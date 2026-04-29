@@ -8,13 +8,13 @@ export const useQueryStore = defineStore("query", () => {
   const activeTabId = ref<string | null>(null);
   const MAX_CACHED_RESULTS = 10;
 
-  function findTabByTitle(connectionId: string, title: string) {
-    return tabs.value.find((t) => t.connectionId === connectionId && t.title === title);
+  function findTabByTitle(connectionId: string, database: string, title: string) {
+    return tabs.value.find((t) => t.connectionId === connectionId && t.database === database && t.title === title);
   }
 
   function createTab(connectionId: string, database: string, title?: string, mode: "data" | "query" | "redis" | "mongo" = "query") {
     if (title) {
-      const existing = findTabByTitle(connectionId, title);
+      const existing = findTabByTitle(connectionId, database, title);
       if (existing) {
         activeTabId.value = existing.id;
         return existing.id;
