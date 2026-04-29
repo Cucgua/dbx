@@ -98,3 +98,9 @@ pnpm tauri build
 ## 社区
 
 [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-社区-blue)](https://linux.do)
+
+### 交流群
+
+| 微信群 | QQ群 |
+|:---:|:---:|
+| <img src="docs/wechat-group.jpg" width="200" /> | <img src="docs/qq-group.jpg" width="200" /> |

@@ -83,13 +83,13 @@ The installer will be in `src-tauri/target/release/bundle/`.
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | [Tauri 2](https://tauri.app/) |
-| Frontend | [Vue 3](https://vuejs.org/) + TypeScript |
-| UI | [shadcn-vue](https://www.shadcn-vue.com/) + Tailwind CSS |
-| Editor | [CodeMirror 6](https://codemirror.net/) |
-| Backend | Rust + [sqlx](https://github.com/launchbadge/sqlx) / [tiberius](https://github.com/prisma/tiberius) / [redis-rs](https://github.com/redis-rs/redis-rs) / [mongodb](https://github.com/mongodb/mongo-rust-driver) |
+| Layer     | Technology                                                                                                                                                                                                       |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework | [Tauri 2](https://tauri.app/)                                                                                                                                                                                    |
+| Frontend  | [Vue 3](https://vuejs.org/) + TypeScript                                                                                                                                                                         |
+| UI        | [shadcn-vue](https://www.shadcn-vue.com/) + Tailwind CSS                                                                                                                                                         |
+| Editor    | [CodeMirror 6](https://codemirror.net/)                                                                                                                                                                          |
+| Backend   | Rust + [sqlx](https://github.com/launchbadge/sqlx) / [tiberius](https://github.com/prisma/tiberius) / [redis-rs](https://github.com/redis-rs/redis-rs) / [mongodb](https://github.com/mongodb/mongo-rust-driver) |
 
 ## License
 
@@ -98,3 +98,7 @@ The installer will be in `src-tauri/target/release/bundle/`.
 ## Community
 
 [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-Community-blue)](https://linux.do)
+
+|                     WeChat Group                      |                     QQ Group                      |
+| :---------------------------------------------: | :-----------------------------------------: |
+| <img src="docs/wechat-group.jpg" width="200" /> | <img src="docs/qq-group.jpg" width="200" /> |
