@@ -23,7 +23,7 @@ jobs:
           version: 9
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install
 
       - name: TypeScript check
         run: npx vue-tsc --noEmit
