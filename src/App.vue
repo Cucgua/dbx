@@ -38,7 +38,7 @@ const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const historyStore = useHistoryStore();
 const settingsStore = useSettingsStore();
-const { message: toastMessage, visible: toastVisible } = useToast();
+const { message: toastMessage, visible: toastVisible, toast } = useToast();
 
 const showConnectionDialog = ref(false);
 const showHistory = ref(false);
