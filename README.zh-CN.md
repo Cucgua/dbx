@@ -90,3 +90,7 @@ xattr -cr /Applications/dbx.app
 ## 开源协议
 
 [MIT](LICENSE)
+
+## 社区
+
+[![LINUX DO](https://img.shields.io/badge/LINUX%20DO-社区-blue)](https://linux.do)

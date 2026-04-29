@@ -90,3 +90,7 @@ Or: **System Settings → Privacy & Security → Open Anyway**.
 ## License
 
 [MIT](LICENSE)
+
+## Community
+
+[![LINUX DO](https://img.shields.io/badge/LINUX%20DO-Community-blue)](https://linux.do)
