@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Tauri build output is handled by src-tauri/.gitignore
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+
+# GitHub (keep workflows)
+.github/*
+!.github/workflows/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Temp
+tmp/
+
+# Logs
+*.log

@@ -1,0 +1,300 @@
+<script setup lang="ts">
+import { ref, computed } from "vue";
+import { useI18n } from "vue-i18n";
+import {
+  Database, Table, Columns3, Eye, ChevronRight, ChevronDown,
+  Loader2, FolderOpen, Trash2, TerminalSquare, RefreshCw,
+  Copy, TableProperties, Key, Link, Zap, ListTree, Pencil,
+} from "lucide-vue-next";
+import {
+  ContextMenu, ContextMenuContent, ContextMenuItem,
+  ContextMenuSeparator, ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { useConnectionStore } from "@/stores/connectionStore";
+import { useQueryStore } from "@/stores/queryStore";
+import type { TreeNode, TreeNodeType } from "@/types/database";
+import * as api from "@/lib/tauri";
+import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
+
+const { t } = useI18n();
+const connectionStore = useConnectionStore();
+const queryStore = useQueryStore();
+
+const props = defineProps<{
+  node: TreeNode;
+  depth: number;
+}>();
+
+function quoteIdent(name: string): string {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return config?.db_type === "mysql"
+    ? `\`${name.replace(/`/g, "``")}\``
+    : `"${name.replace(/"/g, '""')}"`;
+}
+
+function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
+  switch (node.type) {
+    case "connection":
+      return null;
+    case "database":
+      return { icon: Database, colorClass: "text-yellow-500" };
+    case "schema":
+      return { icon: FolderOpen, colorClass: "text-sky-400" };
+    case "table":
+      return { icon: Table, colorClass: "text-green-500" };
+    case "view":
+      return { icon: Eye, colorClass: "text-purple-500" };
+    case "column":
+      return { icon: Columns3, colorClass: "text-muted-foreground" };
+    case "group-columns":
+      return { icon: ListTree, colorClass: "text-green-400" };
+    case "group-indexes":
+      return { icon: Key, colorClass: "text-amber-500" };
+    case "group-fkeys":
+      return { icon: Link, colorClass: "text-blue-400" };
+    case "group-triggers":
+      return { icon: Zap, colorClass: "text-orange-400" };
+    case "index":
+      return { icon: Key, colorClass: "text-amber-400" };
+    case "fkey":
+      return { icon: Link, colorClass: "text-blue-300" };
+    case "trigger":
+      return { icon: Zap, colorClass: "text-orange-300" };
+    case "redis-db":
+      return { icon: Database, colorClass: "text-red-400" };
+    case "redis-key":
+      return { icon: Key, colorClass: "text-red-300" };
+    case "mongo-db":
+      return { icon: Database, colorClass: "text-green-500" };
+    case "mongo-collection":
+      return { icon: Table, colorClass: "text-green-400" };
+    default:
+      return { icon: Database, colorClass: "text-muted-foreground" };
+  }
+}
+
+const leafTypes: Set<TreeNodeType> = new Set(["column", "index", "fkey", "trigger", "redis-key"]);
+const groupTypes: Set<TreeNodeType> = new Set(["group-columns", "group-indexes", "group-fkeys", "group-triggers"]);
+
+function isGroupLabel(node: TreeNode): boolean {
+  return groupTypes.has(node.type);
+}
+
+async function toggle() {
+  const node = props.node;
+  if (node.isLoading) return;
+  if (node.isExpanded) { node.isExpanded = false; return; }
+
+  if (node.type === "connection" && node.connectionId) {
+    const config = connectionStore.getConfig(node.connectionId);
+    if (config?.db_type === "redis") {
+      await connectionStore.loadRedisDatabases(node.connectionId);
+    } else if (config?.db_type === "mongodb") {
+      await connectionStore.loadMongoDatabases(node.connectionId);
+    } else {
+      await connectionStore.loadDatabases(node.connectionId);
+    }
+  } else if (node.type === "redis-db" && node.connectionId && node.database) {
+    const tabTitle = `${connectionStore.getConfig(node.connectionId)?.name || "Redis"}:db${node.database}`;
+    queryStore.createTab(node.connectionId, node.database, tabTitle, "redis");
+  } else if (node.type === "mongo-db" && node.connectionId && node.database) {
+    await connectionStore.loadMongoCollections(node.connectionId, node.database);
+  } else if (node.type === "mongo-collection" && node.connectionId && node.database) {
+    const tabTitle = `${node.database}.${node.label}`;
+    const tab = queryStore.createTab(node.connectionId, node.database, tabTitle, "mongo");
+    queryStore.updateSql(tab, node.label);
+  } else if (node.type === "database" && node.connectionId && node.database) {
+    const config = connectionStore.getConfig(node.connectionId);
+    if (config?.db_type === "postgres") {
+      await connectionStore.loadSchemas(node.connectionId, node.database);
+    } else {
+      await connectionStore.loadTables(node.connectionId, node.database);
+    }
+  } else if (node.type === "schema" && node.connectionId && node.database && node.schema) {
+    await connectionStore.loadTables(node.connectionId, node.database, node.schema);
+  } else if ((node.type === "table" || node.type === "view") && node.connectionId && node.database) {
+    await connectionStore.loadTableGroups(node.connectionId, node.database, node.label, node.schema);
+  } else if (node.type === "group-columns" && node.connectionId && node.database && node.tableName) {
+    await connectionStore.loadColumns(node.connectionId, node.database, node.tableName, node.schema);
+  } else if (node.type === "group-indexes" && node.connectionId && node.database && node.tableName) {
+    await connectionStore.loadIndexes(node.connectionId, node.database, node.tableName, node.schema);
+  } else if (node.type === "group-fkeys" && node.connectionId && node.database && node.tableName) {
+    await connectionStore.loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema);
+  } else if (node.type === "group-triggers" && node.connectionId && node.database && node.tableName) {
+    await connectionStore.loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
+  }
+}
+
+async function openData() {
+  const node = props.node;
+  if (!(node.type === "table" || node.type === "view") || !node.connectionId || !node.database) return;
+  await connectionStore.ensureConnected(node.connectionId);
+  const config = connectionStore.getConfig(node.connectionId);
+  const qualifiedName = config?.db_type === "postgres" && node.schema
+    ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
+    : quoteIdent(node.label);
+  const tabId = queryStore.createTab(node.connectionId, node.database, node.label, "data");
+
+  const querySchema = node.schema || node.database;
+  const columns = await api.getColumns(node.connectionId, node.database, querySchema, node.label);
+  const pks = columns.filter((c) => c.is_primary_key).map((c) => c.name);
+  const order = pks.length ? ` ORDER BY ${pks.map((pk) => `${quoteIdent(pk)} ASC`).join(", ")}` : "";
+  const sql = `SELECT * FROM ${qualifiedName}${order} LIMIT 100;`;
+  queryStore.updateSql(tabId, sql);
+  queryStore.setTableMeta(tabId, {
+    schema: node.schema,
+    tableName: node.label,
+    columns,
+    primaryKeys: pks,
+  });
+
+  queryStore.executeCurrentTab();
+}
+
+async function newQuery() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  await connectionStore.ensureConnected(node.connectionId);
+  connectionStore.activeConnectionId = node.connectionId;
+  queryStore.createTab(node.connectionId, node.database || "", undefined, "query");
+}
+
+async function refresh() {
+  const node = props.node;
+  node.isExpanded = false;
+  node.children = [];
+  await toggle();
+}
+
+function deleteConnection() {
+  const node = props.node;
+  if (node.connectionId) {
+    connectionStore.disconnect(node.connectionId);
+    connectionStore.removeConnection(node.connectionId);
+  }
+}
+
+function copyName() {
+  navigator.clipboard.writeText(props.node.label);
+}
+
+function editConnection() {
+  if (props.node.connectionId) {
+    connectionStore.startEditing(props.node.connectionId);
+  }
+}
+
+const canExpand = !leafTypes.has(props.node.type);
+const paddingLeft = `${props.depth * 16 + 8}px`;
+
+const CHILDREN_PAGE_SIZE = 100;
+const displayLimit = ref(CHILDREN_PAGE_SIZE);
+
+const visibleChildren = computed(() => {
+  if (!props.node.children) return [];
+  return props.node.children.slice(0, displayLimit.value);
+});
+
+const hasMoreChildren = computed(() =>
+  (props.node.children?.length ?? 0) > displayLimit.value
+);
+
+const remainingCount = computed(() =>
+  (props.node.children?.length ?? 0) - displayLimit.value
+);
+
+function showMore() {
+  displayLimit.value += CHILDREN_PAGE_SIZE;
+}
+</script>
+
+<template>
+  <ContextMenu>
+    <ContextMenuTrigger as-child>
+      <div>
+        <div
+          class="flex items-center gap-1.5 py-1 px-2 rounded-sm cursor-pointer hover:bg-accent transition-colors"
+          :style="{ paddingLeft }"
+          @click="canExpand && toggle()"
+          @dblclick="openData"
+        >
+          <template v-if="canExpand">
+            <Loader2 v-if="node.isLoading" class="w-3.5 h-3.5 shrink-0 animate-spin text-muted-foreground" />
+            <ChevronDown v-else-if="node.isExpanded" class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+            <ChevronRight v-else class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+          </template>
+          <span v-else class="w-3.5 h-3.5 shrink-0" />
+          <DatabaseIcon v-if="node.type === 'connection'" :db-type="connectionStore.getConfig(node.connectionId || '')?.db_type || 'postgres'" class="w-3.5 h-3.5 shrink-0" />
+          <component v-else :is="getIconInfo(node)?.icon || Database" class="w-3.5 h-3.5 shrink-0" :class="getIconInfo(node)?.colorClass" />
+          <span class="truncate">{{ isGroupLabel(node) ? t(node.label) : node.label }}</span>
+        </div>
+        <template v-if="node.isExpanded && node.children">
+          <TreeItem v-for="child in visibleChildren" :key="child.id" :node="child" :depth="depth + 1" />
+          <div
+            v-if="hasMoreChildren"
+            class="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent text-xs text-muted-foreground"
+            :style="{ paddingLeft: `${(depth + 1) * 16 + 8}px` }"
+            @click="showMore"
+          >
+            <span>{{ t('sidebar.showMore', { count: Math.min(CHILDREN_PAGE_SIZE, remainingCount) }) }}</span>
+          </div>
+        </template>
+      </div>
+    </ContextMenuTrigger>
+
+    <ContextMenuContent class="w-48">
+      <template v-if="node.type === 'connection'">
+        <ContextMenuItem @click="toggle">
+          <Plug class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.openConnection') }}
+        </ContextMenuItem>
+        <ContextMenuItem @click="newQuery">
+          <TerminalSquare class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.newQuery') }}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem @click="refresh">
+          <RefreshCw class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.refreshChildren') }}
+        </ContextMenuItem>
+        <ContextMenuItem @click="editConnection">
+          <Pencil class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.editConnection') }}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem class="text-destructive" @click="deleteConnection">
+          <Trash2 class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.deleteConnection') }}
+        </ContextMenuItem>
+      </template>
+
+      <template v-if="node.type === 'database' || node.type === 'schema'">
+        <ContextMenuItem @click="newQuery">
+          <TerminalSquare class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.newQuery') }}
+        </ContextMenuItem>
+        <ContextMenuItem @click="refresh">
+          <RefreshCw class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.refreshChildren') }}
+        </ContextMenuItem>
+      </template>
+
+      <template v-if="node.type === 'table' || node.type === 'view'">
+        <ContextMenuItem @click="openData">
+          <TableProperties class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.viewData') }}
+        </ContextMenuItem>
+        <ContextMenuItem @click="newQuery">
+          <TerminalSquare class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.newQuery') }}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem @click="refresh">
+          <RefreshCw class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.refreshChildren') }}
+        </ContextMenuItem>
+      </template>
+
+      <template v-if="isGroupLabel(node)">
+        <ContextMenuItem @click="refresh">
+          <RefreshCw class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.refreshChildren') }}
+        </ContextMenuItem>
+      </template>
+
+      <ContextMenuSeparator />
+      <ContextMenuItem @click="copyName">
+        <Copy class="w-3.5 h-3.5 mr-2" /> {{ t('contextMenu.copyName') }}
+      </ContextMenuItem>
+    </ContextMenuContent>
+  </ContextMenu>
+</template>
