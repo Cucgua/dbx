@@ -64,6 +64,19 @@ function shortTypeName(t: string): string {
   if (s === "real") return "float4";
   return t;
 }
+
+function typeColorClass(t: string): string {
+  const s = t.toLowerCase();
+  if (["int", "int2", "int4", "int8", "smallint", "bigint", "integer", "serial", "bigserial", "tinyint", "mediumint"].includes(s)) return "text-blue-500";
+  if (["float4", "float8", "double", "decimal", "numeric", "real", "float", "money"].includes(s)) return "text-cyan-500";
+  if (["varchar", "text", "char", "character varying", "character", "string", "nvarchar", "nchar", "ntext", "longtext", "mediumtext", "tinytext", "clob"].includes(s)) return "text-green-500";
+  if (["bool", "boolean", "bit"].includes(s)) return "text-orange-500";
+  if (["timestamp", "timestamptz", "datetime", "date", "time", "timetz", "datetime2", "smalldatetime"].includes(s)) return "text-purple-500";
+  if (["json", "jsonb", "xml", "array"].includes(s)) return "text-pink-500";
+  if (["uuid", "uniqueidentifier"].includes(s)) return "text-amber-500";
+  if (["bytea", "blob", "binary", "varbinary", "image"].includes(s)) return "text-red-400";
+  return "text-muted-foreground";
+}
 const contextCell = ref<{ row: number; col: number } | null>(null);
 const sortCol = ref<string | null>(null);
 const sortDir = ref<"asc" | "desc">("asc");
@@ -104,18 +117,19 @@ function onResizeStart(colIdx: number, event: MouseEvent) {
   document.addEventListener("mouseup", onUp);
 }
 
+const ROW_NUM_WIDTH = 48;
 const baseTotalWidth = computed(() => columnWidths.value.reduce((a, b) => a + b, 0));
 const renderedColumnWidths = computed(() => {
   const widths = columnWidths.value;
   if (widths.length === 0) return widths;
 
-  const extraWidth = Math.max(0, gridWidth.value - baseTotalWidth.value);
+  const extraWidth = Math.max(0, gridWidth.value - ROW_NUM_WIDTH - baseTotalWidth.value);
   if (extraWidth === 0) return widths;
 
   const extraPerColumn = extraWidth / widths.length;
   return widths.map((width) => width + extraPerColumn);
 });
-const totalWidth = computed(() => renderedColumnWidths.value.reduce((a, b) => a + b, 0));
+const totalWidth = computed(() => renderedColumnWidths.value.reduce((a, b) => a + b, 0) + ROW_NUM_WIDTH);
 
 const columnVars = computed(() => {
   const vars: Record<string, string> = {};
@@ -486,6 +500,7 @@ const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "")
           <!-- Sticky header -->
           <div ref="headerRef" class="shrink-0 bg-muted z-10 border-b border-border overflow-hidden">
             <div class="flex text-xs font-medium" :style="{ width: 'var(--total-w)' }">
+              <div class="shrink-0 w-12 px-2 py-1.5 border-r border-border text-center text-muted-foreground select-none">#</div>
               <div
                 v-for="(col, colIdx) in result.columns"
                 :key="col"
@@ -497,7 +512,7 @@ const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "")
                   {{ col }}
                   <ArrowUp v-if="sortCol === col && sortDir === 'asc'" class="w-3 h-3" />
                   <ArrowDown v-else-if="sortCol === col && sortDir === 'desc'" class="w-3 h-3" />
-                  <span v-if="columnTypeMap.get(col)" class="text-[10px] text-muted-foreground font-normal ml-auto">#{{ columnTypeMap.get(col) }}</span>
+                  <span v-if="columnTypeMap.get(col)" class="text-[10px] font-normal ml-auto" :class="typeColorClass(columnTypeMap.get(col)!)">#{{ columnTypeMap.get(col) }}</span>
                 </span>
                 <div
                   class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
@@ -532,15 +547,17 @@ const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "")
             key-field="id"
             @scroll="syncHeaderScroll"
           >
-            <template #default="{ item }">
+            <template #default="{ item, index }">
               <div
                 class="flex text-xs border-b border-border hover:bg-accent/50"
                 :class="{
                   'line-through opacity-30': item.isDeleted,
                   'bg-green-500/10': item.isNew,
+                  'bg-muted/30': !item.isNew && !item.isDeleted && index % 2 === 1,
                 }"
                 :style="{ height: '26px', width: 'var(--total-w)' }"
               >
+                <div class="shrink-0 w-12 px-2 py-1 border-r border-border text-center text-muted-foreground select-none">{{ index + 1 }}</div>
                 <div
                   v-for="(cell, colIdx) in item.data"
                   :key="colIdx"
@@ -549,6 +566,7 @@ const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "")
                   :class="{
                     'text-muted-foreground italic': isNull(cell),
                     'bg-yellow-500/10': item.isDirtyCol[colIdx],
+                    'tabular-nums': typeof cell === 'number',
                   }"
                   @dblclick="!item.isNew && !item.isDeleted && startEdit(item.id, colIdx)"
                   @contextmenu="onCellContext(item.id, colIdx)"
