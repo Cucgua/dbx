@@ -11,6 +11,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { QueryResult, ColumnInfo } from "@/types/database";
 import { save as savePath } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
@@ -478,6 +479,10 @@ async function exportMarkdown() {
 }
 
 const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "");
+
+function copySql() {
+  if (props.sql) navigator.clipboard.writeText(props.sql);
+}
 </script>
 
 <template>
@@ -669,9 +674,16 @@ const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "")
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <span v-if="sqlOneLiner" class="truncate max-w-[30%] opacity-60" :title="sqlOneLiner">
-        {{ sqlOneLiner }}
-      </span>
+      <Tooltip v-if="sqlOneLiner">
+        <TooltipTrigger as-child>
+          <span class="truncate max-w-[30%] opacity-60 cursor-pointer hover:opacity-100" @click="copySql">
+            {{ sqlOneLiner }}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" class="max-w-md">
+          <pre class="text-xs font-mono whitespace-pre-wrap">{{ props.sql }}</pre>
+        </TooltipContent>
+      </Tooltip>
     </div>
   </div>
 </template>
