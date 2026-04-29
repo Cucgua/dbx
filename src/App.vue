@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { DatabaseZap, FilePlus2, Play, Loader2, X, Globe, Moon, Sun, Upload, Download, Plus, History } from "lucide-vue-next";
+import { DatabaseZap, FilePlus2, Play, Loader2, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2 } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import ConnectionTree from "@/components/sidebar/ConnectionTree.vue";
 import ConnectionDialog from "@/components/connection/ConnectionDialog.vue";
@@ -19,6 +25,8 @@ import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useHistoryStore } from "@/stores/historyStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useToast } from "@/composables/useToast";
 import { setLocale, currentLocale, type Locale } from "@/i18n";
 import { getCurrentWindow, type Theme } from "@tauri-apps/api/window";
 import * as api from "@/lib/tauri";
@@ -27,11 +35,15 @@ const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const historyStore = useHistoryStore();
+const settingsStore = useSettingsStore();
+const { message: toastMessage, visible: toastVisible } = useToast();
 
 const showConnectionDialog = ref(false);
 const showHistory = ref(false);
 const dangerSql = ref("");
 const showDangerDialog = ref(false);
+const databaseOptions = ref<Record<string, string[]>>({});
+const loadingDatabaseOptions = ref<Record<string, boolean>>({});
 
 const editConfig = computed(() => {
   const id = connectionStore.editingConnectionId;
@@ -50,6 +62,82 @@ watch(showConnectionDialog, (v) => {
 const activeTab = computed(() =>
   queryStore.tabs.find((t) => t.id === queryStore.activeTabId)
 );
+
+const activeConnection = computed(() => {
+  const tab = activeTab.value;
+  return tab ? connectionStore.getConfig(tab.connectionId) : undefined;
+});
+
+const activeTabContext = computed(() => {
+  const tab = activeTab.value;
+  const connection = activeConnection.value;
+  if (!tab || !connection) return [];
+
+  const items = [
+    connection.name,
+    connection.db_type.toUpperCase(),
+  ];
+
+  if (tab.tableMeta?.tableName) {
+    items.push(tab.tableMeta.schema
+      ? `${tab.tableMeta.schema}.${tab.tableMeta.tableName}`
+      : tab.tableMeta.tableName);
+  }
+
+  return items;
+});
+
+const activeDatabaseOptions = computed(() => {
+  const connection = activeConnection.value;
+  return connection ? databaseOptions.value[connection.id] ?? [] : [];
+});
+
+const activeDatabaseValue = computed(() => activeTab.value?.database || "");
+const activeConnectionValue = computed(() => activeConnection.value?.id || "");
+
+function connectionDisplayName(connectionId: string): string {
+  return connectionStore.getConfig(connectionId)?.name || connectionId;
+}
+
+function databaseDisplayName(database: string): string {
+  const connection = activeConnection.value;
+  if (connection?.db_type === "redis" && database !== "") return `db${database}`;
+  return database || t("editor.noDatabase");
+}
+
+async function loadDatabaseOptions(connectionId: string) {
+  const connection = connectionStore.getConfig(connectionId);
+  if (!connection || loadingDatabaseOptions.value[connectionId]) return;
+
+  loadingDatabaseOptions.value[connectionId] = true;
+  try {
+    await connectionStore.ensureConnected(connectionId);
+    if (connection.db_type === "redis") {
+      const dbs = await api.redisListDatabases(connectionId);
+      databaseOptions.value[connectionId] = dbs.map(String);
+    } else if (connection.db_type === "mongodb") {
+      databaseOptions.value[connectionId] = await api.mongoListDatabases(connectionId);
+    } else {
+      const dbs = await api.listDatabases(connectionId);
+      databaseOptions.value[connectionId] = dbs.map((db) => db.name);
+    }
+  } finally {
+    loadingDatabaseOptions.value[connectionId] = false;
+  }
+}
+
+async function getDatabaseOptions(connectionId: string): Promise<string[]> {
+  if (!databaseOptions.value[connectionId]) {
+    await loadDatabaseOptions(connectionId);
+  }
+  return databaseOptions.value[connectionId] ?? [];
+}
+
+watch(activeConnection, (connection) => {
+  if (connection && !databaseOptions.value[connection.id]) {
+    loadDatabaseOptions(connection.id).catch(() => {});
+  }
+}, { immediate: true });
 
 function onEditorUpdate(val: string) {
   if (queryStore.activeTabId) {
@@ -110,6 +198,36 @@ function onHistoryRestore(sql: string) {
   if (queryStore.activeTabId) {
     queryStore.updateSql(queryStore.activeTabId, sql);
   }
+}
+
+function replaceActiveSql(sql: string) {
+  const tab = activeTab.value;
+  if (!tab) return;
+  queryStore.updateSql(tab.id, sql);
+}
+
+function appendActiveSql(sql: string) {
+  const tab = activeTab.value;
+  if (!tab) return;
+  const current = tab.sql.trimEnd();
+  queryStore.updateSql(tab.id, current ? `${current}\n\n${sql}` : sql);
+}
+
+function changeActiveDatabase(database: any) {
+  const tab = activeTab.value;
+  if (!tab || typeof database !== "string") return;
+  queryStore.updateDatabase(tab.id, database);
+}
+
+async function changeActiveConnection(connectionId: any) {
+  const tab = activeTab.value;
+  if (!tab || typeof connectionId !== "string") return;
+  const connection = connectionStore.getConfig(connectionId);
+  if (!connection) return;
+  const options = await getDatabaseOptions(connectionId);
+  const database = connection.database || options[0] || "";
+  queryStore.updateConnection(tab.id, connectionId, database);
+  connectionStore.activeConnectionId = connectionId;
 }
 
 async function onExecuteSql(sql: string) {
@@ -209,6 +327,7 @@ function handleKeydown(e: KeyboardEvent) {
 onMounted(() => {
   applyTheme();
   connectionStore.initFromDisk();
+  settingsStore.initAiConfig();
   window.addEventListener("keydown", handleKeydown);
 });
 
@@ -230,8 +349,6 @@ onUnmounted(() => {
           </TooltipTrigger>
           <TooltipContent>{{ t('toolbar.newConnection') }}</TooltipContent>
         </Tooltip>
-
-        <Separator orientation="vertical" class="h-5" />
 
         <Tooltip>
           <TooltipTrigger as-child>
@@ -347,6 +464,63 @@ onUnmounted(() => {
 
           <!-- Editor Panel -->
           <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
+            <div class="h-8 shrink-0 border-b bg-background/80 px-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <Server class="h-3.5 w-3.5 shrink-0" />
+              <Select
+                :model-value="activeConnectionValue"
+                @update:model-value="changeActiveConnection"
+              >
+                <SelectTrigger class="h-6 w-auto max-w-48 border-0 bg-transparent px-1 text-xs font-medium text-foreground shadow-none focus:ring-0">
+                  <SelectValue :placeholder="t('editor.selectConnection')">
+                    {{ connectionDisplayName(activeConnectionValue) }}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="connection in connectionStore.connections"
+                    :key="connection.id"
+                    :value="connection.id"
+                  >
+                    {{ connection.name }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <span class="text-muted-foreground/50">/</span>
+              <span class="shrink-0">{{ activeConnection?.db_type.toUpperCase() }}</span>
+              <span class="text-muted-foreground/50">/</span>
+              <Select
+                :model-value="activeDatabaseValue"
+                @update:model-value="changeActiveDatabase"
+                @update:open="(open: boolean) => { if (open && activeConnection) loadDatabaseOptions(activeConnection.id).catch(() => {}) }"
+              >
+                <SelectTrigger class="h-6 w-auto max-w-56 border-0 bg-transparent px-1 text-xs shadow-none focus:ring-0">
+                  <SelectValue :placeholder="loadingDatabaseOptions[activeConnection?.id || ''] ? t('common.loading') : t('editor.selectDatabase')">
+                    {{ databaseDisplayName(activeDatabaseValue) }}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="database in activeDatabaseOptions"
+                    :key="database"
+                    :value="database"
+                  >
+                    {{ databaseDisplayName(database) }}
+                  </SelectItem>
+                  <SelectItem v-if="!activeDatabaseOptions.length && activeDatabaseValue" :value="activeDatabaseValue">
+                    {{ databaseDisplayName(activeDatabaseValue) }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <template v-for="item in activeTabContext.slice(2)" :key="item">
+                <span class="text-muted-foreground/50">/</span>
+                <span class="min-w-0 truncate">{{ item }}</span>
+              </template>
+              <span class="flex-1" />
+              <div v-if="activeTab.tableMeta" class="flex min-w-0 items-center gap-1">
+                <Table2 class="h-3.5 w-3.5 shrink-0" />
+                <span class="truncate">{{ activeTab.tableMeta.columns.length }} {{ t('tree.columns') }}</span>
+              </div>
+            </div>
             <!-- Query mode: editor + results -->
             <template v-if="activeTab.mode === 'query'">
               <Splitpanes horizontal class="flex-1">
@@ -358,16 +532,18 @@ onUnmounted(() => {
                       @update:model-value="onEditorUpdate"
                       @execute="tryExecute()"
                     />
-                    <AiAssistant
-                      table-context=""
-                      @insert-sql="(sql: string) => { queryStore.updateSql(activeTab!.id, sql); }"
-                    />
                   </div>
                 </Pane>
                 <Pane :size="60" :min-size="20">
-                  <div class="h-full">
-                    <DataGrid v-if="activeTab.result" :key="activeTab.id" :result="activeTab.result" :sql="activeTab.sql" />
-                    <div v-else class="h-full flex items-center justify-center text-muted-foreground text-sm">
+                  <div class="h-full flex flex-col">
+                    <AiAssistant
+                      :tab="activeTab"
+                      :connection="activeConnection"
+                      @replace-sql="replaceActiveSql"
+                      @append-sql="appendActiveSql"
+                    />
+                    <DataGrid v-if="activeTab.result" :key="activeTab.id" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.sql" />
+                    <div v-else class="flex-1 min-h-0 flex items-center justify-center text-muted-foreground text-sm">
                       {{ t('editor.pressToExecute') }}
                     </div>
                   </div>
@@ -444,6 +620,23 @@ onUnmounted(() => {
 
       <ConnectionDialog v-model:open="showConnectionDialog" :edit-config="editConfig" />
       <DangerConfirmDialog v-model:open="showDangerDialog" :sql="dangerSql" @confirm="onDangerConfirm" />
+
+      <!-- Global Toast -->
+      <Transition name="toast">
+        <div v-if="toastVisible" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-foreground text-background text-sm shadow-lg">
+          {{ toastMessage }}
+        </div>
+      </Transition>
     </div>
   </TooltipProvider>
 </template>
+
+<style scoped>
+.toast-enter-active, .toast-leave-active {
+  transition: all 0.25s ease;
+}
+.toast-enter-from, .toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
+</style>

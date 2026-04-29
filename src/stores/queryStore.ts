@@ -50,6 +50,23 @@ export const useQueryStore = defineStore("query", () => {
     if (tab) tab.sql = sql;
   }
 
+  function updateDatabase(id: string, database: string) {
+    const tab = tabs.value.find((t) => t.id === id);
+    if (!tab || tab.database === database) return;
+    tab.database = database;
+    tab.result = undefined;
+    tab.tableMeta = undefined;
+  }
+
+  function updateConnection(id: string, connectionId: string, database = "") {
+    const tab = tabs.value.find((t) => t.id === id);
+    if (!tab || tab.connectionId === connectionId) return;
+    tab.connectionId = connectionId;
+    tab.database = database;
+    tab.result = undefined;
+    tab.tableMeta = undefined;
+  }
+
   function setTableMeta(id: string, meta: NonNullable<QueryTab["tableMeta"]>) {
     const tab = tabs.value.find((t) => t.id === id);
     if (tab) tab.tableMeta = meta;
@@ -89,6 +106,8 @@ export const useQueryStore = defineStore("query", () => {
     createTab,
     closeTab,
     updateSql,
+    updateDatabase,
+    updateConnection,
     setTableMeta,
     executeCurrentTab,
   };

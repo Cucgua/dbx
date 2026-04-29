@@ -16,7 +16,10 @@ import type { QueryResult, ColumnInfo } from "@/types/database";
 import { save as savePath } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 
+import { useToast } from "@/composables/useToast";
+
 const { t } = useI18n();
+const { toast } = useToast();
 
 const props = defineProps<{
   result: QueryResult;
@@ -481,7 +484,9 @@ async function exportMarkdown() {
 const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "");
 
 function copySql() {
-  if (props.sql) navigator.clipboard.writeText(props.sql);
+  if (!props.sql) return;
+  navigator.clipboard.writeText(props.sql);
+  toast(t('grid.copied'));
 }
 </script>
 
@@ -509,15 +514,21 @@ function copySql() {
               <div
                 v-for="(col, colIdx) in result.columns"
                 :key="col"
-                class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/50 select-none relative"
+                class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/50 select-none relative overflow-hidden"
                 :style="{ width: `var(--col-w-${colIdx})` }"
                 @click="toggleSort(col)"
               >
-                <span class="inline-flex items-center gap-1">
-                  {{ col }}
-                  <ArrowUp v-if="sortCol === col && sortDir === 'asc'" class="w-3 h-3" />
-                  <ArrowDown v-else-if="sortCol === col && sortDir === 'desc'" class="w-3 h-3" />
-                  <span v-if="columnTypeMap.get(col)" class="text-[10px] font-normal ml-auto" :class="typeColorClass(columnTypeMap.get(col)!)">#{{ columnTypeMap.get(col) }}</span>
+                <span class="flex min-w-0 items-center gap-1 overflow-hidden">
+                  <span class="min-w-0 truncate">{{ col }}</span>
+                  <ArrowUp v-if="sortCol === col && sortDir === 'asc'" class="h-3 w-3 shrink-0" />
+                  <ArrowDown v-else-if="sortCol === col && sortDir === 'desc'" class="h-3 w-3 shrink-0" />
+                  <span
+                    v-if="columnTypeMap.get(col)"
+                    class="shrink overflow-hidden truncate text-[10px] font-normal"
+                    :class="typeColorClass(columnTypeMap.get(col)!)"
+                  >
+                    #{{ columnTypeMap.get(col) }}
+                  </span>
                 </span>
                 <div
                   class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"

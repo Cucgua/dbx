@@ -9,6 +9,32 @@ import type {
   TriggerInfo,
   QueryResult,
 } from "@/types/database";
+import type { AiConfig } from "@/stores/settingsStore";
+
+export interface AiMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+export interface AiCompletionRequest {
+  config: AiConfig;
+  systemPrompt: string;
+  messages: AiMessage[];
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export async function aiComplete(request: AiCompletionRequest): Promise<string> {
+  return invoke("ai_complete", { request });
+}
+
+export async function saveAiConfig(config: AiConfig): Promise<void> {
+  return invoke("save_ai_config", { config });
+}
+
+export async function loadAiConfig(): Promise<AiConfig | null> {
+  return invoke("load_ai_config");
+}
 
 export async function testConnection(config: ConnectionConfig): Promise<string> {
   return invoke("test_connection", { config });

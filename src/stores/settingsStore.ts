@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
+import * as api from "@/lib/tauri";
 
 export type AiProvider = "claude" | "openai" | "custom";
 
@@ -17,22 +18,35 @@ const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = {
 };
 
 export const useSettingsStore = defineStore("settings", () => {
-  const saved = localStorage.getItem("dbx-ai-config");
-  const aiConfig = ref<AiConfig>(saved ? JSON.parse(saved) : { ...defaultConfigs.claude, apiKey: "" });
+  const aiConfig = ref<AiConfig>({ ...defaultConfigs.claude, apiKey: "" });
+  const isAiConfigLoaded = ref(false);
+
+  async function initAiConfig() {
+    if (isAiConfigLoaded.value) return;
+    const legacy = localStorage.getItem("dbx-ai-config");
+    const saved = await api.loadAiConfig().catch(() => null);
+    if (saved) {
+      aiConfig.value = saved;
+    } else if (legacy) {
+      aiConfig.value = JSON.parse(legacy);
+      await api.saveAiConfig(aiConfig.value).catch(() => {});
+      localStorage.removeItem("dbx-ai-config");
+    }
+    isAiConfigLoaded.value = true;
+  }
 
   function updateAiConfig(config: Partial<AiConfig>) {
-    Object.assign(aiConfig.value, config);
-    if (config.provider && config.provider !== aiConfig.value.provider) {
-      const defaults = defaultConfigs[config.provider];
-      aiConfig.value.endpoint = defaults.endpoint;
-      aiConfig.value.model = defaults.model;
+    const previousProvider = aiConfig.value.provider;
+    if (config.provider && config.provider !== previousProvider) {
+      Object.assign(aiConfig.value, defaultConfigs[config.provider]);
     }
-    localStorage.setItem("dbx-ai-config", JSON.stringify(aiConfig.value));
+    Object.assign(aiConfig.value, config);
+    api.saveAiConfig(aiConfig.value).catch(() => {});
   }
 
   function isConfigured(): boolean {
     return !!aiConfig.value.apiKey && !!aiConfig.value.endpoint;
   }
 
-  return { aiConfig, updateAiConfig, isConfigured };
+  return { aiConfig, isAiConfigLoaded, initAiConfig, updateAiConfig, isConfigured };
 });

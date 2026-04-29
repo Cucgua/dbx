@@ -14,13 +14,56 @@ const emit = defineEmits<{
 
 const editorRef = ref<HTMLDivElement>();
 const view = shallowRef<EditorViewType | null>(null);
+const DEFAULT_FONT_SIZE = 13;
+const MIN_FONT_SIZE = 10;
+const MAX_FONT_SIZE = 24;
+let editorViewModule: typeof import("@codemirror/view") | null = null;
+let fontSizeTheme: import("@codemirror/state").Compartment | null = null;
+
+const savedFontSize = Number(localStorage.getItem("dbx-query-editor-font-size"));
+const fontSize = ref(
+  Number.isFinite(savedFontSize)
+    ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, savedFontSize))
+    : DEFAULT_FONT_SIZE,
+);
+
+function fontTheme(EditorView: typeof import("@codemirror/view").EditorView, size: number) {
+  return EditorView.theme({
+    "&": { height: "100%", fontSize: `${size}px` },
+    ".cm-scroller": { overflow: "auto" },
+    ".cm-content": { fontFamily: "'JetBrains Mono', 'Fira Code', monospace" },
+  });
+}
+
+function setFontSize(size: number) {
+  const next = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size));
+  fontSize.value = next;
+  localStorage.setItem("dbx-query-editor-font-size", String(next));
+  if (view.value && fontSizeTheme && editorViewModule) {
+    view.value.dispatch({
+      effects: fontSizeTheme.reconfigure(fontTheme(editorViewModule.EditorView, next)),
+    });
+  }
+}
+
+function zoomIn() {
+  setFontSize(fontSize.value + 1);
+}
+
+function zoomOut() {
+  setFontSize(fontSize.value - 1);
+}
+
+function resetZoom() {
+  setFontSize(DEFAULT_FONT_SIZE);
+}
 
 onMounted(async () => {
   if (!editorRef.value) return;
 
   const [
     { EditorView, keymap },
-    { EditorState },
+    { EditorState, Compartment },
     { sql, MySQL, PostgreSQL },
     { basicSetup },
     { oneDark },
@@ -31,10 +74,40 @@ onMounted(async () => {
     import("codemirror"),
     import("@codemirror/theme-one-dark"),
   ]);
+  editorViewModule = { EditorView, keymap } as typeof import("@codemirror/view");
+  fontSizeTheme = new Compartment();
 
   const dialect = props.dialect === "postgres" ? PostgreSQL : MySQL;
 
   const runKeymap = keymap.of([
+    {
+      key: "Mod-=",
+      run: () => {
+        zoomIn();
+        return true;
+      },
+    },
+    {
+      key: "Mod-+",
+      run: () => {
+        zoomIn();
+        return true;
+      },
+    },
+    {
+      key: "Mod--",
+      run: () => {
+        zoomOut();
+        return true;
+      },
+    },
+    {
+      key: "Mod-0",
+      run: () => {
+        resetZoom();
+        return true;
+      },
+    },
     {
       key: "Mod-Enter",
       run: () => {
@@ -56,10 +129,15 @@ onMounted(async () => {
           emit("update:modelValue", update.state.doc.toString());
         }
       }),
-      EditorView.theme({
-        "&": { height: "100%", fontSize: "13px" },
-        ".cm-scroller": { overflow: "auto" },
-        ".cm-content": { fontFamily: "'JetBrains Mono', 'Fira Code', monospace" },
+      fontSizeTheme.of(fontTheme(EditorView, fontSize.value)),
+      EditorView.domEventHandlers({
+        wheel(event) {
+          if (!event.metaKey && !event.ctrlKey) return false;
+          event.preventDefault();
+          if (event.deltaY < 0) zoomIn();
+          else if (event.deltaY > 0) zoomOut();
+          return true;
+        },
       }),
     ],
   });
