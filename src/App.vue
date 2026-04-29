@@ -530,7 +530,7 @@ async function setupFileDrop() {
 
           <!-- Editor Panel -->
           <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
-            <div class="h-8 shrink-0 border-b bg-background/80 px-3 flex items-center gap-2 text-xs text-muted-foreground">
+            <div v-if="activeTab.mode === 'query'" class="h-8 shrink-0 border-b bg-background/80 px-3 flex items-center gap-2 text-xs text-muted-foreground">
               <Server class="h-3.5 w-3.5 shrink-0" />
               <Select
                 :model-value="activeConnectionValue"
