@@ -85,6 +85,10 @@ export async function listTriggers(connectionId: string, database: string, schem
   return invoke("list_triggers", { connectionId, database, schema, table });
 }
 
+export async function getTableDdl(connectionId: string, database: string, schema: string, table: string): Promise<string> {
+  return invoke("get_table_ddl", { connectionId, database, schema, table });
+}
+
 export async function saveConnections(configs: ConnectionConfig[]): Promise<void> {
   return invoke("save_connections", { configs });
 }

@@ -1,8 +1,13 @@
+<script lang="ts">
+import { ref } from "vue";
+const globalDdlOpen = ref(false);
+</script>
+
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from "vue";
+import { computed, nextTick, watch } from "vue";
 import { useElementSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
-import { ArrowUp, ArrowDown, Download, Plus, Trash2, Save, ChevronLeft, ChevronRight, Search, Inbox, SearchX } from "lucide-vue-next";
+import { ArrowUp, ArrowDown, Download, Plus, Trash2, Save, ChevronLeft, ChevronRight, Search, Inbox, SearchX, Code2, Copy, Loader2, X } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem,
@@ -15,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { QueryResult, ColumnInfo } from "@/types/database";
 import { save as savePath } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import * as api from "@/lib/tauri";
 
 import { useToast } from "@/composables/useToast";
 
@@ -25,6 +31,8 @@ const props = defineProps<{
   result: QueryResult;
   sql?: string;
   editable?: boolean;
+  connectionId?: string;
+  database?: string;
   tableMeta?: {
     schema?: string;
     tableName: string;
@@ -488,6 +496,71 @@ function copySql() {
   navigator.clipboard.writeText(props.sql);
   toast(t('grid.copied'));
 }
+
+const showDdl = globalDdlOpen;
+const ddlContent = ref("");
+const ddlLoading = ref(false);
+
+async function toggleDdl() {
+  if (showDdl.value) {
+    showDdl.value = false;
+    return;
+  }
+  await fetchDdl();
+}
+
+async function fetchDdl() {
+  if (!props.connectionId || !props.tableMeta) return;
+  showDdl.value = true;
+  ddlLoading.value = true;
+  try {
+    ddlContent.value = await api.getTableDdl(
+      props.connectionId,
+      props.database || "",
+      props.tableMeta.schema || props.database || "",
+      props.tableMeta.tableName,
+    );
+  } catch (e: any) {
+    ddlContent.value = `-- Error: ${e}`;
+  } finally {
+    ddlLoading.value = false;
+  }
+}
+
+if (showDdl.value && props.tableMeta && props.connectionId) {
+  fetchDdl();
+}
+
+function copyDdl() {
+  navigator.clipboard.writeText(ddlContent.value);
+  toast(t('grid.copied'));
+}
+
+const SQL_KEYWORDS = /\b(CREATE|TABLE|INDEX|UNIQUE|PRIMARY|KEY|FOREIGN|REFERENCES|CONSTRAINT|NOT|NULL|DEFAULT|INT|INTEGER|BIGINT|SMALLINT|VARCHAR|CHARACTER|VARYING|TEXT|BOOLEAN|DOUBLE|PRECISION|REAL|FLOAT|NUMERIC|DECIMAL|TIMESTAMP|DATE|TIME|SERIAL|AUTOINCREMENT|AUTO_INCREMENT|IF|EXISTS|ON|SET|CASCADE|RESTRICT|CHECK|WITH|WITHOUT|ZONE)\b/gi;
+
+function highlightSql(sql: string): string {
+  const tokens: string[] = [];
+  let rest = sql;
+  const re = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g;
+  let match: RegExpExecArray | null;
+  let last = 0;
+  while ((match = re.exec(rest)) !== null) {
+    if (match.index > last) tokens.push(escapeAndHighlightKeywords(rest.slice(last, match.index)));
+    const q = match[1];
+    const escaped = q.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const cls = q.startsWith('"') ? "ddl-ident" : "ddl-str";
+    tokens.push(`<span class="${cls}">${escaped}</span>`);
+    last = re.lastIndex;
+  }
+  if (last < rest.length) tokens.push(escapeAndHighlightKeywords(rest.slice(last)));
+  return tokens.join("");
+}
+
+function escapeAndHighlightKeywords(s: string): string {
+  return s
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(SQL_KEYWORDS, '<span class="ddl-kw">$1</span>');
+}
 </script>
 
 <template>
@@ -506,8 +579,14 @@ function copySql() {
             <span v-if="searchText" class="text-xs text-muted-foreground">
               {{ sortedRows.length }}/{{ result.rows.length }}
             </span>
+            <Button v-if="tableMeta && connectionId" variant="ghost" size="sm" class="h-5 text-xs px-1.5 shrink-0" :class="{ 'bg-accent': showDdl }" @click="toggleDdl">
+              <Code2 class="w-3 h-3 mr-1" /> DDL
+            </Button>
           </div>
-          <!-- Sticky header -->
+          <!-- Content area: table + DDL drawer -->
+          <div class="flex-1 flex min-h-0 overflow-hidden">
+            <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+              <!-- Sticky header -->
           <div ref="headerRef" class="shrink-0 bg-muted z-10 border-b border-border overflow-hidden">
             <div class="flex text-xs font-medium" :style="{ width: 'var(--total-w)' }">
               <div class="shrink-0 w-12 px-2 py-1.5 border-r border-border text-center text-muted-foreground select-none">#</div>
@@ -602,6 +681,25 @@ function copySql() {
               </div>
             </template>
           </RecycleScroller>
+            </div>
+            <!-- DDL Drawer -->
+            <div v-if="showDdl" class="w-80 shrink-0 border-l flex flex-col bg-background">
+              <div class="flex items-center gap-2 px-3 py-1.5 border-b shrink-0 bg-muted/20">
+                <Code2 class="w-3.5 h-3.5 text-muted-foreground" />
+                <span class="text-xs font-medium flex-1">{{ tableMeta?.tableName }} DDL</span>
+                <Button variant="ghost" size="icon" class="h-5 w-5" @click="copyDdl">
+                  <Copy class="w-3 h-3" />
+                </Button>
+                <Button variant="ghost" size="icon" class="h-5 w-5" @click="showDdl = false">
+                  <X class="w-3 h-3" />
+                </Button>
+              </div>
+              <div v-if="ddlLoading" class="flex-1 flex items-center justify-center">
+                <Loader2 class="w-4 h-4 animate-spin text-muted-foreground" />
+              </div>
+              <pre v-else class="flex-1 text-xs font-mono p-3 overflow-auto whitespace-pre-wrap ddl-code" v-html="highlightSql(ddlContent)"></pre>
+            </div>
+          </div>
         </div>
       </ContextMenuTrigger>
 
@@ -647,6 +745,9 @@ function copySql() {
         </Button>
         <Button variant="ghost" size="sm" class="h-5 text-xs" @click="addRow">
           <Plus class="w-3 h-3 mr-1" /> {{ t('grid.addRow') }}
+        </Button>
+        <Button variant="ghost" size="sm" class="h-5 text-xs" @click="toggleDdl">
+          <Code2 class="w-3 h-3 mr-1" /> DDL
         </Button>
       </template>
 
@@ -707,5 +808,16 @@ function copySql() {
 .data-grid-scroller :deep(.vue-recycle-scroller__item-wrapper) {
   min-width: var(--total-w);
   overflow: visible;
+}
+
+.ddl-code :deep(.ddl-kw) {
+  color: oklch(0.6 0.15 250);
+  font-weight: 600;
+}
+.ddl-code :deep(.ddl-ident) {
+  color: oklch(0.65 0.15 150);
+}
+.ddl-code :deep(.ddl-str) {
+  color: oklch(0.65 0.15 50);
 }
 </style>

@@ -297,3 +297,135 @@ pub async fn list_triggers(
         _ => Ok(vec![]),
     }
 }
+
+#[tauri::command]
+pub async fn get_table_ddl(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    database: String,
+    schema: String,
+    table: String,
+) -> Result<String, String> {
+    let pool_key = state.get_or_create_pool(&connection_id, Some(&database)).await?;
+
+    {
+        let connections = state.connections.lock().await;
+        if let Some(con) = extract_duckdb(&connections, &pool_key) {
+            drop(connections);
+            let tbl = table.replace('\'', "''");
+            let con = con.lock().map_err(|e| e.to_string())?;
+            let mut stmt = con.prepare(&format!("SELECT sql FROM duckdb_tables() WHERE table_name = '{tbl}'"))
+                .map_err(|e| e.to_string())?;
+            let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
+            if let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                return row.get::<_, String>(0).map_err(|e| e.to_string());
+            }
+            return Err("Table not found".to_string());
+        }
+        if let Some(client) = extract_clickhouse(&connections, &pool_key) {
+            drop(connections);
+            let result = db::clickhouse_driver::execute_query(&client, &database, &format!("SHOW CREATE TABLE `{table}`")).await?;
+            return result.rows.first()
+                .and_then(|r| r.first())
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| "Table not found".to_string());
+        }
+        if let Some(client) = extract_sqlserver(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return build_sqlserver_ddl(&mut client, &schema, &table).await;
+        }
+    }
+
+    let connections = state.connections.lock().await;
+    let pool = connections.get(&pool_key).ok_or("Pool not found")?;
+
+    match pool {
+        PoolKind::Mysql(p) => mysql_ddl(p, &table).await,
+        PoolKind::Postgres(p) => pg_ddl(p, &schema, &table).await,
+        PoolKind::Sqlite(p) => sqlite_ddl(p, &table).await,
+        _ => Err("DDL not supported for this database type".to_string()),
+    }
+}
+
+async fn mysql_ddl(pool: &sqlx::mysql::MySqlPool, table: &str) -> Result<String, String> {
+    use sqlx::Row;
+    let row: sqlx::mysql::MySqlRow = sqlx::query(&format!("SHOW CREATE TABLE `{}`", table.replace('`', "``")))
+        .fetch_one(pool).await.map_err(|e| e.to_string())?;
+    row.try_get::<String, _>(1)
+        .or_else(|_| row.try_get::<Vec<u8>, _>(1).map(|b| String::from_utf8_lossy(&b).to_string()))
+        .map_err(|e| e.to_string())
+}
+
+async fn sqlite_ddl(pool: &sqlx::sqlite::SqlitePool, table: &str) -> Result<String, String> {
+    use sqlx::Row;
+    let row: sqlx::sqlite::SqliteRow = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name=?")
+        .bind(table)
+        .fetch_one(pool).await.map_err(|e| e.to_string())?;
+    row.try_get::<String, _>(0).map_err(|e| e.to_string())
+}
+
+async fn pg_ddl(pool: &sqlx::postgres::PgPool, schema: &str, table: &str) -> Result<String, String> {
+    let columns = db::postgres::get_columns(pool, schema, table).await?;
+    let indexes = db::postgres::list_indexes(pool, schema, table).await?;
+    let fkeys = db::postgres::list_foreign_keys(pool, schema, table).await?;
+
+    let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
+    let col_lines: Vec<String> = columns.iter().map(|c| {
+        let mut line = format!("  \"{}\" {}", c.name, c.data_type);
+        if !c.is_nullable { line.push_str(" NOT NULL"); }
+        if let Some(ref def) = c.column_default { line.push_str(&format!(" DEFAULT {def}")); }
+        line
+    }).collect();
+    ddl.push_str(&col_lines.join(",\n"));
+
+    let pks: Vec<&str> = columns.iter().filter(|c| c.is_primary_key).map(|c| c.name.as_str()).collect();
+    if !pks.is_empty() {
+        ddl.push_str(&format!(",\n  PRIMARY KEY ({})", pks.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", ")));
+    }
+    for fk in &fkeys {
+        ddl.push_str(&format!(",\n  CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\"(\"{}\")", fk.name, fk.column, fk.ref_table, fk.ref_column));
+    }
+    ddl.push_str("\n);\n");
+
+    for idx in &indexes {
+        if idx.is_primary { continue; }
+        let unique = if idx.is_unique { "UNIQUE " } else { "" };
+        let cols = idx.columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        ddl.push_str(&format!("\nCREATE {unique}INDEX \"{}\" ON \"{schema}\".\"{table}\" ({cols});", idx.name));
+    }
+    Ok(ddl)
+}
+
+async fn build_sqlserver_ddl(client: &mut db::sqlserver::SqlServerClient, schema: &str, table: &str) -> Result<String, String> {
+    let columns = db::sqlserver::get_columns(client, schema, table).await?;
+    let indexes = db::sqlserver::list_indexes(client, schema, table).await?;
+    let fkeys = db::sqlserver::list_foreign_keys(client, schema, table).await?;
+
+    let mut ddl = format!("CREATE TABLE [{schema}].[{table}] (\n");
+    let col_lines: Vec<String> = columns.iter().map(|c| {
+        let mut line = format!("  [{}] {}", c.name, c.data_type);
+        if !c.is_nullable { line.push_str(" NOT NULL"); }
+        if let Some(ref def) = c.column_default { line.push_str(&format!(" DEFAULT {def}")); }
+        line
+    }).collect();
+    ddl.push_str(&col_lines.join(",\n"));
+
+    let pks: Vec<&str> = columns.iter().filter(|c| c.is_primary_key).map(|c| c.name.as_str()).collect();
+    if !pks.is_empty() {
+        ddl.push_str(&format!(",\n  PRIMARY KEY ({})", pks.iter().map(|k| format!("[{k}]")).collect::<Vec<_>>().join(", ")));
+    }
+    for fk in &fkeys {
+        ddl.push_str(&format!(",\n  CONSTRAINT [{}] FOREIGN KEY ([{}]) REFERENCES [{}]([{}])", fk.name, fk.column, fk.ref_table, fk.ref_column));
+    }
+    ddl.push_str("\n);\n");
+
+    for idx in &indexes {
+        if idx.is_primary { continue; }
+        let unique = if idx.is_unique { "UNIQUE " } else { "" };
+        let cols = idx.columns.iter().map(|c| format!("[{c}]")).collect::<Vec<_>>().join(", ");
+        ddl.push_str(&format!("\nCREATE {unique}INDEX [{}] ON [{schema}].[{table}] ({cols});", idx.name));
+    }
+    Ok(ddl)
+}

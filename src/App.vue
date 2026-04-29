@@ -477,7 +477,7 @@ async function setupFileDrop() {
 
       <!-- Main Content -->
       <div class="flex-1 flex min-h-0">
-      <Splitpanes class="flex-1 min-h-0">
+      <Splitpanes class="flex-1 min-h-0 min-w-0">
         <!-- Sidebar -->
         <Pane :size="20" :min-size="10" :max-size="40">
           <div class="h-full flex flex-col overflow-hidden">
@@ -627,6 +627,8 @@ async function setupFileDrop() {
                   :result="activeTab.result"
                   :sql="activeTab.sql"
                   :editable="!!activeTab.tableMeta?.primaryKeys?.length"
+                  :connection-id="activeTab.connectionId"
+                  :database="activeTab.database"
                   :table-meta="activeTab.tableMeta"
                   :on-execute-sql="onExecuteSql"
                   @reload="onReloadData"
