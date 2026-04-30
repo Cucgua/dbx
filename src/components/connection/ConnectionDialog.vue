@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+  DropdownMenu, DropdownMenuContent, DropdownMenuTrigger,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 import type { ConnectionConfig, DatabaseType } from "@/types/database";
 import { useConnectionStore } from "@/stores/connectionStore";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
@@ -91,8 +92,13 @@ const driverProfiles: Record<string, { type: DatabaseType; port: number; user: s
   gaussdb:    { type: "postgres",   port: 5432,  user: "gaussdb",  label: "GaussDB",     icon: "gaussdb" },
   kingbase:   { type: "postgres",   port: 54321, user: "system",   label: "KingBase",    icon: "kingbase" },
   vastbase:   { type: "postgres",   port: 5432,  user: "vastbase", label: "Vastbase",    icon: "vastbase" },
-  custom_mysql:    { type: "mysql",    port: 3306, user: "root",     label: "Custom MySQL-compatible",       icon: "mysql",    urlParams: "" },
-  custom_postgres: { type: "postgres", port: 5432, user: "postgres", label: "Custom PostgreSQL-compatible",  icon: "postgres", urlParams: "" },
+  doris:      { type: "mysql",      port: 9030,  user: "root",     label: "Doris",       icon: "doris" },
+  starrocks:  { type: "mysql",      port: 9030,  user: "root",     label: "StarRocks",   icon: "starrocks" },
+  redshift:   { type: "postgres",   port: 5439,  user: "awsuser",  label: "Redshift",    icon: "redshift" },
+  cockroachdb:{ type: "postgres",   port: 26257, user: "root",     label: "CockroachDB", icon: "cockroachdb" },
+  tdengine:   { type: "mysql",      port: 6030,  user: "root",     label: "TDengine",    icon: "tdengine" },
+  custom_mysql:    { type: "mysql",    port: 3306, user: "root",     label: "Custom",       icon: "mysql",    urlParams: "" },
+  custom_postgres: { type: "postgres", port: 5432, user: "postgres", label: "Custom",  icon: "postgres", urlParams: "" },
 };
 
 function profileForConfig(config: ConnectionConfig) {
@@ -166,9 +172,12 @@ watch(() => props.editConfig, (config) => {
 const isEditing = ref(false);
 watch(() => editingId.value, (v) => { isEditing.value = !!v; });
 
+const dbTypeMenuOpen = ref(false);
+
 function onDbTypeChange(val: string) {
   customDriverName.value = "";
   applyProfile(val, !!editingId.value);
+  dbTypeMenuOpen.value = false;
 }
 
 const iconTypeMap: Record<string, string> = {
@@ -178,6 +187,8 @@ const iconTypeMap: Record<string, string> = {
   elasticsearch: "elasticsearch",
   mariadb: "mariadb", tidb: "tidb", oceanbase: "oceanbase", goldendb: "goldendb",
   opengauss: "opengauss", gaussdb: "gaussdb", kingbase: "kingbase", vastbase: "vastbase",
+  doris: "doris", starrocks: "starrocks", redshift: "redshift",
+  cockroachdb: "cockroachdb", tdengine: "tdengine",
   custom_mysql: "mysql", custom_postgres: "postgres",
 };
 
@@ -199,7 +210,10 @@ const mysqlCompat = [
   { value: "tidb", label: "TiDB" },
   { value: "oceanbase", label: "OceanBase" },
   { value: "goldendb", label: "GoldenDB" },
-  { value: "custom_mysql", label: "Custom MySQL-compatible" },
+  { value: "doris", label: "Doris" },
+  { value: "starrocks", label: "StarRocks" },
+  { value: "tdengine", label: "TDengine" },
+  { value: "custom_mysql", label: "Custom" },
 ];
 
 const pgCompat = [
@@ -207,7 +221,9 @@ const pgCompat = [
   { value: "gaussdb", label: "GaussDB" },
   { value: "kingbase", label: "KingBase" },
   { value: "vastbase", label: "Vastbase" },
-  { value: "custom_postgres", label: "Custom PostgreSQL-compatible" },
+  { value: "redshift", label: "Redshift" },
+  { value: "cockroachdb", label: "CockroachDB" },
+  { value: "custom_postgres", label: "Custom" },
 ];
 
 watch(customDriverName, (value) => {
@@ -295,42 +311,57 @@ watch([() => editingId.value, () => open.value], () => {
 
         <div class="grid grid-cols-4 items-center gap-4">
           <Label class="text-right">{{ t('connection.type') }}</Label>
-          <Select :model-value="selectedType" @update:model-value="(val: any) => onDbTypeChange(String(val))">
-            <SelectTrigger class="col-span-3">
-              <div class="flex items-center gap-2">
+          <DropdownMenu v-model:open="dbTypeMenuOpen">
+            <DropdownMenuTrigger as-child>
+              <Button variant="outline" class="col-span-3 justify-start gap-2 font-normal">
                 <DatabaseIcon :db-type="iconTypeMap[selectedType] || selectedType" class="w-4 h-4" />
-                <SelectValue />
+                {{ selectedProfile().label }}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent class="w-auto p-3" align="start">
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <DropdownMenuLabel class="text-xs text-muted-foreground px-1 pb-1">{{ t('connection.mainstream') }}</DropdownMenuLabel>
+                  <button
+                    v-for="opt in dbOptions"
+                    :key="opt.value"
+                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] hover:bg-accent cursor-default"
+                    :class="{ 'bg-accent': selectedType === opt.value }"
+                    @click="onDbTypeChange(opt.value)"
+                  >
+                    <DatabaseIcon :db-type="iconTypeMap[opt.value]" class="w-3.5 h-3.5" />
+                    {{ opt.label }}
+                  </button>
+                </div>
+                <div>
+                  <DropdownMenuLabel class="text-xs text-muted-foreground px-1 pb-1">MySQL {{ t('connection.compatible') }}</DropdownMenuLabel>
+                  <button
+                    v-for="opt in mysqlCompat"
+                    :key="opt.value"
+                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] hover:bg-accent cursor-default"
+                    :class="{ 'bg-accent': selectedType === opt.value }"
+                    @click="onDbTypeChange(opt.value)"
+                  >
+                    <DatabaseIcon :db-type="iconTypeMap[opt.value]" class="w-3.5 h-3.5" />
+                    {{ opt.label }}
+                  </button>
+                </div>
+                <div>
+                  <DropdownMenuLabel class="text-xs text-muted-foreground px-1 pb-1">PostgreSQL {{ t('connection.compatible') }}</DropdownMenuLabel>
+                  <button
+                    v-for="opt in pgCompat"
+                    :key="opt.value"
+                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] hover:bg-accent cursor-default"
+                    :class="{ 'bg-accent': selectedType === opt.value }"
+                    @click="onDbTypeChange(opt.value)"
+                  >
+                    <DatabaseIcon :db-type="iconTypeMap[opt.value]" class="w-3.5 h-3.5" />
+                    {{ opt.label }}
+                  </button>
+                </div>
               </div>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem v-for="opt in dbOptions" :key="opt.value" :value="opt.value">
-                  <div class="flex items-center gap-2">
-                    <DatabaseIcon :db-type="iconTypeMap[opt.value]" class="w-3.5 h-3.5" />
-                    {{ opt.label }}
-                  </div>
-                </SelectItem>
-              </SelectGroup>
-              <SelectGroup>
-                <SelectLabel class="text-xs text-muted-foreground">MySQL {{ t('connection.compatible') }}</SelectLabel>
-                <SelectItem v-for="opt in mysqlCompat" :key="opt.value" :value="opt.value">
-                  <div class="flex items-center gap-2">
-                    <DatabaseIcon :db-type="iconTypeMap[opt.value]" class="w-3.5 h-3.5" />
-                    {{ opt.label }}
-                  </div>
-                </SelectItem>
-              </SelectGroup>
-              <SelectGroup>
-                <SelectLabel class="text-xs text-muted-foreground">PostgreSQL {{ t('connection.compatible') }}</SelectLabel>
-                <SelectItem v-for="opt in pgCompat" :key="opt.value" :value="opt.value">
-                  <div class="flex items-center gap-2">
-                    <DatabaseIcon :db-type="iconTypeMap[opt.value]" class="w-3.5 h-3.5" />
-                    {{ opt.label }}
-                  </div>
-                </SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         <div v-if="isCustomCompatibleProfile()" class="grid grid-cols-4 items-center gap-4">

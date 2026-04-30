@@ -52,7 +52,7 @@ pub enum TransferStatus {
 
 fn quote_identifier(name: &str, db_type: &DatabaseType) -> String {
     match db_type {
-        DatabaseType::Mysql | DatabaseType::ClickHouse => format!("`{}`", name.replace('`', "``")),
+        DatabaseType::Mysql | DatabaseType::ClickHouse | DatabaseType::Doris | DatabaseType::StarRocks => format!("`{}`", name.replace('`', "``")),
         DatabaseType::SqlServer => format!("[{}]", name.replace(']', "]]")),
         _ => format!("\"{}\"", name.replace('"', "\"\"")),
     }
@@ -71,7 +71,7 @@ fn escape_value(val: &serde_json::Value, db_type: &DatabaseType) -> String {
     match val {
         serde_json::Value::Null => "NULL".to_string(),
         serde_json::Value::Bool(b) => match db_type {
-            DatabaseType::Mysql | DatabaseType::Sqlite | DatabaseType::DuckDb => {
+            DatabaseType::Mysql | DatabaseType::Sqlite | DatabaseType::DuckDb | DatabaseType::Doris | DatabaseType::StarRocks => {
                 if *b { "1".to_string() } else { "0".to_string() }
             }
             _ => if *b { "TRUE".to_string() } else { "FALSE".to_string() },

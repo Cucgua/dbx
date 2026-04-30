@@ -61,6 +61,7 @@ export default {
     sshPasswordPlaceholder: "留空则使用密钥",
     sshKeyPath: "密钥路径",
     compatible: "兼容",
+    mainstream: "主流",
     color: "颜色",
     colorNone: "无颜色",
     colorGreen: "绿色",

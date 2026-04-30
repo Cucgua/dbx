@@ -42,6 +42,9 @@ export const useConnectionStore = defineStore("connection", () => {
       mongodb: "MongoDB",
       oracle: "Oracle",
       elasticsearch: "Elasticsearch",
+      doris: "Doris",
+      starrocks: "StarRocks",
+      redshift: "Redshift",
     };
     return {
       ...config,

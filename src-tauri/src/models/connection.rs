@@ -60,6 +60,10 @@ pub enum DatabaseType {
     Oracle,
     #[serde(rename = "elasticsearch")]
     Elasticsearch,
+    Doris,
+    #[serde(rename = "starrocks")]
+    StarRocks,
+    Redshift,
 }
 
 impl ConnectionConfig {
@@ -88,8 +92,8 @@ impl ConnectionConfig {
                 let scheme = if self.ssl { "rediss" } else { "redis" };
                 format!("{scheme}://{host}:{port}/")
             }
-            DatabaseType::Mysql => format!("mysql://{host}:{port}{db_part}?{params}"),
-            DatabaseType::Postgres => {
+            DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => format!("mysql://{host}:{port}{db_part}?{params}"),
+            DatabaseType::Postgres | DatabaseType::Redshift => {
                 let suffix = if params.is_empty() {
                     String::new()
                 } else {
@@ -138,11 +142,11 @@ impl ConnectionConfig {
                     format!("{scheme}://{username}:{password}@{host}:{port}/")
                 }
             }
-            DatabaseType::Mysql => format!(
+            DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => format!(
                 "mysql://{}:{}@{host}:{port}{db_part}?{params}",
                 username, password
             ),
-            DatabaseType::Postgres => {
+            DatabaseType::Postgres | DatabaseType::Redshift => {
                 let suffix = if params.is_empty() {
                     String::new()
                 } else {
@@ -180,7 +184,7 @@ impl ConnectionConfig {
     fn normalized_url_params(&self) -> String {
         let value = self.url_params.as_deref().unwrap_or("").trim();
         match self.db_type {
-            DatabaseType::Mysql => {
+            DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => {
                 let base = "ssl-mode=preferred&charset=utf8mb4";
                 if value.is_empty() {
                     base.to_string()
@@ -192,7 +196,7 @@ impl ConnectionConfig {
                     if v.contains("charset=") { format!("ssl-mode=preferred&{v}") } else { format!("{base}&{v}") }
                 }
             }
-            DatabaseType::Postgres => value.trim_start_matches('?').to_string(),
+            DatabaseType::Postgres | DatabaseType::Redshift => value.trim_start_matches('?').to_string(),
             _ => value.trim_start_matches('?').to_string(),
         }
     }

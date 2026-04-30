@@ -59,6 +59,7 @@ export default {
     sshPasswordPlaceholder: "Leave empty to use key",
     sshKeyPath: "Key Path",
     compatible: "Compatible",
+    mainstream: "Popular",
     color: "Color",
     colorNone: "No color",
     colorGreen: "Green",
