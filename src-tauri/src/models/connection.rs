@@ -76,6 +76,7 @@ impl ConnectionConfig {
     }
 
     pub fn redacted_connection_url_with_host(&self, host: &str, port: u16) -> String {
+        let host = bracket_ipv6(host);
         let db_part = self
             .database
             .as_deref()
@@ -118,6 +119,7 @@ impl ConnectionConfig {
     }
 
     pub fn connection_url_with_host(&self, host: &str, port: u16) -> String {
+        let host = bracket_ipv6(host);
         let db_part = self
             .database
             .as_deref()
@@ -204,6 +206,14 @@ impl ConnectionConfig {
 
 fn encode_url_part(value: &str) -> String {
     utf8_percent_encode(value, NON_ALPHANUMERIC).to_string()
+}
+
+fn bracket_ipv6(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    }
 }
 
 #[cfg(test)]
