@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { DatabaseZap, FilePlus2, Play, Loader2, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Sparkles, Pin, AlignLeft } from "lucide-vue-next";
+import { DatabaseZap, FilePlus2, Play, Loader2, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Sparkles, Pin, AlignLeft, CloudDownload } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import ConnectionTree from "@/components/sidebar/ConnectionTree.vue";
 import ConnectionDialog from "@/components/connection/ConnectionDialog.vue";
@@ -45,6 +48,7 @@ const { message: toastMessage, visible: toastVisible, toast } = useToast();
 
 const showConnectionDialog = ref(false);
 const showHistory = ref(false);
+const showUpdateDialog = ref(false);
 const dangerSql = ref("");
 const pendingDangerSql = ref("");
 const selectedSql = ref("");
@@ -52,6 +56,10 @@ const formatSqlRequestId = ref(0);
 const showDangerDialog = ref(false);
 const databaseOptions = ref<Record<string, string[]>>({});
 const loadingDatabaseOptions = ref<Record<string, boolean>>({});
+const checkingUpdates = ref(false);
+const updateInfo = ref<api.UpdateInfo | null>(null);
+const updateCheckMessage = ref("");
+const latestReleaseUrl = "https://github.com/t8y2/dbx/releases/latest";
 
 const editConfig = computed(() => {
   const id = connectionStore.editingConnectionId;
@@ -445,6 +453,42 @@ function openGitHub() {
   open("https://github.com/t8y2/dbx");
 }
 
+async function checkUpdates(options: { silent?: boolean } = {}) {
+  if (checkingUpdates.value) return;
+  checkingUpdates.value = true;
+  updateCheckMessage.value = "";
+  try {
+    const info = await api.checkForUpdates();
+    updateInfo.value = info;
+    if (info.update_available) {
+      showUpdateDialog.value = true;
+    } else if (!options.silent) {
+      updateCheckMessage.value = t("updates.upToDate", { version: info.current_version });
+      showUpdateDialog.value = true;
+    }
+  } catch (e: any) {
+    if (!options.silent) {
+      updateCheckMessage.value = formatUpdateError(String(e));
+      showUpdateDialog.value = true;
+    }
+  } finally {
+    checkingUpdates.value = false;
+  }
+}
+
+function formatUpdateError(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("403") || lower.includes("rate limit")) {
+    return t("updates.rateLimited");
+  }
+  return t("updates.failed", { error: message });
+}
+
+function openLatestRelease() {
+  const url = updateInfo.value?.release_url || latestReleaseUrl;
+  open(url);
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (e.metaKey && e.key === "w") {
     e.preventDefault();
@@ -460,6 +504,7 @@ onMounted(() => {
   settingsStore.initAiConfig();
   window.addEventListener("keydown", handleKeydown);
   setupFileDrop();
+  checkUpdates({ silent: true });
 });
 
 onUnmounted(() => {
@@ -558,6 +603,16 @@ async function setupFileDrop() {
         </Tooltip>
 
         <div class="flex-1" />
+
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button variant="ghost" size="icon" class="h-7 w-7" :disabled="checkingUpdates" @click="checkUpdates()">
+              <Loader2 v-if="checkingUpdates" class="h-4 w-4 animate-spin" />
+              <CloudDownload v-else class="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{{ t('updates.check') }}</TooltipContent>
+        </Tooltip>
 
         <Tooltip>
           <TooltipTrigger as-child>
@@ -900,6 +955,28 @@ async function setupFileDrop() {
 
       <ConnectionDialog v-model:open="showConnectionDialog" :edit-config="editConfig" />
       <DangerConfirmDialog v-model:open="showDangerDialog" :sql="dangerSql" @confirm="onDangerConfirm" />
+      <Dialog v-model:open="showUpdateDialog">
+        <DialogContent class="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>{{ updateInfo?.update_available ? t('updates.availableTitle') : t('updates.title') }}</DialogTitle>
+          </DialogHeader>
+          <div class="space-y-3 text-sm">
+            <p v-if="updateInfo?.update_available">
+              {{ t('updates.availableMessage', { current: updateInfo.current_version, latest: updateInfo.latest_version }) }}
+            </p>
+            <p v-else class="text-muted-foreground">
+              {{ updateCheckMessage || t('updates.upToDate', { version: updateInfo?.current_version || '' }) }}
+            </p>
+            <div v-if="updateInfo?.update_available && updateInfo.release_notes" class="max-h-48 overflow-auto rounded-md border bg-muted/30 p-3 text-xs whitespace-pre-wrap">
+              {{ updateInfo.release_notes }}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" @click="showUpdateDialog = false">{{ t('dangerDialog.cancel') }}</Button>
+            <Button v-if="updateInfo?.update_available || updateCheckMessage" @click="openLatestRelease">{{ t('updates.openRelease') }}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <!-- Global Toast -->
       <Transition name="toast">

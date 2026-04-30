@@ -10,6 +10,16 @@ export default {
     formatSql: "格式化 SQL",
     formatSqlFailed: "SQL 格式化失败",
   },
+  updates: {
+    title: "更新",
+    check: "检查更新",
+    availableTitle: "发现新版本",
+    availableMessage: "DBX {latest} 已发布，当前版本为 {current}。",
+    upToDate: "DBX 已是最新版本 ({version})。",
+    failed: "检查更新失败：{error}",
+    rateLimited: "GitHub 更新检查暂时触发频率限制。你仍然可以打开下载页手动查看。",
+    openRelease: "打开下载页",
+  },
   sidebar: {
     connections: "连接",
     noConnections: "暂无连接",

@@ -101,6 +101,20 @@ export async function loadConnections(): Promise<ConnectionConfig[]> {
   return invoke("load_connections");
 }
 
+// --- Updates ---
+export interface UpdateInfo {
+  current_version: string;
+  latest_version: string;
+  update_available: boolean;
+  release_name: string;
+  release_url: string;
+  release_notes: string;
+}
+
+export async function checkForUpdates(): Promise<UpdateInfo> {
+  return invoke("check_for_updates");
+}
+
 // --- Redis ---
 export interface RedisKeyInfo {
   key: string;
