@@ -16,7 +16,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSettingsStore, type AiProvider } from "@/stores/settingsStore";
-import { buildAiContext, extractSql, runAiAction, type AiAction } from "@/lib/ai";
+import { buildAiContext, extractSql, runAiAction } from "@/lib/ai";
 import type { AiMessage } from "@/lib/tauri";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
 
@@ -26,7 +26,6 @@ const settings = useSettingsStore();
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
-  action?: AiAction;
 }
 
 const props = defineProps<{
@@ -39,7 +38,6 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const action = ref<AiAction>("generate");
 const prompt = ref("");
 const messages = ref<ChatMessage[]>([]);
 const isGenerating = ref(false);
@@ -55,15 +53,6 @@ const providerDefaults: Record<AiProvider, { endpoint: string; model: string }> 
   claude: { endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514" },
   openai: { endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o" },
   custom: { endpoint: "", model: "" },
-};
-
-const actionLabels: Record<AiAction, string> = {
-  generate: "ai.actions.generate",
-  explain: "ai.actions.explain",
-  optimize: "ai.actions.optimize",
-  fix: "ai.actions.fix",
-  convert: "ai.actions.convert",
-  sampleData: "ai.actions.sampleData",
 };
 
 function openSettings() {
@@ -107,7 +96,7 @@ async function send() {
     return;
   }
 
-  messages.value.push({ role: "user", content: text, action: action.value });
+  messages.value.push({ role: "user", content: text });
   prompt.value = "";
   scrollToBottom();
 
@@ -120,7 +109,7 @@ async function send() {
     }));
     const result = await runAiAction({
       config: settings.aiConfig,
-      action: action.value,
+      action: "generate",
       instruction: text,
       context,
     }, history);
@@ -215,20 +204,10 @@ function formatMessageContent(text: string): string {
 
     <div class="border-t p-2">
       <div class="flex items-center gap-1.5">
-        <Select :model-value="action" @update:model-value="(v: any) => action = v">
-          <SelectTrigger class="h-7 w-24 text-[10px] shrink-0">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="(label, key) in actionLabels" :key="key" :value="key">
-              {{ t(label) }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
         <Input
           v-model="prompt"
           class="h-7 flex-1 text-xs"
-          :placeholder="t(`ai.placeholders.${action}`)"
+          :placeholder="t('ai.placeholder')"
           :disabled="isGenerating"
           @keydown.enter="send"
         />
