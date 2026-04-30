@@ -136,8 +136,10 @@
   [role="switch"],
   select,
   summary,
+  label,
   a[href] {
     cursor: pointer;
+    user-select: none;
     }
 }
 

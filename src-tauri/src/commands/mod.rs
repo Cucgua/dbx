@@ -5,4 +5,5 @@ pub mod mongo_cmd;
 pub mod query;
 pub mod redis_cmd;
 pub mod schema;
+pub mod transfer;
 pub mod update;
