@@ -38,6 +38,7 @@ impl RunningQueries {
         }
     }
 
+    #[cfg(test)]
     pub fn has(&self, execution_id: &str) -> bool {
         self.inner
             .lock()

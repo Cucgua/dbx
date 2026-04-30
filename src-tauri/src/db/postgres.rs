@@ -1,8 +1,79 @@
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Executor, Row};
+use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
 
 use super::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
+
+fn pg_temporal_to_json_value(row: &PgRow, idx: usize) -> Option<serde_json::Value> {
+    if let Ok(v) = row.try_get::<DateTime<Utc>, _>(idx) {
+        return Some(serde_json::Value::String(v.to_rfc3339()));
+    }
+    if let Ok(v) = row.try_get::<NaiveDateTime, _>(idx) {
+        return Some(serde_json::Value::String(v.to_string()));
+    }
+    if let Ok(v) = row.try_get::<NaiveDate, _>(idx) {
+        return Some(serde_json::Value::String(v.to_string()));
+    }
+    if let Ok(v) = row.try_get::<NaiveTime, _>(idx) {
+        return Some(serde_json::Value::String(v.to_string()));
+    }
+    None
+}
+
+fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Value {
+    if row.try_get_raw(idx).map(|v| v.is_null()).unwrap_or(true) {
+        return serde_json::Value::Null;
+    }
+
+    let upper = type_name.to_uppercase();
+
+    if upper == "BOOL" {
+        return row
+            .try_get::<bool, _>(idx)
+            .map(serde_json::Value::Bool)
+            .unwrap_or(serde_json::Value::Null);
+    }
+
+    if upper.contains("TIMESTAMP")
+        || upper == "DATE"
+        || upper == "TIME"
+        || upper == "TIMETZ"
+        || upper.contains("INTERVAL")
+    {
+        if let Some(v) = pg_temporal_to_json_value(row, idx) {
+            return v;
+        }
+    }
+
+    if upper == "NUMERIC" || upper == "DECIMAL" || upper == "MONEY" {
+        return row
+            .try_get_unchecked::<String, _>(idx)
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null);
+    }
+
+    row.try_get::<String, _>(idx)
+        .map(serde_json::Value::String)
+        .or_else(|_| {
+            row.try_get::<i64, _>(idx)
+                .map(|v| serde_json::Value::Number(v.into()))
+        })
+        .or_else(|_| {
+            row.try_get::<i32, _>(idx)
+                .map(|v| serde_json::Value::Number(v.into()))
+        })
+        .or_else(|_| {
+            row.try_get::<f64, _>(idx).map(|v| {
+                serde_json::Number::from_f64(v)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            })
+        })
+        .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
+        .or_else(|e| pg_temporal_to_json_value(row, idx).ok_or(e))
+        .unwrap_or(serde_json::Value::Null)
+}
 
 pub async fn connect(url: &str) -> Result<PgPool, String> {
     PgPoolOptions::new()
@@ -119,6 +190,11 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
     {
         let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
         let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
+        let column_types: Vec<String> = desc
+            .columns()
+            .iter()
+            .map(|c| c.type_info().name().to_string())
+            .collect();
 
         let rows: Vec<PgRow> = sqlx::query(sql)
             .fetch_all(pool)
@@ -130,25 +206,11 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
             .map(|row| {
                 (0..row.len())
                     .map(|i| {
-                        row.try_get::<String, _>(i)
-                            .map(serde_json::Value::String)
-                            .or_else(|_| {
-                                row.try_get::<i64, _>(i)
-                                    .map(|v| serde_json::Value::Number(v.into()))
-                            })
-                            .or_else(|_| {
-                                row.try_get::<i32, _>(i)
-                                    .map(|v| serde_json::Value::Number(v.into()))
-                            })
-                            .or_else(|_| {
-                                row.try_get::<f64, _>(i).map(|v| {
-                                    serde_json::Number::from_f64(v)
-                                        .map(serde_json::Value::Number)
-                                        .unwrap_or(serde_json::Value::Null)
-                                })
-                            })
-                            .or_else(|_| row.try_get::<bool, _>(i).map(serde_json::Value::Bool))
-                            .unwrap_or(serde_json::Value::Null)
+                        pg_value_to_json(
+                            row,
+                            i,
+                            column_types.get(i).map(String::as_str).unwrap_or(""),
+                        )
                     })
                     .collect()
             })
