@@ -147,6 +147,7 @@ async fn stream_claude(app: &AppHandle, client: &reqwest::Client, session_id: &s
     let mut stream = res.bytes_stream();
     let mut buf = String::new();
 
+    let mut finished = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| e.to_string())?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
@@ -155,26 +156,23 @@ async fn stream_claude(app: &AppHandle, client: &reqwest::Client, session_id: &s
             let line = buf[..pos].to_string();
             buf = buf[pos + 1..].to_string();
 
-            let line = line.trim();
-            if !line.starts_with("data: ") {
+            let Some(data) = stream_data_payload(&line) else {
                 continue;
-            }
-            let data = &line[6..];
+            };
             if data == "[DONE]" {
+                finished = true;
                 break;
             }
 
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                if event["type"] == "content_block_delta" {
-                    if let Some(text) = event["delta"]["text"].as_str() {
-                        let _ = app.emit("ai-stream-chunk", AiStreamChunk {
-                            session_id: session_id.to_string(),
-                            delta: text.to_string(),
-                            done: false,
-                        });
-                    }
+                if let Some(text) = claude_stream_text(&event) {
+                    emit_stream_delta(app, session_id, text);
                 }
             }
+        }
+
+        if finished {
+            break;
         }
     }
 
@@ -224,6 +222,7 @@ async fn stream_openai(app: &AppHandle, client: &reqwest::Client, session_id: &s
     let mut stream = res.bytes_stream();
     let mut buf = String::new();
 
+    let mut finished = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| e.to_string())?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
@@ -232,24 +231,23 @@ async fn stream_openai(app: &AppHandle, client: &reqwest::Client, session_id: &s
             let line = buf[..pos].to_string();
             buf = buf[pos + 1..].to_string();
 
-            let line = line.trim();
-            if !line.starts_with("data: ") {
+            let Some(data) = stream_data_payload(&line) else {
                 continue;
-            }
-            let data = &line[6..];
+            };
             if data == "[DONE]" {
+                finished = true;
                 break;
             }
 
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(text) = event["choices"][0]["delta"]["content"].as_str() {
-                    let _ = app.emit("ai-stream-chunk", AiStreamChunk {
-                        session_id: session_id.to_string(),
-                        delta: text.to_string(),
-                        done: false,
-                    });
+                if let Some(text) = openai_stream_text(&event) {
+                    emit_stream_delta(app, session_id, text);
                 }
             }
+        }
+
+        if finished {
+            break;
         }
     }
 
@@ -351,4 +349,46 @@ fn extract_error(data: &serde_json::Value) -> Option<String> {
         .as_str()
         .or_else(|| data["error"].as_str())
         .map(ToString::to_string)
+}
+
+fn stream_data_payload(line: &str) -> Option<&str> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with(':') || line.starts_with("event:") || line.starts_with("id:") {
+        return None;
+    }
+    if let Some(data) = line.strip_prefix("data:") {
+        return Some(data.trim_start());
+    }
+    if line.starts_with('{') {
+        return Some(line);
+    }
+    None
+}
+
+fn claude_stream_text(event: &serde_json::Value) -> Option<&str> {
+    if event["type"] == "content_block_delta" {
+        return event["delta"]["text"].as_str();
+    }
+    None
+}
+
+fn openai_stream_text(event: &serde_json::Value) -> Option<&str> {
+    event["choices"]
+        .get(0)
+        .and_then(|choice| {
+            choice["delta"]["content"]
+                .as_str()
+                .or_else(|| choice["delta"]["reasoning_content"].as_str())
+                .or_else(|| choice["message"]["content"].as_str())
+        })
+        .or_else(|| event["content"].as_str())
+        .filter(|text| !text.is_empty())
+}
+
+fn emit_stream_delta(app: &AppHandle, session_id: &str, delta: &str) {
+    let _ = app.emit("ai-stream-chunk", AiStreamChunk {
+        session_id: session_id.to_string(),
+        delta: delta.to_string(),
+        done: false,
+    });
 }

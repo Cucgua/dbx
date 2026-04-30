@@ -134,6 +134,7 @@ export default {
     noSql: "当前没有 SQL 可处理",
     sqlPreview: "SQL 预览",
     copySql: "复制 SQL",
+    executeSql: "立即执行",
     copyAll: "复制全部",
     copied: "已复制",
     replace: "替换编辑器",

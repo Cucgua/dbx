@@ -3,7 +3,7 @@ import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   ArrowUp, Bot, Check, Copy, Database, Loader2, Replace, Server, Settings,
-  Trash2, X,
+  Play, Trash2, X,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +40,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   replaceSql: [sql: string];
+  executeSql: [sql: string];
   close: [];
 }>();
 
@@ -52,6 +53,11 @@ const scrollRef = ref<InstanceType<typeof ScrollArea> | null>(null);
 const chatTitle = computed(() => {
   const first = messages.value.find((m) => m.role === "user");
   return first ? first.content.slice(0, 30) : t("ai.newChat");
+});
+
+const isWaitingForFirstDelta = computed(() => {
+  const last = messages.value[messages.value.length - 1];
+  return isGenerating.value && last?.role === "assistant" && !last.content;
 });
 
 
@@ -103,6 +109,11 @@ const providerDefaults: Record<AiProvider, { endpoint: string; model: string }> 
   custom: { endpoint: "", model: "" },
 };
 
+function appendAssistantDelta(assistantIdx: number, delta: string) {
+  messages.value[assistantIdx].content += delta;
+  scrollToBottom();
+}
+
 function openSettings() {
   tempProvider.value = settings.aiConfig.provider;
   tempApiKey.value = settings.aiConfig.apiKey;
@@ -129,8 +140,12 @@ function selectProvider(provider: AiProvider) {
 
 function scrollToBottom() {
   nextTick(() => {
-    const el = scrollRef.value?.$el?.querySelector("[data-radix-scroll-area-viewport]");
-    if (el) el.scrollTop = el.scrollHeight;
+    const root = scrollRef.value?.$el as HTMLElement | undefined;
+    const el = root?.querySelector('[data-slot="scroll-area-viewport"]') as HTMLElement | null;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
   });
 }
 
@@ -163,8 +178,7 @@ async function send() {
       instruction: text,
       context,
     }, history, (delta) => {
-      messages.value[assistantIdx].content += delta;
-      scrollToBottom();
+      appendAssistantDelta(assistantIdx, delta);
     });
   } catch (e: any) {
     messages.value[assistantIdx].content = `Error: ${e.message || e}`;
@@ -176,6 +190,10 @@ async function send() {
 
 function applySql(code: string) {
   emit("replaceSql", code);
+}
+
+function executeSql(code: string) {
+  emit("executeSql", code);
 }
 
 const copiedIndex = ref("");
@@ -209,7 +227,17 @@ function parseMessage(text: string): MessageSegment[] {
     lastIndex = regex.lastIndex;
   }
   if (lastIndex < text.length) {
-    segments.push({ type: "text", content: text.slice(lastIndex) });
+    const remaining = text.slice(lastIndex);
+    const unclosed = remaining.match(/```(sql|mysql|postgresql|sqlite|tsql|clickhouse)?\s*([\s\S]*)/i);
+    if (unclosed) {
+      const before = remaining.slice(0, unclosed.index);
+      if (before.trim()) segments.push({ type: "text", content: before });
+      if (unclosed[2].trim()) {
+        segments.push({ type: "code", lang: (unclosed[1] || "sql").toUpperCase(), content: unclosed[2].trim() });
+      }
+    } else {
+      segments.push({ type: "text", content: remaining });
+    }
   }
   return segments;
 }
@@ -222,7 +250,7 @@ function formatInlineText(text: string): string {
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
+  <div class="flex h-full min-h-0 flex-col overflow-hidden">
     <div class="h-9 flex items-center gap-2 border-b px-3 shrink-0">
       <Bot class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <span class="flex-1 truncate text-xs font-medium">{{ chatTitle }}</span>
@@ -237,11 +265,11 @@ function formatInlineText(text: string): string {
       </Button>
     </div>
 
-    <div v-if="messages.length === 0" class="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground">
+    <div v-if="messages.length === 0" class="flex-1 min-h-0 flex flex-col items-center justify-center text-center text-muted-foreground">
       <Bot class="h-10 w-10 mb-3 opacity-30" />
       <p class="text-sm">{{ t('ai.welcome') }}</p>
     </div>
-    <ScrollArea v-else ref="scrollRef" class="flex-1">
+    <ScrollArea v-else ref="scrollRef" class="min-h-0 flex-1 overflow-hidden">
       <div class="flex flex-col gap-3 p-3">
 
         <template v-for="(msg, i) in messages" :key="i">
@@ -251,33 +279,38 @@ function formatInlineText(text: string): string {
             </div>
           </div>
 
-          <div v-else class="flex flex-col gap-1">
-            <div class="max-w-[95%] text-xs leading-relaxed">
+          <div v-else class="flex">
+            <div class="max-w-[95%] rounded-lg bg-muted px-3 py-2 text-xs leading-relaxed">
               <template v-for="(seg, j) in parseMessage(msg.content)" :key="j">
-                <div v-if="seg.type === 'text'" class="rounded-lg bg-muted px-3 py-2">
+                <div v-if="seg.type === 'text'" class="whitespace-normal">
                   <span v-html="formatInlineText(seg.content)" />
                 </div>
-                <div v-else class="my-1 rounded-md overflow-hidden bg-zinc-900 dark:bg-zinc-900">
+                <div v-else class="my-2 rounded-md overflow-hidden bg-zinc-900 dark:bg-zinc-900">
                   <div class="flex items-center px-3 py-1.5 text-[10px] text-zinc-400 font-medium border-b border-zinc-700/50">
                     <Database class="h-3 w-3 mr-1.5" />
                     <span>{{ seg.lang }}</span>
                     <span class="flex-1" />
-                    <button class="p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200" :title="t('ai.apply')" @click="applySql(seg.content)">
-                      <Replace class="h-3.5 w-3.5" />
-                    </button>
-                    <button class="p-0.5 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 ml-1" :title="copiedIndex === `${i}-${j}` ? t('ai.copied') : t('ai.copySql')" @click="copyCode(seg.content, `${i}-${j}`)">
-                      <Check v-if="copiedIndex === `${i}-${j}`" class="h-3.5 w-3.5 text-green-400" />
-                      <Copy v-else class="h-3.5 w-3.5" />
-                    </button>
+                    <div class="flex items-center gap-1.5">
+                      <button class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200" :title="t('ai.executeSql')" @click="executeSql(seg.content)">
+                        <Play class="h-3.5 w-3.5" />
+                      </button>
+                      <button class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200" :title="t('ai.apply')" @click="applySql(seg.content)">
+                        <Replace class="h-3.5 w-3.5" />
+                      </button>
+                      <button class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200" :title="copiedIndex === `${i}-${j}` ? t('ai.copied') : t('ai.copySql')" @click="copyCode(seg.content, `${i}-${j}`)">
+                        <Check v-if="copiedIndex === `${i}-${j}`" class="h-3.5 w-3.5 text-green-400" />
+                        <Copy v-else class="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <pre class="p-3 text-xs leading-relaxed overflow-x-auto text-zinc-100"><code>{{ seg.content }}</code></pre>
+                  <pre class="whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-100"><code>{{ seg.content }}</code></pre>
                 </div>
               </template>
             </div>
           </div>
         </template>
 
-        <div v-if="isGenerating" class="flex items-center gap-2 text-xs text-muted-foreground">
+        <div v-if="isWaitingForFirstDelta" class="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 class="h-3.5 w-3.5 animate-spin" />
           <span>{{ t('ai.thinking') }}</span>
         </div>
@@ -299,7 +332,7 @@ function formatInlineText(text: string): string {
             </SelectContent>
           </Select>
           <template v-if="connection">
-            <span class="text-foreground/25">/</span>
+            <Database class="h-3 w-3 shrink-0 text-foreground/40" />
             <Select :model-value="tab?.database || ''" @update:model-value="(v: any) => changeDatabase(v)" @update:open="(open: boolean) => { if (open) loadDatabases() }">
               <SelectTrigger class="h-5 w-auto border-0 rounded-none bg-transparent p-0 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3">
                 <SelectValue :placeholder="t('editor.selectDatabase')">{{ tab?.database || t('editor.selectDatabase') }}</SelectValue>

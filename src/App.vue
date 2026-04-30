@@ -1052,11 +1052,12 @@ async function setupFileDrop() {
         </Pane>
 
       <Pane v-if="showAiPanel" :size="aiPanelSize" :min-size="15" :max-size="40">
-        <div class="h-full bg-background">
+        <div class="h-full min-h-0 overflow-hidden bg-background">
           <AiAssistant
             :tab="activeTab"
             :connection="activeConnection"
             @replace-sql="replaceActiveSql"
+            @execute-sql="tryExecute"
             @close="toggleAiPanel"
           />
         </div>
