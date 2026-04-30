@@ -132,11 +132,11 @@ async fn do_execute(
                 .map_err(|_| format!("Query timed out after {} seconds", QUERY_TIMEOUT.as_secs()))?
                 .map(truncate_result)
         }
-        PoolKind::Oracle(pool) => {
-            let pool = pool.clone();
+        PoolKind::Oracle(client) => {
+            let client = client.clone();
             drop(connections);
-            let mut pool = pool.lock().await;
-            timeout(QUERY_TIMEOUT, db::oracle_driver::execute_query(&mut pool, sql))
+            let client = client.lock().await;
+            timeout(QUERY_TIMEOUT, db::oracle_driver::execute_query(&*client, sql))
                 .await
                 .map_err(|_| format!("Query timed out after {} seconds", QUERY_TIMEOUT.as_secs()))?
                 .map(truncate_result)

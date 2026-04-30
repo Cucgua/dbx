@@ -3,38 +3,13 @@ use std::time::Instant;
 
 use super::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
-pub struct OraclePool {
-    pub conn: Connection,
-    host: String,
-    port: u16,
-    service: String,
-    user: String,
-    pass: String,
-}
+pub type OracleClient = Connection;
 
-impl OraclePool {
-    pub async fn connect(host: &str, port: u16, service: &str, user: &str, pass: &str) -> Result<Self, String> {
-        let config = Config::new(host, port, service, user, pass);
-        let conn = Connection::connect_with_config(config)
-            .await
-            .map_err(|e| format!("Oracle connection failed: {e}"))?;
-        Ok(Self {
-            conn,
-            host: host.to_string(),
-            port,
-            service: service.to_string(),
-            user: user.to_string(),
-            pass: pass.to_string(),
-        })
-    }
-
-    pub async fn reconnect(&mut self) -> Result<(), String> {
-        let config = Config::new(&self.host, self.port, &self.service, &self.user, &self.pass);
-        self.conn = Connection::connect_with_config(config)
-            .await
-            .map_err(|e| format!("Oracle reconnect failed: {e}"))?;
-        Ok(())
-    }
+pub async fn connect(host: &str, port: u16, service: &str, user: &str, pass: &str) -> Result<OracleClient, String> {
+    let config = Config::new(host, port, service, user, pass);
+    Connection::connect_with_config(config)
+        .await
+        .map_err(|e| format!("Oracle connection failed: {e}"))
 }
 
 fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
@@ -51,20 +26,18 @@ fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
     }
 }
 
-pub async fn list_databases(pool: &OraclePool) -> Result<Vec<DatabaseInfo>, String> {
-    let result = pool.conn.query(
+pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
+    let result = conn.query(
         "SELECT username FROM all_users ORDER BY username",
         &[],
     ).await.map_err(|e| e.to_string())?;
     Ok(result.rows.iter().map(|row| {
-        DatabaseInfo {
-            name: row.get_string(0).unwrap_or("").to_string(),
-        }
+        DatabaseInfo { name: row.get_string(0).unwrap_or("").to_string() }
     }).collect())
 }
 
-pub async fn list_schemas(pool: &OraclePool) -> Result<Vec<String>, String> {
-    let result = pool.conn.query(
+pub async fn list_schemas(conn: &OracleClient) -> Result<Vec<String>, String> {
+    let result = conn.query(
         "SELECT username FROM all_users ORDER BY username",
         &[],
     ).await.map_err(|e| e.to_string())?;
@@ -73,7 +46,7 @@ pub async fn list_schemas(pool: &OraclePool) -> Result<Vec<String>, String> {
     }).collect())
 }
 
-pub async fn list_tables(pool: &OraclePool, schema: &str) -> Result<Vec<TableInfo>, String> {
+pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableInfo>, String> {
     let sql = format!(
         "SELECT table_name, 'TABLE' AS table_type FROM all_tables WHERE owner = '{s}' \
          UNION ALL \
@@ -81,7 +54,7 @@ pub async fn list_tables(pool: &OraclePool, schema: &str) -> Result<Vec<TableInf
          ORDER BY 1",
         s = schema.replace('\'', "''")
     );
-    let result = pool.conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
+    let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
     Ok(result.rows.iter().map(|row| {
         TableInfo {
             name: row.get_string(0).unwrap_or("").to_string(),
@@ -90,11 +63,11 @@ pub async fn list_tables(pool: &OraclePool, schema: &str) -> Result<Vec<TableInf
     }).collect())
 }
 
-pub async fn get_columns(pool: &OraclePool, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
 
-    let pk_result = pool.conn.query(
+    let pk_result = conn.query(
         &format!(
             "SELECT cols.COLUMN_NAME FROM ALL_CONS_COLUMNS cols \
              JOIN ALL_CONSTRAINTS cons ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME AND cols.OWNER = cons.OWNER \
@@ -106,7 +79,7 @@ pub async fn get_columns(pool: &OraclePool, schema: &str, table: &str) -> Result
         .filter_map(|row| row.get_string(0).map(|s| s.to_string()))
         .collect();
 
-    let col_result = pool.conn.query(
+    let col_result = conn.query(
         &format!(
             "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE \
              FROM ALL_TAB_COLUMNS \
@@ -129,7 +102,7 @@ pub async fn get_columns(pool: &OraclePool, schema: &str, table: &str) -> Result
     }).collect())
 }
 
-pub async fn list_indexes(pool: &OraclePool, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
+pub async fn list_indexes(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
     let sql = format!(
         "SELECT i.INDEX_NAME, \
          LISTAGG(ic.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY ic.COLUMN_POSITION) AS columns, \
@@ -144,7 +117,7 @@ pub async fn list_indexes(pool: &OraclePool, schema: &str, table: &str) -> Resul
          ORDER BY i.INDEX_NAME",
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
-    let result = pool.conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
+    let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
     Ok(result.rows.iter().map(|row| {
         let cols_str = row.get_string(1).unwrap_or("");
         IndexInfo {
@@ -156,7 +129,7 @@ pub async fn list_indexes(pool: &OraclePool, schema: &str, table: &str) -> Resul
     }).collect())
 }
 
-pub async fn list_foreign_keys(pool: &OraclePool, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
+pub async fn list_foreign_keys(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
     let sql = format!(
         "SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME, rc.TABLE_NAME, rcc.COLUMN_NAME \
          FROM ALL_CONSTRAINTS c \
@@ -167,7 +140,7 @@ pub async fn list_foreign_keys(pool: &OraclePool, schema: &str, table: &str) -> 
          ORDER BY c.CONSTRAINT_NAME",
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
-    let result = pool.conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
+    let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
     Ok(result.rows.iter().map(|row| {
         ForeignKeyInfo {
             name: row.get_string(0).unwrap_or("").to_string(),
@@ -178,7 +151,7 @@ pub async fn list_foreign_keys(pool: &OraclePool, schema: &str, table: &str) -> 
     }).collect())
 }
 
-pub async fn list_triggers(pool: &OraclePool, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
+pub async fn list_triggers(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
     let sql = format!(
         "SELECT TRIGGER_NAME, TRIGGERING_EVENT, TRIGGER_TYPE \
          FROM ALL_TRIGGERS \
@@ -186,7 +159,7 @@ pub async fn list_triggers(pool: &OraclePool, schema: &str, table: &str) -> Resu
          ORDER BY TRIGGER_NAME",
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
-    let result = pool.conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
+    let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
     Ok(result.rows.iter().map(|row| {
         TriggerInfo {
             name: row.get_string(0).unwrap_or("").to_string(),
@@ -196,7 +169,7 @@ pub async fn list_triggers(pool: &OraclePool, schema: &str, table: &str) -> Resu
     }).collect())
 }
 
-pub async fn execute_query(pool: &mut OraclePool, sql: &str) -> Result<QueryResult, String> {
+pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
     let trimmed = sql.to_uppercase();
@@ -207,7 +180,7 @@ pub async fn execute_query(pool: &mut OraclePool, sql: &str) -> Result<QueryResu
         || trimmed.starts_with("DESCRIBE")
         || trimmed.starts_with("EXPLAIN")
     {
-        let result = pool.conn.query(sql, &[]).await.map_err(|e| e.to_string())?;
+        let result = conn.query(sql, &[]).await.map_err(|e| e.to_string())?;
         let columns: Vec<String> = result.columns.iter().map(|c| c.name.clone()).collect();
         let rows: Vec<Vec<serde_json::Value>> = result.rows.iter().map(|row| {
             (0..columns.len()).map(|i| {
@@ -225,9 +198,9 @@ pub async fn execute_query(pool: &mut OraclePool, sql: &str) -> Result<QueryResu
             truncated: false,
         })
     } else {
-        match pool.conn.execute(sql, &[]).await {
+        match conn.execute(sql, &[]).await {
             Ok(result) => {
-                pool.conn.commit().await.map_err(|e| e.to_string())?;
+                let _ = conn.commit().await;
                 Ok(QueryResult {
                     columns: vec![],
                     rows: vec![],
@@ -239,7 +212,6 @@ pub async fn execute_query(pool: &mut OraclePool, sql: &str) -> Result<QueryResu
             Err(e) => {
                 let msg = e.to_string();
                 if msg.contains("Server rejected") || msg.contains("closed the connection") {
-                    let _ = pool.reconnect().await;
                     Err("Operation failed — possibly a constraint violation (foreign key, unique, or check constraint).".to_string())
                 } else {
                     Err(msg)

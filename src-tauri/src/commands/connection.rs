@@ -16,7 +16,7 @@ pub enum PoolKind {
     MongoDb(mongodb::Client),
     ClickHouse(db::clickhouse_driver::ChClient),
     SqlServer(std::sync::Arc<tokio::sync::Mutex<db::sqlserver::SqlServerClient>>),
-    Oracle(std::sync::Arc<tokio::sync::Mutex<db::oracle_driver::OraclePool>>),
+    Oracle(std::sync::Arc<tokio::sync::Mutex<db::oracle_driver::OracleClient>>),
 }
 
 pub struct AppState {
@@ -110,12 +110,12 @@ impl AppState {
                 PoolKind::SqlServer(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
             }
             DatabaseType::Oracle => {
-                let pool = db::oracle_driver::OraclePool::connect(
+                let client = db::oracle_driver::connect(
                     &db_config.host, db_config.port,
                     db_config.database.as_deref().unwrap_or("ORCL"),
                     &db_config.username, &db_config.password,
                 ).await?;
-                PoolKind::Oracle(std::sync::Arc::new(tokio::sync::Mutex::new(pool)))
+                PoolKind::Oracle(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
             }
         };
 
@@ -222,7 +222,7 @@ pub async fn test_connection(config: ConnectionConfig) -> Result<String, String>
             Ok("Connection successful".to_string())
         }
         DatabaseType::Oracle => {
-            let _pool = db::oracle_driver::OraclePool::connect(
+            let _client = db::oracle_driver::connect(
                 &config.host, config.port,
                 config.database.as_deref().unwrap_or("ORCL"),
                 &config.username, &config.password,
@@ -279,12 +279,12 @@ pub async fn connect_db(
             ).await?;
                 PoolKind::SqlServer(std::sync::Arc::new(tokio::sync::Mutex::new(client)))        }
         DatabaseType::Oracle => {
-            let pool = db::oracle_driver::OraclePool::connect(
+            let client = db::oracle_driver::connect(
                 &config.host, config.port,
                 config.database.as_deref().unwrap_or("ORCL"),
                 &config.username, &config.password,
             ).await?;
-            PoolKind::Oracle(std::sync::Arc::new(tokio::sync::Mutex::new(pool)))
+            PoolKind::Oracle(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
         }
     };
 

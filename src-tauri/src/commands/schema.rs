@@ -75,9 +75,9 @@ fn extract_clickhouse(connections: &std::collections::HashMap<String, PoolKind>,
     }
 }
 
-fn extract_oracle(connections: &std::collections::HashMap<String, PoolKind>, key: &str) -> Option<std::sync::Arc<tokio::sync::Mutex<db::oracle_driver::OraclePool>>> {
+fn extract_oracle(connections: &std::collections::HashMap<String, PoolKind>, key: &str) -> Option<std::sync::Arc<tokio::sync::Mutex<db::oracle_driver::OracleClient>>> {
     match connections.get(key)? {
-        PoolKind::Oracle(pool) => Some(pool.clone()),
+        PoolKind::Oracle(client) => Some(client.clone()),
         _ => None,
     }
 }
@@ -98,10 +98,10 @@ pub async fn list_databases(
             let mut client = client.lock().await;
             return db::sqlserver::list_databases(&mut client).await;
         }
-        if let Some(pool) = extract_oracle(&connections, &connection_id) {
+        if let Some(client) = extract_oracle(&connections, &connection_id) {
             drop(connections);
-            let pool = pool.lock().await;
-            return db::oracle_driver::list_databases(&pool).await;
+            let client = client.lock().await;
+            return db::oracle_driver::list_databases(&*client).await;
         }
     }
 
@@ -132,10 +132,10 @@ pub async fn list_schemas(
             let mut client = client.lock().await;
             return db::sqlserver::list_schemas(&mut client).await;
         }
-        if let Some(pool) = extract_oracle(&connections, &pool_key) {
+        if let Some(client) = extract_oracle(&connections, &pool_key) {
             drop(connections);
-            let pool = pool.lock().await;
-            return db::oracle_driver::list_schemas(&pool).await;
+            let client = client.lock().await;
+            return db::oracle_driver::list_schemas(&*client).await;
         }
     }
 
@@ -173,10 +173,10 @@ pub async fn list_tables(
             let mut client = client.lock().await;
             return db::sqlserver::list_tables(&mut client, &schema).await;
         }
-        if let Some(pool) = extract_oracle(&connections, &pool_key) {
+        if let Some(client) = extract_oracle(&connections, &pool_key) {
             drop(connections);
-            let pool = pool.lock().await;
-            return db::oracle_driver::list_tables(&pool, &schema).await;
+            let client = client.lock().await;
+            return db::oracle_driver::list_tables(&*client, &schema).await;
         }
     }
 
@@ -217,10 +217,10 @@ pub async fn get_columns(
             let mut client = client.lock().await;
             return db::sqlserver::get_columns(&mut client, &schema, &table).await;
         }
-        if let Some(pool) = extract_oracle(&connections, &pool_key) {
+        if let Some(client) = extract_oracle(&connections, &pool_key) {
             drop(connections);
-            let pool = pool.lock().await;
-            return db::oracle_driver::get_columns(&pool, &schema, &table).await;
+            let client = client.lock().await;
+            return db::oracle_driver::get_columns(&*client, &schema, &table).await;
         }
     }
 
@@ -252,10 +252,10 @@ pub async fn list_indexes(
             let mut client = client.lock().await;
             return db::sqlserver::list_indexes(&mut client, &schema, &table).await;
         }
-        if let Some(pool) = extract_oracle(&connections, &pool_key) {
+        if let Some(client) = extract_oracle(&connections, &pool_key) {
             drop(connections);
-            let pool = pool.lock().await;
-            return db::oracle_driver::list_indexes(&pool, &schema, &table).await;
+            let client = client.lock().await;
+            return db::oracle_driver::list_indexes(&*client, &schema, &table).await;
         }
     }
 
@@ -287,10 +287,10 @@ pub async fn list_foreign_keys(
             let mut client = client.lock().await;
             return db::sqlserver::list_foreign_keys(&mut client, &schema, &table).await;
         }
-        if let Some(pool) = extract_oracle(&connections, &pool_key) {
+        if let Some(client) = extract_oracle(&connections, &pool_key) {
             drop(connections);
-            let pool = pool.lock().await;
-            return db::oracle_driver::list_foreign_keys(&pool, &schema, &table).await;
+            let client = client.lock().await;
+            return db::oracle_driver::list_foreign_keys(&*client, &schema, &table).await;
         }
     }
 
@@ -322,10 +322,10 @@ pub async fn list_triggers(
             let mut client = client.lock().await;
             return db::sqlserver::list_triggers(&mut client, &schema, &table).await;
         }
-        if let Some(pool) = extract_oracle(&connections, &pool_key) {
+        if let Some(client) = extract_oracle(&connections, &pool_key) {
             drop(connections);
-            let pool = pool.lock().await;
-            return db::oracle_driver::list_triggers(&pool, &schema, &table).await;
+            let client = client.lock().await;
+            return db::oracle_driver::list_triggers(&*client, &schema, &table).await;
         }
     }
 
@@ -378,10 +378,10 @@ pub async fn get_table_ddl(
             let mut client = client.lock().await;
             return build_sqlserver_ddl(&mut client, &schema, &table).await;
         }
-        if let Some(pool) = extract_oracle(&connections, &pool_key) {
+        if let Some(client) = extract_oracle(&connections, &pool_key) {
             drop(connections);
-            let pool = pool.lock().await;
-            return build_oracle_ddl(&pool, &schema, &table).await;
+            let client = client.lock().await;
+            return build_oracle_ddl(&*client, &schema, &table).await;
         }
     }
 
@@ -477,10 +477,10 @@ async fn build_sqlserver_ddl(client: &mut db::sqlserver::SqlServerClient, schema
     Ok(ddl)
 }
 
-async fn build_oracle_ddl(pool: &db::oracle_driver::OraclePool, schema: &str, table: &str) -> Result<String, String> {
-    let columns = db::oracle_driver::get_columns(pool, schema, table).await?;
-    let indexes = db::oracle_driver::list_indexes(pool, schema, table).await?;
-    let fkeys = db::oracle_driver::list_foreign_keys(pool, schema, table).await?;
+async fn build_oracle_ddl(client: &db::oracle_driver::OracleClient, schema: &str, table: &str) -> Result<String, String> {
+    let columns = db::oracle_driver::get_columns(client, schema, table).await?;
+    let indexes = db::oracle_driver::list_indexes(client, schema, table).await?;
+    let fkeys = db::oracle_driver::list_foreign_keys(client, schema, table).await?;
 
     let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
     let col_lines: Vec<String> = columns.iter().map(|c| {

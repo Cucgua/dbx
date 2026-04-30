@@ -1119,6 +1119,7 @@ dependencies = [
  "log",
  "mongodb",
  "oracle-rs",
+ "percent-encoding",
  "portpicker",
  "redis",
  "reqwest 0.12.28",
