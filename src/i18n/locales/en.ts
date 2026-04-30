@@ -10,6 +10,16 @@ export default {
     formatSql: "Format SQL",
     formatSqlFailed: "Failed to format SQL",
   },
+  updates: {
+    title: "Updates",
+    check: "Check for updates",
+    availableTitle: "Update available",
+    availableMessage: "DBX {latest} is available. You are using {current}.",
+    upToDate: "DBX is up to date ({version}).",
+    failed: "Failed to check updates: {error}",
+    rateLimited: "GitHub update checks are temporarily rate limited. You can still open the release page to check manually.",
+    openRelease: "Open Release",
+  },
   sidebar: {
     connections: "CONNECTIONS",
     noConnections: "No connections yet",
