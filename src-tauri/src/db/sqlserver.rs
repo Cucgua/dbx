@@ -8,6 +8,13 @@ use super::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, Ta
 pub type SqlServerClient = Client<Compat<TcpStream>>;
 
 pub async fn connect(host: &str, port: u16, user: &str, pass: &str, database: Option<&str>) -> Result<SqlServerClient, String> {
+    match try_connect(host, port, user, pass, database, true).await {
+        Ok(client) => Ok(client),
+        Err(_) => try_connect(host, port, user, pass, database, false).await,
+    }
+}
+
+async fn try_connect(host: &str, port: u16, user: &str, pass: &str, database: Option<&str>, use_encryption: bool) -> Result<SqlServerClient, String> {
     let mut config = Config::new();
     config.host(host);
     config.port(port);
@@ -16,6 +23,9 @@ pub async fn connect(host: &str, port: u16, user: &str, pass: &str, database: Op
         config.database(db);
     }
     config.trust_cert();
+    if !use_encryption {
+        config.encryption(tiberius::EncryptionLevel::NotSupported);
+    }
 
     let tcp = TcpStream::connect(config.get_addr())
         .await

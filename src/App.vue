@@ -319,7 +319,7 @@ function quoteIdent(tab: ActiveTab, name: string): string {
 function qualifiedTableName(tab: NonNullable<typeof activeTab.value>): string {
   const config = connectionStore.getConfig(tab.connectionId);
   if (!tab.tableMeta) return "";
-  if ((config?.db_type === "postgres" || config?.db_type === "oracle") && tab.tableMeta.schema) {
+  if ((config?.db_type === "postgres" || config?.db_type === "oracle" || config?.db_type === "sqlserver") && tab.tableMeta.schema) {
     return `${quoteIdent(tab, tab.tableMeta.schema)}.${quoteIdent(tab, tab.tableMeta.tableName)}`;
   }
   return quoteIdent(tab, tab.tableMeta.tableName);
@@ -343,6 +343,10 @@ function buildTableSql(
   if (config?.db_type === "oracle") {
     const offset = options.offset ? ` OFFSET ${options.offset} ROWS` : "";
     return `SELECT * FROM ${qualifiedTableName(tab)}${order}${offset} FETCH FIRST ${limit} ROWS ONLY`;
+  }
+
+  if (config?.db_type === "sqlserver") {
+    return `SELECT TOP ${limit} * FROM ${qualifiedTableName(tab)}${order}`;
   }
 
   const offset = options.offset ? ` OFFSET ${options.offset}` : "";

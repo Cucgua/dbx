@@ -107,7 +107,7 @@ async function toggle() {
     queryStore.updateSql(tab, node.label);
   } else if (node.type === "database" && node.connectionId && node.database) {
     const config = connectionStore.getConfig(node.connectionId);
-    if (config?.db_type === "postgres") {
+    if (config?.db_type === "postgres" || config?.db_type === "sqlserver") {
       await connectionStore.loadSchemas(node.connectionId, node.database);
     } else {
       await connectionStore.loadTables(node.connectionId, node.database);
@@ -144,7 +144,7 @@ async function openData() {
   if (!(node.type === "table" || node.type === "view") || !node.connectionId || !node.database) return;
   await connectionStore.ensureConnected(node.connectionId);
   const config = connectionStore.getConfig(node.connectionId);
-  const qualifiedName = (config?.db_type === "postgres" || config?.db_type === "oracle") && node.schema
+  const qualifiedName = (config?.db_type === "postgres" || config?.db_type === "oracle" || config?.db_type === "sqlserver") && node.schema
     ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
     : quoteIdent(node.label);
   const tabId = queryStore.createTab(node.connectionId, node.database, node.label, "data");
@@ -153,9 +153,14 @@ async function openData() {
   const columns = await api.getColumns(node.connectionId, node.database, querySchema, node.label);
   const pks = columns.filter((c) => c.is_primary_key).map((c) => c.name);
   const order = pks.length ? ` ORDER BY ${pks.map((pk) => `${quoteIdent(pk)} ASC`).join(", ")}` : "";
-  const sql = config?.db_type === "oracle"
-    ? `SELECT * FROM ${qualifiedName}${order} FETCH FIRST 100 ROWS ONLY`
-    : `SELECT * FROM ${qualifiedName}${order} LIMIT 100;`;
+  let sql: string;
+  if (config?.db_type === "oracle") {
+    sql = `SELECT * FROM ${qualifiedName}${order} FETCH FIRST 100 ROWS ONLY`;
+  } else if (config?.db_type === "sqlserver") {
+    sql = `SELECT TOP 100 * FROM ${qualifiedName}${order}`;
+  } else {
+    sql = `SELECT * FROM ${qualifiedName}${order} LIMIT 100;`;
+  }
   queryStore.updateSql(tabId, sql);
   queryStore.setTableMeta(tabId, {
     schema: node.schema,
