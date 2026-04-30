@@ -110,8 +110,29 @@ function connectionDisplayName(connectionId: string): string {
   return connectionStore.getConfig(connectionId)?.name || connectionId;
 }
 
+function connectionColor(connectionId: string): string {
+  return connectionStore.getConfig(connectionId)?.color || "";
+}
+
 function databaseDisplayName(database: string): string {
   const connection = activeConnection.value;
+  if (connection?.db_type === "redis" && database !== "") return `db${database}`;
+  return database || t("editor.noDatabase");
+}
+
+function tabDisplayTitle(tab: typeof queryStore.tabs[number]): string {
+  const database = databaseDisplayNameForTab(tab.connectionId, tab.database);
+  if (tab.mode === "data" && tab.tableMeta?.tableName) {
+    return `${database} | ${tab.tableMeta.tableName}`;
+  }
+  if (tab.mode === "query") {
+    return `${connectionDisplayName(tab.connectionId)} | ${database}`;
+  }
+  return tab.title;
+}
+
+function databaseDisplayNameForTab(connectionId: string, database: string): string {
+  const connection = connectionStore.getConfig(connectionId);
   if (connection?.db_type === "redis" && database !== "") return `db${database}`;
   return database || t("editor.noDatabase");
 }
@@ -526,7 +547,8 @@ async function setupFileDrop() {
               :class="{ 'bg-background font-medium': tab.id === queryStore.activeTabId }"
               @click="queryStore.activeTabId = tab.id"
             >
-              <span>{{ tab.title }}</span>
+              <span v-if="connectionColor(tab.connectionId)" class="h-4 w-1 rounded-full shrink-0" :style="{ backgroundColor: connectionColor(tab.connectionId) }" />
+              <span>{{ tabDisplayTitle(tab) }}</span>
               <button
                 class="ml-1 rounded hover:bg-muted-foreground/20 p-0.5"
                 @click.stop="queryStore.closeTab(tab.id)"
@@ -540,6 +562,7 @@ async function setupFileDrop() {
           <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
             <div v-if="activeTab.mode === 'query'" class="h-8 shrink-0 border-b bg-background/80 px-3 flex items-center gap-2 text-xs text-muted-foreground">
               <Server class="h-3.5 w-3.5 shrink-0" />
+              <span v-if="activeConnection?.color" class="h-4 w-1 rounded-full shrink-0" :style="{ backgroundColor: activeConnection.color }" />
               <Select
                 :model-value="activeConnectionValue"
                 @update:model-value="changeActiveConnection"
@@ -555,7 +578,10 @@ async function setupFileDrop() {
                     :key="connection.id"
                     :value="connection.id"
                   >
-                    {{ connection.name }}
+                    <div class="flex items-center gap-2">
+                      <span v-if="connection.color" class="h-3.5 w-1 rounded-full shrink-0" :style="{ backgroundColor: connection.color }" />
+                      <span>{{ connection.name }}</span>
+                    </div>
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -710,6 +736,7 @@ async function setupFileDrop() {
                       @click="openConnectionQuery(connection.id)"
                     >
                       <DatabaseIcon :db-type="connection.db_type" class="h-4 w-4" />
+                      <span v-if="connection.color" class="h-5 w-1 rounded-full shrink-0" :style="{ backgroundColor: connection.color }" />
                       <div class="min-w-0 flex-1">
                         <div class="truncate text-sm font-medium">{{ connection.name }}</div>
                         <div class="truncate text-xs text-muted-foreground">

@@ -9,6 +9,7 @@ export interface ConnectionConfig {
   username: string;
   password: string;
   database?: string;
+  color?: string;
   ssh_enabled?: boolean;
   ssh_host?: string;
   ssh_port?: number;

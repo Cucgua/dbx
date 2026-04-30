@@ -223,6 +223,11 @@ const isConnected = computed(() =>
   props.node.type === "connection" && !!props.node.connectionId && connectionStore.connectedIds.has(props.node.connectionId)
 );
 
+const connectionColor = computed(() => {
+  const connectionId = props.node.connectionId;
+  return connectionId ? connectionStore.getConfig(connectionId)?.color || "" : "";
+});
+
 const CHILDREN_PAGE_SIZE = 100;
 const displayLimit = ref(CHILDREN_PAGE_SIZE);
 
@@ -269,6 +274,7 @@ async function showMore() {
           <span v-else class="w-3.5 h-3.5 shrink-0" />
           <DatabaseIcon v-if="node.type === 'connection'" :db-type="connectionStore.getConfig(node.connectionId || '')?.db_type || 'postgres'" class="w-3.5 h-3.5 shrink-0" />
           <component v-else :is="getIconInfo(node)?.icon || Database" class="w-3.5 h-3.5 shrink-0" :class="getIconInfo(node)?.colorClass" />
+          <span v-if="node.type === 'connection' && connectionColor" class="h-3 w-1.5 rounded-full shrink-0" :style="{ backgroundColor: connectionColor }" />
           <span class="truncate">{{ isGroupLabel(node) ? t(node.label) : node.label }}</span>
           <span v-if="node.type === 'connection' && node.connectionId && connectionStore.connectedIds.has(node.connectionId)" class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
         </div>

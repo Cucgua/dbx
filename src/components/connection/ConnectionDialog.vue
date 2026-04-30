@@ -36,6 +36,7 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   username: "root",
   password: "",
   database: undefined,
+  color: "",
   ssh_enabled: false,
   ssh_host: "",
   ssh_port: 22,
@@ -48,6 +49,16 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
 const form = ref(defaultForm());
 const selectedType = ref("mysql");
 
+const colorOptions = [
+  { value: "", class: "bg-transparent border-dashed", labelKey: "connection.colorNone" },
+  { value: "#22c55e", class: "bg-green-500", labelKey: "connection.colorGreen" },
+  { value: "#eab308", class: "bg-yellow-500", labelKey: "connection.colorYellow" },
+  { value: "#f97316", class: "bg-orange-500", labelKey: "connection.colorOrange" },
+  { value: "#ef4444", class: "bg-red-500", labelKey: "connection.colorRed" },
+  { value: "#3b82f6", class: "bg-blue-500", labelKey: "connection.colorBlue" },
+  { value: "#a855f7", class: "bg-purple-500", labelKey: "connection.colorPurple" },
+];
+
 watch(() => props.editConfig, (config) => {
   if (config) {
     editingId.value = config.id;
@@ -59,6 +70,7 @@ watch(() => props.editConfig, (config) => {
       username: config.username,
       password: config.password,
       database: config.database,
+      color: config.color || "",
       ssh_enabled: config.ssh_enabled || false,
       ssh_host: config.ssh_host || "",
       ssh_port: config.ssh_port || 22,
@@ -243,6 +255,21 @@ watch([() => editingId.value, () => open.value], () => {
               </SelectGroup>
             </SelectContent>
           </Select>
+        </div>
+
+        <div class="grid grid-cols-4 items-center gap-4">
+          <Label class="text-right">{{ t('connection.color') }}</Label>
+          <div class="col-span-3 flex items-center gap-1.5">
+            <button
+              v-for="color in colorOptions"
+              :key="color.value || 'none'"
+              type="button"
+              class="h-6 w-6 rounded-full border ring-offset-background transition hover:scale-105"
+              :class="[color.class, form.color === color.value ? 'ring-2 ring-ring ring-offset-2' : 'border-border']"
+              :title="t(color.labelKey)"
+              @click="form.color = color.value"
+            />
+          </div>
         </div>
 
         <!-- SQLite / DuckDB: file path only -->
