@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-  ArrowUp, Bot, Check, Copy, Database, Loader2, Replace, Server, Settings,
-  Play, Trash2, X,
+  ArrowUp, ArrowRightLeft, Bot, Check, Copy, Database, HelpCircle, History,
+  Loader2, MessageSquarePlus, Replace, Server, Settings, Play, Square, Trash2,
+  Wand2, Wrench, X, Zap, TestTube,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,14 +13,20 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSettingsStore, type AiProvider, type AiApiStyle } from "@/stores/settingsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
-import { buildAiContext, runAiStream } from "@/lib/ai";
-import { listDatabases, redisListDatabases, mongoListDatabases, aiTestConnection } from "@/lib/tauri";
+import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
+import {
+  listDatabases, redisListDatabases, mongoListDatabases, aiTestConnection, aiCancelStream,
+  saveAiConversation, loadAiConversations, deleteAiConversation, type AiConversation,
+} from "@/lib/tauri";
 import type { AiMessage } from "@/lib/tauri";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
 
@@ -49,6 +56,31 @@ const messages = ref<ChatMessage[]>([]);
 const isGenerating = ref(false);
 const showSettings = ref(false);
 const scrollRef = ref<InstanceType<typeof ScrollArea> | null>(null);
+const activeAction = ref<AiAction>("generate");
+const currentSessionId = ref("");
+const conversationId = ref("");
+const conversations = ref<AiConversation[]>([]);
+const showConversationList = ref(false);
+
+const actionButtons: { action: AiAction; icon: any; key: string }[] = [
+  { action: "generate", icon: Wand2, key: "ai.actions.generate" },
+  { action: "explain", icon: HelpCircle, key: "ai.actions.explain" },
+  { action: "optimize", icon: Zap, key: "ai.actions.optimize" },
+  { action: "fix", icon: Wrench, key: "ai.actions.fix" },
+  { action: "convert", icon: ArrowRightLeft, key: "ai.actions.convert" },
+  { action: "sampleData", icon: TestTube, key: "ai.actions.sampleData" },
+];
+
+function selectAction(action: AiAction) {
+  activeAction.value = action;
+  if (action === "fix" && props.tab?.result) {
+    const cols = props.tab.result.columns;
+    if (cols.includes("Error")) {
+      const errVal = props.tab.result.rows[0]?.[0];
+      if (errVal != null) prompt.value = String(errVal);
+    }
+  }
+}
 
 const chatTitle = computed(() => {
   const first = messages.value.find((m) => m.role === "user");
@@ -59,6 +91,8 @@ const isWaitingForFirstDelta = computed(() => {
   const last = messages.value[messages.value.length - 1];
   return isGenerating.value && last?.role === "assistant" && !last.content;
 });
+
+const activePlaceholder = computed(() => t(`ai.placeholders.${activeAction.value}`));
 
 
 const databaseOptions = ref<string[]>([]);
@@ -194,6 +228,8 @@ async function send() {
   isGenerating.value = true;
   messages.value.push({ role: "assistant", content: "" });
   const assistantIdx = messages.value.length - 1;
+  const sessionId = crypto.randomUUID();
+  currentSessionId.value = sessionId;
   try {
     const context = await buildAiContext(props.tab, props.connection);
     const history: AiMessage[] = messages.value.slice(0, -2).map((m) => ({
@@ -202,17 +238,26 @@ async function send() {
     }));
     await runAiStream({
       config: settings.aiConfig,
-      action: "generate",
+      action: activeAction.value,
       instruction: text,
       context,
     }, history, (delta) => {
       appendAssistantDelta(assistantIdx, delta);
-    });
+    }, sessionId);
   } catch (e: any) {
     messages.value[assistantIdx].content = `Error: ${e.message || e}`;
   } finally {
     isGenerating.value = false;
+    activeAction.value = "generate";
+    currentSessionId.value = "";
+    persistConversation();
     scrollToBottom();
+  }
+}
+
+async function cancelStream() {
+  if (currentSessionId.value) {
+    await aiCancelStream(currentSessionId.value).catch(() => {});
   }
 }
 
@@ -234,7 +279,61 @@ async function copyCode(code: string, key: string) {
 
 function clearMessages() {
   messages.value = [];
+  conversationId.value = "";
 }
+
+async function persistConversation() {
+  if (!messages.value.length || !props.connection) return;
+  if (!conversationId.value) conversationId.value = crypto.randomUUID();
+  const first = messages.value.find((m) => m.role === "user");
+  await saveAiConversation({
+    id: conversationId.value,
+    title: first ? first.content.slice(0, 50) : "Untitled",
+    connectionName: props.connection.name,
+    database: props.tab?.database || "",
+    messages: messages.value.map((m) => ({ role: m.role, content: m.content })),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }).catch(() => {});
+}
+
+async function loadConversationList() {
+  conversations.value = await loadAiConversations().catch(() => []);
+  showConversationList.value = true;
+}
+
+function selectConversation(conv: AiConversation) {
+  conversationId.value = conv.id;
+  messages.value = conv.messages.map((m) => ({
+    role: m.role as "user" | "assistant",
+    content: m.content,
+  }));
+  showConversationList.value = false;
+  scrollToBottom();
+}
+
+async function deleteConversation(id: string) {
+  await deleteAiConversation(id).catch(() => {});
+  conversations.value = conversations.value.filter((c) => c.id !== id);
+  if (conversationId.value === id) clearMessages();
+}
+
+function startNewChat() {
+  clearMessages();
+  showConversationList.value = false;
+}
+
+onMounted(async () => {
+  conversations.value = await loadAiConversations().catch(() => []);
+});
+
+function triggerAction(action: AiAction, instruction?: string) {
+  activeAction.value = action;
+  if (instruction) prompt.value = instruction;
+  send();
+}
+
+defineExpose({ triggerAction });
 
 interface MessageSegment {
   type: "text" | "code";
@@ -244,29 +343,33 @@ interface MessageSegment {
 
 function parseMessage(text: string): MessageSegment[] {
   const segments: MessageSegment[] = [];
-  const regex = /```(sql|mysql|postgresql|sqlite|tsql|clickhouse)?\s*([\s\S]*?)```/gi;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ type: "text", content: text.slice(lastIndex, match.index) });
-    }
-    segments.push({ type: "code", lang: (match[1] || "sql").toUpperCase(), content: match[2].trim() });
-    lastIndex = regex.lastIndex;
-  }
-  if (lastIndex < text.length) {
-    const remaining = text.slice(lastIndex);
-    const unclosed = remaining.match(/```(sql|mysql|postgresql|sqlite|tsql|clickhouse)?\s*([\s\S]*)/i);
-    if (unclosed) {
-      const before = remaining.slice(0, unclosed.index);
-      if (before.trim()) segments.push({ type: "text", content: before });
-      if (unclosed[2].trim()) {
-        segments.push({ type: "code", lang: (unclosed[1] || "sql").toUpperCase(), content: unclosed[2].trim() });
+  const lines = text.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const fenceMatch = lines[i].match(/^```(sql|mysql|postgresql|sqlite|tsql|clickhouse)?\s*$/i);
+    if (fenceMatch) {
+      const lang = (fenceMatch[1] || "sql").toUpperCase();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+        codeLines.push(lines[i]);
+        i++;
       }
+      if (i < lines.length) i++;
+      const content = codeLines.join("\n").trim();
+      if (content) segments.push({ type: "code", lang, content });
     } else {
-      segments.push({ type: "text", content: remaining });
+      const textLines: string[] = [];
+      while (i < lines.length && !/^```(sql|mysql|postgresql|sqlite|tsql|clickhouse)?\s*$/i.test(lines[i])) {
+        textLines.push(lines[i]);
+        i++;
+      }
+      const content = textLines.join("\n");
+      if (content.trim()) segments.push({ type: "text", content });
     }
   }
+
   return segments;
 }
 
@@ -280,8 +383,13 @@ function formatInlineText(text: string): string {
 <template>
   <div class="flex h-full min-h-0 flex-col overflow-hidden">
     <div class="h-9 flex items-center gap-2 border-b px-3 shrink-0">
-      <Bot class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       <span class="flex-1 truncate text-xs font-medium">{{ chatTitle }}</span>
+      <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat" :title="t('ai.newChat')">
+        <MessageSquarePlus class="h-3.5 w-3.5" />
+      </Button>
+      <Button variant="ghost" size="icon" class="h-6 w-6" :class="{ 'bg-accent': showConversationList }" @click="loadConversationList" :title="t('history.title')">
+        <History class="h-3.5 w-3.5" />
+      </Button>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="clearMessages" :title="t('ai.clear')">
         <Trash2 class="h-3.5 w-3.5" />
       </Button>
@@ -291,6 +399,24 @@ function formatInlineText(text: string): string {
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="emit('close')">
         <X class="h-3.5 w-3.5" />
       </Button>
+    </div>
+
+    <div v-if="showConversationList" class="border-b max-h-48 overflow-auto">
+      <div v-if="!conversations.length" class="p-3 text-xs text-muted-foreground text-center">
+        {{ t('history.empty') }}
+      </div>
+      <div
+        v-for="conv in conversations"
+        :key="conv.id"
+        class="flex items-center gap-2 px-3 py-1.5 hover:bg-muted cursor-pointer text-xs"
+        :class="{ 'bg-muted': conv.id === conversationId }"
+        @click="selectConversation(conv)"
+      >
+        <span class="flex-1 truncate">{{ conv.title }}</span>
+        <button class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive" @click.stop="deleteConversation(conv.id)">
+          <X class="h-3 w-3" />
+        </button>
+      </div>
     </div>
 
     <div v-if="messages.length === 0" class="flex-1 min-h-0 flex flex-col items-center justify-center text-center text-muted-foreground">
@@ -372,18 +498,43 @@ function formatInlineText(text: string): string {
             </Select>
           </template>
         </div>
-        <div class="flex items-end gap-1.5">
-          <textarea
-            v-model="prompt"
-            rows="4"
-            class="flex-1 resize-none bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-            :placeholder="t('ai.placeholder')"
-            :disabled="isGenerating || !props.tab?.database"
-            @keydown.enter.exact="send"
-          />
+        <textarea
+          v-model="prompt"
+          rows="3"
+          class="w-full resize-none bg-transparent text-xs outline-none placeholder:text-muted-foreground mb-1"
+          :placeholder="activePlaceholder"
+          :disabled="isGenerating"
+          @keydown.enter.exact="send"
+        />
+        <div class="flex items-center gap-1.5">
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <button class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground">
+                <component :is="actionButtons.find(b => b.action === activeAction)?.icon" class="h-3 w-3" />
+                <span>{{ t(`ai.actions.${activeAction}`) }}</span>
+                <svg class="h-3 w-3 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" class="w-max min-w-0">
+              <DropdownMenuItem v-for="btn in actionButtons" :key="btn.action" class="text-xs gap-1.5" @click="selectAction(btn.action)">
+                <component :is="btn.icon" class="h-3 w-3" />
+                <span>{{ t(btn.key) }}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <span class="flex-1" />
           <button
+            v-if="isGenerating"
+            class="h-7 w-7 shrink-0 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
+            :title="t('ai.stopGenerating')"
+            @click="cancelStream"
+          >
+            <Square class="h-3.5 w-3.5" />
+          </button>
+          <button
+            v-else
             class="h-7 w-7 shrink-0 rounded-full bg-foreground text-background flex items-center justify-center disabled:opacity-30"
-            :disabled="isGenerating || !prompt.trim() || !props.tab?.database"
+            :disabled="!prompt.trim() || !props.tab?.database"
             @click="send"
           >
             <ArrowUp class="h-4 w-4" />

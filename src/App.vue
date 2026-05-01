@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, type Ref } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { DatabaseZap, FilePlus2, Play, Loader2, Square, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Bot, Pin, AlignLeft, CloudDownload, ArrowLeftRight } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
@@ -62,12 +62,23 @@ const showConnectionDialog = ref(false);
 const showHistory = ref(false);
 const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") !== "false");
 const aiPanelWidth = ref(Number(localStorage.getItem("dbx-ai-panel-width")) || 360);
+const aiAssistantRef = ref<InstanceType<typeof AiAssistant> | null>(null);
 const sidebarWidth = ref(Number(localStorage.getItem("dbx-sidebar-width")) || 260);
 const historyWidth = ref(Number(localStorage.getItem("dbx-history-width")) || 288);
 
 function toggleAiPanel() {
   showAiPanel.value = !showAiPanel.value;
   localStorage.setItem("dbx-ai-panel-open", String(showAiPanel.value));
+}
+
+function fixWithAi(errorMessage: string) {
+  if (!showAiPanel.value) {
+    showAiPanel.value = true;
+    localStorage.setItem("dbx-ai-panel-open", "true");
+  }
+  nextTick(() => {
+    aiAssistantRef.value?.triggerAction("fix", errorMessage);
+  });
 }
 
 function startPanelResize(widthRef: Ref<number>, storageKey: string, direction: 'left' | 'right') {
@@ -954,6 +965,12 @@ async function setupFileDrop() {
                 <Pane :size="60" :min-size="20">
                   <div class="h-full flex flex-col">
                     <DataGrid v-if="activeTab.result" :key="activeTab.id" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.lastExecutedSql || activeTab.sql" :loading="activeTab.isExecuting" />
+                    <div v-if="activeTab.result?.columns.includes('Error')" class="flex items-center gap-2 px-3 py-1.5 border-t bg-destructive/5">
+                      <Bot class="h-3.5 w-3.5 text-destructive" />
+                      <button class="text-xs text-destructive hover:underline" @click="fixWithAi(String(activeTab.result?.rows?.[0]?.[0] ?? ''))">
+                        {{ t('ai.fixWithAi') }}
+                      </button>
+                    </div>
                     <div v-else-if="activeTab.isExecuting" class="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
                       <div class="flex items-center">
                         <Loader2 class="h-5 w-5 animate-spin mr-2" />
@@ -1124,6 +1141,7 @@ async function setupFileDrop() {
         <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startAiPanelResize" />
         <div class="h-full min-h-0 overflow-hidden">
           <AiAssistant
+            ref="aiAssistantRef"
             :tab="activeTab"
             :connection="activeConnection"
             @replace-sql="replaceActiveSql"

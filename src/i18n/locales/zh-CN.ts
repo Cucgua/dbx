@@ -169,6 +169,8 @@ export default {
     welcome: "聊聊你想查什么，我来写 SQL",
     newChat: "新对话",
     thinking: "思考中...",
+    stopGenerating: "停止生成",
+    fixWithAi: "用 AI 修复",
     truncated: "上下文已截断",
     contextSummary: "{database} · {tables} 张表",
     settingsHint: "配置会保存在本机应用数据目录中。请求由 Tauri 后端发出，避免在前端直接暴露给模型服务。",

@@ -2,7 +2,14 @@ use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::RwLock;
+
+static AI_STREAMS: LazyLock<RwLock<HashMap<String, Arc<AtomicBool>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -160,24 +167,40 @@ pub async fn ai_stream(app: AppHandle, session_id: String, request: AiCompletion
         return Err("Model is required".to_string());
     }
 
+    let cancelled = Arc::new(AtomicBool::new(false));
+    AI_STREAMS.write().await.insert(session_id.clone(), cancelled.clone());
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| e.to_string())?;
 
-    match request.config.provider {
-        AiProvider::Claude => stream_claude(&app, &client, &session_id, request).await,
+    let result = match request.config.provider {
+        AiProvider::Claude => stream_claude(&app, &client, &session_id, request, &cancelled).await,
         AiProvider::Openai | AiProvider::Custom => {
             if request.config.api_style == AiApiStyle::Responses {
-                stream_responses_api(&app, &client, &session_id, request).await
+                stream_responses_api(&app, &client, &session_id, request, &cancelled).await
             } else {
-                stream_openai(&app, &client, &session_id, request).await
+                stream_openai(&app, &client, &session_id, request, &cancelled).await
             }
         }
+    };
+
+    AI_STREAMS.write().await.remove(&session_id);
+    result
+}
+
+#[tauri::command]
+pub async fn ai_cancel_stream(session_id: String) -> Result<bool, String> {
+    if let Some(flag) = AI_STREAMS.read().await.get(&session_id) {
+        flag.store(true, Ordering::Relaxed);
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
 
-async fn stream_claude(app: &AppHandle, client: &reqwest::Client, session_id: &str, request: AiCompletionRequest) -> Result<(), String> {
+async fn stream_claude(app: &AppHandle, client: &reqwest::Client, session_id: &str, request: AiCompletionRequest, cancelled: &AtomicBool) -> Result<(), String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
@@ -213,6 +236,9 @@ async fn stream_claude(app: &AppHandle, client: &reqwest::Client, session_id: &s
 
     let mut finished = false;
     while let Some(chunk) = stream.next().await {
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
         let chunk = chunk.map_err(|e| e.to_string())?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -249,7 +275,7 @@ async fn stream_claude(app: &AppHandle, client: &reqwest::Client, session_id: &s
     Ok(())
 }
 
-async fn stream_openai(app: &AppHandle, client: &reqwest::Client, session_id: &str, request: AiCompletionRequest) -> Result<(), String> {
+async fn stream_openai(app: &AppHandle, client: &reqwest::Client, session_id: &str, request: AiCompletionRequest, cancelled: &AtomicBool) -> Result<(), String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
@@ -288,6 +314,9 @@ async fn stream_openai(app: &AppHandle, client: &reqwest::Client, session_id: &s
 
     let mut finished = false;
     while let Some(chunk) = stream.next().await {
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
         let chunk = chunk.map_err(|e| e.to_string())?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -536,7 +565,7 @@ async fn call_responses_api(
         .to_string())
 }
 
-async fn stream_responses_api(app: &AppHandle, client: &reqwest::Client, session_id: &str, request: AiCompletionRequest) -> Result<(), String> {
+async fn stream_responses_api(app: &AppHandle, client: &reqwest::Client, session_id: &str, request: AiCompletionRequest, cancelled: &AtomicBool) -> Result<(), String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
@@ -570,6 +599,9 @@ async fn stream_responses_api(app: &AppHandle, client: &reqwest::Client, session
 
     let mut finished = false;
     while let Some(chunk) = stream.next().await {
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
         let chunk = chunk.map_err(|e| e.to_string())?;
         buf.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -608,4 +640,74 @@ async fn stream_responses_api(app: &AppHandle, client: &reqwest::Client, session
 
 fn responses_stream_text(event: &serde_json::Value) -> Option<&str> {
     event["delta"].as_str().filter(|s| !s.is_empty())
+}
+
+// --- AI Conversation Persistence ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConversation {
+    pub id: String,
+    pub title: String,
+    pub connection_name: String,
+    pub database: String,
+    pub messages: Vec<AiChatMessage>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+fn conversations_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join("ai_conversations.json"))
+}
+
+fn read_conversations(app: &AppHandle) -> Result<Vec<AiConversation>, String> {
+    let path = conversations_file(app)?;
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&json).map_err(|e| e.to_string())
+}
+
+fn write_conversations(app: &AppHandle, conversations: &[AiConversation]) -> Result<(), String> {
+    let path = conversations_file(app)?;
+    let json = serde_json::to_string(conversations).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+const MAX_CONVERSATIONS: usize = 50;
+
+#[tauri::command]
+pub async fn save_ai_conversation(app: AppHandle, conversation: AiConversation) -> Result<(), String> {
+    let mut conversations = read_conversations(&app)?;
+    if let Some(pos) = conversations.iter().position(|c| c.id == conversation.id) {
+        conversations[pos] = conversation;
+    } else {
+        conversations.insert(0, conversation);
+        conversations.truncate(MAX_CONVERSATIONS);
+    }
+    write_conversations(&app, &conversations)
+}
+
+#[tauri::command]
+pub async fn load_ai_conversations(app: AppHandle) -> Result<Vec<AiConversation>, String> {
+    read_conversations(&app)
+}
+
+#[tauri::command]
+pub async fn delete_ai_conversation(app: AppHandle, id: String) -> Result<(), String> {
+    let conversations: Vec<AiConversation> = read_conversations(&app)?
+        .into_iter()
+        .filter(|c| c.id != id)
+        .collect();
+    write_conversations(&app, &conversations)
 }

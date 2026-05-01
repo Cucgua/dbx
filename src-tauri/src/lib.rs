@@ -38,9 +38,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ai::ai_complete,
             commands::ai::ai_stream,
+            commands::ai::ai_cancel_stream,
             commands::ai::ai_test_connection,
             commands::ai::save_ai_config,
             commands::ai::load_ai_config,
+            commands::ai::save_ai_conversation,
+            commands::ai::load_ai_conversations,
+            commands::ai::delete_ai_conversation,
             commands::connection::test_connection,
             commands::connection::connect_db,
             commands::connection::disconnect_db,

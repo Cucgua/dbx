@@ -62,8 +62,41 @@ export async function aiTestConnection(config: AiConfig): Promise<string> {
   return invoke("ai_test_connection", { config });
 }
 
+export async function aiCancelStream(sessionId: string): Promise<boolean> {
+  return invoke("ai_cancel_stream", { sessionId });
+}
+
 export async function loadAiConfig(): Promise<AiConfig | null> {
   return invoke("load_ai_config");
+}
+
+// --- AI Conversations ---
+
+export interface AiChatMessage {
+  role: string;
+  content: string;
+}
+
+export interface AiConversation {
+  id: string;
+  title: string;
+  connectionName: string;
+  database: string;
+  messages: AiChatMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function saveAiConversation(conversation: AiConversation): Promise<void> {
+  return invoke("save_ai_conversation", { conversation });
+}
+
+export async function loadAiConversations(): Promise<AiConversation[]> {
+  return invoke("load_ai_conversations");
+}
+
+export async function deleteAiConversation(id: string): Promise<void> {
+  return invoke("delete_ai_conversation", { id });
 }
 
 export async function testConnection(config: ConnectionConfig): Promise<string> {
