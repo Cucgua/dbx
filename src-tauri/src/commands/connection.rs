@@ -166,6 +166,7 @@ impl AppState {
                 &config.ssh_key_path,
                 &config.host,
                 config.port,
+                config.ssh_expose_lan,
             )
             .await?;
 

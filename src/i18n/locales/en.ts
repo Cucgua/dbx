@@ -58,6 +58,7 @@ export default {
     sshPassword: "SSH Password",
     sshPasswordPlaceholder: "Leave empty to use key",
     sshKeyPath: "Key Path",
+    sshExposeLan: "Expose tunnel to LAN",
     compatible: "Compatible",
     mainstream: "Popular",
     color: "Color",

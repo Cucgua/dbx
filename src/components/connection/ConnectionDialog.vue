@@ -54,6 +54,7 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   ssh_user: "",
   ssh_password: "",
   ssh_key_path: "",
+  ssh_expose_lan: false,
   ssl: false,
   connection_string: undefined,
 });
@@ -155,6 +156,7 @@ watch(() => props.editConfig, (config) => {
       ssh_user: config.ssh_user || "",
       ssh_password: config.ssh_password || "",
       ssh_key_path: config.ssh_key_path || "",
+      ssh_expose_lan: config.ssh_expose_lan || false,
       ssl: config.ssl || false,
       connection_string: config.connection_string,
     };
@@ -513,6 +515,13 @@ watch([() => editingId.value, () => open.value], () => {
             <div class="grid grid-cols-4 items-center gap-4">
               <Label class="text-right text-xs">{{ t('connection.sshKeyPath') }}</Label>
               <Input v-model="form.ssh_key_path" class="col-span-3" placeholder="~/.ssh/id_rsa" />
+            </div>
+            <div class="grid grid-cols-4 items-center gap-4">
+              <span />
+              <label class="col-span-3 flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="form.ssh_expose_lan" class="mr-0" />
+                <span class="text-xs text-muted-foreground">{{ t('connection.sshExposeLan') }}</span>
+              </label>
             </div>
           </template>
         </template>

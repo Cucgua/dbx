@@ -60,6 +60,7 @@ export default {
     sshPassword: "SSH 密码",
     sshPasswordPlaceholder: "留空则使用密钥",
     sshKeyPath: "密钥路径",
+    sshExposeLan: "允许局域网访问隧道",
     compatible: "兼容",
     mainstream: "主流",
     color: "颜色",

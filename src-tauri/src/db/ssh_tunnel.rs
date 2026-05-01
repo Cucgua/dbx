@@ -160,6 +160,7 @@ impl TunnelManager {
         ssh_key_path: &str,
         remote_host: &str,
         remote_port: u16,
+        expose_to_lan: bool,
     ) -> Result<u16, String> {
         let local_port = portpicker::pick_unused_port().ok_or("No available port")?;
 
@@ -167,7 +168,8 @@ impl TunnelManager {
             connect_and_authenticate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_path)
                 .await?;
 
-        let listener = TcpListener::bind(("127.0.0.1", local_port))
+        let bind_addr = if expose_to_lan { "0.0.0.0" } else { "127.0.0.1" };
+        let listener = TcpListener::bind((bind_addr, local_port))
             .await
             .map_err(|e| format!("Failed to bind local port: {e}"))?;
 
