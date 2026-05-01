@@ -178,12 +178,59 @@ impl SqlStatementSplitter {
 
     fn push_current_statement(&mut self, statements: &mut Vec<String>) {
         let statement = self.buffer.trim();
-        if !statement.is_empty() {
+        if has_executable_sql(statement) {
             statements.push(statement.to_string());
         }
         self.buffer.clear();
         self.previous = None;
     }
+}
+
+fn has_executable_sql(statement: &str) -> bool {
+    let mut chars = statement.chars().peekable();
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut previous = None;
+
+    while let Some(ch) = chars.next() {
+        let next = chars.peek().copied();
+
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+            }
+            previous = Some(ch);
+            continue;
+        }
+
+        if in_block_comment {
+            if previous == Some('*') && ch == '/' {
+                in_block_comment = false;
+            }
+            previous = Some(ch);
+            continue;
+        }
+
+        if ch == '-' && next == Some('-') {
+            in_line_comment = true;
+            previous = Some(ch);
+            continue;
+        }
+
+        if ch == '/' && next == Some('*') {
+            in_block_comment = true;
+            previous = Some(ch);
+            continue;
+        }
+
+        if !ch.is_whitespace() {
+            return true;
+        }
+
+        previous = Some(ch);
+    }
+
+    false
 }
 
 #[tauri::command]
@@ -524,7 +571,7 @@ fn statement_error_decision(
                 affected_rows,
                 started_at,
                 summary,
-                Some(error),
+                None,
             )],
             failure_count,
             result: Ok(true),
@@ -799,6 +846,14 @@ mod tests {
         );
         assert_eq!(splitter.finish(), Vec::<String>::new());
     }
+
+    #[test]
+    fn skips_comment_only_tail_after_statement() {
+        assert_eq!(
+            split_sql_script("CREATE TABLE a(id int); -- done\n/* no more sql */").unwrap(),
+            vec!["CREATE TABLE a(id int)"]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -946,6 +1001,7 @@ mod execution_tests {
         assert_eq!(decision.progress.len(), 1);
         assert_eq!(decision.progress[0].status, SqlFileStatus::Cancelled);
         assert_eq!(decision.progress[0].failure_count, 4);
+        assert_eq!(decision.progress[0].error, None);
     }
 
     #[test]
