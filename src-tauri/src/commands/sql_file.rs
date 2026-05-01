@@ -259,16 +259,31 @@ async fn execute_sql_file_inner(
     token: CancellationToken,
     started_at: Instant,
 ) -> Result<(), String> {
-    let file = tokio::fs::File::open(&request.file_path)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut reader = BufReader::new(file);
-    let mut splitter = SqlStatementSplitter::default();
-    let mut line = String::new();
     let mut statement_index = 0;
     let mut success_count = 0;
     let mut failure_count = 0;
     let mut affected_rows = 0;
+
+    let file = match tokio::fs::File::open(&request.file_path).await {
+        Ok(file) => file,
+        Err(error) => {
+            let error = error.to_string();
+            emit_file_io_error_progress(
+                app,
+                &request.execution_id,
+                statement_index,
+                success_count,
+                failure_count,
+                affected_rows,
+                started_at,
+                error.clone(),
+            );
+            return Err(error);
+        }
+    };
+    let mut reader = BufReader::new(file);
+    let mut splitter = SqlStatementSplitter::default();
+    let mut line = String::new();
 
     loop {
         if token.is_cancelled() {
@@ -288,10 +303,23 @@ async fn execute_sql_file_inner(
         }
 
         line.clear();
-        let bytes_read = reader
-            .read_line(&mut line)
-            .await
-            .map_err(|e| e.to_string())?;
+        let bytes_read = match reader.read_line(&mut line).await {
+            Ok(bytes_read) => bytes_read,
+            Err(error) => {
+                let error = error.to_string();
+                emit_file_io_error_progress(
+                    app,
+                    &request.execution_id,
+                    statement_index,
+                    success_count,
+                    failure_count,
+                    affected_rows,
+                    started_at,
+                    error.clone(),
+                );
+                return Err(error);
+            }
+        };
         if bytes_read == 0 {
             break;
         }
@@ -487,18 +515,88 @@ fn emit_progress(
 ) {
     let _ = app.emit(
         "sql-file-progress",
-        SqlFileProgress {
-            execution_id: execution_id.to_string(),
+        sql_file_progress(
+            execution_id,
             status,
             statement_index,
             success_count,
             failure_count,
             affected_rows,
-            elapsed_ms: started_at.elapsed().as_millis(),
-            statement_summary: statement_summary.to_string(),
+            started_at,
+            statement_summary,
             error,
-        },
+        ),
     );
+}
+
+fn emit_file_io_error_progress(
+    app: &AppHandle,
+    execution_id: &str,
+    statement_index: usize,
+    success_count: usize,
+    failure_count: usize,
+    affected_rows: u64,
+    started_at: Instant,
+    error: String,
+) {
+    let _ = app.emit(
+        "sql-file-progress",
+        file_io_error_progress(
+            execution_id,
+            statement_index,
+            success_count,
+            failure_count,
+            affected_rows,
+            started_at,
+            error,
+        ),
+    );
+}
+
+fn file_io_error_progress(
+    execution_id: &str,
+    statement_index: usize,
+    success_count: usize,
+    failure_count: usize,
+    affected_rows: u64,
+    started_at: Instant,
+    error: String,
+) -> SqlFileProgress {
+    sql_file_progress(
+        execution_id,
+        SqlFileStatus::Error,
+        statement_index,
+        success_count,
+        failure_count,
+        affected_rows,
+        started_at,
+        "",
+        Some(error),
+    )
+}
+
+fn sql_file_progress(
+    execution_id: &str,
+    status: SqlFileStatus,
+    statement_index: usize,
+    success_count: usize,
+    failure_count: usize,
+    affected_rows: u64,
+    started_at: Instant,
+    statement_summary: &str,
+    error: Option<String>,
+) -> SqlFileProgress {
+    SqlFileProgress {
+        execution_id: execution_id.to_string(),
+        status,
+        statement_index,
+        success_count,
+        failure_count,
+        affected_rows,
+        elapsed_ms: started_at.elapsed().as_millis(),
+        statement_summary: statement_summary.to_string(),
+        error,
+    }
 }
 
 fn statement_summary(statement: &str) -> String {
@@ -687,5 +785,27 @@ mod execution_tests {
 
         assert_eq!(summary.success_count, 1);
         assert_eq!(summary.status, SqlFileStatus::Cancelled);
+    }
+
+    #[test]
+    fn file_io_errors_build_terminal_error_progress() {
+        let progress = file_io_error_progress(
+            "exec-1",
+            4,
+            2,
+            1,
+            17,
+            Instant::now(),
+            "read failed".to_string(),
+        );
+
+        assert_eq!(progress.execution_id, "exec-1");
+        assert_eq!(progress.status, SqlFileStatus::Error);
+        assert_eq!(progress.statement_index, 4);
+        assert_eq!(progress.success_count, 2);
+        assert_eq!(progress.failure_count, 1);
+        assert_eq!(progress.affected_rows, 17);
+        assert_eq!(progress.statement_summary, "");
+        assert_eq!(progress.error, Some("read failed".to_string()));
     }
 }
