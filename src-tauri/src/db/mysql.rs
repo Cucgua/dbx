@@ -116,6 +116,21 @@ pub async fn connect(url: &str) -> Result<MySqlPool, String> {
         .map_err(|e| format!("MySQL connection failed: {e}"))
 }
 
+pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
+    let options: sqlx::mysql::MySqlConnectOptions = url.parse()
+        .map_err(|e: sqlx::Error| format!("Invalid MySQL URL: {e}"))?;
+    let options = options
+        .no_engine_substitution(false)
+        .set_names(false);
+    MySqlPoolOptions::new()
+        .max_connections(5)
+        .acquire_timeout(Duration::from_secs(10))
+        .idle_timeout(Duration::from_secs(300))
+        .connect_with(options)
+        .await
+        .map_err(|e| format!("MySQL connection failed: {e}"))
+}
+
 pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, String> {
     let rows: Vec<MySqlRow> = sqlx::query("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME")
         .fetch_all(pool)

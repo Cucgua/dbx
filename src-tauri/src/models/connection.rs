@@ -202,7 +202,10 @@ impl ConnectionConfig {
             }
             DatabaseType::Doris | DatabaseType::StarRocks => {
                 let v = value.trim_start_matches('?');
-                if v.is_empty() { "ssl-mode=disabled".to_string() } else { v.to_string() }
+                let filtered: Vec<&str> = v.split('&')
+                    .filter(|p| !p.is_empty() && !p.starts_with("charset=") && !p.starts_with("ssl-mode=preferred"))
+                    .collect();
+                if filtered.is_empty() { "ssl-mode=disabled".to_string() } else { format!("ssl-mode=disabled&{}", filtered.join("&")) }
             }
             DatabaseType::Postgres | DatabaseType::Redshift => value.trim_start_matches('?').to_string(),
             _ => value.trim_start_matches('?').to_string(),
