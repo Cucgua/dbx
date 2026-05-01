@@ -83,16 +83,38 @@ struct SqlStatementSplitter {
     in_backtick: bool,
     in_line_comment: bool,
     in_block_comment: bool,
+    dollar_quote_tag: Option<String>,
     previous: Option<char>,
 }
 
 impl SqlStatementSplitter {
     fn push_chunk(&mut self, chunk: &str) -> Vec<String> {
         let mut statements = Vec::new();
-        let mut chars = chunk.chars().peekable();
+        let chars = chunk.chars().collect::<Vec<_>>();
+        let mut i = 0;
 
-        while let Some(ch) = chars.next() {
-            let next = chars.peek().copied();
+        while i < chars.len() {
+            if let Some(tag) = &self.dollar_quote_tag {
+                let tag_chars = tag.chars().collect::<Vec<_>>();
+                if starts_with_chars(&chars, i, &tag_chars) {
+                    for tag_ch in &tag_chars {
+                        self.buffer.push(*tag_ch);
+                        self.previous = Some(*tag_ch);
+                    }
+                    i += tag_chars.len();
+                    self.dollar_quote_tag = None;
+                    continue;
+                }
+
+                let ch = chars[i];
+                self.buffer.push(ch);
+                self.previous = Some(ch);
+                i += 1;
+                continue;
+            }
+
+            let ch = chars[i];
+            let next = chars.get(i + 1).copied();
 
             if self.in_line_comment {
                 self.buffer.push(ch);
@@ -100,6 +122,7 @@ impl SqlStatementSplitter {
                     self.in_line_comment = false;
                 }
                 self.previous = Some(ch);
+                i += 1;
                 continue;
             }
 
@@ -109,6 +132,7 @@ impl SqlStatementSplitter {
                     self.in_block_comment = false;
                 }
                 self.previous = Some(ch);
+                i += 1;
                 continue;
             }
 
@@ -117,24 +141,37 @@ impl SqlStatementSplitter {
                     self.in_line_comment = true;
                     self.buffer.push(ch);
                     self.previous = Some(ch);
+                    i += 1;
                     continue;
                 }
                 if self.previous == Some('/') && ch == '*' {
                     self.in_block_comment = true;
                     self.buffer.push(ch);
                     self.previous = Some(ch);
+                    i += 1;
                     continue;
                 }
                 if ch == '-' && next == Some('-') {
                     self.in_line_comment = true;
                     self.buffer.push(ch);
                     self.previous = Some(ch);
+                    i += 1;
                     continue;
                 }
                 if ch == '/' && next == Some('*') {
                     self.in_block_comment = true;
                     self.buffer.push(ch);
                     self.previous = Some(ch);
+                    i += 1;
+                    continue;
+                }
+                if let Some(tag) = dollar_quote_tag_at(&chars, i) {
+                    for tag_ch in tag.chars() {
+                        self.buffer.push(tag_ch);
+                        self.previous = Some(tag_ch);
+                    }
+                    i += tag.chars().count();
+                    self.dollar_quote_tag = Some(tag);
                     continue;
                 }
             }
@@ -165,6 +202,7 @@ impl SqlStatementSplitter {
             }
 
             self.previous = Some(ch);
+            i += 1;
         }
 
         statements
@@ -186,20 +224,52 @@ impl SqlStatementSplitter {
     }
 }
 
+fn starts_with_chars(chars: &[char], start: usize, needle: &[char]) -> bool {
+    start + needle.len() <= chars.len() && chars[start..start + needle.len()] == *needle
+}
+
+fn dollar_quote_tag_at(chars: &[char], start: usize) -> Option<String> {
+    if chars.get(start) != Some(&'$') {
+        return None;
+    }
+
+    match chars.get(start + 1) {
+        Some('$') => return Some("$$".to_string()),
+        Some(ch) if ch.is_ascii_alphabetic() || *ch == '_' => {}
+        _ => return None,
+    }
+
+    let mut end = start + 2;
+    while let Some(ch) = chars.get(end) {
+        if *ch == '$' {
+            return Some(chars[start..=end].iter().collect());
+        }
+        if !ch.is_ascii_alphanumeric() && *ch != '_' {
+            return None;
+        }
+        end += 1;
+    }
+
+    None
+}
+
 fn has_executable_sql(statement: &str) -> bool {
-    let mut chars = statement.chars().peekable();
+    let chars = statement.chars().collect::<Vec<_>>();
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut previous = None;
+    let mut i = 0;
 
-    while let Some(ch) = chars.next() {
-        let next = chars.peek().copied();
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied();
 
         if in_line_comment {
             if ch == '\n' {
                 in_line_comment = false;
             }
             previous = Some(ch);
+            i += 1;
             continue;
         }
 
@@ -208,18 +278,24 @@ fn has_executable_sql(statement: &str) -> bool {
                 in_block_comment = false;
             }
             previous = Some(ch);
+            i += 1;
             continue;
         }
 
         if ch == '-' && next == Some('-') {
             in_line_comment = true;
             previous = Some(ch);
+            i += 1;
             continue;
         }
 
         if ch == '/' && next == Some('*') {
+            if is_mysql_executable_comment_start(&chars, i) {
+                return true;
+            }
             in_block_comment = true;
             previous = Some(ch);
+            i += 1;
             continue;
         }
 
@@ -228,9 +304,17 @@ fn has_executable_sql(statement: &str) -> bool {
         }
 
         previous = Some(ch);
+        i += 1;
     }
 
     false
+}
+
+fn is_mysql_executable_comment_start(chars: &[char], start: usize) -> bool {
+    chars.get(start) == Some(&'/')
+        && chars.get(start + 1) == Some(&'*')
+        && (chars.get(start + 2) == Some(&'!')
+            || (chars.get(start + 2) == Some(&'M') && chars.get(start + 3) == Some(&'!')))
 }
 
 #[tauri::command]
@@ -852,6 +936,41 @@ mod tests {
         assert_eq!(
             split_sql_script("CREATE TABLE a(id int); -- done\n/* no more sql */").unwrap(),
             vec!["CREATE TABLE a(id int)"]
+        );
+    }
+
+    #[test]
+    fn keeps_postgres_dollar_quoted_function_body_together() {
+        let sql = "\
+            CREATE FUNCTION bump_counter()\n\
+            RETURNS trigger AS $$\n\
+            BEGIN\n\
+              PERFORM 1;\n\
+              RETURN NEW;\n\
+            END;\n\
+            $$ LANGUAGE plpgsql;\n\
+            SELECT 1;";
+
+        assert_eq!(
+            split_sql_script(sql).unwrap(),
+            vec![
+                "CREATE FUNCTION bump_counter()\nRETURNS trigger AS $$\nBEGIN\nPERFORM 1;\nRETURN NEW;\nEND;\n$$ LANGUAGE plpgsql",
+                "SELECT 1",
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_mysql_executable_comments_as_statements() {
+        assert_eq!(
+            split_sql_script(
+                "/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;\nSELECT 1;",
+            )
+            .unwrap(),
+            vec![
+                "/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */",
+                "SELECT 1",
+            ]
         );
     }
 }
