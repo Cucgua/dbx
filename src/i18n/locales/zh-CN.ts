@@ -218,6 +218,7 @@ export default {
     readonlyId: "_id 只读",
     invalidJsonValue: "当前单元格不是合法 JSON 值",
     duplicateField: "字段名重复：{field}",
+    edit: "编辑",
   },
   history: {
     title: "查询历史",

@@ -186,7 +186,7 @@ impl ConnectionConfig {
     fn normalized_url_params(&self) -> String {
         let value = self.url_params.as_deref().unwrap_or("").trim();
         match self.db_type {
-            DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => {
+            DatabaseType::Mysql => {
                 let base = "ssl-mode=preferred&charset=utf8mb4";
                 if value.is_empty() {
                     base.to_string()
@@ -197,6 +197,10 @@ impl ConnectionConfig {
                     let v = value.trim_start_matches('?');
                     if v.contains("charset=") { format!("ssl-mode=preferred&{v}") } else { format!("{base}&{v}") }
                 }
+            }
+            DatabaseType::Doris | DatabaseType::StarRocks => {
+                let v = value.trim_start_matches('?');
+                if v.is_empty() { "ssl-mode=disabled".to_string() } else { v.to_string() }
             }
             DatabaseType::Postgres | DatabaseType::Redshift => value.trim_start_matches('?').to_string(),
             _ => value.trim_start_matches('?').to_string(),

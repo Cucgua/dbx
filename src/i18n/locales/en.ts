@@ -213,6 +213,7 @@ export default {
     readonlyId: "_id is read-only",
     invalidJsonValue: "This cell is not a valid JSON value",
     duplicateField: "Duplicate field name: {field}",
+    edit: "Edit",
   },
   history: {
     title: "History",

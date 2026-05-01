@@ -322,7 +322,7 @@ onMounted(load);
     <!-- Document list (left) -->
     <Pane :size="30" :min-size="15" :max-size="50">
       <div class="h-full flex flex-col overflow-hidden">
-      <div class="flex items-center gap-1 px-3 py-1.5 border-b shrink-0 text-xs text-muted-foreground">
+      <div class="h-9 flex items-center gap-1 px-3 border-b shrink-0 text-xs text-muted-foreground">
         <span>{{ t('mongo.documents', { count: total }) }}</span>
         <span class="flex-1" />
         <Button variant="ghost" size="icon" class="h-5 w-5" @click="startNew"><Plus class="h-3 w-3" /></Button>
@@ -364,10 +364,10 @@ onMounted(load);
     <Pane :size="70">
     <div class="h-full flex flex-col min-w-0 overflow-hidden">
       <template v-if="selectedIdx !== null || isNew">
-        <div class="flex items-center gap-2 px-4 py-2 border-b bg-muted/30 shrink-0">
+        <div class="h-9 flex items-center gap-2 px-4 border-b bg-muted/30 shrink-0">
           <Badge variant="secondary" class="text-xs">{{ isNew ? 'New' : selectedDoc?._id }}</Badge>
           <span class="flex-1" />
-          <Button v-if="!isEditing" variant="ghost" size="sm" class="h-6 text-xs" @click="startEdit">Edit</Button>
+          <Button v-if="!isEditing" variant="ghost" size="sm" class="h-6 text-xs" @click="startEdit">{{ t('mongo.edit') }}</Button>
           <template v-if="isEditing">
             <Button variant="ghost" size="sm" class="h-6 text-xs" @click="addField">
               <Plus class="w-3 h-3 mr-1" /> {{ t('mongo.addField') }}

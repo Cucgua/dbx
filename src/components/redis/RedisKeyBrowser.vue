@@ -87,7 +87,7 @@ onMounted(loadKeys);
     <Pane :size="30" :min-size="15" :max-size="50">
     <div class="h-full flex flex-col overflow-hidden">
       <!-- Search bar -->
-      <div class="flex items-center gap-1 px-2 py-1.5 border-b shrink-0">
+      <div class="h-9 flex items-center gap-1 px-2 border-b shrink-0">
         <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         <Input
           v-model="searchPattern"
@@ -102,7 +102,7 @@ onMounted(loadKeys);
       </div>
 
       <!-- Key count -->
-      <div class="px-3 py-1 text-xs text-muted-foreground border-b shrink-0">
+      <div class="h-9 flex items-center px-3 text-xs text-muted-foreground border-b shrink-0">
         {{ loading && keys.length === 0 ? t('redis.loadingKeys') : t('redis.keys', { count: keys.length }) }}
       </div>
 
