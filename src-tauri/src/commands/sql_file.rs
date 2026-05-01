@@ -15,6 +15,13 @@ use crate::commands::query::execute_sql_statement;
 static SQL_FILE_EXECUTIONS: std::sync::LazyLock<RwLock<HashMap<String, CancellationToken>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
+#[derive(Debug)]
+struct StatementErrorDecision {
+    progress: Vec<SqlFileProgress>,
+    failure_count: usize,
+    result: Result<bool, String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SqlFileRequest {
@@ -214,10 +221,10 @@ pub async fn execute_sql_file(
     request: SqlFileRequest,
 ) -> Result<(), String> {
     let token = CancellationToken::new();
-    SQL_FILE_EXECUTIONS
-        .write()
-        .await
-        .insert(request.execution_id.clone(), token.clone());
+    {
+        let mut executions = SQL_FILE_EXECUTIONS.write().await;
+        register_sql_file_execution(&mut executions, request.execution_id.clone(), token.clone())?;
+    }
 
     let started_at = Instant::now();
     emit_progress(
@@ -234,10 +241,10 @@ pub async fn execute_sql_file(
     );
 
     let result = execute_sql_file_inner(&app, &state, &request, token, started_at).await;
-    SQL_FILE_EXECUTIONS
-        .write()
-        .await
-        .remove(&request.execution_id);
+    {
+        let mut executions = SQL_FILE_EXECUTIONS.write().await;
+        remove_sql_file_execution(&mut executions, &request.execution_id);
+    }
     result
 }
 
@@ -450,54 +457,117 @@ async fn execute_statement_with_progress(
             Ok(false)
         }
         Err(error) => {
-            *failure_count += 1;
-            emit_progress(
-                app,
+            let decision = statement_error_decision(
                 &request.execution_id,
-                SqlFileStatus::StatementFailed,
+                token,
+                request.continue_on_error,
+                started_at,
                 statement_index,
                 *success_count,
                 *failure_count,
                 *affected_rows,
-                started_at,
                 &summary,
-                Some(error.clone()),
+                error,
             );
 
-            if token.is_cancelled() {
-                emit_progress(
-                    app,
-                    &request.execution_id,
-                    SqlFileStatus::Cancelled,
-                    statement_index,
-                    *success_count,
-                    *failure_count,
-                    *affected_rows,
-                    started_at,
-                    &summary,
-                    Some(error),
-                );
-                return Ok(true);
+            *failure_count = decision.failure_count;
+            for progress in decision.progress {
+                let _ = app.emit("sql-file-progress", progress);
             }
-
-            if request.continue_on_error {
-                Ok(false)
-            } else {
-                emit_progress(
-                    app,
-                    &request.execution_id,
-                    SqlFileStatus::Error,
-                    statement_index,
-                    *success_count,
-                    *failure_count,
-                    *affected_rows,
-                    started_at,
-                    &summary,
-                    Some(error),
-                );
-                Ok(true)
-            }
+            decision.result
         }
+    }
+}
+
+fn register_sql_file_execution(
+    executions: &mut HashMap<String, CancellationToken>,
+    execution_id: String,
+    token: CancellationToken,
+) -> Result<(), String> {
+    if executions.contains_key(&execution_id) {
+        return Err(format!(
+            "SQL file execution '{execution_id}' already exists"
+        ));
+    }
+
+    executions.insert(execution_id, token);
+    Ok(())
+}
+
+fn remove_sql_file_execution(
+    executions: &mut HashMap<String, CancellationToken>,
+    execution_id: &str,
+) {
+    executions.remove(execution_id);
+}
+
+fn statement_error_decision(
+    execution_id: &str,
+    token: &CancellationToken,
+    continue_on_error: bool,
+    started_at: Instant,
+    statement_index: usize,
+    success_count: usize,
+    failure_count: usize,
+    affected_rows: u64,
+    summary: &str,
+    error: String,
+) -> StatementErrorDecision {
+    if token.is_cancelled() {
+        return StatementErrorDecision {
+            progress: vec![sql_file_progress(
+                execution_id,
+                SqlFileStatus::Cancelled,
+                statement_index,
+                success_count,
+                failure_count,
+                affected_rows,
+                started_at,
+                summary,
+                Some(error),
+            )],
+            failure_count,
+            result: Ok(true),
+        };
+    }
+
+    let failure_count = failure_count + 1;
+    let statement_failed = sql_file_progress(
+        execution_id,
+        SqlFileStatus::StatementFailed,
+        statement_index,
+        success_count,
+        failure_count,
+        affected_rows,
+        started_at,
+        summary,
+        Some(error.clone()),
+    );
+
+    if continue_on_error {
+        return StatementErrorDecision {
+            progress: vec![statement_failed],
+            failure_count,
+            result: Ok(false),
+        };
+    }
+
+    let terminal_error = sql_file_progress(
+        execution_id,
+        SqlFileStatus::Error,
+        statement_index,
+        success_count,
+        failure_count,
+        affected_rows,
+        started_at,
+        summary,
+        Some(error.clone()),
+    );
+
+    StatementErrorDecision {
+        progress: vec![statement_failed, terminal_error],
+        failure_count,
+        result: Err(error),
     }
 }
 
@@ -807,5 +877,100 @@ mod execution_tests {
         assert_eq!(progress.affected_rows, 17);
         assert_eq!(progress.statement_summary, "");
         assert_eq!(progress.error, Some("read failed".to_string()));
+    }
+
+    #[test]
+    fn duplicate_execution_id_is_rejected_without_replacing_token() {
+        let mut executions = HashMap::new();
+        let original = CancellationToken::new();
+        let replacement = CancellationToken::new();
+        executions.insert("dup".to_string(), original.clone());
+
+        let result =
+            register_sql_file_execution(&mut executions, "dup".to_string(), replacement.clone());
+
+        assert_eq!(
+            result.unwrap_err(),
+            "SQL file execution 'dup' already exists"
+        );
+        assert_eq!(executions.len(), 1);
+
+        executions.get("dup").unwrap().cancel();
+        assert!(original.is_cancelled());
+        assert!(!replacement.is_cancelled());
+    }
+
+    #[test]
+    fn stop_on_error_returns_err_with_terminal_error_progress() {
+        let decision = statement_error_decision(
+            "exec-1",
+            &CancellationToken::new(),
+            false,
+            Instant::now(),
+            3,
+            1,
+            0,
+            5,
+            "bad statement",
+            "syntax error".to_string(),
+        );
+
+        assert_eq!(decision.failure_count, 1);
+        assert_eq!(decision.result, Err("syntax error".to_string()));
+        assert_eq!(decision.progress.len(), 2);
+        assert_eq!(decision.progress[0].status, SqlFileStatus::StatementFailed);
+        assert_eq!(decision.progress[1].status, SqlFileStatus::Error);
+        assert_eq!(decision.progress[1].error, Some("syntax error".to_string()));
+    }
+
+    #[test]
+    fn cancelled_in_flight_error_does_not_increment_failure_count() {
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let decision = statement_error_decision(
+            "exec-1",
+            &token,
+            false,
+            Instant::now(),
+            2,
+            1,
+            4,
+            9,
+            "slow statement",
+            "Query canceled".to_string(),
+        );
+
+        assert_eq!(decision.failure_count, 4);
+        assert_eq!(decision.result, Ok(true));
+        assert_eq!(decision.progress.len(), 1);
+        assert_eq!(decision.progress[0].status, SqlFileStatus::Cancelled);
+        assert_eq!(decision.progress[0].failure_count, 4);
+    }
+
+    #[test]
+    fn progress_payload_serializes_camel_case_status() {
+        let progress = sql_file_progress(
+            "exec-1",
+            SqlFileStatus::StatementDone,
+            1,
+            1,
+            0,
+            3,
+            Instant::now(),
+            "select 1",
+            None,
+        );
+
+        let value = serde_json::to_value(progress).unwrap();
+
+        assert_eq!(value["executionId"], "exec-1");
+        assert_eq!(value["statementIndex"], 1);
+        assert_eq!(value["successCount"], 1);
+        assert_eq!(value["failureCount"], 0);
+        assert_eq!(value["affectedRows"], 3);
+        assert_eq!(value["statementSummary"], "select 1");
+        assert_eq!(value["status"], "statementDone");
+        assert!(value.get("execution_id").is_none());
     }
 }
