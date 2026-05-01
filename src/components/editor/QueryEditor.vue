@@ -160,7 +160,7 @@ onMounted(async () => {
   const [
     { EditorView, keymap },
     { EditorState, Compartment },
-    { sql, MySQL, PostgreSQL },
+    { sql, MySQL, PostgreSQL, SQLDialect },
     { basicSetup },
     { oneDark },
     { autocompletion, startCompletion },
@@ -175,7 +175,12 @@ onMounted(async () => {
   editorViewModule = { EditorView, keymap } as typeof import("@codemirror/view");
   fontSizeTheme = new Compartment();
 
-  const dialect = props.dialect === "postgres" ? PostgreSQL : MySQL;
+  const baseDialect = props.dialect === "postgres" ? PostgreSQL : MySQL;
+  const extraKeywords = "PIVOT UNPIVOT EXCLUDE REPLACE QUALIFY ASOF POSITIONAL ANTI SEMI SAMPLE TABLESAMPLE STRUCT MAP LIST ARRAY LAMBDA UNNEST LATERAL FILTER RECURSIVE SUMMARIZE PRAGMA READ_CSV READ_PARQUET READ_JSON DESCRIBE SHOW COPY EXPORT IMPORT";
+  const dialect = SQLDialect.define({
+    ...baseDialect.spec,
+    keywords: (baseDialect.spec.keywords || "") + " " + extraKeywords,
+  });
 
   const runKeymap = keymap.of([
     {
