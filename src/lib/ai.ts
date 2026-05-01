@@ -1,6 +1,7 @@
 import type { AiConfig } from "@/stores/settingsStore";
 import type { ColumnInfo, ConnectionConfig, DatabaseType, QueryResult, QueryTab } from "@/types/database";
 import * as api from "@/lib/tauri";
+import { currentLocale } from "@/i18n";
 
 export type AiAction = "generate" | "explain" | "optimize" | "fix" | "convert" | "sampleData";
 
@@ -107,13 +108,33 @@ export function buildSystemPrompt(action: AiAction, context: AiContext): string 
     : "";
   const lastError = context.lastError ? `\nLast error:\n${context.lastError}\n` : "";
 
+  const isZh = currentLocale() === "zh-CN";
+
   return [
-    "You are DBX's built-in database assistant.",
-    "Be precise, conservative, and adapt SQL to the active database dialect.",
-    "Never invent tables or columns that are not present in the schema context unless the user explicitly asks for hypothetical examples.",
-    "For destructive statements such as DROP, DELETE, TRUNCATE, ALTER, or UPDATE without a clear WHERE clause, warn briefly and prefer a safer SELECT preview when appropriate.",
-    "When returning SQL, put the SQL in a fenced ```sql code block. Keep extra explanation short and practical.",
-    action === "generate" ? "For generate actions, return the SQL first and avoid long explanations." : "",
+    isZh
+      ? "你是 DBX 内置的数据库助手。用中文回复。"
+      : "You are DBX's built-in database assistant. Reply in English.",
+    isZh
+      ? "精确、保守，根据当前数据库方言生成 SQL。"
+      : "Be precise, conservative, and adapt SQL to the active database dialect.",
+    isZh
+      ? "下面的 Schema 上下文已包含表和列信息，直接使用即可。不要查询 information_schema 或系统表来获取结构信息，直接针对用户的实际表编写查询。"
+      : "The schema context below already contains table and column information — use it directly. Do NOT query information_schema or system tables to discover schema; write queries against the user's actual tables.",
+    isZh
+      ? "当用户要求分析或查看某个表时，生成 SELECT 查询获取数据，而不是查询元数据。"
+      : "When the user asks to 'analyze' or 'look at' a table, generate a SELECT query to retrieve data, not a metadata query.",
+    isZh
+      ? "不要编造 Schema 中不存在的表或列，除非用户明确要求假设示例。"
+      : "Never invent tables or columns that are not present in the schema context unless the user explicitly asks for hypothetical examples.",
+    isZh
+      ? "对于 DROP、DELETE、TRUNCATE、ALTER 或没有 WHERE 子句的 UPDATE 等危险语句，简要警告并优先提供安全的 SELECT 预览。"
+      : "For destructive statements such as DROP, DELETE, TRUNCATE, ALTER, or UPDATE without a clear WHERE clause, warn briefly and prefer a safer SELECT preview when appropriate.",
+    isZh
+      ? "返回 SQL 时放在 ```sql 代码块中。额外说明简短实用即可。"
+      : "When returning SQL, put the SQL in a fenced ```sql code block. Keep extra explanation short and practical.",
+    action === "generate"
+      ? (isZh ? "生成操作优先返回 SQL，避免长篇解释。" : "For generate actions, return the SQL first and avoid long explanations.")
+      : "",
     "",
     `Database type: ${context.databaseType}`,
     `Connection: ${context.connectionName}`,
@@ -150,7 +171,7 @@ export async function buildAiContext(
   connection: ConnectionConfig,
   options: { maxTables?: number; maxColumnsPerTable?: number } = {},
 ): Promise<AiContext> {
-  const maxTables = options.maxTables ?? 12;
+  const maxTables = options.maxTables ?? 50;
   const maxColumnsPerTable = options.maxColumnsPerTable ?? 40;
   const tables: AiSchemaTable[] = [];
   let truncated = false;
