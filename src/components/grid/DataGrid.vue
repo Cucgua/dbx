@@ -1113,7 +1113,7 @@ function escapeAndHighlightKeywords(s: string): string {
               v-if="showCellDetail && activeCellDetail"
               class="relative w-80 shrink-0 border-l flex flex-col bg-background min-w-0"
             >
-              <div class="flex items-center gap-2 px-3 py-1.5 border-b shrink-0 bg-muted/20">
+              <div class="h-9 flex items-center gap-2 px-3 border-b shrink-0 bg-muted/20">
                 <Info class="w-3.5 h-3.5 text-muted-foreground" />
                 <span class="text-xs font-medium flex-1 min-w-0 truncate">{{ t('grid.cellDetails') }}</span>
                 <Button variant="ghost" size="icon" class="h-5 w-5" @click="showCellDetail = false">
