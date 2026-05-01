@@ -298,7 +298,10 @@ async function cancelExecution() {
   cancelling.value = true;
   if (!executionStarted.value) return;
   try {
-    await cancelSqlFileExecution(executionId.value);
+    const cancelled = await cancelSqlFileExecution(executionId.value);
+    if (!cancelled) {
+      throw new Error("Cancel request was not accepted");
+    }
   } catch (e: any) {
     cancelRequested.value = false;
     cancelling.value = false;
