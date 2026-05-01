@@ -33,6 +33,8 @@ const props = defineProps<{
   depth: number;
 }>();
 
+const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
+
 function quoteIdent(name: string): string {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return config?.db_type === "mysql"
@@ -344,6 +346,10 @@ function openSqlFileExecution() {
 
 const canExpand = !leafTypes.has(props.node.type);
 const canPin = computed(() => pinnableTypes.has(props.node.type));
+const canOpenSqlFileExecution = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return !!config && !sqlFileUnsupportedTypes.has(config.db_type);
+});
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));
 const hasTypeMenu = computed(() => {
   const t = props.node.type;
@@ -453,7 +459,7 @@ async function showMore() {
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t('contextMenu.newQuery') }}
         </ContextMenuItem>
-        <ContextMenuItem @click="openSqlFileExecution">
+        <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
           <FileCode class="w-4 h-4" /> {{ t('sqlFile.title') }}
         </ContextMenuItem>
         <ContextMenuSeparator />
@@ -473,7 +479,7 @@ async function showMore() {
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t('contextMenu.newQuery') }}
         </ContextMenuItem>
-        <ContextMenuItem @click="openSqlFileExecution">
+        <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
           <FileCode class="w-4 h-4" /> {{ t('sqlFile.title') }}
         </ContextMenuItem>
         <ContextMenuItem @click="refresh">

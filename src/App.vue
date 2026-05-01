@@ -130,6 +130,11 @@ const updateInfo = ref<api.UpdateInfo | null>(null);
 const updateCheckMessage = ref("");
 const appVersion = ref("");
 const latestReleaseUrl = "https://github.com/t8y2/dbx/releases/latest";
+const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
+
+const hasSqlFileConnections = computed(() =>
+  connectionStore.connections.some((connection) => !sqlFileUnsupportedTypes.has(connection.db_type))
+);
 
 const editConfig = computed(() => {
   const id = connectionStore.editingConnectionId;
@@ -712,7 +717,7 @@ async function setupFileDrop() {
           {{ t('transfer.dataTransfer') }}
         </Button>
 
-        <Button variant="ghost" size="sm" class="h-7 px-2 text-xs gap-1" @click="showSqlFileDialog = true" :disabled="!connectionStore.connections.length">
+        <Button variant="ghost" size="sm" class="h-7 px-2 text-xs gap-1" @click="showSqlFileDialog = true" :disabled="!hasSqlFileConnections">
           <FileCode class="h-3.5 w-3.5" />
           {{ t('sqlFile.title') }}
         </Button>
