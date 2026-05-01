@@ -1,9 +1,146 @@
 use std::collections::HashMap;
-use tokio::process::{Child, Command};
+use std::sync::Arc;
+
+use russh::client::{self, Config, Handle};
+use russh::keys::{key::PrivateKeyWithHashAlg, load_secret_key};
+use russh::ChannelMsg;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+
+struct SshClient;
+
+impl client::Handler for SshClient {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &russh::keys::ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
+
+async fn connect_and_authenticate(
+    ssh_host: &str,
+    ssh_port: u16,
+    ssh_user: &str,
+    ssh_password: &str,
+    ssh_key_path: &str,
+) -> Result<Handle<SshClient>, String> {
+    let config = Arc::new(Config {
+        nodelay: true,
+        ..Default::default()
+    });
+
+    let mut session = client::connect(config, (ssh_host, ssh_port), SshClient {})
+        .await
+        .map_err(|e| format!("SSH connection failed: {e}"))?;
+
+    if !ssh_key_path.is_empty() {
+        let key_pair = load_secret_key(ssh_key_path, None)
+            .map_err(|e| format!("Failed to load SSH key: {e}"))?;
+        let auth_res = session
+            .authenticate_publickey(
+                ssh_user,
+                PrivateKeyWithHashAlg::new(
+                    Arc::new(key_pair),
+                    session
+                        .best_supported_rsa_hash()
+                        .await
+                        .ok()
+                        .flatten()
+                        .flatten(),
+                ),
+            )
+            .await
+            .map_err(|e| format!("SSH key auth failed: {e}"))?;
+        if !auth_res.success() {
+            return Err("SSH public key authentication failed".to_string());
+        }
+    } else if !ssh_password.is_empty() {
+        let auth_res = session
+            .authenticate_password(ssh_user, ssh_password)
+            .await
+            .map_err(|e| format!("SSH password auth failed: {e}"))?;
+        if !auth_res.success() {
+            return Err("SSH password authentication failed".to_string());
+        }
+    } else {
+        return Err("No SSH password or key provided".to_string());
+    }
+
+    Ok(session)
+}
+
+async fn forward_loop(
+    session: Handle<SshClient>,
+    listener: TcpListener,
+    remote_host: String,
+    remote_port: u16,
+) {
+    loop {
+        let (mut stream, peer_addr) = match listener.accept().await {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+
+        let mut channel = match session
+            .channel_open_direct_tcpip(
+                &remote_host,
+                remote_port.into(),
+                peer_addr.ip().to_string(),
+                peer_addr.port().into(),
+            )
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("SSH direct-tcpip failed: {e}");
+                continue;
+            }
+        };
+
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; 65536];
+            let mut stream_closed = false;
+
+            loop {
+                tokio::select! {
+                    r = stream.read(&mut buf), if !stream_closed => {
+                        match r {
+                            Ok(0) => {
+                                stream_closed = true;
+                                let _ = channel.eof().await;
+                            }
+                            Ok(n) => {
+                                if channel.data(&buf[..n]).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    msg = channel.wait() => {
+                        match msg {
+                            Some(ChannelMsg::Data { ref data }) => {
+                                if stream.write_all(data).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Some(ChannelMsg::Eof) | None => break,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
 
 pub struct TunnelManager {
-    tunnels: Mutex<HashMap<String, (Child, u16)>>,
+    tunnels: Mutex<HashMap<String, (JoinHandle<()>, u16)>>,
 }
 
 impl TunnelManager {
@@ -26,55 +163,21 @@ impl TunnelManager {
     ) -> Result<u16, String> {
         let local_port = portpicker::pick_unused_port().ok_or("No available port")?;
 
-        let mut ssh_args = vec![
-            "-N".to_string(),
-            "-o".to_string(), "StrictHostKeyChecking=no".to_string(),
-            "-o".to_string(), "ServerAliveInterval=60".to_string(),
-            "-L".to_string(), format!("{local_port}:{remote_host}:{remote_port}"),
-            "-p".to_string(), ssh_port.to_string(),
-        ];
+        let session =
+            connect_and_authenticate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_path)
+                .await?;
 
-        if !ssh_key_path.is_empty() {
-            ssh_args.push("-i".to_string());
-            ssh_args.push(ssh_key_path.to_string());
-        }
+        let listener = TcpListener::bind(("127.0.0.1", local_port))
+            .await
+            .map_err(|e| format!("Failed to bind local port: {e}"))?;
 
-        ssh_args.push(format!("{ssh_user}@{ssh_host}"));
-
-        let child = if !ssh_password.is_empty() && ssh_key_path.is_empty() {
-            Command::new("sshpass")
-                .arg("-p").arg(ssh_password)
-                .arg("ssh")
-                .args(&ssh_args)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        "SSH password auth requires 'sshpass'. Install it: brew install sshpass (macOS) / apt install sshpass (Linux)".to_string()
-                    } else {
-                        format!("Failed to start SSH tunnel: {e}")
-                    }
-                })?
-        } else {
-            Command::new("ssh")
-                .args(&ssh_args)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .map_err(|e| format!("Failed to start SSH tunnel: {e}"))?
-        };
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+        let remote_host = remote_host.to_string();
+        let handle = tokio::spawn(forward_loop(session, listener, remote_host, remote_port));
 
         self.tunnels
             .lock()
             .await
-            .insert(connection_id.to_string(), (child, local_port));
+            .insert(connection_id.to_string(), (handle, local_port));
 
         Ok(local_port)
     }
@@ -88,8 +191,8 @@ impl TunnelManager {
     }
 
     pub async fn stop_tunnel(&self, connection_id: &str) {
-        if let Some((mut child, _)) = self.tunnels.lock().await.remove(connection_id) {
-            let _ = child.kill().await;
+        if let Some((handle, _)) = self.tunnels.lock().await.remove(connection_id) {
+            handle.abort();
         }
     }
 }
