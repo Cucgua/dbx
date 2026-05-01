@@ -940,7 +940,7 @@ async function setupFileDrop() {
                 </Pane>
                 <Pane :size="60" :min-size="20">
                   <div class="h-full flex flex-col">
-                    <DataGrid v-if="activeTab.result" :key="activeTab.id" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.lastExecutedSql || activeTab.sql" />
+                    <DataGrid v-if="activeTab.result" :key="activeTab.id" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.lastExecutedSql || activeTab.sql" :loading="activeTab.isExecuting" />
                     <div v-else-if="activeTab.isExecuting" class="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
                       <div class="flex items-center">
                         <Loader2 class="h-5 w-5 animate-spin mr-2" />
@@ -963,6 +963,7 @@ async function setupFileDrop() {
                   :key="activeTab.id"
                   :result="activeTab.result"
                   :sql="activeTab.sql"
+                  :loading="activeTab.isExecuting"
                   :editable="!!activeTab.tableMeta?.primaryKeys?.length"
                   :database-type="activeConnection?.db_type"
                   :connection-id="activeTab.connectionId"

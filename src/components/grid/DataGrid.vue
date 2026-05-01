@@ -42,6 +42,7 @@ const props = defineProps<{
     columns: ColumnInfo[];
     primaryKeys: string[];
   };
+  loading?: boolean;
   onExecuteSql?: (sql: string) => Promise<void>;
 }>();
 
@@ -995,6 +996,7 @@ function escapeAndHighlightKeywords(s: string): string {
       </template>
 
       <span class="ml-auto flex items-center gap-1">
+        <Loader2 v-if="loading" class="w-3 h-3 animate-spin text-muted-foreground" />
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
             <Button variant="ghost" size="sm" class="h-5 text-xs px-1.5">
