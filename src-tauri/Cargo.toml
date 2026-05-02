@@ -17,7 +17,7 @@ tauri-build = { version = "2.5.6", features = [] }
 
 [profile.release]
 strip = true
-lto = true
+lto = "thin"
 codegen-units = 1
 opt-level = "s"
 
