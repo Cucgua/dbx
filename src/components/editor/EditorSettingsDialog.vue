@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, shallowRef, computed } from "vue";
+import type { EditorView as EditorViewType } from "@codemirror/view";
+import type { Extension } from "@codemirror/state";
 import { useI18n } from "vue-i18n";
 import { Settings } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -68,11 +70,151 @@ function onFontFamilyChange(v: any) {
 function onThemeChange(v: any) {
   if (typeof v === 'string') editTheme.value = v as EditorTheme;
 }
+
+// ---------- CodeMirror preview ----------
+const previewRef = ref<HTMLDivElement>();
+const previewView = shallowRef<EditorViewType | null>(null);
+
+// Reactive settings computed for the preview
+const previewSettings = computed(() => ({
+  fontFamily: editFontFamily.value,
+  fontSize: editFontSize.value,
+  theme: editTheme.value,
+}));
+
+async function loadTheme(theme: EditorTheme): Promise<Extension> {
+  switch (theme) {
+    case "one-dark":
+      return (await import("@codemirror/theme-one-dark")).oneDark;
+    case "vscode-dark":
+      return (await import("@uiw/codemirror-theme-vscode")).vscodeDark;
+    case "vscode-light":
+      return (await import("@uiw/codemirror-theme-vscode")).vscodeLight;
+    case "nord":
+      return (await import("@uiw/codemirror-theme-nord")).nord;
+    case "okaidia":
+      return (await import("@uiw/codemirror-theme-okaidia")).okaidia;
+    case "material":
+      return (await import("@uiw/codemirror-theme-material")).materialDark;
+    case "duotone-light":
+      return (await import("@uiw/codemirror-theme-duotone")).duotoneLight;
+    case "duotone-dark":
+      return (await import("@uiw/codemirror-theme-duotone")).duotoneDark;
+    case "xcode":
+      return (await import("@uiw/codemirror-theme-xcode")).xcodeLight;
+    default:
+      return (await import("@codemirror/theme-one-dark")).oneDark;
+  }
+}
+
+const previewSql = `SELECT u.id, u.name
+FROM users u
+ORDER BY u.id LIMIT 5;`;
+
+let fontSizeComp: import("@codemirror/state").Compartment | null = null;
+let fontFamilyComp: import("@codemirror/state").Compartment | null = null;
+let themeComp: import("@codemirror/state").Compartment | null = null;
+let editorViewModule: typeof import("@codemirror/view") | null = null;
+
+watch(previewSettings, async (ss) => {
+  if (
+    !previewView.value ||
+    !fontSizeComp ||
+    !fontFamilyComp ||
+    !themeComp ||
+    !editorViewModule
+  ) return;
+
+  const themeExt = await loadTheme(ss.theme);
+  previewView.value.dispatch({
+    effects: [
+      themeComp.reconfigure(themeExt),
+      fontFamilyComp.reconfigure(
+        editorViewModule.EditorView.theme({
+          "&": { fontSize: `${ss.fontSize}px` },
+          ".cm-content": { fontFamily: ss.fontFamily },
+        })
+      ),
+      fontSizeComp.reconfigure(
+        editorViewModule.EditorView.theme({
+          "&": { fontSize: `${ss.fontSize}px` },
+          ".cm-content": { fontFamily: ss.fontFamily },
+        })
+      ),
+    ],
+  });
+}, { deep: true });
+
+let previewInitialized = false;
+
+watch(previewRef, async (el) => {
+  if (!el || previewInitialized) return;
+  previewInitialized = true;
+  if (previewView.value) return;
+
+  const [
+    { EditorView },
+    { EditorState, Compartment },
+    { sql, MySQL },
+    { basicSetup },
+  ] = await Promise.all([
+    import("@codemirror/view"),
+    import("@codemirror/state"),
+    import("@codemirror/lang-sql"),
+    import("codemirror"),
+  ]);
+
+  editorViewModule = { EditorView } as typeof import("@codemirror/view");
+  fontSizeComp = new Compartment();
+  fontFamilyComp = new Compartment();
+  themeComp = new Compartment();
+
+  const ss = previewSettings.value;
+  const themeExt = await loadTheme(ss.theme);
+
+  const state = EditorState.create({
+    doc: previewSql,
+    extensions: [
+      basicSetup,
+      sql({ dialect: MySQL }),
+      themeComp.of(themeExt),
+      fontSizeComp.of(
+        EditorView.theme({
+          "&": { fontSize: `${ss.fontSize}px` },
+          ".cm-scroller": { overflow: "auto" },
+          ".cm-content": { fontFamily: ss.fontFamily },
+        })
+      ),
+      fontFamilyComp.of(
+        EditorView.theme({
+          "&": { fontSize: `${ss.fontSize}px` },
+          ".cm-scroller": { overflow: "auto" },
+          ".cm-content": { fontFamily: ss.fontFamily },
+        })
+      ),
+    ],
+    readOnly: true,
+  });
+
+  previewView.value = new EditorView({ state, parent: previewRef.value });
+});
+
+watch(() => props.open, (open) => {
+  if (!open && previewView.value) {
+    previewView.value.destroy();
+    previewView.value = null;
+    previewInitialized = false;
+    fontSizeComp = null;
+    fontFamilyComp = null;
+    themeComp = null;
+    editorViewModule = null;
+  }
+});
 </script>
 
 <template>
   <Dialog :open="open" @update:open="(v: boolean) => emit('update:open', v)">
-    <DialogContent class="sm:max-w-[480px]">
+    <DialogContent class="sm:max-w-[720px] max-h-[calc(100vh-80px)] overflow-y-auto">
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <Settings class="h-4 w-4" />
@@ -99,9 +241,6 @@ function onThemeChange(v: any) {
               </SelectItem>
             </SelectContent>
           </Select>
-          <p class="text-xs text-muted-foreground leading-relaxed font-mono" :style="{ fontFamily: editFontFamily }">
-            SELECT * FROM users WHERE id = 1;
-          </p>
         </div>
 
         <Separator />
@@ -153,6 +292,19 @@ function onThemeChange(v: any) {
               </SelectItem>
             </SelectContent>
           </Select>
+        </div>
+
+        <Separator />
+
+        <!-- Live Preview -->
+        <div class="space-y-2">
+          <Label>{{ t('settings.preview') }}</Label>
+          <div
+            class="rounded-md border overflow-auto max-w-full"
+            :class="editTheme === 'vscode-light' || editTheme === 'duotone-light' || editTheme === 'xcode' ? 'border-border' : 'border-border/50'"
+          >
+            <div ref="previewRef" style="height: 160px; min-width: 100%" />
+          </div>
         </div>
       </div>
 

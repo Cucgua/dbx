@@ -367,5 +367,6 @@ export default {
     selectTheme: "Select theme...",
     apply: "Apply",
     resetDefaults: "Reset Defaults",
+    preview: "Live Preview",
   },
 };

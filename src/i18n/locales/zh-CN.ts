@@ -367,5 +367,6 @@ export default {
     selectTheme: "选择主题...",
     apply: "应用",
     resetDefaults: "恢复默认",
+    preview: "实时预览",
   },
 };
