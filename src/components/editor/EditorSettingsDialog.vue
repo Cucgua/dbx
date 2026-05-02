@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, shallowRef, computed } from "vue";
 import type { EditorView as EditorViewType } from "@codemirror/view";
-import type { Extension } from "@codemirror/state";
 import { useI18n } from "vue-i18n";
 import { Settings } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -13,7 +12,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { useSettingsStore, EDITOR_THEMES, FONT_FAMILIES, type EditorTheme } from "@/stores/settingsStore";
+import {
+  useSettingsStore, EDITOR_THEMES, FONT_FAMILIES, DEFAULT_EDITOR_SETTINGS,
+} from "@/stores/settingsStore";
+import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
@@ -58,9 +60,9 @@ function applySettings() {
 }
 
 function resetDefaults() {
-  editFontFamily.value = "'JetBrains Mono', 'Fira Code', monospace";
-  editFontSize.value = 13;
-  editTheme.value = "one-dark";
+  editFontFamily.value = DEFAULT_EDITOR_SETTINGS.fontFamily;
+  editFontSize.value = DEFAULT_EDITOR_SETTINGS.fontSize;
+  editTheme.value = DEFAULT_EDITOR_SETTINGS.theme;
 }
 
 function onFontFamilyChange(v: any) {
@@ -68,78 +70,36 @@ function onFontFamilyChange(v: any) {
 }
 
 function onThemeChange(v: any) {
-  if (typeof v === 'string') editTheme.value = v as EditorTheme;
+  if (typeof v === 'string') editTheme.value = v as typeof DEFAULT_EDITOR_SETTINGS.theme;
 }
 
 // ---------- CodeMirror preview ----------
 const previewRef = ref<HTMLDivElement>();
 const previewView = shallowRef<EditorViewType | null>(null);
 
-// Reactive settings computed for the preview
 const previewSettings = computed(() => ({
   fontFamily: editFontFamily.value,
   fontSize: editFontSize.value,
   theme: editTheme.value,
 }));
 
-async function loadTheme(theme: EditorTheme): Promise<Extension> {
-  switch (theme) {
-    case "one-dark":
-      return (await import("@codemirror/theme-one-dark")).oneDark;
-    case "vscode-dark":
-      return (await import("@uiw/codemirror-theme-vscode")).vscodeDark;
-    case "vscode-light":
-      return (await import("@uiw/codemirror-theme-vscode")).vscodeLight;
-    case "nord":
-      return (await import("@uiw/codemirror-theme-nord")).nord;
-    case "okaidia":
-      return (await import("@uiw/codemirror-theme-okaidia")).okaidia;
-    case "material":
-      return (await import("@uiw/codemirror-theme-material")).materialDark;
-    case "duotone-light":
-      return (await import("@uiw/codemirror-theme-duotone")).duotoneLight;
-    case "duotone-dark":
-      return (await import("@uiw/codemirror-theme-duotone")).duotoneDark;
-    case "xcode":
-      return (await import("@uiw/codemirror-theme-xcode")).xcodeLight;
-    default:
-      return (await import("@codemirror/theme-one-dark")).oneDark;
-  }
-}
-
 const previewSql = `SELECT u.id, u.name
 FROM users u
 ORDER BY u.id LIMIT 5;`;
 
-let fontSizeComp: import("@codemirror/state").Compartment | null = null;
-let fontFamilyComp: import("@codemirror/state").Compartment | null = null;
+let fontThemeComp: import("@codemirror/state").Compartment | null = null;
 let themeComp: import("@codemirror/state").Compartment | null = null;
 let editorViewModule: typeof import("@codemirror/view") | null = null;
 
 watch(previewSettings, async (ss) => {
-  if (
-    !previewView.value ||
-    !fontSizeComp ||
-    !fontFamilyComp ||
-    !themeComp ||
-    !editorViewModule
-  ) return;
+  if (!previewView.value || !fontThemeComp || !themeComp || !editorViewModule) return;
 
-  const themeExt = await loadTheme(ss.theme);
+  const themeExt = await loadEditorTheme(ss.theme);
   previewView.value.dispatch({
     effects: [
       themeComp.reconfigure(themeExt),
-      fontFamilyComp.reconfigure(
-        editorViewModule.EditorView.theme({
-          "&": { fontSize: `${ss.fontSize}px` },
-          ".cm-content": { fontFamily: ss.fontFamily },
-        })
-      ),
-      fontSizeComp.reconfigure(
-        editorViewModule.EditorView.theme({
-          "&": { fontSize: `${ss.fontSize}px` },
-          ".cm-content": { fontFamily: ss.fontFamily },
-        })
+      fontThemeComp.reconfigure(
+        editorFontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily)
       ),
     ],
   });
@@ -165,12 +125,11 @@ watch(previewRef, async (el) => {
   ]);
 
   editorViewModule = { EditorView } as typeof import("@codemirror/view");
-  fontSizeComp = new Compartment();
-  fontFamilyComp = new Compartment();
+  fontThemeComp = new Compartment();
   themeComp = new Compartment();
 
   const ss = previewSettings.value;
-  const themeExt = await loadTheme(ss.theme);
+  const themeExt = await loadEditorTheme(ss.theme);
 
   const state = EditorState.create({
     doc: previewSql,
@@ -178,22 +137,10 @@ watch(previewRef, async (el) => {
       basicSetup,
       sql({ dialect: MySQL }),
       themeComp.of(themeExt),
-      fontSizeComp.of(
-        EditorView.theme({
-          "&": { fontSize: `${ss.fontSize}px` },
-          ".cm-scroller": { overflow: "auto" },
-          ".cm-content": { fontFamily: ss.fontFamily },
-        })
-      ),
-      fontFamilyComp.of(
-        EditorView.theme({
-          "&": { fontSize: `${ss.fontSize}px` },
-          ".cm-scroller": { overflow: "auto" },
-          ".cm-content": { fontFamily: ss.fontFamily },
-        })
+      fontThemeComp.of(
+        editorFontTheme(EditorView, ss.fontSize, ss.fontFamily)
       ),
     ],
-    // readOnly: true,
   });
 
   previewView.value = new EditorView({ state, parent: previewRef.value });
@@ -204,8 +151,7 @@ watch(() => props.open, (open) => {
     previewView.value.destroy();
     previewView.value = null;
     previewInitialized = false;
-    fontSizeComp = null;
-    fontFamilyComp = null;
+    fontThemeComp = null;
     themeComp = null;
     editorViewModule = null;
   }

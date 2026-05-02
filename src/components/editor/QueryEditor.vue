@@ -2,15 +2,15 @@
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef } from "vue";
 import type { CompletionContext } from "@codemirror/autocomplete";
 import type { EditorView as EditorViewType } from "@codemirror/view";
-import type { Extension } from "@codemirror/state";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { formatSqlText, type SqlFormatDialect } from "@/lib/sqlFormatter";
 import { useConnectionStore } from "@/stores/connectionStore";
-import { useSettingsStore, type EditorTheme } from "@/stores/settingsStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import {
   buildSqlCompletionItemsFromContext,
   getSqlCompletionContext,
 } from "@/lib/sqlCompletion";
+import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 
 const props = defineProps<{
   modelValue: string;
@@ -35,53 +35,23 @@ const settingsStore = useSettingsStore();
 const MIN_FONT_SIZE = 10;
 const MAX_FONT_SIZE = 24;
 let editorViewModule: typeof import("@codemirror/view") | null = null;
-let fontSizeTheme: import("@codemirror/state").Compartment | null = null;
-let fontFamilyTheme: import("@codemirror/state").Compartment | null = null;
+let fontThemeComp: import("@codemirror/state").Compartment | null = null;
 let codeMirrorTheme: import("@codemirror/state").Compartment | null = null;
-
-async function loadTheme(theme: EditorTheme): Promise<Extension> {
-  switch (theme) {
-    case "one-dark":
-      return (await import("@codemirror/theme-one-dark")).oneDark;
-    case "vscode-dark":
-      return (await import("@uiw/codemirror-theme-vscode")).vscodeDark;
-    case "vscode-light":
-      return (await import("@uiw/codemirror-theme-vscode")).vscodeLight;
-    case "nord":
-      return (await import("@uiw/codemirror-theme-nord")).nord;
-    case "okaidia":
-      return (await import("@uiw/codemirror-theme-okaidia")).okaidia;
-    case "material":
-      return (await import("@uiw/codemirror-theme-material")).materialDark;
-    case "duotone-light":
-      return (await import("@uiw/codemirror-theme-duotone")).duotoneLight;
-    case "duotone-dark":
-      return (await import("@uiw/codemirror-theme-duotone")).duotoneDark;
-    case "xcode":
-      return (await import("@uiw/codemirror-theme-xcode")).xcodeLight;
-    default:
-      return (await import("@codemirror/theme-one-dark")).oneDark;
-  }
-}
-
-function fontTheme(EditorView: typeof import("@codemirror/view").EditorView, size: number, family: string) {
-  return EditorView.theme({
-    "&": { height: "100%", fontSize: `${size}px` },
-    ".cm-scroller": { overflow: "auto" },
-    ".cm-content": { fontFamily: family },
-  });
-}
 
 function setFontSize(size: number) {
   const next = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size));
   const ss = settingsStore.editorSettings;
   ss.fontSize = next;
   settingsStore.updateEditorSettings({ fontSize: next });
-  if (view.value && fontSizeTheme && fontFamilyTheme && editorViewModule) {
+  if (view.value && fontThemeComp && editorViewModule) {
     view.value.dispatch({
       effects: [
-        fontSizeTheme.reconfigure(fontTheme(editorViewModule.EditorView, next, ss.fontFamily)),
-        fontFamilyTheme.reconfigure(fontTheme(editorViewModule.EditorView, next, ss.fontFamily)),
+        fontThemeComp.reconfigure(
+          editorFontTheme(editorViewModule.EditorView, next, ss.fontFamily, {
+            fixedHeight: true,
+            scrollable: true,
+          })
+        ),
       ],
     });
   }
@@ -197,8 +167,7 @@ onMounted(async () => {
     import("@codemirror/autocomplete"),
   ]);
   editorViewModule = { EditorView, keymap } as typeof import("@codemirror/view");
-  fontSizeTheme = new Compartment();
-  fontFamilyTheme = new Compartment();
+  fontThemeComp = new Compartment();
   codeMirrorTheme = new Compartment();
 
   const ss = settingsStore.editorSettings;
@@ -248,7 +217,7 @@ onMounted(async () => {
     },
   ]);
 
-  const theme = await loadTheme(ss.theme);
+  const theme = await loadEditorTheme(ss.theme);
 
   const state = EditorState.create({
     doc: props.modelValue,
@@ -278,8 +247,12 @@ onMounted(async () => {
           emit("selectionChange", selectedSqlFromView(update.view));
         }
       }),
-      fontSizeTheme.of(fontTheme(EditorView, ss.fontSize, ss.fontFamily)),
-      fontFamilyTheme.of(fontTheme(EditorView, ss.fontSize, ss.fontFamily)),
+      fontThemeComp.of(
+        editorFontTheme(EditorView, ss.fontSize, ss.fontFamily, {
+          fixedHeight: true,
+          scrollable: true,
+        })
+      ),
       EditorView.domEventHandlers({
         wheel(event) {
           if (!event.metaKey && !event.ctrlKey) return false;
@@ -317,13 +290,17 @@ watch(
 watch(
   () => settingsStore.editorSettings,
   async (ss) => {
-    if (!view.value || !codeMirrorTheme || !fontFamilyTheme || !fontSizeTheme || !editorViewModule) return;
-    const themeExt = await loadTheme(ss.theme);
+    if (!view.value || !codeMirrorTheme || !fontThemeComp || !editorViewModule) return;
+    const themeExt = await loadEditorTheme(ss.theme);
     view.value.dispatch({
       effects: [
         codeMirrorTheme.reconfigure(themeExt),
-        fontFamilyTheme.reconfigure(fontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily)),
-        fontSizeTheme.reconfigure(fontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily)),
+        fontThemeComp.reconfigure(
+          editorFontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily, {
+            fixedHeight: true,
+            scrollable: true,
+          })
+        ),
       ],
     });
   },

@@ -49,15 +49,17 @@ export const FONT_FAMILIES: { value: string; label: string }[] = [
   { value: "monospace", label: "System Monospace" },
 ];
 
-const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
+export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
   fontSize: 13,
   theme: "one-dark",
 };
 
 export const STORAGE_KEY = "dbx-editor-settings";
+const OLD_FONT_SIZE_KEY = "dbx-query-editor-font-size";
 
 function loadEditorSettings(): EditorSettings {
+  // Try new format first
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -69,6 +71,24 @@ function loadEditorSettings(): EditorSettings {
       };
     }
   } catch { /* ignore */ }
+
+  // Migrate old font-size key if new settings don't exist
+  try {
+    const oldSize = localStorage.getItem(OLD_FONT_SIZE_KEY);
+    if (oldSize) {
+      const parsed = parseInt(oldSize, 10);
+      if (!isNaN(parsed)) {
+        const migrated: EditorSettings = {
+          ...DEFAULT_EDITOR_SETTINGS,
+          fontSize: parsed,
+        };
+        saveEditorSettings(migrated);
+        localStorage.removeItem(OLD_FONT_SIZE_KEY);
+        return migrated;
+      }
+    }
+  } catch { /* ignore */ }
+
   return { ...DEFAULT_EDITOR_SETTINGS };
 }
 
