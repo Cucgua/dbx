@@ -241,6 +241,9 @@ watch(() => props.open, (open) => {
               </SelectItem>
             </SelectContent>
           </Select>
+          <p class="text-xs text-muted-foreground leading-relaxed font-mono" :style="{ fontFamily: editFontFamily }">
+            SELECT * FROM users WHERE id = 1;
+          </p>
         </div>
 
         <Separator />
