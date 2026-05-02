@@ -19,9 +19,88 @@ const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = {
   custom: { provider: "custom", endpoint: "", model: "", apiStyle: "completions" },
 };
 
+export type EditorTheme = "one-dark" | "vscode-dark" | "vscode-light" | "nord" | "okaidia" | "material" | "duotone-light" | "duotone-dark" | "xcode";
+
+export interface EditorSettings {
+  fontFamily: string;
+  fontSize: number;
+  theme: EditorTheme;
+}
+
+export const EDITOR_THEMES: { value: EditorTheme; label: string; dark: boolean }[] = [
+  { value: "one-dark", label: "One Dark", dark: true },
+  { value: "vscode-dark", label: "VS Dark+", dark: true },
+  { value: "vscode-light", label: "VS Light+", dark: false },
+  { value: "nord", label: "Nord", dark: true },
+  { value: "okaidia", label: "Okaidia", dark: true },
+  { value: "material", label: "Material", dark: true },
+  { value: "duotone-light", label: "Duotone Light", dark: false },
+  { value: "duotone-dark", label: "Duotone Dark", dark: true },
+  { value: "xcode", label: "Xcode", dark: false },
+];
+
+export const FONT_FAMILIES: { value: string; label: string }[] = [
+  { value: "'JetBrains Mono', 'Fira Code', monospace", label: "JetBrains Mono" },
+  { value: "'Fira Code', monospace", label: "Fira Code" },
+  { value: "'Cascadia Code', monospace", label: "Cascadia Code" },
+  { value: "'Source Code Pro', monospace", label: "Source Code Pro" },
+  { value: "'SF Mono', 'Menlo', monospace", label: "SF Mono / Menlo" },
+  { value: "'Consolas', 'Courier New', monospace", label: "Consolas" },
+  { value: "monospace", label: "System Monospace" },
+];
+
+export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
+  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+  fontSize: 13,
+  theme: "one-dark",
+};
+
+export const STORAGE_KEY = "dbx-editor-settings";
+const OLD_FONT_SIZE_KEY = "dbx-query-editor-font-size";
+
+function loadEditorSettings(): EditorSettings {
+  // Try new format first
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<EditorSettings>;
+      return {
+        fontFamily: parsed.fontFamily ?? DEFAULT_EDITOR_SETTINGS.fontFamily,
+        fontSize: parsed.fontSize ?? DEFAULT_EDITOR_SETTINGS.fontSize,
+        theme: parsed.theme ?? DEFAULT_EDITOR_SETTINGS.theme,
+      };
+    }
+  } catch { /* ignore */ }
+
+  // Migrate old font-size key if new settings don't exist
+  try {
+    const oldSize = localStorage.getItem(OLD_FONT_SIZE_KEY);
+    if (oldSize) {
+      const parsed = parseInt(oldSize, 10);
+      if (!isNaN(parsed)) {
+        const migrated: EditorSettings = {
+          ...DEFAULT_EDITOR_SETTINGS,
+          fontSize: parsed,
+        };
+        saveEditorSettings(migrated);
+        localStorage.removeItem(OLD_FONT_SIZE_KEY);
+        return migrated;
+      }
+    }
+  } catch { /* ignore */ }
+
+  return { ...DEFAULT_EDITOR_SETTINGS };
+}
+
+function saveEditorSettings(settings: EditorSettings) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+}
+
 export const useSettingsStore = defineStore("settings", () => {
   const aiConfig = ref<AiConfig>({ ...defaultConfigs.claude, apiKey: "", apiStyle: "completions" });
   const isAiConfigLoaded = ref(false);
+
+  const editorSettings = ref<EditorSettings>(loadEditorSettings());
 
   async function initAiConfig() {
     if (isAiConfigLoaded.value) return;
@@ -50,5 +129,13 @@ export const useSettingsStore = defineStore("settings", () => {
     return !!aiConfig.value.apiKey && !!aiConfig.value.endpoint;
   }
 
-  return { aiConfig, isAiConfigLoaded, initAiConfig, updateAiConfig, isConfigured };
+  function updateEditorSettings(partial: Partial<EditorSettings>) {
+    Object.assign(editorSettings.value, partial);
+    saveEditorSettings(editorSettings.value);
+  }
+
+  return {
+    aiConfig, isAiConfigLoaded, initAiConfig, updateAiConfig, isConfigured,
+    editorSettings, updateEditorSettings,
+  };
 });
