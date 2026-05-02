@@ -39,6 +39,7 @@ import SchemaDiffDialog from "@/components/diff/SchemaDiffDialog.vue";
 import SqlFileExecutionDialog from "@/components/sql-file/SqlFileExecutionDialog.vue";
 import SchemaDiagramDialog from "@/components/diagram/SchemaDiagramDialog.vue";
 import TableImportDialog from "@/components/import/TableImportDialog.vue";
+import TableStructureEditorDialog from "@/components/structure/TableStructureEditorDialog.vue";
 import type { ConnectionConfig } from "@/types/database";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
@@ -124,6 +125,7 @@ const showSchemaDiffDialog = ref(false);
 const showSqlFileDialog = ref(false);
 const showDiagramDialog = ref(false);
 const showTableImportDialog = ref(false);
+const showStructureEditorDialog = ref(false);
 const transferPrefillConnectionId = ref("");
 const transferPrefillDatabase = ref("");
 const schemaDiffPrefillConnectionId = ref("");
@@ -138,6 +140,10 @@ const tableImportPrefillConnectionId = ref("");
 const tableImportPrefillDatabase = ref("");
 const tableImportPrefillSchema = ref("");
 const tableImportPrefillTable = ref("");
+const structurePrefillConnectionId = ref("");
+const structurePrefillDatabase = ref("");
+const structurePrefillSchema = ref("");
+const structurePrefillTable = ref("");
 const databaseOptions = ref<Record<string, string[]>>({});
 const loadingDatabaseOptions = ref<Record<string, boolean>>({});
 const checkingUpdates = ref(false);
@@ -213,6 +219,39 @@ watch(() => connectionStore.tableImportSource, (v) => {
     connectionStore.tableImportSource = null;
   }
 });
+
+watch(() => connectionStore.structureEditorSource, (v) => {
+  if (v) {
+    structurePrefillConnectionId.value = v.connectionId;
+    structurePrefillDatabase.value = v.database;
+    structurePrefillSchema.value = v.schema ?? "";
+    structurePrefillTable.value = v.tableName;
+    showStructureEditorDialog.value = true;
+    connectionStore.structureEditorSource = null;
+  }
+});
+
+async function onStructureEditorSaved() {
+  const tab = activeTab.value;
+  if (tab?.mode === "data" && tab.tableMeta?.tableName === structurePrefillTable.value) {
+    try {
+      const columns = await api.getColumns(
+        tab.connectionId,
+        tab.database,
+        tab.tableMeta.schema || tab.database,
+        tab.tableMeta.tableName,
+      );
+      queryStore.setTableMeta(tab.id, {
+        ...tab.tableMeta,
+        columns,
+        primaryKeys: columns.filter((column) => column.is_primary_key).map((column) => column.name),
+      });
+      await onReloadData();
+    } catch (e: any) {
+      toast(e?.message || String(e), 5000);
+    }
+  }
+}
 
 function onConnectionConnectStarted(name: string) {
   toast(t("connection.connecting", { name }), 30000);
@@ -1280,6 +1319,14 @@ async function setupFileDrop() {
         :prefill-database="tableImportPrefillDatabase"
         :prefill-schema="tableImportPrefillSchema"
         :prefill-table="tableImportPrefillTable"
+      />
+      <TableStructureEditorDialog
+        v-model:open="showStructureEditorDialog"
+        :prefill-connection-id="structurePrefillConnectionId"
+        :prefill-database="structurePrefillDatabase"
+        :prefill-schema="structurePrefillSchema"
+        :prefill-table="structurePrefillTable"
+        @saved="onStructureEditorSaved"
       />
       <Dialog v-model:open="showUpdateDialog">
         <DialogContent class="sm:max-w-[520px]">

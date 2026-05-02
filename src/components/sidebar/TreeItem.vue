@@ -5,7 +5,7 @@ import {
   Database, Table, Columns3, Eye, ChevronRight, ChevronDown,
   Loader2, FolderOpen, Trash2, TerminalSquare, RefreshCw,
   Copy, TableProperties, Key, Link, Zap, ListTree, Pencil, Plug, Unplug,
-  Pin, ArrowRightLeft, Download, FileCode, Network, FileUp,
+  Pin, ArrowRightLeft, Download, FileCode, Network, FileUp, PencilRuler,
 } from "lucide-vue-next";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem,
@@ -44,6 +44,7 @@ const props = defineProps<{
 const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
 const diagramSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
 const tableImportSupportedTypes = new Set(["mysql", "postgres", "sqlite", "duckdb", "clickhouse", "sqlserver", "oracle", "doris", "starrocks", "redshift"]);
+const tableStructureSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver"]);
 const isExportingDatabase = ref(false);
 
 function currentDatabaseType(): DatabaseType | undefined {
@@ -525,6 +526,17 @@ function openTableImport() {
   };
 }
 
+function openStructureEditor() {
+  const node = props.node;
+  if (node.type !== "table" || !node.connectionId || !node.database) return;
+  connectionStore.structureEditorSource = {
+    connectionId: node.connectionId,
+    database: node.database,
+    schema: node.schema,
+    tableName: node.label,
+  };
+}
+
 const canExpand = !leafTypes.has(props.node.type);
 const canPin = computed(() => pinnableTypes.has(props.node.type));
 const canOpenSqlFileExecution = computed(() => {
@@ -538,6 +550,10 @@ const canOpenDiagram = computed(() => {
 const canOpenTableImport = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return props.node.type === "table" && !!props.node.database && !!config && tableImportSupportedTypes.has(config.db_type);
+});
+const canOpenStructureEditor = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "table" && !!props.node.database && !!config && tableStructureSupportedTypes.has(config.db_type);
 });
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));
 const hasTypeMenu = computed(() => {
@@ -694,6 +710,9 @@ async function showMore() {
       <template v-if="node.type === 'table' || node.type === 'view'">
         <ContextMenuItem @click="openData">
           <TableProperties class="w-4 h-4" /> {{ t('contextMenu.viewData') }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="canOpenStructureEditor" @click="openStructureEditor">
+          <PencilRuler class="w-4 h-4" /> {{ t('contextMenu.editStructure') }}
         </ContextMenuItem>
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t('contextMenu.newQuery') }}
