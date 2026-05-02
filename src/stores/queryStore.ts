@@ -1,9 +1,10 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import type { QueryTab } from "@/types/database";
+import type { DatabaseType, QueryTab } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
 import { canCancelQueryExecution } from "@/lib/queryExecutionState";
 import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
+import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
 import * as api from "@/lib/tauri";
 
 export const useQueryStore = defineStore("query", () => {
@@ -33,6 +34,7 @@ export const useQueryStore = defineStore("query", () => {
       sql: "",
       isExecuting: false,
       isCancelling: false,
+      isExplaining: false,
       mode,
     };
     tabs.value.push(tab);
@@ -44,6 +46,7 @@ export const useQueryStore = defineStore("query", () => {
     const idx = tabs.value.findIndex((t) => t.id === id);
     if (idx < 0) return;
     if (tabs.value[idx].isExecuting) void cancelTabExecution(id);
+    if (tabs.value[idx].isExplaining) void cancelTabExplain(id);
     tabs.value.splice(idx, 1);
     if (activeTabId.value === id) {
       activeTabId.value = tabs.value[Math.min(idx, tabs.value.length - 1)]?.id ?? null;
@@ -54,6 +57,9 @@ export const useQueryStore = defineStore("query", () => {
     tabs.value
       .filter((tab) => tab.id !== id && tab.isExecuting)
       .forEach((tab) => void cancelTabExecution(tab.id));
+    tabs.value
+      .filter((tab) => tab.id !== id && tab.isExplaining)
+      .forEach((tab) => void cancelTabExplain(tab.id));
     const next = closeOtherTabsState(tabs.value, activeTabId.value, id);
     tabs.value = next.tabs;
     activeTabId.value = next.activeTabId;
@@ -63,6 +69,9 @@ export const useQueryStore = defineStore("query", () => {
     tabs.value
       .filter((tab) => tab.isExecuting)
       .forEach((tab) => void cancelTabExecution(tab.id));
+    tabs.value
+      .filter((tab) => tab.isExplaining)
+      .forEach((tab) => void cancelTabExplain(tab.id));
     const next = closeAllTabsState(tabs.value, activeTabId.value);
     tabs.value = next.tabs;
     activeTabId.value = next.activeTabId;
@@ -86,6 +95,7 @@ export const useQueryStore = defineStore("query", () => {
     tab.database = database;
     tab.result = undefined;
     tab.lastExecutedSql = undefined;
+    clearExplain(tab);
     tab.tableMeta = undefined;
   }
 
@@ -96,6 +106,7 @@ export const useQueryStore = defineStore("query", () => {
     tab.database = database;
     tab.result = undefined;
     tab.lastExecutedSql = undefined;
+    clearExplain(tab);
     tab.tableMeta = undefined;
   }
 
@@ -112,6 +123,15 @@ export const useQueryStore = defineStore("query", () => {
       tab.isCancelling = false;
       tab.executionId = undefined;
     }
+  }
+
+  function clearExplain(tab: QueryTab) {
+    tab.explainPlan = undefined;
+    tab.explainError = undefined;
+    tab.explainSql = undefined;
+    tab.lastExplainedSql = undefined;
+    tab.isExplaining = false;
+    tab.explainExecutionId = undefined;
   }
 
   function toErrorResult(e: any): NonNullable<QueryTab["result"]> {
@@ -171,6 +191,46 @@ export const useQueryStore = defineStore("query", () => {
     trimResultCache();
   }
 
+  async function explainTabSql(id: string, sql: string, databaseType?: DatabaseType) {
+    const tab = tabs.value.find((t) => t.id === id);
+    if (!tab) return { ok: false as const, reason: "empty" as const };
+
+    const built = buildExplainSql(databaseType, sql);
+    if (!built.ok) {
+      tab.explainPlan = undefined;
+      tab.explainError = built.reason;
+      return built;
+    }
+
+    const executionId = crypto.randomUUID();
+    tab.isExplaining = true;
+    tab.explainExecutionId = executionId;
+    tab.explainError = undefined;
+    tab.explainSql = built.sql;
+    tab.lastExplainedSql = sql;
+    try {
+      const result = await api.executeQuery(tab.connectionId, tab.database, built.sql, executionId);
+      const current = tabs.value.find((t) => t.id === id);
+      if (current?.explainExecutionId === executionId) {
+        current.explainPlan = parseExplainResult(databaseType as "mysql" | "postgres", result);
+        current.explainError = undefined;
+      }
+    } catch (e: any) {
+      const current = tabs.value.find((t) => t.id === id);
+      if (current?.explainExecutionId === executionId) {
+        current.explainPlan = undefined;
+        current.explainError = String(e?.message || e);
+      }
+    } finally {
+      const current = tabs.value.find((t) => t.id === id);
+      if (current?.explainExecutionId === executionId) {
+        current.isExplaining = false;
+        current.explainExecutionId = undefined;
+      }
+    }
+    return { ok: true as const, sql: built.sql };
+  }
+
   async function cancelTabExecution(id: string) {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || !canCancelQueryExecution(tab)) return false;
@@ -190,6 +250,28 @@ export const useQueryStore = defineStore("query", () => {
       if (current && current.executionId === executionId) {
         current.isCancelling = false;
         current.result = toErrorResult(e);
+      }
+      return false;
+    }
+  }
+
+  async function cancelTabExplain(id: string) {
+    const tab = tabs.value.find((t) => t.id === id);
+    if (!tab?.isExplaining || !tab.explainExecutionId) return false;
+
+    const executionId = tab.explainExecutionId;
+    try {
+      const canceled = await api.cancelQuery(executionId);
+      if (!canceled) {
+        const current = tabs.value.find((t) => t.id === id);
+        if (current && current.explainExecutionId === executionId) current.isExplaining = false;
+      }
+      return canceled;
+    } catch (e: any) {
+      const current = tabs.value.find((t) => t.id === id);
+      if (current && current.explainExecutionId === executionId) {
+        current.isExplaining = false;
+        current.explainError = String(e?.message || e);
       }
       return false;
     }
@@ -220,6 +302,8 @@ export const useQueryStore = defineStore("query", () => {
     executeCurrentTab,
     executeCurrentSql,
     executeTabSql,
+    explainTabSql,
     cancelTabExecution,
+    cancelTabExplain,
   };
 });
