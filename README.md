@@ -130,7 +130,7 @@ The installer will be in `src-tauri/target/release/bundle/`.
 ## Contributors
 
 <a href="https://github.com/t8y2/dbx/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=t8y2/dbx" />
+  <img src="https://contrib.rocks/image?repo=t8y2/dbx&v=2" />
 </a>
 
 ## Star History
