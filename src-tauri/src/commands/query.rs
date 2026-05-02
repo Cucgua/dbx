@@ -140,10 +140,11 @@ async fn do_execute(
             })
             .await
         }
-        PoolKind::Mysql(p) => {
+        PoolKind::Mysql(p, bare) => {
             let p = p.clone();
+            let bare = *bare;
             drop(connections);
-            wait_for_query(cancel_token, db::mysql::execute_query(&p, sql))
+            wait_for_query(cancel_token, db::mysql::execute_query(&p, sql, bare))
                 .await
                 .map(truncate_result)
         }

@@ -111,7 +111,7 @@ pub async fn list_databases(
     let pool = connections.get(&connection_id).ok_or("Connection not found")?;
 
     match pool {
-        PoolKind::Mysql(p) => db::mysql::list_databases(p).await,
+        PoolKind::Mysql(p, _) => db::mysql::list_databases(p).await,
         PoolKind::Postgres(p) => db::postgres::list_databases(p).await,
         PoolKind::Sqlite(p) => db::sqlite::list_databases(p).await,
         PoolKind::DuckDb(_) => Ok(vec![db::DatabaseInfo { name: "main".to_string() }]),
@@ -186,7 +186,7 @@ pub async fn list_tables(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p) => db::mysql::list_tables(p, &schema).await,
+        PoolKind::Mysql(p, _) => db::mysql::list_tables(p, &schema).await,
         PoolKind::Postgres(p) => db::postgres::list_tables(p, &schema).await,
         PoolKind::Sqlite(p) => db::sqlite::list_tables(p, &schema).await,
         _ => Ok(vec![]),
@@ -230,7 +230,7 @@ pub async fn get_columns(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p) => db::mysql::get_columns(p, &schema, &table).await,
+        PoolKind::Mysql(p, _) => db::mysql::get_columns(p, &schema, &table).await,
         PoolKind::Postgres(p) => db::postgres::get_columns(p, &schema, &table).await,
         PoolKind::Sqlite(p) => db::sqlite::get_columns(p, &schema, &table).await,
         _ => Ok(vec![]),
@@ -265,7 +265,7 @@ pub async fn list_indexes(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p) => db::mysql::list_indexes(p, &schema, &table).await,
+        PoolKind::Mysql(p, _) => db::mysql::list_indexes(p, &schema, &table).await,
         PoolKind::Postgres(p) => db::postgres::list_indexes(p, &schema, &table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_indexes(p, &schema, &table).await,
         _ => Ok(vec![]),
@@ -300,7 +300,7 @@ pub async fn list_foreign_keys(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p) => db::mysql::list_foreign_keys(p, &schema, &table).await,
+        PoolKind::Mysql(p, _) => db::mysql::list_foreign_keys(p, &schema, &table).await,
         PoolKind::Postgres(p) => db::postgres::list_foreign_keys(p, &schema, &table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_foreign_keys(p, &schema, &table).await,
         _ => Ok(vec![]),
@@ -335,7 +335,7 @@ pub async fn list_triggers(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p) => db::mysql::list_triggers(p, &schema, &table).await,
+        PoolKind::Mysql(p, _) => db::mysql::list_triggers(p, &schema, &table).await,
         PoolKind::Postgres(p) => db::postgres::list_triggers(p, &schema, &table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_triggers(p, &schema, &table).await,
         _ => Ok(vec![]),
@@ -391,7 +391,7 @@ pub async fn get_table_ddl(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p) => mysql_ddl(p, &table).await,
+        PoolKind::Mysql(p, _) => mysql_ddl(p, &table).await,
         PoolKind::Postgres(p) => pg_ddl(p, &schema, &table).await,
         PoolKind::Sqlite(p) => sqlite_ddl(p, &table).await,
         _ => Err("DDL not supported for this database type".to_string()),

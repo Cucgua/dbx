@@ -1,7 +1,7 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Row, TypeInfo, ValueRef};
+use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
 
 use super::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
@@ -250,40 +250,68 @@ pub async fn get_columns(
         .collect())
 }
 
-pub async fn execute_query(pool: &MySqlPool, sql: &str) -> Result<QueryResult, String> {
+pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<QueryResult, String> {
     let start = Instant::now();
     let trimmed = sql.trim().to_uppercase();
 
     if trimmed.starts_with("SELECT") || trimmed.starts_with("SHOW") || trimmed.starts_with("DESCRIBE") || trimmed.starts_with("EXPLAIN") {
-        let rows: Vec<MySqlRow> = sqlx::raw_sql(sql)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        if bare {
+            let rows: Vec<MySqlRow> = sqlx::raw_sql(sql)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
 
-        let (columns, column_types) = if let Some(first) = rows.first() {
-            let cols: Vec<String> = first.columns().iter().map(|c| c.name().to_string()).collect();
-            let types: Vec<String> = first.columns().iter().map(|c| c.type_info().name().to_string()).collect();
-            (cols, types)
-        } else {
-            (vec![], vec![])
-        };
+            let (columns, column_types) = if let Some(first) = rows.first() {
+                let cols: Vec<String> = first.columns().iter().map(|c| c.name().to_string()).collect();
+                let types: Vec<String> = first.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+                (cols, types)
+            } else {
+                (vec![], vec![])
+            };
 
-        let result_rows: Vec<Vec<serde_json::Value>> = rows
-            .iter()
-            .map(|row| {
-                (0..row.len())
-                    .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                    .collect()
+            let result_rows: Vec<Vec<serde_json::Value>> = rows
+                .iter()
+                .map(|row| {
+                    (0..row.len())
+                        .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                        .collect()
+                })
+                .collect();
+
+            Ok(QueryResult {
+                columns,
+                rows: result_rows,
+                affected_rows: 0,
+                execution_time_ms: start.elapsed().as_millis(),
+                truncated: false,
             })
-            .collect();
+        } else {
+            let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
+            let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
+            let column_types: Vec<String> = desc.columns().iter().map(|c| c.type_info().name().to_string()).collect();
 
-        Ok(QueryResult {
-            columns,
-            rows: result_rows,
-            affected_rows: 0,
-            execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
-        })
+            let rows: Vec<MySqlRow> = sqlx::query(sql)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let result_rows: Vec<Vec<serde_json::Value>> = rows
+                .iter()
+                .map(|row| {
+                    (0..row.len())
+                        .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                        .collect()
+                })
+                .collect();
+
+            Ok(QueryResult {
+                columns,
+                rows: result_rows,
+                affected_rows: 0,
+                execution_time_ms: start.elapsed().as_millis(),
+                truncated: false,
+            })
+        }
     } else {
         let result = sqlx::raw_sql(sql)
             .execute(pool)

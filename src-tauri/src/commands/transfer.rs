@@ -321,10 +321,11 @@ pub(crate) async fn execute_on_pool(
     let pool = connections.get(pool_key).ok_or("Connection not found")?;
 
     match pool {
-        PoolKind::Mysql(p) => {
+        PoolKind::Mysql(p, bare) => {
             let p = p.clone();
+            let bare = *bare;
             drop(connections);
-            db::mysql::execute_query(&p, sql).await
+            db::mysql::execute_query(&p, sql, bare).await
         }
         PoolKind::Postgres(p) => {
             let p = p.clone();
@@ -475,7 +476,7 @@ async fn get_columns_for_transfer(
     let schema = schema.to_string();
     let table = table.to_string();
     match pool {
-        PoolKind::Mysql(p) => {
+        PoolKind::Mysql(p, _) => {
             let p = p.clone();
             drop(connections);
             db::mysql::get_columns(&p, &schema, &table).await

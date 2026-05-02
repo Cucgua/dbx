@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Ref } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { DatabaseZap, FilePlus2, Play, Loader2, Square, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Bot, Pin, AlignLeft, CloudDownload, ArrowLeftRight, FileCode, Settings, Sparkles, GitBranch } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
@@ -34,13 +34,13 @@ import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import QueryHistory from "@/components/editor/QueryHistory.vue";
 import EditorSettingsDialog from "@/components/editor/EditorSettingsDialog.vue";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
-import DataTransferDialog from "@/components/transfer/DataTransferDialog.vue";
-import SchemaDiffDialog from "@/components/diff/SchemaDiffDialog.vue";
-import SqlFileExecutionDialog from "@/components/sql-file/SqlFileExecutionDialog.vue";
-import SchemaDiagramDialog from "@/components/diagram/SchemaDiagramDialog.vue";
-import TableImportDialog from "@/components/import/TableImportDialog.vue";
-import TableStructureEditorDialog from "@/components/structure/TableStructureEditorDialog.vue";
-import ExplainPlanViewer from "@/components/explain/ExplainPlanViewer.vue";
+const DataTransferDialog = defineAsyncComponent(() => import("@/components/transfer/DataTransferDialog.vue"));
+const SchemaDiffDialog = defineAsyncComponent(() => import("@/components/diff/SchemaDiffDialog.vue"));
+const SqlFileExecutionDialog = defineAsyncComponent(() => import("@/components/sql-file/SqlFileExecutionDialog.vue"));
+const SchemaDiagramDialog = defineAsyncComponent(() => import("@/components/diagram/SchemaDiagramDialog.vue"));
+const TableImportDialog = defineAsyncComponent(() => import("@/components/import/TableImportDialog.vue"));
+const TableStructureEditorDialog = defineAsyncComponent(() => import("@/components/structure/TableStructureEditorDialog.vue"));
+const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
 import type { ConnectionConfig } from "@/types/database";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";

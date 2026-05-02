@@ -12,7 +12,7 @@ use crate::db::ssh_tunnel::TunnelManager;
 use crate::models::connection::{ConnectionConfig, DatabaseType};
 
 pub enum PoolKind {
-    Mysql(sqlx::mysql::MySqlPool),
+    Mysql(sqlx::mysql::MySqlPool, bool),
     Postgres(sqlx::postgres::PgPool),
     Sqlite(sqlx::sqlite::SqlitePool),
     Redis(tokio::sync::Mutex<redis::aio::MultiplexedConnection>),
@@ -89,9 +89,9 @@ impl AppState {
         let (host, port) = self.connection_host_port(connection_id, &db_config).await?;
         let url = connection_url_for_endpoint(&db_config, &host, port);
         let pool = match db_config.db_type {
-            DatabaseType::Mysql if db_config.needs_bare_mysql() => PoolKind::Mysql(db::mysql::connect_bare(&url).await?),
-            DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?),
-            DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?),
+            DatabaseType::Mysql if db_config.needs_bare_mysql() => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
+            DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, false),
+            DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
             DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
             DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect(&url).await?),
             DatabaseType::Redis => {
@@ -382,9 +382,9 @@ pub async fn connect_db(
     let url = connection_url_for_endpoint(&config, &host, port);
 
     let pool = match config.db_type {
-        DatabaseType::Mysql if config.needs_bare_mysql() => PoolKind::Mysql(db::mysql::connect_bare(&url).await?),
-        DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?),
-        DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?),
+        DatabaseType::Mysql if config.needs_bare_mysql() => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
+        DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, false),
+        DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
         DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
         DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect(&url).await?),
         DatabaseType::Redis => {
@@ -458,7 +458,7 @@ pub async fn disconnect_db(
     for key in keys_to_remove {
         if let Some(pool) = conns.remove(&key) {
             match pool {
-                PoolKind::Mysql(p) => p.close().await,
+                PoolKind::Mysql(p, _) => p.close().await,
                 PoolKind::Postgres(p) => p.close().await,
                 PoolKind::Sqlite(p) => p.close().await,
                 PoolKind::Redis(_) => {},

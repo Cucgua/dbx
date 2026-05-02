@@ -13,6 +13,23 @@ export default defineConfig(async () => ({
     },
   },
   clearScreen: false,
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          codemirror: [
+            "codemirror",
+            "@codemirror/lang-sql",
+            "@codemirror/view",
+            "@codemirror/state",
+            "@codemirror/autocomplete",
+            "@codemirror/theme-one-dark",
+          ],
+          "sql-formatter": ["sql-formatter"],
+        },
+      },
+    },
+  },
   server: {
     port: 1420,
     strictPort: true,
