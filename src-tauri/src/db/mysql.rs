@@ -155,7 +155,9 @@ pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
         .map_err(|e: sqlx::Error| format!("Invalid MySQL URL: {e}"))?;
     let options = options
         .no_engine_substitution(false)
-        .set_names(false);
+        .set_names(false)
+        .pipes_as_concat(false)
+        .timezone(None);
     MySqlPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(Duration::from_secs(10))
