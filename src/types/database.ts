@@ -104,9 +104,15 @@ export interface QueryTab {
   lastExecutedSql?: string;
   pinned?: boolean;
   result?: QueryResult;
+  explainPlan?: import("@/lib/explainPlan").ParsedExplainPlan;
+  explainError?: string;
+  explainSql?: string;
+  lastExplainedSql?: string;
   isExecuting: boolean;
   isCancelling?: boolean;
   executionId?: string;
+  isExplaining?: boolean;
+  explainExecutionId?: string;
   mode: "data" | "query" | "redis" | "mongo";
   tableMeta?: {
     schema?: string;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { DatabaseZap, FilePlus2, Play, Loader2, Square, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Bot, Pin, AlignLeft, CloudDownload, ArrowLeftRight, FileCode, Settings, Sparkles } from "lucide-vue-next";
+import { DatabaseZap, FilePlus2, Play, Loader2, Square, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Bot, Pin, AlignLeft, CloudDownload, ArrowLeftRight, FileCode, Settings, Sparkles, GitBranch } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,7 @@ import SqlFileExecutionDialog from "@/components/sql-file/SqlFileExecutionDialog
 import SchemaDiagramDialog from "@/components/diagram/SchemaDiagramDialog.vue";
 import TableImportDialog from "@/components/import/TableImportDialog.vue";
 import TableStructureEditorDialog from "@/components/structure/TableStructureEditorDialog.vue";
+import ExplainPlanViewer from "@/components/explain/ExplainPlanViewer.vue";
 import type { ConnectionConfig } from "@/types/database";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
@@ -119,6 +120,7 @@ const dangerSql = ref("");
 const pendingDangerSql = ref("");
 const selectedSql = ref("");
 const formatSqlRequestId = ref(0);
+const activeOutputView = ref<"result" | "explain">("result");
 const showDangerDialog = ref(false);
 const showTransferDialog = ref(false);
 const showSchemaDiffDialog = ref(false);
@@ -277,6 +279,7 @@ const executableSql = computed(() => {
 watch(() => queryStore.activeTabId, () => {
   selectedSql.value = "";
   pendingDangerSql.value = "";
+  activeOutputView.value = "result";
 });
 
 const activeConnection = computed(() => {
@@ -479,6 +482,7 @@ function tryExecute(sqlOverride?: string) {
 async function doExecute(sql = executableSql.value) {
   const tab = activeTab.value;
   if (!tab || !sql.trim()) return;
+  activeOutputView.value = "result";
   const connName = connectionStore.getConfig(tab.connectionId)?.name || "";
   const start = Date.now();
   await queryStore.executeCurrentSql(sql);
@@ -496,7 +500,34 @@ async function doExecute(sql = executableSql.value) {
 
 function cancelActiveExecution() {
   const tab = activeTab.value;
-  if (tab) void queryStore.cancelTabExecution(tab.id);
+  if (!tab) return;
+  if (tab.isExecuting) void queryStore.cancelTabExecution(tab.id);
+  else if (tab.isExplaining) void queryStore.cancelTabExplain(tab.id);
+}
+
+function explainReasonMessage(reason: string): string {
+  if (reason === "unsupported") return t("explain.unsupported");
+  if (reason === "unsafe") return t("explain.unsafe");
+  return t("explain.emptySql");
+}
+
+async function tryExplain(sqlOverride?: string) {
+  const tab = activeTab.value;
+  const sql = sqlOverride ?? executableSql.value;
+  if (!tab || !sql.trim()) {
+    toast(t("explain.emptySql"));
+    return;
+  }
+
+  activeOutputView.value = "explain";
+  const result = await queryStore.explainTabSql(tab.id, sql, activeConnection.value?.db_type);
+  if (!result.ok) {
+    toast(explainReasonMessage(result.reason), 5000);
+    return;
+  }
+
+  const current = activeTab.value;
+  if (current?.explainError) toast(current.explainError, 5000);
 }
 
 function onDangerConfirm() {
@@ -972,7 +1003,7 @@ async function setupFileDrop() {
                       :variant="activeTab.isExecuting ? 'destructive' : 'ghost'"
                       size="icon"
                       class="h-6 w-6"
-                      :disabled="activeTab.isCancelling || (!activeTab.isExecuting && !executableSql.trim())"
+                      :disabled="activeTab.isCancelling || activeTab.isExplaining || (!activeTab.isExecuting && !executableSql.trim())"
                       @click="activeTab.isExecuting ? cancelActiveExecution() : tryExecute()"
                     >
                       <Loader2 v-if="activeTab.isCancelling" class="h-3.5 w-3.5 animate-spin" />
@@ -984,7 +1015,22 @@ async function setupFileDrop() {
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger as-child>
-                    <Button variant="ghost" size="icon" class="h-6 w-6" :disabled="activeTab.isExecuting || !activeTab.sql.trim()" @click="formatActiveSql">
+                    <Button
+                      :variant="activeTab.isExplaining ? 'destructive' : 'ghost'"
+                      size="icon"
+                      class="h-6 w-6"
+                      :disabled="activeTab.isExecuting || (!activeTab.isExplaining && !executableSql.trim())"
+                      @click="activeTab.isExplaining ? cancelActiveExecution() : tryExplain()"
+                    >
+                      <Square v-if="activeTab.isExplaining" class="h-3.5 w-3.5 fill-current" />
+                      <GitBranch v-else class="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{{ activeTab.isExplaining ? t('toolbar.stopExplain') : t('toolbar.explainPlan') }}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger as-child>
+                    <Button variant="ghost" size="icon" class="h-6 w-6" :disabled="activeTab.isExecuting || activeTab.isExplaining || !activeTab.sql.trim()" @click="formatActiveSql">
                       <AlignLeft class="h-3.5 w-3.5" />
                     </Button>
                   </TooltipTrigger>
@@ -1073,22 +1119,59 @@ async function setupFileDrop() {
                 </Pane>
                 <Pane :size="60" :min-size="20">
                   <div class="h-full flex flex-col">
-                    <DataGrid v-if="activeTab.result" :key="activeTab.id" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.lastExecutedSql || activeTab.sql" :loading="activeTab.isExecuting" />
-                    <div v-if="activeTab.result?.columns.includes('Error')" class="flex items-center gap-2 px-3 py-1.5 border-t bg-destructive/5">
-                      <Bot class="h-3.5 w-3.5 text-destructive" />
-                      <button class="text-xs text-destructive hover:underline" @click="fixWithAi(String(activeTab.result?.rows?.[0]?.[0] ?? ''))">
-                        {{ t('ai.fixWithAi') }}
-                      </button>
+                    <div
+                      v-if="activeTab.result || activeTab.explainPlan || activeTab.explainError || activeTab.isExecuting || activeTab.isExplaining"
+                      class="h-8 shrink-0 border-b bg-muted/20 px-2 flex items-center gap-1"
+                    >
+                      <Button
+                        size="sm"
+                        :variant="activeOutputView === 'result' ? 'secondary' : 'ghost'"
+                        class="h-6 px-2 text-xs"
+                        :disabled="!activeTab.result && !activeTab.isExecuting"
+                        @click="activeOutputView = 'result'"
+                      >
+                        {{ t('tabs.tableData') }}
+                      </Button>
+                      <Button
+                        size="sm"
+                        :variant="activeOutputView === 'explain' ? 'secondary' : 'ghost'"
+                        class="h-6 px-2 text-xs gap-1"
+                        :disabled="!activeTab.explainPlan && !activeTab.explainError && !activeTab.isExplaining"
+                        @click="activeOutputView = 'explain'"
+                      >
+                        <GitBranch class="h-3.5 w-3.5" />
+                        {{ t('explain.title') }}
+                      </Button>
                     </div>
-                    <div v-else-if="!activeTab.result && activeTab.isExecuting" class="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
-                      <div class="flex items-center">
-                        <Loader2 class="h-5 w-5 animate-spin mr-2" />
-                        {{ t(queryExecutionLabelKey(activeTab)) }}
+
+                    <ExplainPlanViewer
+                      v-if="activeOutputView === 'explain'"
+                      class="flex-1 min-h-0"
+                      :plan="activeTab.explainPlan"
+                      :error="activeTab.explainError"
+                      :loading="activeTab.isExplaining"
+                      :source-sql="activeTab.lastExplainedSql"
+                      :explain-sql="activeTab.explainSql"
+                    />
+
+                    <template v-else>
+                      <DataGrid v-if="activeTab.result" :key="activeTab.id" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.lastExecutedSql || activeTab.sql" :loading="activeTab.isExecuting" />
+                      <div v-if="activeTab.result?.columns.includes('Error')" class="flex items-center gap-2 px-3 py-1.5 border-t bg-destructive/5">
+                        <Bot class="h-3.5 w-3.5 text-destructive" />
+                        <button class="text-xs text-destructive hover:underline" @click="fixWithAi(String(activeTab.result?.rows?.[0]?.[0] ?? ''))">
+                          {{ t('ai.fixWithAi') }}
+                        </button>
                       </div>
-                    </div>
-                    <div v-else-if="!activeTab.result" class="flex-1 min-h-0 flex items-center justify-center text-muted-foreground text-sm">
-                      {{ t('editor.pressToExecute') }}
-                    </div>
+                      <div v-else-if="!activeTab.result && activeTab.isExecuting" class="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
+                        <div class="flex items-center">
+                          <Loader2 class="h-5 w-5 animate-spin mr-2" />
+                          {{ t(queryExecutionLabelKey(activeTab)) }}
+                        </div>
+                      </div>
+                      <div v-else-if="!activeTab.result" class="flex-1 min-h-0 flex items-center justify-center text-muted-foreground text-sm">
+                        {{ t('editor.pressToExecute') }}
+                      </div>
+                    </template>
                   </div>
                 </Pane>
               </Splitpanes>

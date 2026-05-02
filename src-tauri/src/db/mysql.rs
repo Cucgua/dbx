@@ -86,6 +86,16 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
 
     let upper_type = type_name.to_uppercase();
 
+    if upper_type == "JSON" {
+        if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
+            return v;
+        }
+        if let Ok(v) = row.try_get::<String, _>(idx) {
+            return serde_json::from_str::<serde_json::Value>(&v).unwrap_or(serde_json::Value::String(v));
+        }
+        return serde_json::Value::Null;
+    }
+
     if upper_type == "BOOLEAN" {
         return row
             .try_get::<bool, _>(idx)
