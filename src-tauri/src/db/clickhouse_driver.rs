@@ -7,13 +7,17 @@ use super::{ColumnInfo, DatabaseInfo, QueryResult, TableInfo};
 pub struct ChClient {
     http: HttpClient,
     base_url: String,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 impl ChClient {
-    pub fn new(url: &str) -> Self {
+    pub fn new(url: &str, username: Option<String>, password: Option<String>) -> Self {
         Self {
             http: HttpClient::new(),
             base_url: url.trim_end_matches('/').to_string(),
+            username,
+            password,
         }
     }
 }
@@ -23,6 +27,8 @@ impl Clone for ChClient {
         Self {
             http: self.http.clone(),
             base_url: self.base_url.clone(),
+            username: self.username.clone(),
+            password: self.password.clone(),
         }
     }
 }
@@ -43,13 +49,21 @@ struct ChColumn {
     _type: String,
 }
 
+fn build_request(client: &ChClient, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match (&client.username, &client.password) {
+        (Some(u), Some(p)) if !u.is_empty() => req.basic_auth(u, Some(p)),
+        (Some(u), None) if !u.is_empty() => req.basic_auth(u, None::<&str>),
+        _ => req,
+    }
+}
+
 async fn ch_query(client: &ChClient, sql: &str, database: Option<&str>) -> Result<ChJsonResult, String> {
     let mut url = format!("{}/?default_format=JSONCompact", client.base_url);
     if let Some(db) = database {
         url.push_str(&format!("&database={}", db));
     }
-    let resp = client.http.post(&url)
-        .body(sql.to_string())
+    let req = build_request(client, client.http.post(&url).body(sql.to_string()));
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("ClickHouse request failed: {e}"))?;
@@ -62,7 +76,8 @@ async fn ch_query(client: &ChClient, sql: &str, database: Option<&str>) -> Resul
 
 pub async fn test_connection(client: &ChClient) -> Result<(), String> {
     let url = format!("{}/ping", client.base_url);
-    client.http.get(&url).send().await
+    let req = build_request(client, client.http.get(&url));
+    req.send().await
         .map_err(|e| format!("ClickHouse connection failed: {e}"))?;
     Ok(())
 }
@@ -139,8 +154,8 @@ pub async fn execute_query(client: &ChClient, database: &str, sql: &str) -> Resu
         })
     } else {
         let url = format!("{}/?default_format=JSONCompact&database={}", client.base_url, database);
-        let resp = client.http.post(&url)
-            .body(sql.to_string())
+        let req = build_request(client, client.http.post(&url).body(sql.to_string()));
+        let resp = req
             .send()
             .await
             .map_err(|e| format!("ClickHouse request failed: {e}"))?;

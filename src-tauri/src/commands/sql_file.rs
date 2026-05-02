@@ -67,6 +67,7 @@ pub struct SqlFileProgress {
     pub error: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SqlFileSummary {
     status: SqlFileStatus,

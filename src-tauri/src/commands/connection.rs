@@ -106,7 +106,9 @@ impl AppState {
                 PoolKind::MongoDb(client)
             }
             DatabaseType::ClickHouse => {
-                let client = db::clickhouse_driver::ChClient::new(&url);
+                let username = if db_config.username.is_empty() { None } else { Some(db_config.username.clone()) };
+                let password = if db_config.password.is_empty() { None } else { Some(db_config.password.clone()) };
+                let client = db::clickhouse_driver::ChClient::new(&url, username, password);
                 db::clickhouse_driver::test_connection(&client).await?;
                 PoolKind::ClickHouse(client)
             }
@@ -311,7 +313,9 @@ pub async fn test_connection(
             Err(e) => Err(e.to_string()),
         },
         DatabaseType::ClickHouse => {
-            let client = db::clickhouse_driver::ChClient::new(&url);
+            let username = if config.username.is_empty() { None } else { Some(config.username.clone()) };
+            let password = if config.password.is_empty() { None } else { Some(config.password.clone()) };
+            let client = db::clickhouse_driver::ChClient::new(&url, username, password);
             db::clickhouse_driver::test_connection(&client)
                 .await
                 .map(|_| "Connection successful".to_string())
@@ -381,7 +385,9 @@ pub async fn connect_db(
             PoolKind::MongoDb(client)
         }
         DatabaseType::ClickHouse => {
-            let client = db::clickhouse_driver::ChClient::new(&url);
+            let username = if config.username.is_empty() { None } else { Some(config.username.clone()) };
+            let password = if config.password.is_empty() { None } else { Some(config.password.clone()) };
+            let client = db::clickhouse_driver::ChClient::new(&url, username, password);
             db::clickhouse_driver::test_connection(&client).await?;
             PoolKind::ClickHouse(client)
         }

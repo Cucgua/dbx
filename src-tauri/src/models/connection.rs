@@ -104,7 +104,7 @@ impl ConnectionConfig {
                 };
                 format!("postgres://{host}:{port}{db_part}{suffix}")
             }
-            DatabaseType::ClickHouse => format!("http://{host}:{port}{db_part}"),
+            DatabaseType::ClickHouse => format!("http://{host}:{port}"),
             DatabaseType::SqlServer => format!(
                 "server=tcp:{host},{port};database={}",
                 self.database.as_deref().unwrap_or("master")
@@ -161,7 +161,7 @@ impl ConnectionConfig {
                     username, password
                 )
             }
-            DatabaseType::ClickHouse => format!("http://{host}:{port}{db_part}"),
+            DatabaseType::ClickHouse => format!("http://{host}:{port}"),
             DatabaseType::SqlServer => format!(
                 "server=tcp:{host},{port};user={};password={};database={}",
                 self.username,
