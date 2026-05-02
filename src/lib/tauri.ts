@@ -303,6 +303,61 @@ export async function deleteHistoryEntry(id: string): Promise<void> {
   return invoke("delete_history_entry", { id });
 }
 
+// --- SQL File Execution ---
+export type SqlFileStatus =
+  | "started"
+  | "running"
+  | "statementDone"
+  | "statementFailed"
+  | "done"
+  | "error"
+  | "cancelled";
+
+export interface SqlFileRequest {
+  executionId: string;
+  connectionId: string;
+  database: string;
+  filePath: string;
+  continueOnError: boolean;
+}
+
+export interface SqlFilePreview {
+  fileName: string;
+  filePath: string;
+  sizeBytes: number;
+  preview: string;
+}
+
+export interface SqlFileProgress {
+  executionId: string;
+  status: SqlFileStatus;
+  statementIndex: number;
+  successCount: number;
+  failureCount: number;
+  affectedRows: number;
+  elapsedMs: number;
+  statementSummary: string;
+  error?: string | null;
+}
+
+export async function previewSqlFile(filePath: string): Promise<SqlFilePreview> {
+  return invoke("preview_sql_file", { filePath });
+}
+
+export async function executeSqlFile(request: SqlFileRequest): Promise<void> {
+  return invoke("execute_sql_file", { request });
+}
+
+export async function cancelSqlFileExecution(executionId: string): Promise<boolean> {
+  return invoke("cancel_sql_file_execution", { executionId });
+}
+
+export async function listenSqlFileProgress(
+  handler: (progress: SqlFileProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<SqlFileProgress>("sql-file-progress", (event) => handler(event.payload));
+}
+
 // --- Data Transfer ---
 export interface TransferRequest {
   transferId: string;
