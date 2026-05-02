@@ -48,8 +48,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
-          shared-key: "release"
+          workspaces: './src-tauri -> target'
+          shared-key: release-${{ matrix.target }}
 
       - name: Install system dependencies (Linux)
         if: startsWith(matrix.platform, 'ubuntu')
