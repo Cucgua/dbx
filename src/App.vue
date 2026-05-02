@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { DatabaseZap, FilePlus2, Play, Loader2, Square, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Bot, Pin, AlignLeft, CloudDownload, ArrowLeftRight, FileCode } from "lucide-vue-next";
+import { DatabaseZap, FilePlus2, Play, Loader2, Square, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Bot, Pin, AlignLeft, CloudDownload, ArrowLeftRight, FileCode, Settings } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ import AiAssistant from "@/components/editor/AiAssistant.vue";
 import MongoDocBrowser from "@/components/mongo/MongoDocBrowser.vue";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import QueryHistory from "@/components/editor/QueryHistory.vue";
+import EditorSettingsDialog from "@/components/editor/EditorSettingsDialog.vue";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import DataTransferDialog from "@/components/transfer/DataTransferDialog.vue";
 import SchemaDiffDialog from "@/components/diff/SchemaDiffDialog.vue";
@@ -60,6 +61,7 @@ const settingsStore = useSettingsStore();
 const { message: toastMessage, visible: toastVisible, toast } = useToast();
 
 const showConnectionDialog = ref(false);
+const showSettingsDialog = ref(false);
 const showHistory = ref(false);
 const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") !== "false");
 const aiPanelWidth = ref(Number(localStorage.getItem("dbx-ai-panel-width")) || 360);
@@ -785,6 +787,15 @@ async function setupFileDrop() {
           </TooltipTrigger>
           <TooltipContent>GitHub</TooltipContent>
         </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button variant="ghost" size="icon" class="h-7 w-7" @click="showSettingsDialog = true">
+              <Settings class="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{{ t('settings.title') }}</TooltipContent>
+        </Tooltip>
       </div>
 
       <!-- Main Content -->
@@ -1194,6 +1205,7 @@ async function setupFileDrop() {
         @connect-succeeded="onConnectionConnectSucceeded"
         @connect-failed="onConnectionConnectFailed"
       />
+      <EditorSettingsDialog v-model:open="showSettingsDialog" />
       <DangerConfirmDialog v-model:open="showDangerDialog" :sql="dangerSql" @confirm="onDangerConfirm" />
       <DataTransferDialog
         v-model:open="showTransferDialog"

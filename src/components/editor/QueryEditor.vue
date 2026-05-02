@@ -2,9 +2,11 @@
 import { ref, onMounted, onBeforeUnmount, watch, shallowRef } from "vue";
 import type { CompletionContext } from "@codemirror/autocomplete";
 import type { EditorView as EditorViewType } from "@codemirror/view";
+import type { Extension } from "@codemirror/state";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { formatSqlText, type SqlFormatDialect } from "@/lib/sqlFormatter";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useSettingsStore, type EditorTheme } from "@/stores/settingsStore";
 import {
   buildSqlCompletionItemsFromContext,
   getSqlCompletionContext,
@@ -29,48 +31,72 @@ const emit = defineEmits<{
 const editorRef = ref<HTMLDivElement>();
 const view = shallowRef<EditorViewType | null>(null);
 const connectionStore = useConnectionStore();
-const DEFAULT_FONT_SIZE = 13;
+const settingsStore = useSettingsStore();
 const MIN_FONT_SIZE = 10;
 const MAX_FONT_SIZE = 24;
 let editorViewModule: typeof import("@codemirror/view") | null = null;
 let fontSizeTheme: import("@codemirror/state").Compartment | null = null;
+let fontFamilyTheme: import("@codemirror/state").Compartment | null = null;
+let codeMirrorTheme: import("@codemirror/state").Compartment | null = null;
 
-const savedFontSize = Number(localStorage.getItem("dbx-query-editor-font-size"));
-const fontSize = ref(
-  Number.isFinite(savedFontSize)
-    ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, savedFontSize))
-    : DEFAULT_FONT_SIZE,
-);
+async function loadTheme(theme: EditorTheme): Promise<Extension> {
+  switch (theme) {
+    case "one-dark":
+      return (await import("@codemirror/theme-one-dark")).oneDark;
+    case "vscode-dark":
+      return (await import("@uiw/codemirror-theme-vscode")).vscodeDark;
+    case "vscode-light":
+      return (await import("@uiw/codemirror-theme-vscode")).vscodeLight;
+    case "nord":
+      return (await import("@uiw/codemirror-theme-nord")).nord;
+    case "okaidia":
+      return (await import("@uiw/codemirror-theme-okaidia")).okaidia;
+    case "material":
+      return (await import("@uiw/codemirror-theme-material")).materialDark;
+    case "duotone-light":
+      return (await import("@uiw/codemirror-theme-duotone")).duotoneLight;
+    case "duotone-dark":
+      return (await import("@uiw/codemirror-theme-duotone")).duotoneDark;
+    case "xcode":
+      return (await import("@uiw/codemirror-theme-xcode")).xcodeLight;
+    default:
+      return (await import("@codemirror/theme-one-dark")).oneDark;
+  }
+}
 
-function fontTheme(EditorView: typeof import("@codemirror/view").EditorView, size: number) {
+function fontTheme(EditorView: typeof import("@codemirror/view").EditorView, size: number, family: string) {
   return EditorView.theme({
     "&": { height: "100%", fontSize: `${size}px` },
     ".cm-scroller": { overflow: "auto" },
-    ".cm-content": { fontFamily: "'JetBrains Mono', 'Fira Code', monospace" },
+    ".cm-content": { fontFamily: family },
   });
 }
 
 function setFontSize(size: number) {
   const next = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size));
-  fontSize.value = next;
-  localStorage.setItem("dbx-query-editor-font-size", String(next));
-  if (view.value && fontSizeTheme && editorViewModule) {
+  const ss = settingsStore.editorSettings;
+  ss.fontSize = next;
+  settingsStore.updateEditorSettings({ fontSize: next });
+  if (view.value && fontSizeTheme && fontFamilyTheme && editorViewModule) {
     view.value.dispatch({
-      effects: fontSizeTheme.reconfigure(fontTheme(editorViewModule.EditorView, next)),
+      effects: [
+        fontSizeTheme.reconfigure(fontTheme(editorViewModule.EditorView, next, ss.fontFamily)),
+        fontFamilyTheme.reconfigure(fontTheme(editorViewModule.EditorView, next, ss.fontFamily)),
+      ],
     });
   }
 }
 
 function zoomIn() {
-  setFontSize(fontSize.value + 1);
+  setFontSize(settingsStore.editorSettings.fontSize + 1);
 }
 
 function zoomOut() {
-  setFontSize(fontSize.value - 1);
+  setFontSize(settingsStore.editorSettings.fontSize - 1);
 }
 
 function resetZoom() {
-  setFontSize(DEFAULT_FONT_SIZE);
+  setFontSize(13);
 }
 
 function selectedSqlFromView(currentView: EditorViewType): string {
@@ -162,18 +188,20 @@ onMounted(async () => {
     { EditorState, Compartment },
     { sql, MySQL, PostgreSQL, SQLDialect },
     { basicSetup },
-    { oneDark },
     { autocompletion, startCompletion },
   ] = await Promise.all([
     import("@codemirror/view"),
     import("@codemirror/state"),
     import("@codemirror/lang-sql"),
     import("codemirror"),
-    import("@codemirror/theme-one-dark"),
     import("@codemirror/autocomplete"),
   ]);
   editorViewModule = { EditorView, keymap } as typeof import("@codemirror/view");
   fontSizeTheme = new Compartment();
+  fontFamilyTheme = new Compartment();
+  codeMirrorTheme = new Compartment();
+
+  const ss = settingsStore.editorSettings;
 
   const baseDialect = props.dialect === "postgres" ? PostgreSQL : MySQL;
   const extraKeywords = "PIVOT UNPIVOT EXCLUDE REPLACE QUALIFY ASOF POSITIONAL ANTI SEMI SAMPLE TABLESAMPLE STRUCT MAP LIST ARRAY LAMBDA UNNEST LATERAL FILTER RECURSIVE SUMMARIZE PRAGMA READ_CSV READ_PARQUET READ_JSON DESCRIBE SHOW COPY EXPORT IMPORT";
@@ -220,6 +248,8 @@ onMounted(async () => {
     },
   ]);
 
+  const theme = await loadTheme(ss.theme);
+
   const state = EditorState.create({
     doc: props.modelValue,
     extensions: [
@@ -231,7 +261,7 @@ onMounted(async () => {
           async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos),
         ],
       }),
-      oneDark,
+      codeMirrorTheme.of(theme),
       runKeymap,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
@@ -248,7 +278,8 @@ onMounted(async () => {
           emit("selectionChange", selectedSqlFromView(update.view));
         }
       }),
-      fontSizeTheme.of(fontTheme(EditorView, fontSize.value)),
+      fontSizeTheme.of(fontTheme(EditorView, ss.fontSize, ss.fontFamily)),
+      fontFamilyTheme.of(fontTheme(EditorView, ss.fontSize, ss.fontFamily)),
       EditorView.domEventHandlers({
         wheel(event) {
           if (!event.metaKey && !event.ctrlKey) return false;
@@ -280,6 +311,23 @@ watch(
   (val, oldVal) => {
     if (val && val !== oldVal) formatCurrentSql();
   }
+);
+
+// Reactively apply editor settings changes (theme, font family, font size)
+watch(
+  () => settingsStore.editorSettings,
+  async (ss) => {
+    if (!view.value || !codeMirrorTheme || !fontFamilyTheme || !fontSizeTheme || !editorViewModule) return;
+    const themeExt = await loadTheme(ss.theme);
+    view.value.dispatch({
+      effects: [
+        codeMirrorTheme.reconfigure(themeExt),
+        fontFamilyTheme.reconfigure(fontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily)),
+        fontSizeTheme.reconfigure(fontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily)),
+      ],
+    });
+  },
+  { deep: true }
 );
 
 onBeforeUnmount(() => {

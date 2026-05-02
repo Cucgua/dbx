@@ -358,4 +358,14 @@ export default {
     executeSync: "执行同步",
     syncSuccess: "同步执行成功",
   },
+  settings: {
+    title: "设置",
+    fontFamily: "字体",
+    selectFont: "选择字体...",
+    fontSize: "字号",
+    theme: "主题",
+    selectTheme: "选择主题...",
+    apply: "应用",
+    resetDefaults: "恢复默认",
+  },
 };

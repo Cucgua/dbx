@@ -358,4 +358,14 @@ export default {
     executeSync: "Execute Sync",
     syncSuccess: "Sync executed successfully",
   },
+  settings: {
+    title: "Settings",
+    fontFamily: "Font Family",
+    selectFont: "Select font...",
+    fontSize: "Font Size",
+    theme: "Theme",
+    selectTheme: "Select theme...",
+    apply: "Apply",
+    resetDefaults: "Reset Defaults",
+  },
 };
