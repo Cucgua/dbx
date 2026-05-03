@@ -66,6 +66,7 @@ export default {
     sshKeyPassphrasePlaceholder: "Leave empty if key is not encrypted",
     sshKeyPathBrowse: "Browse",
     sshExposeLan: "Expose tunnel to LAN",
+    dmCompatHint: "Requires DM PG compatibility mode (set COMPATIBLE_MODE=7 in dm.ini and restart)",
     compatible: "Compatible",
     mainstream: "Popular",
     color: "Color",

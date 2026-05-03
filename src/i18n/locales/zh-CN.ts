@@ -68,6 +68,7 @@ export default {
     sshKeyPassphrasePlaceholder: "密钥未加密则留空",
     sshKeyPathBrowse: "浏览",
     sshExposeLan: "允许局域网访问隧道",
+    dmCompatHint: "需要开启达梦 PG 兼容模式（dm.ini 中设置 COMPATIBLE_MODE=7 并重启服务）",
     compatible: "兼容",
     mainstream: "主流",
     color: "颜色",

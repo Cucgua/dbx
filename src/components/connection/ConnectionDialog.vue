@@ -102,6 +102,7 @@ const driverProfiles: Record<string, { type: DatabaseType; port: number; user: s
   starrocks:  { type: "mysql",      port: 9030,  user: "root",     label: "StarRocks",   icon: "starrocks", urlParams: "" },
   redshift:   { type: "postgres",   port: 5439,  user: "awsuser",  label: "Redshift",    icon: "redshift" },
   cockroachdb:{ type: "postgres",   port: 26257, user: "root",     label: "CockroachDB", icon: "cockroachdb" },
+  dm:         { type: "postgres",   port: 5236,  user: "SYSDBA",   label: "DM (Dameng)", icon: "dm" },
   tdengine:   { type: "mysql",      port: 6030,  user: "root",     label: "TDengine",    icon: "tdengine" },
   custom_mysql:    { type: "mysql",    port: 3306, user: "root",     label: "Custom",       icon: "mysql",    urlParams: "" },
   custom_postgres: { type: "postgres", port: 5432, user: "postgres", label: "Custom",  icon: "postgres", urlParams: "" },
@@ -196,7 +197,7 @@ const iconTypeMap: Record<string, string> = {
   mariadb: "mariadb", tidb: "tidb", oceanbase: "oceanbase", goldendb: "goldendb",
   opengauss: "opengauss", gaussdb: "gaussdb", kingbase: "kingbase", vastbase: "vastbase",
   doris: "doris", selectdb: "selectdb", starrocks: "starrocks", redshift: "redshift",
-  cockroachdb: "cockroachdb", tdengine: "tdengine",
+  cockroachdb: "cockroachdb", tdengine: "tdengine", dm: "dm",
   custom_mysql: "mysql", custom_postgres: "postgres",
 };
 
@@ -230,6 +231,7 @@ const pgCompat = [
   { value: "gaussdb", label: "GaussDB" },
   { value: "kingbase", label: "KingBase" },
   { value: "vastbase", label: "Vastbase" },
+  { value: "dm", label: "DM (Dameng)" },
   { value: "redshift", label: "Redshift" },
   { value: "cockroachdb", label: "CockroachDB" },
   { value: "custom_postgres", label: "Custom" },
@@ -496,6 +498,11 @@ async function browseSshKeyPath() {
           <div class="grid grid-cols-4 items-center gap-4">
             <Label class="text-right">{{ t('connection.database') }}</Label>
             <Input v-model="form.database" class="col-span-3" :placeholder="t('connection.databasePlaceholder')" />
+          </div>
+
+          <div v-if="selectedType === 'dm'" class="grid grid-cols-4 items-center gap-4">
+            <span />
+            <p class="col-span-3 text-xs text-muted-foreground">{{ t('connection.dmCompatHint') }}</p>
           </div>
 
           <div v-if="form.db_type === 'mysql' || form.db_type === 'postgres'" class="grid grid-cols-4 items-center gap-4">
