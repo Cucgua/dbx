@@ -100,6 +100,9 @@ const filteredNodes = computed(() => {
           <Search class="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
           <input
             v-model="searchQuery"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
             class="w-full h-6 pl-7 pr-6 text-xs rounded border border-border bg-background focus:outline-none focus:ring-1 focus:ring-ring"
             :placeholder="t('grid.search')"
           />
