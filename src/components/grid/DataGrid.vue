@@ -142,6 +142,155 @@ const showTranspose = ref(false);
 const sortCol = ref<string | null>(null);
 const sortDir = ref<"asc" | "desc">("asc");
 const searchText = ref("");
+const searchSuggestions = ref<string[]>([]);
+const suggestionIndex = ref(-1);
+const searchInputRef = ref<HTMLInputElement>();
+const measureRef = ref<HTMLSpanElement>();
+const suggestionLeft = ref(0);
+
+function updateSuggestionPosition() {
+  nextTick(() => {
+    const input = searchInputRef.value;
+    const measure = measureRef.value;
+    if (!input || !measure) return;
+    const cursorPos = input.selectionStart ?? 0;
+    measure.textContent = searchText.value.slice(0, cursorPos);
+    suggestionLeft.value = measure.getBoundingClientRect().width;
+  });
+}
+
+watch(searchText, (val) => {
+  searchSuggestions.value = [];
+  if (!canUseWhereSearch.value || !props.tableMeta?.columns?.length) return;
+
+  const trimmed = val.trimStart();
+  const lower = trimmed.toLowerCase();
+
+  if (trimmed.length > 0 && lower !== "where" && "where".startsWith(lower)) {
+    searchSuggestions.value = ["WHERE "];
+    suggestionIndex.value = 0;
+    updateSuggestionPosition();
+    return;
+  }
+
+  const m = val.match(/^\s*where\s+(.+)$/i);
+  if (m) {
+    const lastToken = m[1].split(/[\s,()><=!]+/).pop() || "";
+    if (lastToken.length > 0) {
+      const tl = lastToken.toLowerCase();
+      searchSuggestions.value = props.tableMeta.columns
+        .map((c) => c.name)
+        .filter((n) => n.toLowerCase().startsWith(tl) && n.toLowerCase() !== tl)
+        .slice(0, 8);
+      suggestionIndex.value = 0;
+      updateSuggestionPosition();
+    }
+  }
+});
+
+function acceptSuggestion() {
+  const idx = suggestionIndex.value;
+  if (idx < 0 || idx >= searchSuggestions.value.length) return;
+  const sug = searchSuggestions.value[idx];
+
+  if (sug === "WHERE ") {
+    const trimmed = searchText.value.trimStart();
+    const leading = searchText.value.slice(0, searchText.value.length - trimmed.length);
+    searchText.value = leading + "WHERE ";
+  } else {
+    const lastWordMatch = searchText.value.match(/([^\s,()><=!]+)$/);
+    if (lastWordMatch) {
+      const lastWord = lastWordMatch[1];
+      const prefix = searchText.value.slice(0, -lastWord.length);
+      searchText.value = prefix + sug;
+    }
+  }
+  searchSuggestions.value = [];
+  suggestionIndex.value = -1;
+  searchInputRef.value?.focus();
+}
+
+function dismissSuggestions() {
+  searchSuggestions.value = [];
+  suggestionIndex.value = -1;
+}
+
+function navigateSuggestion(delta: number) {
+  if (searchSuggestions.value.length === 0) return;
+  suggestionIndex.value = Math.min(
+    Math.max(suggestionIndex.value + delta, 0),
+    searchSuggestions.value.length - 1,
+  );
+}
+
+const PAIRS: Record<string, string> = { "'": "'", '"': '"', "(": ")" };
+
+function onSearchKeydown(e: KeyboardEvent) {
+  if (e.key in PAIRS && !e.ctrlKey && !e.metaKey) {
+    const input = e.target as HTMLInputElement;
+    const start = input.selectionStart ?? 0;
+    const end = input.selectionEnd ?? 0;
+    const close = PAIRS[e.key];
+
+    if (start !== end) {
+      // Wrap selection: 'text' → 'text'
+      e.preventDefault();
+      const selected = searchText.value.slice(start, end);
+      searchText.value = searchText.value.slice(0, start) + e.key + selected + close + searchText.value.slice(end);
+      nextTick(() => {
+        input.setSelectionRange(start + 1 + selected.length, start + 1 + selected.length);
+      });
+      suggestionIndex.value = -1;
+      return;
+    }
+
+    if (searchText.value[start] === close) {
+      // Cursor before closing char → skip over it
+      e.preventDefault();
+      input.setSelectionRange(start + 1, start + 1);
+      return;
+    }
+
+    e.preventDefault();
+    searchText.value = searchText.value.slice(0, start) + e.key + close + searchText.value.slice(end);
+    nextTick(() => {
+      input.setSelectionRange(start + 1, start + 1);
+    });
+    suggestionIndex.value = -1;
+    return;
+  }
+
+  if (searchSuggestions.value.length > 0) {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      acceptSuggestion();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      dismissSuggestions();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateSuggestion(1);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateSuggestion(-1);
+      return;
+    }
+  }
+  if (e.key === "Enter") {
+    onSearchEnter(e);
+    return;
+  }
+  if (e.key === "Escape") {
+    searchText.value = "";
+  }
+}
+
 const saveError = ref("");
 const isApplyingWhere = ref(false);
 const rowStatusFilter = ref<RowStatusFilter>("all");
@@ -997,14 +1146,35 @@ function escapeAndHighlightKeywords(s: string): string {
       <ContextMenuTrigger as-child>
         <div v-if="hasData" class="flex-1 flex flex-col overflow-hidden">
           <!-- Search bar -->
-          <div class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20">
+          <div class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20 relative">
             <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <input
+              ref="searchInputRef"
               v-model="searchText"
               class="flex-1 h-5 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
               :placeholder="canUseWhereSearch ? t('grid.searchOrWhere') : t('grid.search')"
-              @keydown.enter="onSearchEnter"
+              @keydown="onSearchKeydown"
+              @click="updateSuggestionPosition"
             />
+            <span ref="measureRef" class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none" aria-hidden="true" />
+            <!-- Suggestion dropdown -->
+            <div
+              v-if="searchSuggestions.length > 0"
+              class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
+              :style="{ left: suggestionLeft + 24 + 'px' }"
+            >
+              <div
+                v-for="(sug, idx) in searchSuggestions"
+                :key="sug"
+                class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
+                :class="idx === suggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
+                @mousedown.prevent="suggestionIndex = idx; acceptSuggestion()"
+                @mouseenter="suggestionIndex = idx"
+              >
+                <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
+                <span>{{ sug }}</span>
+              </div>
+            </div>
             <Select
               v-if="editable && tableMeta"
               :model-value="rowStatusFilter"
