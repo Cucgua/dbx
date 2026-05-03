@@ -51,6 +51,7 @@ fn duckdb_query_columns(con: &duckdb::Connection, table: &str) -> Result<Vec<db:
             extra: None, comment: None,
             numeric_precision: None,
             numeric_scale: None,
+            character_maximum_length: None,
         })
     }).map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())

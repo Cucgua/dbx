@@ -97,7 +97,7 @@ pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str
     let sql = format!(
         "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, c.COLUMN_DEFAULT, \
          CASE WHEN kcu.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_PK, \
-         c.NUMERIC_PRECISION, c.NUMERIC_SCALE \
+         c.NUMERIC_PRECISION, c.NUMERIC_SCALE, c.CHARACTER_MAXIMUM_LENGTH, c.DATETIME_PRECISION \
          FROM INFORMATION_SCHEMA.COLUMNS c \
          LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu \
            ON c.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND c.TABLE_NAME = kcu.TABLE_NAME AND c.COLUMN_NAME = kcu.COLUMN_NAME \
@@ -109,15 +109,46 @@ pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
     let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows.iter().map(|row| {
+        let base = row.get::<&str, _>(1).unwrap_or("").to_string();
+        let max_len = row.get::<i32, _>(7);
+        let dt_prec = row.get::<i32, _>(8);
+        let num_prec = row.get::<i32, _>(5);
+        let num_scale = row.get::<i32, _>(6);
+        let data_type = match base.to_lowercase().as_str() {
+            "varchar" => match max_len {
+                Some(-1) => "varchar(max)".to_string(),
+                Some(n) => format!("varchar({n})"),
+                None => "varchar".to_string(),
+            },
+            "nvarchar" => match max_len {
+                Some(-1) => "nvarchar(max)".to_string(),
+                Some(n) => format!("nvarchar({n})"),
+                None => "nvarchar".to_string(),
+            },
+            "char" | "nchar" | "binary" | "varbinary" => match max_len {
+                Some(n) if n > 0 => format!("{base}({n})"),
+                _ => base,
+            }
+            "decimal" | "numeric" => match (num_prec, num_scale) {
+                (Some(p), Some(s)) => format!("{base}({p},{s})"),
+                _ => base,
+            },
+            "datetime2" | "datetimeoffset" | "time" => match dt_prec {
+                Some(p) => format!("{base}({p})"),
+                _ => base,
+            },
+            _ => base,
+        };
         ColumnInfo {
             name: row.get::<&str, _>(0).unwrap_or("").to_string(),
-            data_type: row.get::<&str, _>(1).unwrap_or("").to_string(),
+            data_type,
             is_nullable: row.get::<&str, _>(2).unwrap_or("NO") == "YES",
             column_default: row.get::<&str, _>(3).map(|s| s.to_string()),
             is_primary_key: row.get::<i32, _>(4).unwrap_or(0) == 1,
             extra: None, comment: None,
-            numeric_precision: row.get::<i32, _>(5),
-            numeric_scale: row.get::<i32, _>(6),
+            numeric_precision: num_prec,
+            numeric_scale: num_scale,
+            character_maximum_length: max_len,
         }
     }).collect())
 }

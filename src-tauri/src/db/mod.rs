@@ -33,6 +33,7 @@ pub struct ColumnInfo {
     pub comment: Option<String>,
     pub numeric_precision: Option<i32>,
     pub numeric_scale: Option<i32>,
+    pub character_maximum_length: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

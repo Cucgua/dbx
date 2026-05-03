@@ -154,21 +154,29 @@ pub async fn get_columns(
     table: &str,
 ) -> Result<Vec<ColumnInfo>, String> {
     let rows: Vec<PgRow> = sqlx::query(
-        "SELECT c.column_name, c.data_type, c.is_nullable, c.column_default, \
-         CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN true ELSE false END AS is_pk, \
-         col_description((c.table_schema || '.' || c.table_name)::regclass, c.ordinal_position) AS column_comment, \
-         c.numeric_precision, c.numeric_scale \
-         FROM information_schema.columns c \
-         LEFT JOIN information_schema.key_column_usage kcu \
-           ON c.table_schema = kcu.table_schema \
-           AND c.table_name = kcu.table_name \
-           AND c.column_name = kcu.column_name \
-         LEFT JOIN information_schema.table_constraints tc \
-           ON kcu.constraint_name = tc.constraint_name \
-           AND kcu.table_schema = tc.table_schema \
-           AND tc.constraint_type = 'PRIMARY KEY' \
-         WHERE c.table_schema = $1 AND c.table_name = $2 \
-         ORDER BY c.ordinal_position",
+        "SELECT a.attname AS column_name, \
+         format_type(a.atttypid, a.atttypmod) AS full_type, \
+         NOT a.attnotnull AS is_nullable, \
+         pg_get_expr(ad.adbin, ad.adrelid) AS column_default, \
+         EXISTS ( \
+           SELECT 1 FROM pg_constraint co \
+           JOIN pg_index i ON i.indrelid = co.conrelid AND co.conindid = i.indexrelid \
+           WHERE co.conrelid = a.attrelid AND co.contype = 'p' \
+           AND a.attnum = ANY(i.indkey) \
+         ) AS is_pk, \
+         col_description(a.attrelid, a.attnum) AS column_comment, \
+         CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
+           THEN ((a.atttypmod - 4) >> 16) & 65535 ELSE NULL END AS numeric_precision, \
+         CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
+           THEN ((a.atttypmod - 4) & 2047) - 1024 ELSE NULL END AS numeric_scale, \
+         CASE WHEN t.typname IN ('varchar', 'bpchar') AND a.atttypmod > 0 \
+           THEN a.atttypmod - 4 ELSE NULL END AS character_maximum_length \
+         FROM pg_attribute a \
+         JOIN pg_type t ON t.oid = a.atttypid \
+         LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+         WHERE a.attrelid = ($1 || '.' || $2)::regclass \
+         AND a.attnum > 0 AND NOT a.attisdropped \
+         ORDER BY a.attnum",
     )
     .bind(schema)
     .bind(table)
@@ -178,16 +186,20 @@ pub async fn get_columns(
 
     Ok(rows
         .iter()
-        .map(|row| ColumnInfo {
-            name: row.get::<String, _>("column_name"),
-            data_type: row.get::<String, _>("data_type"),
-            is_nullable: row.get::<String, _>("is_nullable") == "YES",
-            column_default: row.get::<Option<String>, _>("column_default"),
-            is_primary_key: row.get::<bool, _>("is_pk"),
-            extra: None,
-            comment: row.get::<Option<String>, _>("column_comment"),
-            numeric_precision: row.get::<Option<i32>, _>("numeric_precision"),
-            numeric_scale: row.get::<Option<i32>, _>("numeric_scale"),
+        .map(|row| {
+            let full_type = row.get::<Option<String>, _>("full_type").unwrap_or_default();
+            ColumnInfo {
+                name: row.get::<String, _>("column_name"),
+                data_type: full_type,
+                is_nullable: row.get::<bool, _>("is_nullable"),
+                column_default: row.get::<Option<String>, _>("column_default"),
+                is_primary_key: row.get::<bool, _>("is_pk"),
+                extra: None,
+                comment: row.get::<Option<String>, _>("column_comment"),
+                numeric_precision: row.get::<Option<i32>, _>("numeric_precision"),
+                numeric_scale: row.get::<Option<i32>, _>("numeric_scale"),
+                character_maximum_length: row.get::<Option<i32>, _>("character_maximum_length"),
+            }
         })
         .collect())
 }
@@ -202,18 +214,25 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
         || trimmed.starts_with("WITH")
         || trimmed.starts_with("TABLE")
     {
-        let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
-        let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
-        let column_types: Vec<String> = desc
-            .columns()
-            .iter()
-            .map(|c| c.type_info().name().to_string())
-            .collect();
-
         let rows: Vec<PgRow> = sqlx::query(sql)
+            .persistent(false)
             .fetch_all(pool)
             .await
             .map_err(|e| e.to_string())?;
+
+        let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(first) = rows.first() {
+            let cols = first.columns();
+            (
+                cols.iter().map(|c| c.name().to_string()).collect(),
+                cols.iter().map(|c| c.type_info().name().to_string()).collect(),
+            )
+        } else {
+            let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
+            (
+                desc.columns().iter().map(|c| c.name().to_string()).collect(),
+                desc.columns().iter().map(|c| c.type_info().name().to_string()).collect(),
+            )
+        };
 
         let result_rows: Vec<Vec<serde_json::Value>> = rows
             .iter()
