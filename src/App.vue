@@ -1068,7 +1068,7 @@ async function setupFileDrop() {
       <!-- Main Content -->
       <div class="flex-1 flex min-h-0">
       <!-- Sidebar (fixed pixel width) -->
-      <div class="h-full shrink-0 relative" :style="{ width: sidebarWidth + 'px' }">
+      <div class="h-full shrink-0 relative select-none" :style="{ width: sidebarWidth + 'px' }">
           <div class="h-full flex flex-col overflow-hidden">
             <div class="h-9 flex items-center px-3 text-xs font-medium text-muted-foreground border-b bg-muted/20">
               {{ t('sidebar.connections') }}
