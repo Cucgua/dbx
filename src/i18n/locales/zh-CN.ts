@@ -96,6 +96,7 @@ export default {
     tooltipDatabase: "数据库：",
     tooltipTable: "表：",
     tooltipCollection: "集合：",
+    resultN: "结果 {n}",
   },
   grid: {
     rows: "{count} 行",

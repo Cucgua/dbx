@@ -1320,6 +1320,19 @@ async function setupFileDrop() {
                       >
                         {{ t('tabs.tableData') }}
                       </Button>
+                      <template v-if="activeOutputView === 'result' && activeTab.results && activeTab.results.length > 1">
+                        <span class="mx-1 h-4 w-px bg-border" />
+                        <Button
+                          v-for="(_, rIdx) in activeTab.results"
+                          :key="rIdx"
+                          size="sm"
+                          :variant="activeTab.activeResultIndex === rIdx ? 'default' : 'ghost'"
+                          class="h-6 px-2 text-xs"
+                          @click="queryStore.setActiveResultIndex(activeTab.id, rIdx)"
+                        >
+                          {{ t('tabs.resultN', { n: rIdx + 1 }) }}
+                        </Button>
+                      </template>
                       <Button
                         size="sm"
                         :variant="activeOutputView === 'explain' ? 'secondary' : 'ghost'"
@@ -1343,7 +1356,7 @@ async function setupFileDrop() {
                     />
 
                     <template v-else>
-                      <DataGrid v-if="activeTab.result" :key="activeTab.id" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.lastExecutedSql || activeTab.sql" :loading="activeTab.isExecuting" />
+                      <DataGrid v-if="activeTab.result" :key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.lastExecutedSql || activeTab.sql" :loading="activeTab.isExecuting" />
                       <div v-if="activeTab.result?.columns.includes('Error')" class="flex items-center gap-2 px-3 py-1.5 border-t bg-destructive/5">
                         <Bot class="h-3.5 w-3.5 text-destructive" />
                         <button class="text-xs text-destructive hover:underline" @click="fixWithAi(String(activeTab.result?.rows?.[0]?.[0] ?? ''))">

@@ -94,6 +94,7 @@ export default {
     tooltipDatabase: "Database:",
     tooltipTable: "Table:",
     tooltipCollection: "Collection:",
+    resultN: "Result {n}",
   },
   grid: {
     rows: "{count} rows",
