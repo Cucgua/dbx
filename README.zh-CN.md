@@ -49,6 +49,28 @@
 - **多语言** — English & 简体中文
 - **极致轻量** — 安装包约 15 MB（不内嵌 Chromium）
 
+## AI 编程助手集成 (MCP)
+
+DBX 提供 [MCP Server](mcp/)，让 AI 编程助手直接使用 DBX 中已配置的数据库连接查询数据。
+
+```bash
+npx @dbx-app/mcp-server
+```
+
+在 `.mcp.json` 中添加：
+
+```json
+{
+  "mcpServers": {
+    "dbx": { "command": "npx", "args": ["-y", "@dbx-app/mcp-server"] }
+  }
+}
+```
+
+支持 Claude Code、Cursor、Windsurf 等 MCP 兼容的 AI 助手。可列出连接、浏览表、执行 SQL，还能直接在 DBX 界面中打开表。
+
+详见 [MCP Server 说明](mcp/README.md)。
+
 ## 截图
 
 <div align="center">
