@@ -17,12 +17,26 @@ struct OpenTableRequest {
     table: String,
 }
 
+#[derive(Deserialize)]
+struct ExecuteQueryRequest {
+    connection_name: String,
+    database: Option<String>,
+    sql: String,
+}
+
 #[derive(Clone, Serialize)]
 pub struct McpOpenTableEvent {
     pub connection_id: String,
     pub database: String,
     pub schema: Option<String>,
     pub table: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct McpExecuteQueryEvent {
+    pub connection_id: String,
+    pub database: String,
+    pub sql: String,
 }
 
 pub fn start(app_handle: AppHandle, _state: Arc<AppState>) {
@@ -47,7 +61,7 @@ pub fn start(app_handle: AppHandle, _state: Arc<AppState>) {
             };
             let app = app_handle.clone();
             tokio::spawn(async move {
-                let mut buf = vec![0u8; 8192];
+                let mut buf = vec![0u8; 16384];
                 let n = match stream.read(&mut buf).await {
                     Ok(n) if n > 0 => n,
                     _ => return,
@@ -56,43 +70,13 @@ pub fn start(app_handle: AppHandle, _state: Arc<AppState>) {
                 let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
                 let first_line = request.lines().next().unwrap_or("");
 
-                if !first_line.starts_with("POST /open-table") {
+                if first_line.starts_with("POST /open-table") {
+                    handle_open_table(&app, body, &mut stream).await;
+                } else if first_line.starts_with("POST /execute-query") {
+                    handle_execute_query(&app, body, &mut stream).await;
+                } else {
                     let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
-                    return;
                 }
-
-                let req: OpenTableRequest = match serde_json::from_str(body) {
-                    Ok(r) => r,
-                    Err(_) => {
-                        let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n").await;
-                        return;
-                    }
-                };
-
-                let configs = match load_configs_from_disk(&app) {
-                    Ok(c) => c,
-                    Err(_) => {
-                        let _ = stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n").await;
-                        return;
-                    }
-                };
-
-                let found = configs.iter().find(|c| c.name.eq_ignore_ascii_case(&req.connection_name));
-                let Some(config) = found else {
-                    let resp = b"HTTP/1.1 404 Not Found\r\nContent-Length: 20\r\n\r\nConnection not found";
-                    let _ = stream.write_all(resp).await;
-                    return;
-                };
-
-                let event = McpOpenTableEvent {
-                    connection_id: config.id.clone(),
-                    database: req.database.unwrap_or_else(|| config.database.clone().unwrap_or_default()),
-                    schema: req.schema,
-                    table: req.table,
-                };
-
-                let _ = app.emit("mcp-open-table", &event);
-                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
             });
         }
     });
@@ -103,4 +87,56 @@ fn load_configs_from_disk(app: &AppHandle) -> Result<Vec<crate::models::connecti
     let path = dir.join("connections.json");
     let store = create_secret_store(app);
     load_connections_from_file(&path, &*store)
+}
+
+fn find_config_by_name<'a>(configs: &'a [crate::models::connection::ConnectionConfig], name: &str) -> Option<&'a crate::models::connection::ConnectionConfig> {
+    configs.iter().find(|c| c.name.eq_ignore_ascii_case(name))
+}
+
+async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
+    let resp = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+    let _ = stream.write_all(resp.as_bytes()).await;
+}
+
+async fn handle_open_table(app: &AppHandle, body: &str, stream: &mut tokio::net::TcpStream) {
+    let req: OpenTableRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => { respond(stream, "400 Bad Request", "").await; return; }
+    };
+    let configs = match load_configs_from_disk(app) {
+        Ok(c) => c,
+        Err(_) => { respond(stream, "500 Internal Server Error", "").await; return; }
+    };
+    let Some(config) = find_config_by_name(&configs, &req.connection_name) else {
+        respond(stream, "404 Not Found", "Connection not found").await; return;
+    };
+    let event = McpOpenTableEvent {
+        connection_id: config.id.clone(),
+        database: req.database.unwrap_or_else(|| config.database.clone().unwrap_or_default()),
+        schema: req.schema,
+        table: req.table,
+    };
+    let _ = app.emit("mcp-open-table", &event);
+    respond(stream, "200 OK", "ok").await;
+}
+
+async fn handle_execute_query(app: &AppHandle, body: &str, stream: &mut tokio::net::TcpStream) {
+    let req: ExecuteQueryRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => { respond(stream, "400 Bad Request", "").await; return; }
+    };
+    let configs = match load_configs_from_disk(app) {
+        Ok(c) => c,
+        Err(_) => { respond(stream, "500 Internal Server Error", "").await; return; }
+    };
+    let Some(config) = find_config_by_name(&configs, &req.connection_name) else {
+        respond(stream, "404 Not Found", "Connection not found").await; return;
+    };
+    let event = McpExecuteQueryEvent {
+        connection_id: config.id.clone(),
+        database: req.database.unwrap_or_else(|| config.database.clone().unwrap_or_default()),
+        sql: req.sql,
+    };
+    let _ = app.emit("mcp-execute-query", &event);
+    respond(stream, "200 OK", "ok").await;
 }

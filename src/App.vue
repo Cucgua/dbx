@@ -836,6 +836,10 @@ onMounted(() => {
     import("@tauri-apps/api/event").then(({ listen }) => {
       listen<{ connection_id: string; database: string; schema?: string; table: string }>("mcp-open-table", async (event) => {
         const { connection_id, database, schema, table } = event.payload;
+
+        if (!connectionStore.connections.length) {
+          await connectionStore.initFromDisk();
+        }
         const config = connectionStore.getConfig(connection_id);
         if (!config) return;
         connectionStore.activeConnectionId = connection_id;
@@ -848,6 +852,22 @@ onMounted(() => {
         } else {
           openLineageTarget({ connectionId: connection_id, database, schema, tableName: table });
         }
+
+        getCurrentWindow().setFocus().catch(() => {});
+      });
+      listen<{ connection_id: string; database: string; sql: string }>("mcp-execute-query", async (event) => {
+        const { connection_id, database, sql } = event.payload;
+        if (!connectionStore.connections.length) {
+          await connectionStore.initFromDisk();
+        }
+        const config = connectionStore.getConfig(connection_id);
+        if (!config) return;
+        connectionStore.activeConnectionId = connection_id;
+        await connectionStore.ensureConnected(connection_id);
+        const tabId = queryStore.createTab(connection_id, database, undefined, "query");
+        queryStore.updateSql(tabId, sql);
+        await queryStore.executeTabSql(tabId, sql);
+        getCurrentWindow().setFocus().catch(() => {});
       });
     }).catch(() => {});
   }

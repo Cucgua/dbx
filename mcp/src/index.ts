@@ -134,20 +134,37 @@ server.tool(
     schema: z.string().optional().describe("Schema name"),
   },
   async ({ connection_name, table, database, schema }) => {
-    try {
-      const bridgeUrl = await getBridgeUrl();
-      const res = await fetch(`${bridgeUrl}/open-table`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ connection_name, table, database, schema }),
-      });
-      if (res.ok) return text(`Opened ${table} in DBX`);
-      return text(`Failed: ${await res.text()}`);
-    } catch {
-      return text("DBX is not running. Please start DBX first.");
-    }
+    return bridgeRequest("/open-table", { connection_name, table, database, schema }, `Opened ${table} in DBX`);
   },
 );
+
+server.tool(
+  "dbx_execute_and_show",
+  "Execute a SQL query in DBX desktop app UI and show results there. Requires DBX to be running.",
+  {
+    connection_name: z.string().describe("Name of the DBX connection"),
+    sql: z.string().describe("SQL query to execute"),
+    database: z.string().optional().describe("Database name"),
+  },
+  async ({ connection_name, sql, database }) => {
+    return bridgeRequest("/execute-query", { connection_name, sql, database }, "Query sent to DBX");
+  },
+);
+
+async function bridgeRequest(path: string, body: Record<string, unknown>, successMsg: string) {
+  try {
+    const bridgeUrl = await getBridgeUrl();
+    const res = await fetch(`${bridgeUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return text(successMsg);
+    return text(`Failed: ${await res.text()}`);
+  } catch {
+    return text("DBX is not running. Please start DBX first.");
+  }
+}
 
 async function main() {
   const transport = new StdioServerTransport();
