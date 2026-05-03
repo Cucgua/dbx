@@ -4,6 +4,7 @@ mod models;
 
 use commands::connection::AppState;
 use std::sync::Arc;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -26,6 +27,9 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            let app_handle = app.handle().clone();
+            let state: tauri::State<Arc<AppState>> = app.state();
+            commands::mcp_bridge::start(app_handle, state.inner().clone());
             Ok(())
         })
         .on_window_event(|window, event| {

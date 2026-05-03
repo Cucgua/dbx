@@ -833,6 +833,23 @@ onMounted(() => {
     setupFileDrop().catch(() => {});
     checkUpdates({ silent: true });
     getVersion().then((v) => { appVersion.value = v; }).catch(() => {});
+    import("@tauri-apps/api/event").then(({ listen }) => {
+      listen<{ connection_id: string; database: string; schema?: string; table: string }>("mcp-open-table", async (event) => {
+        const { connection_id, database, schema, table } = event.payload;
+        const config = connectionStore.getConfig(connection_id);
+        if (!config) return;
+        connectionStore.activeConnectionId = connection_id;
+        await connectionStore.ensureConnected(connection_id);
+
+        if (config.db_type === "redis") {
+          queryStore.createTab(connection_id, database || "0", `db${database || "0"}`, "redis");
+        } else if (config.db_type === "mongodb") {
+          queryStore.createTab(connection_id, database, table, "mongo");
+        } else {
+          openLineageTarget({ connectionId: connection_id, database, schema, tableName: table });
+        }
+      });
+    }).catch(() => {});
   }
 });
 
