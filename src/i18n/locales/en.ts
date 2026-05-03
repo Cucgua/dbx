@@ -90,6 +90,10 @@ export default {
     tableData: "Table Data",
     redis: "Redis",
     mongo: "Mongo",
+    tooltipConnection: "Connection:",
+    tooltipDatabase: "Database:",
+    tooltipTable: "Table:",
+    tooltipCollection: "Collection:",
   },
   grid: {
     rows: "{count} rows",

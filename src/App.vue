@@ -465,7 +465,7 @@ function tabDisplayTitle(tab: typeof queryStore.tabs[number]): string {
   if (isPreviewTab(tab)) return tab.title;
   const database = databaseDisplayNameForTab(tab.connectionId, tab.database);
   if (tab.mode === "data" && tab.tableMeta?.tableName) {
-    return `${database} | ${tab.tableMeta.tableName}`;
+    return tab.tableMeta.tableName;
   }
   if (tab.mode === "query") {
     return `${connectionDisplayName(tab.connectionId)} | ${database}`;
@@ -477,6 +477,22 @@ function tabDisplayTitle(tab: typeof queryStore.tabs[number]): string {
     return `${connectionDisplayName(tab.connectionId)} | ${database}`;
   }
   return tab.title;
+}
+
+function tabTooltipLines(tab: typeof queryStore.tabs[number]): { label: string; value: string }[] {
+  const connName = connectionDisplayName(tab.connectionId);
+  const database = databaseDisplayNameForTab(tab.connectionId, tab.database);
+  const lines: { label: string; value: string }[] = [
+    { label: t("tabs.tooltipConnection"), value: connName },
+    { label: t("tabs.tooltipDatabase"), value: database },
+  ];
+  if (tab.mode === "data" && tab.tableMeta?.tableName) {
+    lines.push({ label: t("tabs.tooltipTable"), value: tab.tableMeta.tableName });
+  }
+  if (tab.mode === "mongo" && tab.sql) {
+    lines.push({ label: t("tabs.tooltipCollection"), value: tab.sql });
+  }
+  return lines;
 }
 
 function tabModeLabel(tab: typeof queryStore.tabs[number]): string {
@@ -1091,8 +1107,10 @@ async function setupFileDrop() {
               :key="tab.id"
             >
               <ContextMenuTrigger as-child>
+                <Tooltip>
+                <TooltipTrigger as-child>
                 <div
-                  class="group flex min-w-36 items-center gap-1 px-3 h-full text-xs cursor-pointer border-r hover:bg-accent transition-colors whitespace-nowrap max-w-48"
+                  class="group flex min-w-36 items-center gap-1 px-3 h-full text-xs cursor-pointer border-r hover:bg-accent transition-colors whitespace-nowrap"
                   :class="{ 'bg-background font-medium': tab.id === queryStore.activeTabId }"
                   @click="queryStore.activeTabId = tab.id"
                 >
@@ -1112,8 +1130,8 @@ async function setupFileDrop() {
                   <Tooltip>
                     <TooltipTrigger as-child>
                       <button
-                        class="ml-1 rounded p-0.5 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground focus:opacity-100"
-                        :class="tab.pinned ? 'opacity-100 text-primary' : 'opacity-0 group-hover:opacity-100'"
+                        class="rounded p-0.5 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground focus:opacity-100"
+                        :class="tab.pinned ? 'opacity-100 text-primary' : 'hidden group-hover:inline-flex'"
                         @click.stop="queryStore.togglePinnedTab(tab.id)"
                       >
                         <Pin class="h-3 w-3" :class="{ 'fill-current': tab.pinned }" />
@@ -1128,6 +1146,14 @@ async function setupFileDrop() {
                     <X class="h-3 w-3" />
                   </button>
                 </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" class="text-xs grid grid-cols-[auto_1fr] gap-x-2">
+                  <template v-for="line in tabTooltipLines(tab)" :key="line.label">
+                    <span class="text-muted-foreground">{{ line.label }}</span>
+                    <span>{{ line.value }}</span>
+                  </template>
+                </TooltipContent>
+                </Tooltip>
               </ContextMenuTrigger>
 
               <ContextMenuContent class="w-44">

@@ -92,6 +92,10 @@ export default {
     tableData: "数据表",
     redis: "Redis",
     mongo: "Mongo",
+    tooltipConnection: "连接：",
+    tooltipDatabase: "数据库：",
+    tooltipTable: "表：",
+    tooltipCollection: "集合：",
   },
   grid: {
     rows: "{count} 行",
