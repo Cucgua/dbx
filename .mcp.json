@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "dbx": {
-      "command": "npx",
-      "args": ["tsx", "mcp/src/index.ts"],
-      "cwd": "/Users/skyler/VsCodeProjects/dbx"
-    }
-  }
-}
