@@ -422,7 +422,7 @@ watch(open, (value) => {
                           v-else-if="indexTypeOptions.length > 0"
                           :model-value="index.indexType || 'BTREE'"
                           :disabled="index.markedForDrop"
-                          @update:model-value="(v: string) => index.indexType = v"
+                          @update:model-value="(v: any) => index.indexType = String(v ?? '')"
                         >
                           <SelectTrigger class="h-7 font-mono text-xs">
                             <SelectValue />
