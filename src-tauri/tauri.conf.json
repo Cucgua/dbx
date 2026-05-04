@@ -39,7 +39,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "RWSCMKdQ+0yVxDVHblYBpu9cqAj8cSIaMVVhmeXzZNtBxRDuDvJEiuQ2",
+      "pubkey": "RWTfx7a7FyNPkSgMFBEXIVLl9fJAaOT+ZqH2JSer4CSdfdIBBzawniaC",
       "endpoints": [
         "https://github.com/t8y2/dbx/releases/latest/download/latest.json"
       ]
