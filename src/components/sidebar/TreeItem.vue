@@ -25,6 +25,7 @@ import {
   type ExportedTableSql,
 } from "@/lib/databaseExport";
 import { qualifiedTableName as buildQualifiedTableName, quoteTableIdentifier } from "@/lib/tableSelectSql";
+import { treeNodeRowAction } from "@/lib/treeNodeClick";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -178,14 +179,10 @@ async function toggle() {
 
 function onClick() {
   const node = props.node;
-  if (node.type === "table" || node.type === "view") {
+  const action = treeNodeRowAction(node.type, canExpand);
+  if (action === "open-data") {
     openData();
-    toggle();
-  } else if (node.type === "redis-db") {
-    toggle();
-  } else if (node.type === "mongo-collection") {
-    toggle();
-  } else if (canExpand) {
+  } else if (action === "toggle") {
     toggle();
   }
 }
@@ -629,9 +626,15 @@ async function showMore() {
           @click="onClick"
         >
           <template v-if="canExpand">
-            <Loader2 v-if="node.isLoading" class="w-3.5 h-3.5 shrink-0 animate-spin text-muted-foreground" />
-            <ChevronDown v-else-if="node.isExpanded" class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-            <ChevronRight v-else class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+            <button
+              type="button"
+              class="-m-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+              @click.stop="toggle"
+            >
+              <Loader2 v-if="node.isLoading" class="w-3.5 h-3.5 animate-spin" />
+              <ChevronDown v-else-if="node.isExpanded" class="w-3.5 h-3.5" />
+              <ChevronRight v-else class="w-3.5 h-3.5" />
+            </button>
           </template>
           <span v-else class="w-3.5 h-3.5 shrink-0" />
           <DatabaseIcon v-if="node.type === 'connection'" :db-type="connectionIconType(node.connectionId)" class="w-3.5 h-3.5 shrink-0" />

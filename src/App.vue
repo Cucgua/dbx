@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { DatabaseZap, FilePlus2, Play, Loader2, Square, X, Globe, Moon, Sun, Upload, Download, Plus, History, Server, Table2, Database, Search, ShieldCheck, Bot, Pin, AlignLeft, CloudDownload, ArrowLeftRight, FileCode, Settings, Sparkles, GitBranch } from "lucide-vue-next";
+import { DatabaseZap, FilePlus2, Play, Loader2, Square, X, Globe, Moon, Sun, Upload, Download, Plus, History, Table2, Database, Search, ShieldCheck, Bot, Pin, AlignLeft, CloudDownload, ArrowLeftRight, FileCode, Settings, Sparkles, GitBranch } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getVersion } from "@tauri-apps/api/app";
 import * as api from "@/lib/tauri";
 import { canCancelQueryExecution, queryExecutionLabelKey } from "@/lib/queryExecutionState";
+import { connectionDriverLabel, connectionIconType, connectionOptionSubtitle } from "@/lib/connectionPresentation";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
@@ -436,14 +437,6 @@ const recentConnections = computed(() => connectionStore.connections.slice(0, 5)
 
 function connectionDisplayName(connectionId: string): string {
   return connectionStore.getConfig(connectionId)?.name || connectionId;
-}
-
-function connectionDriverLabel(connection?: ConnectionConfig): string {
-  return connection?.driver_label || connection?.db_type.toUpperCase() || "";
-}
-
-function connectionIconType(connection?: ConnectionConfig): string {
-  return connection?.driver_profile || connection?.db_type || "postgres";
 }
 
 function connectionColor(connectionId: string): string {
@@ -1229,25 +1222,31 @@ async function setupFileDrop() {
               <div class="flex items-center gap-2">
                 <div class="flex items-center gap-1">
                   <span v-if="activeConnection?.color" class="h-4 w-1 rounded-full shrink-0" :style="{ backgroundColor: activeConnection.color }" />
-                  <Server class="h-3.5 w-3.5 shrink-0" />
                   <Select
                     :model-value="activeConnectionValue"
                     @update:model-value="changeActiveConnection"
                   >
-                    <SelectTrigger class="h-6 w-auto max-w-48 border-0 bg-transparent px-1 text-xs font-medium text-foreground shadow-none focus:ring-0">
-                      <SelectValue :placeholder="t('editor.selectConnection')">
-                        {{ connectionDisplayName(activeConnectionValue) }}
-                      </SelectValue>
+                    <SelectTrigger class="h-6 w-auto max-w-56 border-0 bg-transparent px-1 text-xs font-medium text-foreground shadow-none focus:ring-0">
+                      <div v-if="activeConnection" class="flex min-w-0 items-center gap-1.5">
+                        <DatabaseIcon :db-type="connectionIconType(activeConnection)" class="h-3.5 w-3.5 shrink-0" />
+                        <span class="truncate">{{ connectionDisplayName(activeConnectionValue) }}</span>
+                      </div>
+                      <SelectValue v-else :placeholder="t('editor.selectConnection')" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent class="min-w-64">
                       <SelectItem
                         v-for="connection in connectionStore.connections"
                         :key="connection.id"
                         :value="connection.id"
                       >
-                        <div class="flex items-center gap-2">
+                        <div class="flex min-w-0 items-center gap-2">
                           <span v-if="connection.color" class="h-3.5 w-1 rounded-full shrink-0" :style="{ backgroundColor: connection.color }" />
-                          <span>{{ connection.name }}</span>
+                          <span v-else class="h-3.5 w-1 shrink-0" />
+                          <DatabaseIcon :db-type="connectionIconType(connection)" class="h-3.5 w-3.5 shrink-0" />
+                          <div class="min-w-0 flex-1">
+                            <div class="truncate">{{ connection.name }}</div>
+                            <div class="truncate text-[11px] font-normal text-muted-foreground">{{ connectionOptionSubtitle(connection) }}</div>
+                          </div>
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -1497,7 +1496,7 @@ async function setupFileDrop() {
                       <div class="min-w-0 flex-1">
                         <div class="truncate text-sm font-medium">{{ connection.name }}</div>
                         <div class="truncate text-xs text-muted-foreground">
-                          {{ connectionDriverLabel(connection) }} · {{ connection.host || connection.database || 'local' }}{{ connection.port ? ':' + connection.port : '' }}
+                          {{ connectionOptionSubtitle(connection) || connectionDriverLabel(connection) }}
                         </div>
                       </div>
                       <FilePlus2 class="h-4 w-4 text-muted-foreground" />
