@@ -62,16 +62,24 @@ pub async fn save_ai_config(
     State(state): State<Arc<WebState>>,
     Json(body): Json<SaveAiConfigRequest>,
 ) -> Result<Json<()>, AppError> {
-    let path = state.data_dir.join("ai_config.json");
-    dbx_core::ai::save_config(&path, &body.config).map_err(AppError)?;
+    state
+        .app
+        .storage
+        .save_ai_config(&body.config)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }
 
 pub async fn load_ai_config(
     State(state): State<Arc<WebState>>,
 ) -> Result<Json<Option<AiConfig>>, AppError> {
-    let path = state.data_dir.join("ai_config.json");
-    let config = dbx_core::ai::load_config(&path).map_err(AppError)?;
+    let config = state
+        .app
+        .storage
+        .load_ai_config()
+        .await
+        .map_err(AppError)?;
     Ok(Json(config))
 }
 
@@ -83,16 +91,24 @@ pub async fn save_ai_conversation(
     State(state): State<Arc<WebState>>,
     Json(body): Json<SaveAiConversationRequest>,
 ) -> Result<Json<()>, AppError> {
-    let path = state.data_dir.join("ai_conversations.json");
-    dbx_core::ai::save_conversation(&path, body.conversation).map_err(AppError)?;
+    state
+        .app
+        .storage
+        .save_ai_conversation(&body.conversation)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }
 
 pub async fn load_ai_conversations(
     State(state): State<Arc<WebState>>,
 ) -> Result<Json<Vec<AiConversation>>, AppError> {
-    let path = state.data_dir.join("ai_conversations.json");
-    let conversations = dbx_core::ai::load_conversations(&path).map_err(AppError)?;
+    let conversations = state
+        .app
+        .storage
+        .load_ai_conversations()
+        .await
+        .map_err(AppError)?;
     Ok(Json(conversations))
 }
 
@@ -100,8 +116,12 @@ pub async fn delete_ai_conversation(
     State(state): State<Arc<WebState>>,
     Path(id): Path<String>,
 ) -> Result<Json<()>, AppError> {
-    let path = state.data_dir.join("ai_conversations.json");
-    dbx_core::ai::delete_conversation(&path, &id).map_err(AppError)?;
+    state
+        .app
+        .storage
+        .delete_ai_conversation(&id)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }
 

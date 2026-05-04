@@ -1,18 +1,8 @@
-use tauri::{AppHandle, Emitter, Manager};
+use std::sync::Arc;
+use tauri::{Emitter, AppHandle, State};
 
+use super::connection::AppState;
 pub use dbx_core::ai::*;
-
-fn ai_config_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("ai_config.json"))
-}
-
-fn conversations_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("ai_conversations.json"))
-}
 
 #[tauri::command]
 pub async fn ai_test_connection(config: AiConfig) -> Result<String, String> {
@@ -20,13 +10,18 @@ pub async fn ai_test_connection(config: AiConfig) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn save_ai_config(app: AppHandle, config: AiConfig) -> Result<(), String> {
-    dbx_core::ai::save_config(&ai_config_file(&app)?, &config)
+pub async fn save_ai_config(
+    state: State<'_, Arc<AppState>>,
+    config: AiConfig,
+) -> Result<(), String> {
+    state.storage.save_ai_config(&config).await
 }
 
 #[tauri::command]
-pub async fn load_ai_config(app: AppHandle) -> Result<Option<AiConfig>, String> {
-    dbx_core::ai::load_config(&ai_config_file(&app)?)
+pub async fn load_ai_config(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<AiConfig>, String> {
+    state.storage.load_ai_config().await
 }
 
 #[tauri::command]
@@ -58,18 +53,23 @@ pub async fn ai_cancel_stream(session_id: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn save_ai_conversation(
-    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
     conversation: AiConversation,
 ) -> Result<(), String> {
-    dbx_core::ai::save_conversation(&conversations_file(&app)?, conversation)
+    state.storage.save_ai_conversation(&conversation).await
 }
 
 #[tauri::command]
-pub async fn load_ai_conversations(app: AppHandle) -> Result<Vec<AiConversation>, String> {
-    dbx_core::ai::load_conversations(&conversations_file(&app)?)
+pub async fn load_ai_conversations(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<AiConversation>, String> {
+    state.storage.load_ai_conversations().await
 }
 
 #[tauri::command]
-pub async fn delete_ai_conversation(app: AppHandle, id: String) -> Result<(), String> {
-    dbx_core::ai::delete_conversation(&conversations_file(&app)?, &id)
+pub async fn delete_ai_conversation(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    state.storage.delete_ai_conversation(&id).await
 }

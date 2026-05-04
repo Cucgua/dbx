@@ -10,6 +10,7 @@ pub mod query_cancel;
 pub mod redis_ops;
 pub mod schema;
 pub mod sql;
+pub mod storage;
 pub mod table_import;
 pub mod transfer;
 pub mod types;

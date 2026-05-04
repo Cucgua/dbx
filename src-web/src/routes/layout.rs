@@ -17,21 +17,23 @@ pub async fn save_sidebar_layout(
     State(state): State<Arc<WebState>>,
     Json(body): Json<SaveLayoutRequest>,
 ) -> Result<Json<()>, AppError> {
-    let path = state.data_dir.join("sidebar_layout.json");
-    let json = serde_json::to_string_pretty(&body.layout).map_err(|e| AppError(e.to_string()))?;
-    std::fs::write(&path, json).map_err(|e| AppError(e.to_string()))?;
+    state
+        .app
+        .storage
+        .save_sidebar_layout(&body.layout)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }
 
 pub async fn load_sidebar_layout(
     State(state): State<Arc<WebState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let path = state.data_dir.join("sidebar_layout.json");
-    if !path.exists() {
-        return Ok(Json(serde_json::json!(null)));
-    }
-    let json = std::fs::read_to_string(&path).map_err(|e| AppError(e.to_string()))?;
-    let layout: serde_json::Value =
-        serde_json::from_str(&json).map_err(|e| AppError(e.to_string()))?;
-    Ok(Json(layout))
+    let layout = state
+        .app
+        .storage
+        .load_sidebar_layout()
+        .await
+        .map_err(AppError)?;
+    Ok(Json(layout.unwrap_or(serde_json::json!(null))))
 }

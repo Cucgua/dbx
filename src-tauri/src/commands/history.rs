@@ -1,37 +1,35 @@
-use tauri::{AppHandle, Manager};
+use std::sync::Arc;
+use tauri::State;
 
+use super::connection::AppState;
 pub use dbx_core::history::HistoryEntry;
 
-fn history_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("query_history.json"))
-}
-
 #[tauri::command]
-pub async fn save_history(app: AppHandle, entry: HistoryEntry) -> Result<(), String> {
-    let path = history_file(&app)?;
-    dbx_core::history::save_history_entry(&path, entry)
+pub async fn save_history(
+    state: State<'_, Arc<AppState>>,
+    entry: HistoryEntry,
+) -> Result<(), String> {
+    state.storage.save_history_entry(&entry).await
 }
 
 #[tauri::command]
 pub async fn load_history(
-    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<HistoryEntry>, String> {
-    let path = history_file(&app)?;
-    dbx_core::history::load_history_entries(&path, limit, offset)
+    state.storage.load_history_entries(limit, offset).await
 }
 
 #[tauri::command]
-pub async fn clear_history(app: AppHandle) -> Result<(), String> {
-    let path = history_file(&app)?;
-    dbx_core::history::clear_history_entries(&path)
+pub async fn clear_history(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    state.storage.clear_history().await
 }
 
 #[tauri::command]
-pub async fn delete_history_entry(app: AppHandle, id: String) -> Result<(), String> {
-    let path = history_file(&app)?;
-    dbx_core::history::delete_history_entry_by_id(&path, &id)
+pub async fn delete_history_entry(
+    state: State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    state.storage.delete_history_entry(&id).await
 }

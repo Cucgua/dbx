@@ -1,9 +1,5 @@
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
-
-use crate::commands::connection_secrets::{
-    create_secret_store, load_connections_from_file, save_connections_to_file,
-};
+use tauri::State;
 
 pub use dbx_core::connection::{
     connection_url_for_endpoint, expand_tilde, redacted_connection_url_for_endpoint, AppState,
@@ -12,54 +8,34 @@ pub use dbx_core::connection::{
 use dbx_core::db;
 use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
 
-fn connections_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("connections.json"))
-}
-
-fn sidebar_layout_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("sidebar_layout.json"))
-}
-
 #[tauri::command]
 pub async fn save_connections(
-    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
     configs: Vec<ConnectionConfig>,
 ) -> Result<(), String> {
-    let path = connections_file(&app)?;
-    let store = create_secret_store(&app);
-    save_connections_to_file(&path, &configs, &*store)
+    state.storage.save_connections(&configs).await
 }
 
 #[tauri::command]
-pub async fn load_connections(app: AppHandle) -> Result<Vec<ConnectionConfig>, String> {
-    let path = connections_file(&app)?;
-    let store = create_secret_store(&app);
-    load_connections_from_file(&path, &*store)
+pub async fn load_connections(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<ConnectionConfig>, String> {
+    state.storage.load_connections().await
 }
 
 #[tauri::command]
 pub async fn save_sidebar_layout(
-    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
     layout: serde_json::Value,
 ) -> Result<(), String> {
-    let path = sidebar_layout_file(&app)?;
-    let json = serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+    state.storage.save_sidebar_layout(&layout).await
 }
 
 #[tauri::command]
-pub async fn load_sidebar_layout(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
-    let path = sidebar_layout_file(&app)?;
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
-    Ok(Some(value))
+pub async fn load_sidebar_layout(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<serde_json::Value>, String> {
+    state.storage.load_sidebar_layout().await
 }
 
 #[tauri::command]

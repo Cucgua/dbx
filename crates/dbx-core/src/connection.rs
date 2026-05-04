@@ -6,6 +6,7 @@ use crate::db;
 use crate::db::ssh_tunnel::TunnelManager;
 use crate::models::connection::{ConnectionConfig, DatabaseType};
 use crate::query_cancel::RunningQueries;
+use crate::storage::Storage;
 
 pub fn expand_tilde(path: &str) -> String {
     if path == "~" || path.starts_with("~/") {
@@ -34,15 +35,17 @@ pub struct AppState {
     pub configs: Mutex<HashMap<String, ConnectionConfig>>,
     pub running_queries: RunningQueries,
     pub tunnels: TunnelManager,
+    pub storage: Storage,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(storage: Storage) -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
             configs: Mutex::new(HashMap::new()),
             running_queries: RunningQueries::default(),
             tunnels: TunnelManager::new(),
+            storage,
         }
     }
 

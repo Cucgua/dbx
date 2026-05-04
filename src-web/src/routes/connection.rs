@@ -2,9 +2,6 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::Json;
-use dbx_core::connection_secrets::{
-    load_connections_from_file, save_connections_to_file, FileSecretStore,
-};
 use dbx_core::models::connection::ConnectionConfig;
 use serde::Deserialize;
 
@@ -105,19 +102,23 @@ pub async fn save_connections(
     State(state): State<Arc<WebState>>,
     Json(body): Json<SaveConnectionsRequest>,
 ) -> Result<Json<()>, AppError> {
-    let path = state.data_dir.join("connections.json");
-    let secret_path = state.data_dir.join("secrets.json");
-    let store = FileSecretStore::new(secret_path);
-    save_connections_to_file(&path, &body.configs, &store).map_err(AppError)?;
+    state
+        .app
+        .storage
+        .save_connections(&body.configs)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }
 
 pub async fn load_connections(
     State(state): State<Arc<WebState>>,
 ) -> Result<Json<Vec<ConnectionConfig>>, AppError> {
-    let path = state.data_dir.join("connections.json");
-    let secret_path = state.data_dir.join("secrets.json");
-    let store = FileSecretStore::new(secret_path);
-    let configs = load_connections_from_file(&path, &store).map_err(AppError)?;
+    let configs = state
+        .app
+        .storage
+        .load_connections()
+        .await
+        .map_err(AppError)?;
     Ok(Json(configs))
 }

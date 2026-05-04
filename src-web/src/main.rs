@@ -12,6 +12,7 @@ use axum::middleware;
 use axum::routing::{delete, get, post};
 use axum::Router;
 use dbx_core::connection::AppState;
+use dbx_core::storage::Storage;
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
@@ -26,8 +27,6 @@ async fn main() {
         .install_default()
         .expect("Failed to install rustls crypto provider");
 
-    let app_state = Arc::new(AppState::new());
-
     // Data directory
     let data_dir = std::env::var("DBX_DATA_DIR")
         .map(std::path::PathBuf::from)
@@ -36,6 +35,18 @@ async fn main() {
             std::path::PathBuf::from(home).join(".dbx-web")
         });
     std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
+
+    let app_state = {
+        let db_path = data_dir.join("dbx.db");
+        let storage = Storage::open(&db_path)
+            .await
+            .expect("Failed to open storage");
+        storage
+            .migrate_from_json(&data_dir)
+            .await
+            .expect("Failed to migrate JSON data");
+        Arc::new(AppState::new(storage))
+    };
 
     // Password hash
     let password_hash = std::env::var("DBX_PASSWORD").ok().map(|pw| {
