@@ -5,7 +5,7 @@ import {
   Database, Table, Columns3, Eye, ChevronRight, ChevronDown,
   Loader2, FolderOpen, Trash2, TerminalSquare, RefreshCw,
   Copy, TableProperties, Key, Link, Zap, ListTree, Pencil, Plug, Unplug,
-  Pin, ArrowRightLeft, Download, FileCode, Network, FileUp, PencilRuler,
+  Pin, ArrowRightLeft, Download, FileCode, Network, FileUp, PencilRuler, Search,
 } from "lucide-vue-next";
 import {
   ContextMenu, ContextMenuContent, ContextMenuItem,
@@ -43,6 +43,7 @@ const props = defineProps<{
 
 const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
 const diagramSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
+const databaseSearchSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift", "duckdb", "clickhouse"]);
 const tableImportSupportedTypes = new Set(["mysql", "postgres", "sqlite", "duckdb", "clickhouse", "sqlserver", "oracle", "doris", "starrocks", "redshift"]);
 const tableStructureSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver"]);
 const fieldLineageSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
@@ -516,6 +517,16 @@ function openDiagram() {
   };
 }
 
+function openDatabaseSearch() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  connectionStore.databaseSearchSource = {
+    connectionId: node.connectionId,
+    database: node.database,
+    schema: node.type === "schema" ? node.schema : undefined,
+  };
+}
+
 function openTableImport() {
   const node = props.node;
   if (node.type !== "table" || !node.connectionId || !node.database) return;
@@ -560,6 +571,10 @@ const canOpenSqlFileExecution = computed(() => {
 const canOpenDiagram = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return !!props.node.database && !!config && diagramSupportedTypes.has(config.db_type);
+});
+const canOpenDatabaseSearch = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return !!props.node.database && !!config && databaseSearchSupportedTypes.has(config.db_type);
 });
 const canOpenTableImport = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
@@ -707,6 +722,9 @@ async function showMore() {
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenDiagram" @click="openDiagram">
           <Network class="w-4 h-4" /> {{ t('diagram.open') }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="canOpenDatabaseSearch" @click="openDatabaseSearch">
+          <Search class="w-4 h-4" /> {{ t('databaseSearch.open') }}
         </ContextMenuItem>
         <ContextMenuItem @click="refresh">
           <RefreshCw class="w-4 h-4" /> {{ t('contextMenu.refreshChildren') }}
