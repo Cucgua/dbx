@@ -32,6 +32,7 @@ const emit = defineEmits<{
 const editFontFamily = ref(settingsStore.editorSettings.fontFamily);
 const editFontSize = ref(settingsStore.editorSettings.fontSize);
 const editTheme = ref(settingsStore.editorSettings.theme);
+const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
 
 // Sync from store when dialog opens
 watch(() => props.open, (open) => {
@@ -39,6 +40,7 @@ watch(() => props.open, (open) => {
     editFontFamily.value = settingsStore.editorSettings.fontFamily;
     editFontSize.value = settingsStore.editorSettings.fontSize;
     editTheme.value = settingsStore.editorSettings.theme;
+    editExecuteMode.value = settingsStore.editorSettings.executeMode;
   }
 });
 
@@ -46,7 +48,8 @@ function hasChanges(): boolean {
   return (
     editFontFamily.value !== settingsStore.editorSettings.fontFamily ||
     editFontSize.value !== settingsStore.editorSettings.fontSize ||
-    editTheme.value !== settingsStore.editorSettings.theme
+    editTheme.value !== settingsStore.editorSettings.theme ||
+    editExecuteMode.value !== settingsStore.editorSettings.executeMode
   );
 }
 
@@ -55,6 +58,7 @@ function applySettings() {
     fontFamily: editFontFamily.value,
     fontSize: editFontSize.value,
     theme: editTheme.value,
+    executeMode: editExecuteMode.value,
   });
   emit("update:open", false);
 }
@@ -63,6 +67,11 @@ function resetDefaults() {
   editFontFamily.value = DEFAULT_EDITOR_SETTINGS.fontFamily;
   editFontSize.value = DEFAULT_EDITOR_SETTINGS.fontSize;
   editTheme.value = DEFAULT_EDITOR_SETTINGS.theme;
+  editExecuteMode.value = DEFAULT_EDITOR_SETTINGS.executeMode;
+}
+
+function onExecuteModeChange(v: any) {
+  if (v === "all" || v === "current") editExecuteMode.value = v;
 }
 
 function onFontFamilyChange(v: any) {
@@ -160,7 +169,7 @@ watch(() => props.open, (open) => {
 
 <template>
   <Dialog :open="open" @update:open="(v: boolean) => emit('update:open', v)">
-    <DialogContent class="sm:max-w-[720px] max-h-[calc(100vh-80px)] overflow-y-auto">
+    <DialogContent class="sm:max-w-[720px] max-h-[calc(100vh-80px)] overflow-y-auto overflow-x-hidden">
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <Settings class="h-4 w-4" />
@@ -243,6 +252,19 @@ watch(() => props.open, (open) => {
           </Select>
         </div>
 
+        <div class="space-y-2">
+          <Label>{{ t('settings.executeMode') }}</Label>
+          <Select :model-value="editExecuteMode" @update:model-value="onExecuteModeChange">
+            <SelectTrigger>
+              <SelectValue :placeholder="t('settings.executeMode')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{{ t('settings.executeModeAll') }}</SelectItem>
+              <SelectItem value="current">{{ t('settings.executeModeCurrent') }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
         <Separator />
 
         <!-- Live Preview -->
@@ -252,7 +274,7 @@ watch(() => props.open, (open) => {
             class="rounded-md border overflow-auto max-w-full"
             :class="editTheme === 'vscode-light' || editTheme === 'duotone-light' || editTheme === 'xcode' ? 'border-border' : 'border-border/50'"
           >
-            <div ref="previewRef" style="height: 160px; min-width: 100%" />
+            <div ref="previewRef" style="min-width: 100%" />
           </div>
         </div>
       </div>

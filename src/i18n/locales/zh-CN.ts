@@ -608,6 +608,9 @@ export default {
     selectTheme: "选择主题...",
     apply: "应用",
     resetDefaults: "恢复默认",
+    executeMode: "执行模式 (Cmd+Enter)",
+    executeModeAll: "执行全部 SQL",
+    executeModeCurrent: "执行光标所在语句",
     preview: "实时预览",
   },
 };

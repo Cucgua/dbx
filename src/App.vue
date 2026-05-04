@@ -124,6 +124,7 @@ const showUpdateDialog = ref(false);
 const dangerSql = ref("");
 const pendingDangerSql = ref("");
 const selectedSql = ref("");
+const cursorPos = ref(0);
 const formatSqlRequestId = ref(0);
 const activeOutputView = ref<"result" | "explain">("result");
 const showDangerDialog = ref(false);
@@ -455,7 +456,10 @@ const activeTab = computed(() =>
 
 const executableSql = computed(() => {
   const tab = activeTab.value;
-  return tab ? resolveExecutableSql(tab.sql, selectedSql.value) : "";
+  return tab ? resolveExecutableSql(tab.sql, selectedSql.value, {
+    mode: settingsStore.editorSettings.executeMode,
+    cursorPos: cursorPos.value,
+  }) : "";
 });
 
 watch(() => queryStore.activeTabId, () => {
@@ -613,6 +617,10 @@ function onEditorUpdate(val: string) {
 
 function onEditorSelectionChange(val: string) {
   selectedSql.value = val;
+}
+
+function onEditorCursorChange(pos: number) {
+  cursorPos.value = pos;
 }
 
 function formatActiveSql() {
@@ -1464,6 +1472,7 @@ async function setupFileDrop() {
                       :format-request-id="formatSqlRequestId"
                       @update:model-value="onEditorUpdate"
                       @selection-change="onEditorSelectionChange"
+                      @cursor-change="onEditorCursorChange"
                       @format-error="onFormatSqlError"
                       @execute="tryExecute"
                     />

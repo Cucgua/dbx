@@ -610,6 +610,9 @@ export default {
     selectTheme: "Select theme...",
     apply: "Apply",
     resetDefaults: "Reset Defaults",
+    executeMode: "Execute Mode (Cmd+Enter)",
+    executeModeAll: "Execute all SQL",
+    executeModeCurrent: "Execute statement at cursor",
     preview: "Live Preview",
   },
 };

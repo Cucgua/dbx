@@ -25,6 +25,7 @@ export interface EditorSettings {
   fontFamily: string;
   fontSize: number;
   theme: EditorTheme;
+  executeMode: "all" | "current";
 }
 
 export const EDITOR_THEMES: { value: EditorTheme; label: string; dark: boolean }[] = [
@@ -53,6 +54,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
   fontSize: 13,
   theme: "one-dark",
+  executeMode: "all",
 };
 
 export const STORAGE_KEY = "dbx-editor-settings";
@@ -68,6 +70,7 @@ function loadEditorSettings(): EditorSettings {
         fontFamily: parsed.fontFamily ?? DEFAULT_EDITOR_SETTINGS.fontFamily,
         fontSize: parsed.fontSize ?? DEFAULT_EDITOR_SETTINGS.fontSize,
         theme: parsed.theme ?? DEFAULT_EDITOR_SETTINGS.theme,
+        executeMode: parsed.executeMode ?? DEFAULT_EDITOR_SETTINGS.executeMode,
       };
     }
   } catch { /* ignore */ }
