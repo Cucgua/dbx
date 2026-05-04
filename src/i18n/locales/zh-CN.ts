@@ -22,6 +22,10 @@ export default {
     failed: "检查更新失败：{error}",
     rateLimited: "GitHub 更新检查暂时触发频率限制。你仍然可以打开下载页手动查看。",
     openRelease: "打开下载页",
+    downloadAndInstall: "下载并安装",
+    downloading: "下载中 {progress}%",
+    downloadFailed: "更新下载失败：{error}",
+    restart: "立即重启",
   },
   sidebar: {
     connections: "连接",

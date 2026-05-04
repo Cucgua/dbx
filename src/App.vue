@@ -918,6 +918,43 @@ function openLatestRelease() {
   open(url);
 }
 
+const isDownloadingUpdate = ref(false);
+const downloadProgress = ref(0);
+const updateReady = ref(false);
+
+async function downloadAndInstallUpdate() {
+  if (isDownloadingUpdate.value) return;
+  isDownloadingUpdate.value = true;
+  downloadProgress.value = 0;
+  try {
+    const { check } = await import("@tauri-apps/plugin-updater");
+    const update = await check();
+    if (!update) return;
+    let totalBytes = 0;
+    let downloadedBytes = 0;
+    await update.downloadAndInstall((event) => {
+      if (event.event === "Started" && event.data.contentLength) {
+        totalBytes = event.data.contentLength;
+      } else if (event.event === "Progress") {
+        downloadedBytes += event.data.chunkLength;
+        downloadProgress.value = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+      } else if (event.event === "Finished") {
+        downloadProgress.value = 100;
+      }
+    });
+    updateReady.value = true;
+  } catch (e: any) {
+    toast(t("updates.downloadFailed", { error: e?.message || String(e) }), 5000);
+  } finally {
+    isDownloadingUpdate.value = false;
+  }
+}
+
+async function restartApp() {
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  await relaunch();
+}
+
 function isQueryEditorTarget(target: EventTarget | null): boolean {
   return target instanceof Element && !!target.closest("[data-query-editor-root]");
 }
@@ -1806,7 +1843,16 @@ async function setupFileDrop() {
           </div>
           <DialogFooter>
             <Button variant="outline" @click="showUpdateDialog = false">{{ t('dangerDialog.cancel') }}</Button>
-            <Button v-if="updateInfo?.update_available || updateCheckMessage" @click="openLatestRelease">{{ t('updates.openRelease') }}</Button>
+            <template v-if="updateInfo?.update_available">
+              <Button variant="outline" @click="openLatestRelease">{{ t('updates.openRelease') }}</Button>
+              <Button v-if="updateReady" @click="restartApp">{{ t('updates.restart') }}</Button>
+              <Button v-else-if="isDownloadingUpdate" disabled>
+                <Loader2 class="h-4 w-4 animate-spin" />
+                {{ t('updates.downloading', { progress: downloadProgress }) }}
+              </Button>
+              <Button v-else @click="downloadAndInstallUpdate">{{ t('updates.downloadAndInstall') }}</Button>
+            </template>
+            <Button v-else-if="updateCheckMessage" @click="openLatestRelease">{{ t('updates.openRelease') }}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
