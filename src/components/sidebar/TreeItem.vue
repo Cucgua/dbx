@@ -199,15 +199,10 @@ async function toggle() {
 function onClick() {
   const node = props.node;
   const action = treeNodeRowAction(node.type, canExpand);
-  if (action === "toggle") {
-    toggle();
-  }
-}
-
-function onDblClick() {
-  const node = props.node;
-  if (node.type === "table" || node.type === "view") {
+  if (action === "open-data") {
     openData();
+  } else if (action === "toggle") {
+    toggle();
   }
 }
 
@@ -772,7 +767,6 @@ const isDragging = computed(() =>
           @mousedown="isDraggable ? startDrag($event, node.id, node.type) : undefined"
           @mousemove="isDropTarget ? updateTarget($event, node.id, node.type) : undefined"
           @mouseleave="clearTarget(node.id)"
-          @dblclick="onDblClick"
         >
           <div v-if="showDropBefore" class="absolute right-2 top-0 h-0.5 bg-primary rounded-full pointer-events-none" :style="{ left: paddingLeft }" />
           <div v-if="showDropAfter" class="absolute right-2 bottom-0 h-0.5 bg-primary rounded-full pointer-events-none" :style="{ left: paddingLeft }" />
