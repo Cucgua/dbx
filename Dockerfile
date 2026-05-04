@@ -5,7 +5,7 @@ RUN npm i -g pnpm
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY src/ src/
-COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json ./
+COPY index.html vite.config.ts tsconfig.json ./
 COPY tailwind.config.* postcss.config.* ./
 RUN pnpm build
 
@@ -24,7 +24,6 @@ RUN cargo build --release -p dbx-web
 
 # Stage 3: Final image
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /app/target/release/dbx-web /usr/local/bin/
 COPY --from=frontend /app/dist /app/static
 ENV DBX_STATIC_DIR=/app/static
