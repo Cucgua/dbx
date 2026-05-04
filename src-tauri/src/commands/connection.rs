@@ -11,6 +11,15 @@ use crate::db;
 use crate::db::ssh_tunnel::TunnelManager;
 use crate::models::connection::{ConnectionConfig, DatabaseType};
 
+fn expand_tilde(path: &str) -> String {
+    if path == "~" || path.starts_with("~/") {
+        if let Ok(home) = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+            return format!("{}{}", home, &path[1..]);
+        }
+    }
+    path.to_string()
+}
+
 pub enum PoolKind {
     Mysql(sqlx::mysql::MySqlPool, bool),
     Postgres(sqlx::postgres::PgPool),
@@ -93,13 +102,13 @@ impl AppState {
             DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, false),
             DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
             DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
-            DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&db_config.host).await?),
+            DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?),
             DatabaseType::Redis => {
                 let con = db::redis_driver::connect(&url).await?;
                 PoolKind::Redis(tokio::sync::Mutex::new(con))
             }
             DatabaseType::DuckDb => {
-                let con = duckdb::Connection::open(&db_config.host).map_err(|e| e.to_string())?;
+                let con = duckdb::Connection::open(&expand_tilde(&db_config.host)).map_err(|e| e.to_string())?;
                 PoolKind::DuckDb(std::sync::Arc::new(std::sync::Mutex::new(con)))
             }
             DatabaseType::MongoDb => {
@@ -329,7 +338,7 @@ pub async fn test_connection(
             }
             Err(e) => Err(e),
         },
-        DatabaseType::Sqlite => match db::sqlite::connect_path(&config.host).await {
+        DatabaseType::Sqlite => match db::sqlite::connect_path(&expand_tilde(&config.host)).await {
             Ok(pool) => {
                 pool.close().await;
                 Ok("Connection successful".to_string())
@@ -342,7 +351,7 @@ pub async fn test_connection(
                 .map(|_| "Connection successful".to_string())
         }
         DatabaseType::DuckDb => {
-            duckdb::Connection::open(&config.host)
+            duckdb::Connection::open(&expand_tilde(&config.host))
                 .map(|_| "Connection successful".to_string())
                 .map_err(|e| e.to_string())
         }
@@ -414,13 +423,13 @@ pub async fn connect_db(
         DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, false),
         DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
         DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
-        DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&config.host).await?),
+        DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&config.host)).await?),
         DatabaseType::Redis => {
             let con = db::redis_driver::connect(&url).await?;
             PoolKind::Redis(tokio::sync::Mutex::new(con))
         }
         DatabaseType::DuckDb => {
-            let con = duckdb::Connection::open(&config.host).map_err(|e| e.to_string())?;
+            let con = duckdb::Connection::open(&expand_tilde(&config.host)).map_err(|e| e.to_string())?;
             PoolKind::DuckDb(std::sync::Arc::new(std::sync::Mutex::new(con)))
         }
         DatabaseType::MongoDb => {
