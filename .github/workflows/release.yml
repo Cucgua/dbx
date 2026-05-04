@@ -86,7 +86,11 @@ jobs:
         run: |
           mkdir -p ~/.tauri
           echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_BASE64 }}" | base64 --decode > ~/.tauri/dbx.key
-          echo "TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/dbx.key)" >> "$GITHUB_ENV"
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY<<ENDOFKEY"
+            cat ~/.tauri/dbx.key
+            echo "ENDOFKEY"
+          } >> "$GITHUB_ENV"
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
