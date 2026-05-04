@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:tauri": "tauri dev",
+    "dev:web": "vite --port 5173 --mode web",
+    "dev:backend": "RUST_LOG=info cargo watch -x 'run -p dbx-web'",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

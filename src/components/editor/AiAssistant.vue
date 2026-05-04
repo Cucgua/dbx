@@ -28,8 +28,8 @@ import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
 import {
   listDatabases, redisListDatabases, mongoListDatabases, aiTestConnection, aiCancelStream,
   saveAiConversation, loadAiConversations, deleteAiConversation, type AiConversation,
-} from "@/lib/tauri";
-import type { AiMessage } from "@/lib/tauri";
+} from "@/lib/api";
+import type { AiMessage } from "@/lib/api";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
 
 const { t } = useI18n();
@@ -620,15 +620,15 @@ function formatInlineText(text: string): string {
         </div>
         <div class="grid grid-cols-3 items-center gap-3">
           <Label class="text-right text-xs">API Key</Label>
-          <Input v-model="tempApiKey" type="password" class="col-span-2 h-8 text-xs" />
+          <Input v-model="tempApiKey" type="password" autocomplete="off" class="col-span-2 h-8 text-xs" />
         </div>
         <div class="grid grid-cols-3 items-center gap-3">
           <Label class="text-right text-xs">Endpoint</Label>
-          <Input v-model="tempEndpoint" placeholder="https://api.openai.com/v1" class="col-span-2 h-8 text-xs" />
+          <Input v-model="tempEndpoint" placeholder="https://api.openai.com/v1" autocomplete="off" class="col-span-2 h-8 text-xs" />
         </div>
         <div class="grid grid-cols-3 items-center gap-3">
           <Label class="text-right text-xs">Model</Label>
-          <Input v-model="tempModel" class="col-span-2 h-8 text-xs" />
+          <Input v-model="tempModel" autocomplete="off" class="col-span-2 h-8 text-xs" />
         </div>
         <div v-if="tempProvider !== 'claude'" class="grid grid-cols-3 items-center gap-3">
           <Label class="text-right text-xs">API</Label>
@@ -640,7 +640,7 @@ function formatInlineText(text: string): string {
       </div>
       <DialogFooter class="flex items-center gap-2">
         <div class="flex-1 flex items-center gap-2">
-          <Button size="sm" variant="outline" :disabled="testingAi || !tempApiKey.trim() || !tempEndpoint.trim() || !tempModel.trim()" @click="testAiConnection">
+          <Button size="sm" variant="outline" :disabled="testingAi || !tempApiKey?.trim() || !tempEndpoint?.trim() || !tempModel?.trim()" @click="testAiConnection">
             <Loader2 v-if="testingAi" class="h-3 w-3 animate-spin mr-1" />
             {{ t('connection.test') }}
           </Button>

@@ -5,7 +5,7 @@ import { orderPinnedFirst } from "@/lib/pinnedItems";
 import { canCancelQueryExecution } from "@/lib/queryExecutionState";
 import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
-import * as api from "@/lib/tauri";
+import * as api from "@/lib/api";
 
 export const useQueryStore = defineStore("query", () => {
   const tabs = ref<QueryTab[]>([]);

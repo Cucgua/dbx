@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-import * as api from "@/lib/tauri";
+import * as api from "@/lib/api";
 
 export type AiProvider = "claude" | "openai" | "custom";
 export type AiApiStyle = "completions" | "responses";

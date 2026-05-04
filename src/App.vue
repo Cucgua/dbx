@@ -51,10 +51,8 @@ import { useHistoryStore } from "@/stores/historyStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useToast } from "@/composables/useToast";
 import { setLocale, currentLocale, type Locale } from "@/i18n";
-import { getCurrentWindow, type Theme } from "@tauri-apps/api/window";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getVersion } from "@tauri-apps/api/app";
-import * as api from "@/lib/tauri";
+import type { Theme } from "@tauri-apps/api/window";
+import * as api from "@/lib/api";
 import { canCancelQueryExecution, queryExecutionLabelKey } from "@/lib/queryExecutionState";
 import { connectionDriverLabel, connectionIconType, connectionOptionSubtitle } from "@/lib/connectionPresentation";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
@@ -62,6 +60,7 @@ import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql"
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import type { SqlFormatDialect } from "@/lib/sqlFormatter";
 import { isCloseTabShortcut, isExecuteSqlShortcut } from "@/lib/keyboardShortcuts";
+import LoginPage from "@/components/auth/LoginPage.vue";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
@@ -69,6 +68,10 @@ const queryStore = useQueryStore();
 const historyStore = useHistoryStore();
 const settingsStore = useSettingsStore();
 const { message: toastMessage, visible: toastVisible, toast } = useToast();
+
+const isDesktop = isTauriRuntime();
+const needsAuth = ref(!isDesktop);
+const authenticated = ref(isDesktop);
 
 const showConnectionDialog = ref(false);
 const showSettingsDialog = ref(false);
@@ -869,9 +872,11 @@ const isDark = ref(localStorage.getItem("dbx-theme") === "dark");
 function applyTheme() {
   document.documentElement.classList.toggle("dark", isDark.value);
   if (!isTauriRuntime()) return;
-  getCurrentWindow()
-    .setTheme(isDark.value ? "dark" as Theme : "light" as Theme)
-    .catch(() => {});
+  import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
+    getCurrentWindow()
+      .setTheme(isDark.value ? "dark" as Theme : "light" as Theme)
+      .catch(() => {});
+  });
 }
 
 function toggleTheme() {
@@ -880,14 +885,20 @@ function toggleTheme() {
   applyTheme();
 }
 
-import { open } from "@tauri-apps/plugin-shell";
+function openUrl(url: string) {
+  if (isTauriRuntime()) {
+    import("@tauri-apps/plugin-shell").then(({ open }) => open(url));
+  } else {
+    window.open(url, "_blank");
+  }
+}
 
 function openGitHub() {
-  open("https://github.com/t8y2/dbx");
+  openUrl("https://github.com/t8y2/dbx");
 }
 
 function openMcpGuide() {
-  open("https://github.com/t8y2/dbx/blob/main/docs/mcp-guide.md");
+  openUrl("https://github.com/t8y2/dbx/blob/main/docs/mcp-guide.md");
 }
 
 async function checkUpdates(options: { silent?: boolean } = {}) {
@@ -923,7 +934,7 @@ function formatUpdateError(message: string): string {
 
 function openLatestRelease() {
   const url = updateInfo.value?.release_url || latestReleaseUrl;
-  open(url);
+  openUrl(url);
 }
 
 const isDownloadingUpdate = ref(false);
@@ -987,19 +998,44 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
-  applyTheme();
+function initApp() {
   connectionStore.initFromDisk().catch((e: any) => {
     toast(t("connection.loadFailed", { message: e?.message || String(e) }), 5000);
   });
   settingsStore.initAiConfig();
+}
+
+function onAuthenticated() {
+  authenticated.value = true;
+  initApp();
+}
+
+onMounted(async () => {
+  applyTheme();
   window.addEventListener("keydown", handleKeydown, true);
   window.addEventListener("resize", updateScrollButtons);
-  if (isTauriRuntime()) {
-    setupFileDrop().catch(() => {});
-    checkUpdates({ silent: true });
+
+  if (!isDesktop) {
+    try {
+      const res = await fetch("/api/auth/check");
+      const data = await res.json();
+      needsAuth.value = data.required;
+      authenticated.value = data.authenticated;
+    } catch { /* server unreachable */ }
+    if (!needsAuth.value || authenticated.value) {
+      initApp();
+    }
+    api.checkForUpdates().then((info) => { appVersion.value = info.current_version; }).catch(() => {});
+    return;
+  }
+
+  initApp();
+  setupFileDrop().catch(() => {});
+  checkUpdates({ silent: true });
+  import("@tauri-apps/api/app").then(({ getVersion }) => {
     getVersion().then((v) => { appVersion.value = v; }).catch(() => {});
-    import("@tauri-apps/api/event").then(({ listen }) => {
+  }).catch(() => {});
+  import("@tauri-apps/api/event").then(({ listen }) => {
       listen<{ connection_id: string; database: string; schema?: string; table: string }>("mcp-open-table", async (event) => {
         const { connection_id, database, schema, table } = event.payload;
 
@@ -1019,7 +1055,7 @@ onMounted(() => {
           openLineageTarget({ connectionId: connection_id, database, schema, tableName: table });
         }
 
-        getCurrentWindow().setFocus().catch(() => {});
+        import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().setFocus().catch(() => {}));
       });
       listen<{ connection_id: string; database: string; sql: string }>("mcp-execute-query", async (event) => {
         const { connection_id, database, sql } = event.payload;
@@ -1033,10 +1069,9 @@ onMounted(() => {
         const tabId = queryStore.createTab(connection_id, database, undefined, "query");
         queryStore.updateSql(tabId, sql);
         await queryStore.executeTabSql(tabId, sql);
-        getCurrentWindow().setFocus().catch(() => {});
+        import("@tauri-apps/api/window").then(({ getCurrentWindow }) => getCurrentWindow().setFocus().catch(() => {}));
       });
     }).catch(() => {});
-  }
 });
 
 onUnmounted(() => {
@@ -1064,6 +1099,7 @@ function getDataFileQuery(path: string): string | null {
 }
 
 async function setupFileDrop() {
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
   const webview = getCurrentWebview();
   await webview.onDragDropEvent(async (event) => {
     if (event.payload.type !== "drop") return;
@@ -1120,7 +1156,8 @@ async function setupFileDrop() {
 </script>
 
 <template>
-  <TooltipProvider :delay-duration="300">
+  <LoginPage v-if="needsAuth && !authenticated" @authenticated="onAuthenticated" />
+  <TooltipProvider v-show="!needsAuth || authenticated" :delay-duration="300">
     <div class="h-screen w-screen flex flex-col bg-background text-foreground overflow-hidden">
       <!-- Toolbar -->
       <div class="h-10 flex items-center gap-1 px-2 border-b bg-muted/30 shrink-0">

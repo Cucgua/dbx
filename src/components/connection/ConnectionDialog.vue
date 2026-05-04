@@ -14,8 +14,8 @@ import type { ConnectionConfig, DatabaseType } from "@/types/database";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToast } from "@/composables/useToast";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
-import * as api from "@/lib/tauri";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import * as api from "@/lib/api";
+import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { ArrowLeft, ChevronRight, Copy, FolderOpen, Grid3X3, List, Search } from "lucide-vue-next";
 
 type DbOption = { value: string; label: string };
@@ -402,12 +402,15 @@ watch([() => editingId.value, () => open.value], () => {
 });
 
 async function browseSshKeyPath() {
-  const selected = await openFileDialog({
-    title: "Select SSH Private Key",
-    multiple: false,
-  });
-  if (selected && typeof selected === "string") {
-    form.value.ssh_key_path = selected;
+  if (isTauriRuntime()) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      title: "Select SSH Private Key",
+      multiple: false,
+    });
+    if (selected && typeof selected === "string") {
+      form.value.ssh_key_path = selected;
+    }
   }
 }
 </script>
