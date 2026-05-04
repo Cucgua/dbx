@@ -43,6 +43,7 @@ const TableStructureEditorDialog = defineAsyncComponent(() => import("@/componen
 const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
 const FieldLineageDialog = defineAsyncComponent(() => import("@/components/lineage/FieldLineageDialog.vue"));
 const ConfigPassphraseDialog = defineAsyncComponent(() => import("@/components/config/ConfigPassphraseDialog.vue"));
+const DatabaseSearchDialog = defineAsyncComponent(() => import("@/components/search/DatabaseSearchDialog.vue"));
 import type { ConnectionConfig } from "@/types/database";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
@@ -133,6 +134,7 @@ const showDiagramDialog = ref(false);
 const showTableImportDialog = ref(false);
 const showStructureEditorDialog = ref(false);
 const showFieldLineageDialog = ref(false);
+const showDatabaseSearchDialog = ref(false);
 const showConfigPassphraseDialog = ref(false);
 const configPassphraseMode = ref<"export" | "import">("export");
 const configPassphraseError = ref("");
@@ -160,12 +162,22 @@ const lineagePrefillDatabase = ref("");
 const lineagePrefillSchema = ref("");
 const lineagePrefillTable = ref("");
 const lineagePrefillColumn = ref("");
+const databaseSearchPrefillConnectionId = ref("");
+const databaseSearchPrefillDatabase = ref("");
+const databaseSearchPrefillSchema = ref("");
 type LineageNavigationTarget = {
   connectionId: string;
   database: string;
   schema?: string;
   tableName: string;
   columnName?: string;
+};
+type DatabaseSearchNavigationTarget = {
+  connectionId: string;
+  database: string;
+  schema?: string;
+  tableName: string;
+  whereInput?: string;
 };
 const databaseOptions = ref<Record<string, string[]>>({});
 const loadingDatabaseOptions = ref<Record<string, boolean>>({});
@@ -266,6 +278,16 @@ watch(() => connectionStore.fieldLineageSource, (v) => {
   }
 });
 
+watch(() => connectionStore.databaseSearchSource, (v) => {
+  if (v) {
+    databaseSearchPrefillConnectionId.value = v.connectionId;
+    databaseSearchPrefillDatabase.value = v.database;
+    databaseSearchPrefillSchema.value = v.schema ?? "";
+    showDatabaseSearchDialog.value = true;
+    connectionStore.databaseSearchSource = null;
+  }
+});
+
 async function onStructureEditorSaved() {
   const tab = activeTab.value;
   if (tab?.mode === "data" && tab.tableMeta?.tableName === structurePrefillTable.value) {
@@ -308,6 +330,43 @@ async function openLineageTarget(target: LineageNavigationTarget) {
       schema: target.schema,
       tableName: target.tableName,
       primaryKeys,
+    });
+
+    queryStore.updateSql(tabId, sql);
+    queryStore.setTableMeta(tabId, {
+      schema: target.schema,
+      tableName: target.tableName,
+      columns,
+      primaryKeys,
+    });
+
+    await queryStore.executeTabSql(tabId, sql);
+  } catch (e: any) {
+    queryStore.setErrorResult(tabId, e);
+  }
+}
+
+async function openDatabaseSearchTarget(target: DatabaseSearchNavigationTarget) {
+  showDatabaseSearchDialog.value = false;
+  connectionStore.activeConnectionId = target.connectionId;
+  const config = connectionStore.getConfig(target.connectionId);
+  const tabTitle = target.schema ? `${target.schema}.${target.tableName}` : target.tableName;
+  const tabId = queryStore.createTab(target.connectionId, target.database, tabTitle, "data");
+  queryStore.setExecuting(tabId, true);
+
+  try {
+    await connectionStore.ensureConnected(target.connectionId);
+    if (!config) throw new Error("Connection config not found");
+
+    const querySchema = target.schema || target.database;
+    const columns = await api.getColumns(target.connectionId, target.database, querySchema, target.tableName);
+    const primaryKeys = columns.filter((column) => column.is_primary_key).map((column) => column.name);
+    const sql = buildTableSelectSql({
+      databaseType: config.db_type,
+      schema: target.schema,
+      tableName: target.tableName,
+      primaryKeys,
+      whereInput: target.whereInput,
     });
 
     queryStore.updateSql(tabId, sql);
@@ -1634,6 +1693,13 @@ async function setupFileDrop() {
         :prefill-table="lineagePrefillTable"
         :prefill-column="lineagePrefillColumn"
         @open-target="openLineageTarget"
+      />
+      <DatabaseSearchDialog
+        v-model:open="showDatabaseSearchDialog"
+        :prefill-connection-id="databaseSearchPrefillConnectionId"
+        :prefill-database="databaseSearchPrefillDatabase"
+        :prefill-schema="databaseSearchPrefillSchema"
+        @open-target="openDatabaseSearchTarget"
       />
       <ConfigPassphraseDialog
         v-model:open="showConfigPassphraseDialog"
