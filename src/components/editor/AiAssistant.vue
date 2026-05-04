@@ -26,11 +26,12 @@ import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useQueryStore } from "@/stores/queryStore";
 import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
 import {
-  listDatabases, redisListDatabases, mongoListDatabases, aiTestConnection, aiCancelStream,
+  aiTestConnection, aiCancelStream,
   saveAiConversation, loadAiConversations, deleteAiConversation, type AiConversation,
 } from "@/lib/api";
 import type { AiMessage } from "@/lib/api";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
+import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -99,23 +100,16 @@ const isWaitingForFirstDelta = computed(() => {
 const activePlaceholder = computed(() => t(`ai.placeholders.${activeAction.value}`));
 
 
-const databaseOptions = ref<string[]>([]);
+const { databaseOptions: allDbOptions, loadDatabaseOptions } = useDatabaseOptions();
+
+const dbOptions = computed(() => {
+  if (!props.connection) return [];
+  return allDbOptions.value[props.connection.id] || [];
+});
 
 async function loadDatabases() {
   if (!props.connection) return;
-  try {
-    if (props.connection.db_type === "redis") {
-      const dbs = await redisListDatabases(props.connection.id);
-      databaseOptions.value = dbs.map(String);
-    } else if (props.connection.db_type === "mongodb") {
-      databaseOptions.value = await mongoListDatabases(props.connection.id);
-    } else {
-      const list = await listDatabases(props.connection.id);
-      databaseOptions.value = list.map((d: { name: string }) => d.name);
-    }
-  } catch {
-    databaseOptions.value = [];
-  }
+  await loadDatabaseOptions(props.connection.id);
 }
 
 function changeConnection(connectionId: string) {
@@ -549,8 +543,8 @@ function formatInlineText(text: string): string {
                 <SelectValue :placeholder="t('editor.selectDatabase')">{{ tab?.database || t('editor.selectDatabase') }}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="db in databaseOptions" :key="db" :value="db">{{ db }}</SelectItem>
-                <SelectItem v-if="!databaseOptions.length && tab?.database" :value="tab.database">{{ tab.database }}</SelectItem>
+                <SelectItem v-for="db in dbOptions" :key="db" :value="db">{{ db }}</SelectItem>
+                <SelectItem v-if="!dbOptions.length && tab?.database" :value="tab.database">{{ tab.database }}</SelectItem>
               </SelectContent>
             </Select>
           </template>
