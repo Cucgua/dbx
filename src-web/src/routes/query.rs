@@ -103,3 +103,20 @@ pub async fn cancel_query(
     let cancelled = state.app.running_queries.cancel(&req.execution_id);
     Json(serde_json::json!({ "cancelled": cancelled }))
 }
+
+pub async fn execute_script(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<ExecuteQueryRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let statements = dbx_core::sql::split_sql_statements(&req.sql);
+    let result = dbx_core::query::execute_statements(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &statements,
+    )
+    .await
+    .map_err(AppError)?;
+
+    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+}

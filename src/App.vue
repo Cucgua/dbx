@@ -942,7 +942,7 @@ const downloadProgress = ref(0);
 const updateReady = ref(false);
 
 async function downloadAndInstallUpdate() {
-  if (isDownloadingUpdate.value) return;
+  if (!isTauriRuntime() || isDownloadingUpdate.value) return;
   isDownloadingUpdate.value = true;
   downloadProgress.value = 0;
   try {
@@ -970,6 +970,7 @@ async function downloadAndInstallUpdate() {
 }
 
 async function restartApp() {
+  if (!isTauriRuntime()) return;
   const { relaunch } = await import("@tauri-apps/plugin-process");
   await relaunch();
 }
