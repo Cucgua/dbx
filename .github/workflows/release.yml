@@ -84,11 +84,23 @@ jobs:
       - name: Setup Tauri signing key
         shell: bash
         run: |
+          printf '%s\n%s\n' "untrusted comment: rsign encrypted secret key" "${{ secrets.TAURI_SIGNING_KEY_BODY }}" > "$RUNNER_TEMP/signing.key"
+          echo "=== Key file byte count ==="
+          wc -c "$RUNNER_TEMP/signing.key"
+          echo "=== Key file line count ==="
+          wc -l "$RUNNER_TEMP/signing.key"
+          echo "=== First line length ==="
+          head -1 "$RUNNER_TEMP/signing.key" | wc -c
+          echo "=== Second line length ==="
+          tail -1 "$RUNNER_TEMP/signing.key" | wc -c
+          echo "=== hexdump of first 80 bytes ==="
+          xxd -l 80 "$RUNNER_TEMP/signing.key"
           {
             echo "TAURI_SIGNING_PRIVATE_KEY<<ENDOFKEY"
-            printf '%s\n%s\n' "untrusted comment: rsign encrypted secret key" "${{ secrets.TAURI_SIGNING_KEY_BODY }}"
+            cat "$RUNNER_TEMP/signing.key"
             echo "ENDOFKEY"
           } >> "$GITHUB_ENV"
+          echo "=== Env var set via GITHUB_ENV ==="
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
