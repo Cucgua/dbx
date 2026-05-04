@@ -181,10 +181,15 @@ async function toggle() {
 function onClick() {
   const node = props.node;
   const action = treeNodeRowAction(node.type, canExpand);
-  if (action === "open-data") {
-    openData();
-  } else if (action === "toggle") {
+  if (action === "toggle") {
     toggle();
+  }
+}
+
+function onDblClick() {
+  const node = props.node;
+  if (node.type === "table" || node.type === "view") {
+    openData();
   }
 }
 
@@ -639,6 +644,7 @@ async function showMore() {
           class="group flex min-w-0 items-center gap-1.5 py-1 px-2 rounded-sm cursor-pointer hover:bg-accent transition-colors"
           :style="{ paddingLeft }"
           @click="onClick"
+          @dblclick="onDblClick"
         >
           <template v-if="canExpand">
             <button
