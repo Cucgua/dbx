@@ -21,6 +21,8 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSettingsStore, type AiProvider, type AiApiStyle } from "@/stores/settingsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { connectionIconType } from "@/lib/connectionPresentation";
+import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useQueryStore } from "@/stores/queryStore";
 import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
 import {
@@ -525,14 +527,18 @@ function formatInlineText(text: string): string {
     <div class="p-2">
       <div class="rounded-lg border bg-background px-2 pb-2 pt-1">
         <div v-if="connectionStore.connections.length" class="flex items-center gap-1 mb-1 text-xs text-foreground/80">
-          <Server class="h-3 w-3 shrink-0" />
+          <DatabaseIcon v-if="connection" :db-type="connectionIconType(connection)" class="h-3 w-3 shrink-0" />
+          <Server v-else class="h-3 w-3 shrink-0" />
           <Select :model-value="connection?.id || ''" @update:model-value="(v: any) => changeConnection(v)">
             <SelectTrigger class="h-5 w-auto border-0 rounded-none bg-transparent p-0 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3">
               <SelectValue :placeholder="t('editor.selectConnection')">{{ connection?.name || t('editor.selectConnection') }}</SelectValue>
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent class="min-w-48">
               <SelectItem v-for="conn in connectionStore.connections" :key="conn.id" :value="conn.id">
-                {{ conn.name }}
+                <div class="flex min-w-0 items-center gap-2">
+                  <DatabaseIcon :db-type="connectionIconType(conn)" class="h-3.5 w-3.5 shrink-0" />
+                  <span class="truncate">{{ conn.name }}</span>
+                </div>
               </SelectItem>
             </SelectContent>
           </Select>
