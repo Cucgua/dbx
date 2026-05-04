@@ -50,6 +50,7 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
           shared-key: release-${{ matrix.target }}
+          cache-on-failure: true
 
       - name: Install Apple certificate (macOS)
         if: startsWith(matrix.platform, 'macos')
