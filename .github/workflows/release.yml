@@ -81,14 +81,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
 
-      - name: Write Tauri signing key
+      - name: Setup Tauri signing key
         shell: bash
         run: |
-          mkdir -p ~/.tauri
-          echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_BASE64 }}" | base64 --decode > ~/.tauri/dbx.key
           {
             echo "TAURI_SIGNING_PRIVATE_KEY<<ENDOFKEY"
-            cat ~/.tauri/dbx.key
+            printf '%s\n%s\n' "untrusted comment: rsign encrypted secret key" "${{ secrets.TAURI_SIGNING_KEY_BODY }}"
             echo "ENDOFKEY"
           } >> "$GITHUB_ENV"
 
