@@ -1349,7 +1349,7 @@ async function setupFileDrop() {
 
           <!-- Editor Panel -->
           <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
-            <div v-if="activeTab.mode === 'query' && !isPreviewTab(activeTab)" class="h-9 shrink-0 border-b bg-background/80 px-3 flex items-center gap-1 text-xs text-muted-foreground">
+            <div v-if="activeTab.mode === 'query' && !isPreviewTab(activeTab)" class="h-9 shrink-0 border-b bg-background/80 px-3 flex items-center gap-1 text-xs text-muted-foreground relative z-10">
               <div class="flex items-center gap-0.5">
                 <Tooltip>
                   <TooltipTrigger as-child>
@@ -1391,8 +1391,8 @@ async function setupFileDrop() {
                   <TooltipContent>{{ t('toolbar.formatSql') }}</TooltipContent>
                 </Tooltip>
               </div>
-              <span class="flex-1" />
-              <div class="flex items-center gap-2">
+              <span class="flex-1 min-w-0" />
+              <div class="flex items-center gap-2 shrink-0">
                 <div class="flex items-center gap-1">
                   <span v-if="activeConnection?.color" class="h-4 w-1 rounded-full shrink-0" :style="{ backgroundColor: activeConnection.color }" />
                   <Select
@@ -1406,20 +1406,15 @@ async function setupFileDrop() {
                       </div>
                       <SelectValue v-else :placeholder="t('editor.selectConnection')" />
                     </SelectTrigger>
-                    <SelectContent class="min-w-64">
+                    <SelectContent position="popper">
                       <SelectItem
                         v-for="connection in connectionStore.connections"
                         :key="connection.id"
                         :value="connection.id"
                       >
                         <div class="flex min-w-0 items-center gap-2">
-                          <span v-if="connection.color" class="h-3.5 w-1 rounded-full shrink-0" :style="{ backgroundColor: connection.color }" />
-                          <span v-else class="h-3.5 w-1 shrink-0" />
                           <DatabaseIcon :db-type="connectionIconType(connection)" class="h-3.5 w-3.5 shrink-0" />
-                          <div class="min-w-0 flex-1">
-                            <div class="truncate">{{ connection.name }}</div>
-                            <div class="truncate text-[11px] font-normal text-muted-foreground">{{ connectionOptionSubtitle(connection) }}</div>
-                          </div>
+                          <span class="truncate">{{ connection.name }}</span>
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -1437,7 +1432,7 @@ async function setupFileDrop() {
                         {{ databaseDisplayName(activeDatabaseValue) }}
                       </SelectValue>
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent position="popper">
                       <SelectItem
                         v-for="database in activeDatabaseOptions"
                         :key="database"
