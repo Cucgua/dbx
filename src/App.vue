@@ -168,6 +168,25 @@ function toggleLocale() { setLocale(currentLocale() === "zh-CN" ? "en" : "zh-CN"
 function openGitHub() { openUrl("https://github.com/t8y2/dbx"); }
 function openMcpGuide() { openUrl("https://github.com/t8y2/dbx/blob/main/docs/mcp-guide.md"); }
 
+function ensureQueryTab(): string {
+  const tab = activeTab.value;
+  if (tab && tab.mode === "query") return tab.id;
+  const connId = connectionStore.activeConnectionId || connectionStore.connections[0]?.id || "";
+  const db = tab?.database || "";
+  return queryStore.createTab(connId, db, undefined, "query");
+}
+
+function onAiReplaceSql(sql: string) {
+  const tabId = ensureQueryTab();
+  queryStore.updateSql(tabId, sql);
+}
+
+function onAiExecuteSql(sql: string) {
+  const tabId = ensureQueryTab();
+  queryStore.updateSql(tabId, sql);
+  nextTick(() => tryExecute());
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (isCloseTabShortcut(e)) {
     e.preventDefault();
@@ -280,8 +299,8 @@ onUnmounted(() => { window.removeEventListener("keydown", handleKeydown, true); 
           <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startAiPanelResize" />
           <div class="h-full min-h-0 overflow-hidden">
             <AiAssistant ref="aiAssistantRef" :tab="activeTab" :connection="activeConnection"
-              @replace-sql="(sql: string) => { const tab = activeTab; if (tab) queryStore.updateSql(tab.id, sql) }"
-              @execute-sql="tryExecute" @close="toggleAiPanel"
+              @replace-sql="onAiReplaceSql"
+              @execute-sql="onAiExecuteSql" @close="toggleAiPanel"
             />
           </div>
         </div>
