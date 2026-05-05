@@ -17,7 +17,7 @@ FROM --platform=$BUILDPLATFORM rust:1-bookworm AS backend
 ARG TARGETARCH
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3-pip gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu \
+    build-essential cmake pkg-config perl python3-pip gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu \
     && pip3 install --break-system-packages ziglang \
     && cargo install cargo-zigbuild \
     && rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
@@ -45,7 +45,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Stage 3: Final image
 FROM debian:bookworm-slim
 ARG TARGETPLATFORM
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 COPY --from=backend /out/${TARGETPLATFORM}/dbx-web /usr/local/bin/
 COPY --from=frontend /app/dist /app/static
 ENV DBX_STATIC_DIR=/app/static

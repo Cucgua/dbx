@@ -5,11 +5,14 @@ import { useI18n } from "vue-i18n";
 import { Settings } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSettingsStore, EDITOR_THEMES, FONT_FAMILIES, DEFAULT_EDITOR_SETTINGS } from "@/stores/settingsStore";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
+import { isTauriRuntime } from "@/lib/tauriRuntime";
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
@@ -79,6 +82,63 @@ function onThemeChange(v: any) {
   if (typeof v === "string") editTheme.value = v as typeof DEFAULT_EDITOR_SETTINGS.theme;
 }
 
+const activeSettingsTab = ref("editor");
+const isWeb = !isTauriRuntime();
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open) {
+      activeSettingsTab.value = "editor";
+      passwordMessage.value = "";
+      oldPassword.value = "";
+      newPassword.value = "";
+      confirmNewPassword.value = "";
+    }
+  },
+);
+const oldPassword = ref("");
+const newPassword = ref("");
+const confirmNewPassword = ref("");
+const passwordMessage = ref("");
+const passwordError = ref(false);
+const changingPassword = ref(false);
+
+async function changePassword() {
+  if (newPassword.value !== confirmNewPassword.value) {
+    passwordMessage.value = t("auth.passwordMismatch");
+    passwordError.value = true;
+    return;
+  }
+  changingPassword.value = true;
+  passwordMessage.value = "";
+  try {
+    const res = await fetch("/api/auth/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ old_password: oldPassword.value, new_password: newPassword.value }),
+    });
+    if (res.ok) {
+      passwordMessage.value = t("auth.passwordChanged");
+      passwordError.value = false;
+      oldPassword.value = "";
+      newPassword.value = "";
+      confirmNewPassword.value = "";
+    } else if (res.status === 401) {
+      passwordMessage.value = t("auth.oldPasswordWrong");
+      passwordError.value = true;
+    } else {
+      passwordMessage.value = t("auth.changePasswordFailed");
+      passwordError.value = true;
+    }
+  } catch {
+    passwordMessage.value = t("auth.connectFailed");
+    passwordError.value = true;
+  } finally {
+    changingPassword.value = false;
+  }
+}
+
 // ---------- CodeMirror preview ----------
 const previewRef = ref<HTMLDivElement>();
 const previewView = shallowRef<EditorViewType | null>(null);
@@ -114,6 +174,17 @@ watch(
 );
 
 let previewInitialized = false;
+
+watch(activeSettingsTab, (tab) => {
+  if (tab !== "editor" && previewView.value) {
+    previewView.value.destroy();
+    previewView.value = null;
+    previewInitialized = false;
+    fontThemeComp = null;
+    themeComp = null;
+    editorViewModule = null;
+  }
+});
 
 watch(previewRef, async (el) => {
   if (!el || previewInitialized) return;
@@ -172,124 +243,173 @@ watch(
         </DialogTitle>
       </DialogHeader>
 
-      <div class="space-y-5 py-2">
-        <!-- Font Family -->
-        <div class="space-y-2">
-          <Label>{{ t("settings.fontFamily") }}</Label>
-          <Select :model-value="editFontFamily" @update:model-value="onFontFamilyChange">
-            <SelectTrigger>
-              <SelectValue :placeholder="t('settings.selectFont')" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem
-                v-for="font in FONT_FAMILIES"
-                :key="font.value"
-                :value="font.value"
-                :style="{ fontFamily: font.value }"
-              >
-                {{ font.label }}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          <p class="text-xs text-muted-foreground leading-relaxed font-mono" :style="{ fontFamily: editFontFamily }">
-            SELECT * FROM users WHERE id = 1;
-          </p>
-        </div>
+      <Tabs v-model="activeSettingsTab">
+        <TabsList class="w-full">
+          <TabsTrigger value="editor" class="flex-1">{{ t("settings.editorTab") }}</TabsTrigger>
+          <TabsTrigger v-if="isWeb" value="security" class="flex-1">{{ t("settings.securityTab") }}</TabsTrigger>
+        </TabsList>
 
-        <Separator />
-
-        <!-- Font Size -->
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <Label>{{ t("settings.fontSize") }}</Label>
-            <span class="text-xs text-muted-foreground tabular-nums">{{ editFontSize }}px</span>
+        <TabsContent value="editor" class="space-y-5 py-2">
+          <!-- Font Family -->
+          <div class="space-y-2">
+            <Label>{{ t("settings.fontFamily") }}</Label>
+            <Select :model-value="editFontFamily" @update:model-value="onFontFamilyChange">
+              <SelectTrigger>
+                <SelectValue :placeholder="t('settings.selectFont')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem
+                  v-for="font in FONT_FAMILIES"
+                  :key="font.value"
+                  :value="font.value"
+                  :style="{ fontFamily: font.value }"
+                >
+                  {{ font.label }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="text-xs text-muted-foreground leading-relaxed font-mono" :style="{ fontFamily: editFontFamily }">
+              SELECT * FROM users WHERE id = 1;
+            </p>
           </div>
-          <input
-            type="range"
-            min="10"
-            max="24"
-            step="1"
-            :value="editFontSize"
-            @input="editFontSize = Number(($event.target as HTMLInputElement).value)"
-            class="w-full accent-primary"
-          />
-          <div class="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>10px</span>
-            <span class="flex-1 border-b border-dashed border-muted-foreground/30" />
-            <span>24px</span>
+
+          <Separator />
+
+          <!-- Font Size -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <Label>{{ t("settings.fontSize") }}</Label>
+              <span class="text-xs text-muted-foreground tabular-nums">{{ editFontSize }}px</span>
+            </div>
+            <input
+              type="range"
+              min="10"
+              max="24"
+              step="1"
+              :value="editFontSize"
+              @input="editFontSize = Number(($event.target as HTMLInputElement).value)"
+              class="w-full accent-primary"
+            />
+            <div class="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>10px</span>
+              <span class="flex-1 border-b border-dashed border-muted-foreground/30" />
+              <span>24px</span>
+            </div>
           </div>
-        </div>
 
-        <Separator />
+          <Separator />
 
-        <!-- Theme -->
-        <div class="space-y-2">
-          <Label>{{ t("settings.theme") }}</Label>
-          <Select :model-value="editTheme" @update:model-value="onThemeChange">
-            <SelectTrigger>
-              <SelectValue :placeholder="t('settings.selectTheme')" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="theme in EDITOR_THEMES" :key="theme.value" :value="theme.value">
-                <div class="flex items-center gap-2">
-                  <span
-                    class="h-3 w-3 rounded-full border"
-                    :class="
-                      theme.dark
-                        ? 'bg-foreground border-foreground/20'
-                        : 'bg-muted-foreground/30 border-muted-foreground/40'
-                    "
-                  />
-                  {{ theme.label }}
-                </div>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div class="space-y-2">
-          <Label>{{ t("settings.executeMode") }}</Label>
-          <Select :model-value="editExecuteMode" @update:model-value="onExecuteModeChange">
-            <SelectTrigger>
-              <SelectValue :placeholder="t('settings.executeMode')" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{{ t("settings.executeModeAll") }}</SelectItem>
-              <SelectItem value="current">{{ t("settings.executeModeCurrent") }}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <Separator />
-
-        <!-- Live Preview -->
-        <div class="space-y-2">
-          <Label>{{ t("settings.preview") }}</Label>
-          <div
-            class="rounded-md border overflow-auto max-w-full"
-            :class="
-              editTheme === 'vscode-light' || editTheme === 'duotone-light' || editTheme === 'xcode'
-                ? 'border-border'
-                : 'border-border/50'
-            "
-          >
-            <div ref="previewRef" style="min-width: 100%" />
+          <!-- Theme -->
+          <div class="space-y-2">
+            <Label>{{ t("settings.theme") }}</Label>
+            <Select :model-value="editTheme" @update:model-value="onThemeChange">
+              <SelectTrigger>
+                <SelectValue :placeholder="t('settings.selectTheme')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="theme in EDITOR_THEMES" :key="theme.value" :value="theme.value">
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="h-3 w-3 rounded-full border"
+                      :class="
+                        theme.dark
+                          ? 'bg-foreground border-foreground/20'
+                          : 'bg-muted-foreground/30 border-muted-foreground/40'
+                      "
+                    />
+                    {{ theme.label }}
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-        </div>
-      </div>
 
-      <DialogFooter class="gap-2 sm:gap-0">
-        <Button variant="outline" @click="resetDefaults">
-          {{ t("settings.resetDefaults") }}
-        </Button>
-        <div class="flex-1" />
-        <Button variant="outline" @click="emit('update:open', false)">
-          {{ t("common.close") }}
-        </Button>
-        <Button :disabled="!hasChanges()" @click="applySettings">
-          {{ t("settings.apply") }}
-        </Button>
-      </DialogFooter>
+          <div class="space-y-2">
+            <Label>{{ t("settings.executeMode") }}</Label>
+            <Select :model-value="editExecuteMode" @update:model-value="onExecuteModeChange">
+              <SelectTrigger>
+                <SelectValue :placeholder="t('settings.executeMode')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{{ t("settings.executeModeAll") }}</SelectItem>
+                <SelectItem value="current">{{ t("settings.executeModeCurrent") }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Separator />
+
+          <!-- Live Preview -->
+          <div class="space-y-2">
+            <Label>{{ t("settings.preview") }}</Label>
+            <div
+              class="rounded-md border overflow-auto max-w-full"
+              :class="
+                editTheme === 'vscode-light' || editTheme === 'duotone-light' || editTheme === 'xcode'
+                  ? 'border-border'
+                  : 'border-border/50'
+              "
+            >
+              <div ref="previewRef" style="min-width: 100%" />
+            </div>
+          </div>
+
+          <DialogFooter class="gap-2 sm:gap-0">
+            <Button variant="outline" @click="resetDefaults">
+              {{ t("settings.resetDefaults") }}
+            </Button>
+            <div class="flex-1" />
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+            <Button :disabled="!hasChanges()" @click="applySettings">
+              {{ t("settings.apply") }}
+            </Button>
+          </DialogFooter>
+        </TabsContent>
+
+        <TabsContent v-if="isWeb" value="security" class="space-y-5 py-2">
+          <div class="space-y-3">
+            <Label class="text-base">{{ t("auth.changePassword") }}</Label>
+            <p class="text-sm text-muted-foreground">{{ t("auth.changePasswordDescription") }}</p>
+            <Input
+              v-model="oldPassword"
+              type="password"
+              :placeholder="t('auth.oldPassword')"
+              class="h-9"
+              autocomplete="off"
+            />
+            <Input
+              v-model="newPassword"
+              type="password"
+              :placeholder="t('auth.newPassword')"
+              class="h-9"
+              autocomplete="off"
+            />
+            <Input
+              v-model="confirmNewPassword"
+              type="password"
+              :placeholder="t('auth.confirmPassword')"
+              class="h-9"
+              autocomplete="off"
+            />
+            <p v-if="passwordMessage" class="text-xs" :class="passwordError ? 'text-destructive' : 'text-green-500'">
+              {{ passwordMessage }}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+            <Button
+              :disabled="changingPassword || !oldPassword || !newPassword || !confirmNewPassword"
+              @click="changePassword"
+            >
+              {{ t("auth.changePassword") }}
+            </Button>
+          </DialogFooter>
+        </TabsContent>
+      </Tabs>
     </DialogContent>
   </Dialog>
 </template>

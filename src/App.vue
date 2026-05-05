@@ -59,6 +59,7 @@ const { setupFileDrop } = useFileDrop();
 const isDesktop = isTauriRuntime();
 const needsAuth = ref(!isDesktop);
 const authenticated = ref(isDesktop);
+const setupRequired = ref(false);
 
 const showConnectionDialog = ref(false);
 const showSettingsDialog = ref(false);
@@ -296,6 +297,8 @@ function handleKeydown(e: KeyboardEvent) {
 
 function onLoginSuccess() {
   authenticated.value = true;
+  setupRequired.value = false;
+  needsAuth.value = true;
   window.history.replaceState(null, "", "/");
   initApp();
 }
@@ -336,13 +339,14 @@ onMounted(async () => {
       const data = await res.json();
       needsAuth.value = data.required;
       authenticated.value = data.authenticated;
+      setupRequired.value = data.setup_required;
     } catch {
       /* server unreachable */
     }
     if (needsAuth.value && !authenticated.value) {
       history.replaceState(null, "", "/login");
     }
-    if (!needsAuth.value || authenticated.value) initApp();
+    if (!setupRequired.value && (!needsAuth.value || authenticated.value)) initApp();
     api
       .getAppVersion()
       .then((v) => {
@@ -369,8 +373,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <LoginPage v-if="needsAuth && !authenticated" @authenticated="onLoginSuccess" />
-  <div v-show="!needsAuth || authenticated">
+  <LoginPage
+    v-if="setupRequired || (needsAuth && !authenticated)"
+    :setup-mode="setupRequired"
+    @authenticated="onLoginSuccess"
+  />
+  <div v-show="!setupRequired && (!needsAuth || authenticated)">
     <TooltipProvider :delay-duration="300">
       <div class="h-screen w-screen flex flex-col bg-background text-foreground overflow-hidden">
         <AppToolbar

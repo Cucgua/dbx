@@ -46,16 +46,18 @@ async fn main() {
         Arc::new(AppState::new(storage))
     };
 
-    // Password hash
-    let password_hash = std::env::var("DBX_PASSWORD").ok().map(|pw| {
+    // Password hash: env var takes priority, then database
+    let password_hash = if let Some(pw) = std::env::var("DBX_PASSWORD").ok() {
         let salt = SaltString::generate(&mut OsRng);
-        Argon2::default().hash_password(pw.as_bytes(), &salt).expect("Failed to hash password").to_string()
-    });
+        Some(Argon2::default().hash_password(pw.as_bytes(), &salt).expect("Failed to hash password").to_string())
+    } else {
+        app_state.storage.load_password_hash().await.unwrap_or(None)
+    };
 
     let web_state = Arc::new(WebState {
         app: app_state,
         data_dir,
-        password_hash,
+        password_hash: RwLock::new(password_hash),
         sessions: RwLock::new(HashSet::new()),
         sse_channels: RwLock::new(HashMap::new()),
         login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit { fail_count: 0, locked_until: None }),
@@ -69,6 +71,8 @@ async fn main() {
         // Auth
         .route("/auth/login", post(auth::login))
         .route("/auth/check", get(auth::check))
+        .route("/auth/setup", post(auth::setup))
+        .route("/auth/change-password", post(auth::change_password))
         .route("/auth/logout", post(auth::logout))
         // Connection
         .route("/connection/test", post(routes::connection::test_connection))

@@ -49,6 +49,10 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         id INTEGER PRIMARY KEY CHECK (id = 1),
         layout_json TEXT NOT NULL
     )",
+    "CREATE TABLE IF NOT EXISTS app_settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        settings_json TEXT NOT NULL
+    )",
 ];
 
 // ---------------------------------------------------------------------------
@@ -177,6 +181,36 @@ impl Storage {
             .map_err(|e| e.to_string())?;
         match row {
             Some((json,)) => serde_json::from_str(&json).map(Some).map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// App Settings
+// ---------------------------------------------------------------------------
+
+impl Storage {
+    pub async fn save_password_hash(&self, hash: &str) -> Result<(), String> {
+        let json = serde_json::json!({ "password_hash": hash }).to_string();
+        sqlx::query("INSERT OR REPLACE INTO app_settings (id, settings_json) VALUES (1, ?)")
+            .bind(&json)
+            .execute(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn load_password_hash(&self) -> Result<Option<String>, String> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT settings_json FROM app_settings WHERE id = 1")
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        match row {
+            Some((json,)) => {
+                let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+                Ok(v.get("password_hash").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            }
             None => Ok(None),
         }
     }
