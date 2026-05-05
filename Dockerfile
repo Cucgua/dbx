@@ -31,8 +31,8 @@ COPY src-tauri/Cargo.toml src-tauri/
 COPY src-tauri/build.rs src-tauri/
 COPY src-tauri/tauri.conf.json src-tauri/
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-$TARGETARCH \
+    --mount=type=cache,target=/app/target,id=cargo-target-$TARGETARCH \
     case "$TARGETARCH" in \
       amd64) rust_target=x86_64-unknown-linux-gnu ;; \
       arm64) rust_target=aarch64-unknown-linux-gnu ;; \
