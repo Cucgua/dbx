@@ -35,7 +35,7 @@ watch(
       if (!container) return;
       const activeEl = container.querySelector('[data-active-tab="true"]');
       if (activeEl) {
-        activeEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+        activeEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
       }
       updateScrollButtons();
     });
@@ -44,7 +44,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="queryStore.tabs.length > 0" class="relative h-9 flex items-center border-b bg-muted/20 shrink-0">
+  <div v-if="queryStore.tabs.length > 0" class="relative h-9 flex items-stretch border-b bg-muted shrink-0">
     <button
       v-if="canScrollLeft"
       class="absolute left-0 z-10 h-full px-1 bg-linear-to-r from-background via-background/80 to-transparent text-muted-foreground hover:text-foreground"
@@ -64,15 +64,20 @@ watch(
           <Tooltip>
             <TooltipTrigger as-child>
               <div
-                class="group flex min-w-38 items-center gap-1 px-1 h-full text-xs cursor-pointer border-r transition-colors whitespace-nowrap"
+                class="group flex min-w-38 items-center gap-1 px-2 h-full text-xs cursor-pointer transition-colors whitespace-nowrap border-r border-border/50"
                 :class="
-                  tab.id === queryStore.activeTabId ? 'bg-background font-medium' : 'font-normal text-muted-foreground'
+                  tab.id === queryStore.activeTabId
+                    ? 'bg-background text-foreground font-medium'
+                    : 'text-foreground/70 hover:text-foreground/90'
+                "
+                :style="
+                  tab.id === queryStore.activeTabId ? { boxShadow: '0 1px 0 0 var(--color-background)' } : undefined
                 "
                 :data-active-tab="tab.id === queryStore.activeTabId"
                 @click="queryStore.activeTabId = tab.id"
               >
                 <span
-                  class="h-4 w-1 rounded-full shrink-0"
+                  class="h-1.5 w-1.5 rounded-full shrink-0"
                   :style="{ backgroundColor: connectionColor(tab.connectionId) || '#9ca3af' }"
                 />
                 <span class="min-w-0 truncate flex-1">{{ tabDisplayTitle(tab) }}</span>
