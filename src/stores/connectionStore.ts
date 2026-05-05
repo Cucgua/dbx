@@ -35,6 +35,7 @@ export const useConnectionStore = defineStore("connection", () => {
   const treeNodes = ref<TreeNode[]>([]);
   const pinnedTreeNodeIds = ref<Set<string>>(loadPinnedTreeNodeIds());
   const connectedIds = ref<Set<string>>(new Set());
+  const connectionErrors = ref<Record<string, string>>({});
   const editingConnectionId = ref<string | null>(null);
   const completionTablesCache = ref<Record<string, SqlCompletionTable[]>>({});
   const completionColumnsCache = ref<Record<string, ColumnInfo[]>>({});
@@ -84,6 +85,31 @@ export const useConnectionStore = defineStore("connection", () => {
 
   function getConfig(connectionId: string) {
     return connections.value.find((c) => c.id === connectionId);
+  }
+
+  function connectionErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    return String(error);
+  }
+
+  function setConnectionError(connectionId: string, message: string) {
+    connectionErrors.value = {
+      ...connectionErrors.value,
+      [connectionId]: message,
+    };
+  }
+
+  function clearConnectionError(connectionId: string) {
+    if (!connectionErrors.value[connectionId]) return;
+    const next = { ...connectionErrors.value };
+    delete next[connectionId];
+    connectionErrors.value = next;
+  }
+
+  function recordConnectionError(connectionId: string, error: unknown): string {
+    const message = connectionErrorMessage(error);
+    setConnectionError(connectionId, message);
+    return message;
   }
 
   function normalizeConnection(config: ConnectionConfig): ConnectionConfig {
@@ -203,6 +229,7 @@ export const useConnectionStore = defineStore("connection", () => {
     const nextConnections = connections.value.filter((c) => c.id !== id);
     await persistConnections(nextConnections);
     connections.value = nextConnections;
+    clearConnectionError(id);
     sidebarLayout.value = removeConnectionFromSidebarLayout(sidebarLayout.value, id);
     rebuildTreeNodes();
     persistSidebarLayoutDebounced();
@@ -233,6 +260,8 @@ export const useConnectionStore = defineStore("connection", () => {
       const id = await api.connectDb(config);
       activeConnectionId.value = id;
       connectedIds.value.add(id);
+      clearConnectionError(config.id);
+      if (id !== config.id) clearConnectionError(id);
 
       const node: TreeNode = {
         id,
@@ -249,6 +278,9 @@ export const useConnectionStore = defineStore("connection", () => {
         treeNodes.value.push(node);
       }
       return id;
+    } catch (e) {
+      recordConnectionError(config.id, e);
+      throw e;
     } finally {
       const node = findNode(treeNodes.value, config.id);
       if (node) node.isLoading = false;
@@ -272,10 +304,20 @@ export const useConnectionStore = defineStore("connection", () => {
   async function ensureConnected(connectionId: string) {
     if (connectedIds.value.has(connectionId)) return;
     const config = getConfig(connectionId);
-    if (!config) throw new Error("Connection config not found");
-    await api.connectDb(config);
-    connectedIds.value.add(connectionId);
-    activeConnectionId.value = connectionId;
+    if (!config) {
+      const error = new Error("Connection config not found");
+      recordConnectionError(connectionId, error);
+      throw error;
+    }
+    try {
+      await api.connectDb(config);
+      connectedIds.value.add(connectionId);
+      activeConnectionId.value = connectionId;
+      clearConnectionError(connectionId);
+    } catch (e) {
+      recordConnectionError(connectionId, e);
+      throw e;
+    }
   }
 
   async function loadDatabases(connectionId: string) {
@@ -858,6 +900,7 @@ export const useConnectionStore = defineStore("connection", () => {
       connections.value.push(normalized);
     }
     connectedIds.value.add(normalized.id);
+    clearConnectionError(normalized.id);
   }
 
   return {
@@ -865,6 +908,10 @@ export const useConnectionStore = defineStore("connection", () => {
     activeConnectionId,
     treeNodes,
     connectedIds,
+    connectionErrors,
+    setConnectionError,
+    clearConnectionError,
+    recordConnectionError,
     sidebarLayout,
     getConfig,
     isTreeNodePinned,
