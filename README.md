@@ -29,12 +29,12 @@
   </p>
 
   <p>
-    <a href="docs/screenshot-light.png"><img src="docs/screenshot-light.png" width="395" /></a>
-    <a href="docs/screenshot-dark.png"><img src="docs/screenshot-dark.png" width="395" /></a>
+    <a href="docs/screenshot-light.png"><img src="https://cdn.jsdelivr.net/gh/t8y2/dbx@main/docs/screenshot-light.png" width="395" /></a>
+    <a href="docs/screenshot-dark.png"><img src="https://cdn.jsdelivr.net/gh/t8y2/dbx@main/docs/screenshot-dark.png" width="395" /></a>
   </p>
   <p>
-    <a href="docs/screenshot-er.png"><img src="docs/screenshot-er.png" width="395" /></a>
-    <a href="docs/screenshot-grid.png"><img src="docs/screenshot-grid.png" width="395" /></a>
+    <a href="docs/screenshot-er.png"><img src="https://cdn.jsdelivr.net/gh/t8y2/dbx@main/docs/screenshot-er.png" width="395" /></a>
+    <a href="docs/screenshot-grid.png"><img src="https://cdn.jsdelivr.net/gh/t8y2/dbx@main/docs/screenshot-grid.png" width="395" /></a>
   </p>
 </div>
 
@@ -124,8 +124,6 @@ scoop bucket add dbx https://github.com/t8y2/scoop-bucket
 scoop install dbx
 ```
 
-macOS builds are Apple code-signed and notarized.
-
 ## Self-Hosted (Docker)
 
 DBX provides a web version that can be deployed via Docker.
@@ -164,7 +162,7 @@ Open `http://localhost:4224` in your browser. Multi-arch images (amd64 / arm64) 
 
 ```bash
 pnpm install
-pnpm tauri dev
+pnpm dev:tauri
 ```
 
 Web version:
@@ -203,7 +201,7 @@ The installer will be in `src-tauri/target/release/bundle/`.
 ## Contributors
 
 <a href="https://github.com/t8y2/dbx/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=t8y2/dbx&v=3" />
+  <img src="https://contrib.rocks/image?repo=t8y2/dbx" />
 </a>
 
 ## Star History
