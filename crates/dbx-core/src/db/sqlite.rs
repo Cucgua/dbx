@@ -3,9 +3,15 @@ use sqlx::{Column, Executor, Row};
 use std::time::{Duration, Instant};
 
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
+use super::file_validator::validate_file_path;
 
 pub async fn connect_path(path: &str) -> Result<SqlitePool, String> {
-    let mut options = SqliteConnectOptions::new().filename(path).create_if_missing(true);
+    // Validate file path using universal validator
+    validate_file_path(path, is_network_path)?;
+
+    let mut options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false);
 
     if is_network_path(path) {
         options = options.vfs("unix-nolock");
@@ -49,8 +55,10 @@ pub async fn list_tables(pool: &SqlitePool, _schema: &str) -> Result<Vec<TableIn
 }
 
 pub async fn get_columns(pool: &SqlitePool, _schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    let rows: Vec<SqliteRow> =
-        sqlx::query(&format!("PRAGMA table_info(\"{}\")", table)).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let rows: Vec<SqliteRow> = sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
@@ -60,8 +68,7 @@ pub async fn get_columns(pool: &SqlitePool, _schema: &str, table: &str) -> Resul
             is_nullable: row.get::<i32, _>("notnull") == 0,
             column_default: row.get::<Option<String>, _>("dflt_value"),
             is_primary_key: row.get::<i32, _>("pk") > 0,
-            extra: None,
-            comment: None,
+            extra: None, comment: None,
             numeric_precision: None,
             numeric_scale: None,
             character_maximum_length: None,
@@ -123,33 +130,26 @@ pub async fn list_foreign_keys(pool: &SqlitePool, _schema: &str, table: &str) ->
 }
 
 pub async fn list_triggers(pool: &SqlitePool, _schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
-    let rows: Vec<SqliteRow> =
-        sqlx::query("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name")
-            .bind(table)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+    let rows: Vec<SqliteRow> = sqlx::query(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name",
+    )
+    .bind(table)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
         .map(|row| {
             let sql_text: String = row.get::<Option<String>, _>("sql").unwrap_or_default();
             let upper = sql_text.to_uppercase();
-            let timing = if upper.contains("BEFORE") {
-                "BEFORE"
-            } else if upper.contains("AFTER") {
-                "AFTER"
-            } else {
-                "INSTEAD OF"
-            };
-            let event = if upper.contains("INSERT") {
-                "INSERT"
-            } else if upper.contains("UPDATE") {
-                "UPDATE"
-            } else {
-                "DELETE"
-            };
-            TriggerInfo { name: row.get::<String, _>("name"), event: event.to_string(), timing: timing.to_string() }
+            let timing = if upper.contains("BEFORE") { "BEFORE" } else if upper.contains("AFTER") { "AFTER" } else { "INSTEAD OF" };
+            let event = if upper.contains("INSERT") { "INSERT" } else if upper.contains("UPDATE") { "UPDATE" } else { "DELETE" };
+            TriggerInfo {
+                name: row.get::<String, _>("name"),
+                event: event.to_string(),
+                timing: timing.to_string(),
+            }
         })
         .collect())
 }
@@ -166,7 +166,10 @@ pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, 
         let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
         let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
 
-        let rows: Vec<SqliteRow> = sqlx::query(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+        let rows: Vec<SqliteRow> = sqlx::query(sql)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let result_rows: Vec<Vec<serde_json::Value>> = rows
             .iter()
@@ -176,13 +179,11 @@ pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, 
                         row.try_get::<String, _>(i)
                             .map(serde_json::Value::String)
                             .or_else(|_| row.try_get::<i64, _>(i).map(|v| serde_json::Value::Number(v.into())))
-                            .or_else(|_| {
-                                row.try_get::<f64, _>(i).map(|v| {
-                                    serde_json::Number::from_f64(v)
-                                        .map(serde_json::Value::Number)
-                                        .unwrap_or(serde_json::Value::Null)
-                                })
-                            })
+                            .or_else(|_| row.try_get::<f64, _>(i).map(|v| {
+                                serde_json::Number::from_f64(v)
+                                    .map(serde_json::Value::Number)
+                                    .unwrap_or(serde_json::Value::Null)
+                            }))
                             .or_else(|_| row.try_get::<bool, _>(i).map(serde_json::Value::Bool))
                             .unwrap_or(serde_json::Value::Null)
                     })
@@ -198,7 +199,10 @@ pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, 
             truncated: false,
         })
     } else {
-        let result = sqlx::query(sql).execute(pool).await.map_err(|e| e.to_string())?;
+        let result = sqlx::query(sql)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
         Ok(QueryResult {
             columns: vec![],

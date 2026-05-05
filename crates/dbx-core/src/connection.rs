@@ -105,8 +105,8 @@ impl AppState {
                 PoolKind::Redis(tokio::sync::Mutex::new(con))
             }
             DatabaseType::DuckDb => {
-                let con = duckdb::Connection::open(&expand_tilde(&db_config.host)).map_err(|e| e.to_string())?;
-                PoolKind::DuckDb(Arc::new(std::sync::Mutex::new(con)))
+                let con = db::duckdb_driver::connect_path(&expand_tilde(&db_config.host))?;
+                PoolKind::DuckDb(con)
             }
             DatabaseType::MongoDb => {
                 let client = db::mongo_driver::connect(&url).await?;
