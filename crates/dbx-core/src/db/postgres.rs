@@ -73,6 +73,7 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
             })
         })
         .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
+        .or_else(|_| row.try_get::<uuid::Uuid, _>(idx).map(|v| serde_json::Value::String(v.to_string())))
         .or_else(|e| pg_temporal_to_json_value(row, idx).ok_or(e))
         .unwrap_or(serde_json::Value::Null)
 }
