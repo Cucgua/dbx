@@ -60,6 +60,7 @@ import { qualifiedTableName as buildQualifiedTableName, quoteTableIdentifier } f
 import { treeNodeRowAction } from "@/lib/treeNodeClick";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
+import ConnectionErrorIndicator from "@/components/connection/ConnectionErrorIndicator.vue";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -304,9 +305,13 @@ async function openData() {
 async function newQuery() {
   const node = props.node;
   if (!node.connectionId) return;
-  await connectionStore.ensureConnected(node.connectionId);
-  connectionStore.activeConnectionId = node.connectionId;
-  queryStore.createTab(node.connectionId, node.database || "", undefined, "query");
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    connectionStore.activeConnectionId = node.connectionId;
+    queryStore.createTab(node.connectionId, node.database || "", undefined, "query");
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 async function refresh() {
@@ -918,6 +923,11 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
               node.type === 'connection' && node.connectionId && connectionStore.connectedIds.has(node.connectionId)
             "
             class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"
+          />
+          <ConnectionErrorIndicator
+            v-if="node.type === 'connection'"
+            :connection-id="node.connectionId"
+            trigger-class="h-4 w-4"
           />
           <button
             v-if="canPin"

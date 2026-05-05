@@ -215,9 +215,15 @@ function newQuery() {
 async function openConnectionQuery(connectionId: string) {
   const connection = connectionStore.getConfig(connectionId);
   if (!connection) return;
-  const options = await getDatabaseOptions(connectionId);
   connectionStore.activeConnectionId = connectionId;
-  queryStore.createTab(connectionId, connection.database || options[0] || "");
+  const tabId = queryStore.createTab(connectionId, connection.database || "");
+  try {
+    await connectionStore.ensureConnected(connectionId);
+    const options = await getDatabaseOptions(connectionId);
+    if (!connection.database && options[0]) queryStore.updateDatabase(tabId, options[0]);
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 async function changeActiveConnection(connectionId: string) {
@@ -225,9 +231,15 @@ async function changeActiveConnection(connectionId: string) {
   if (!tab) return;
   const connection = connectionStore.getConfig(connectionId);
   if (!connection) return;
-  const options = await getDatabaseOptions(connectionId);
-  queryStore.updateConnection(tab.id, connectionId, connection.database || options[0] || "");
+  queryStore.updateConnection(tab.id, connectionId, connection.database || "");
   connectionStore.activeConnectionId = connectionId;
+  try {
+    await connectionStore.ensureConnected(connectionId);
+    const options = await getDatabaseOptions(connectionId);
+    if (!connection.database && options[0]) queryStore.updateDatabase(tab.id, options[0]);
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 function changeActiveDatabase(database: string) {

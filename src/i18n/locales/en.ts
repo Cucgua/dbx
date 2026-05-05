@@ -76,6 +76,8 @@ export default {
     connecting: "Connecting to {name}...",
     connectSuccess: "Connected to {name}",
     connectFailed: "Connection failed: {message}",
+    lastError: "Connection error",
+    clearError: "Clear connection error",
     saveFailed: "Failed to save connection: {message}",
     loadFailed: "Failed to load saved connections: {message}",
     sshTunnel: "SSH Tunnel",

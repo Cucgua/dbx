@@ -42,6 +42,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { connectionIconType } from "@/lib/connectionPresentation";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useQueryStore } from "@/stores/queryStore";
+import { useToast } from "@/composables/useToast";
 import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
 import {
   aiTestConnection,
@@ -59,6 +60,7 @@ const { t } = useI18n();
 const settings = useSettingsStore();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
+const { toast } = useToast();
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -133,7 +135,7 @@ async function loadDatabases() {
   await loadDatabaseOptions(props.connection.id);
 }
 
-function changeConnection(connectionId: string) {
+async function changeConnection(connectionId: string) {
   const conn = connectionStore.getConfig(connectionId);
   if (!conn) return;
   connectionStore.activeConnectionId = connectionId;
@@ -142,6 +144,11 @@ function changeConnection(connectionId: string) {
     queryStore.updateConnection(tab.id, connectionId, conn.database || "");
   } else {
     queryStore.createTab(connectionId, conn.database || "");
+  }
+  try {
+    await loadDatabaseOptions(connectionId);
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
