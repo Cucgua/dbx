@@ -1,18 +1,18 @@
 use std::path::Path;
 
 /// Validates a file path for database connections.
-/// 
+///
 /// Performs comprehensive checks including:
 /// - Empty path validation
 /// - Null character detection
 /// - File existence (for local paths)
 /// - File type validation (must be a file, not directory)
 /// - Network path detection (skips validation for network paths)
-/// 
+///
 /// # Arguments
 /// * `path` - The file path to validate
 /// * `is_network_path` - Closure to determine if path is a network path
-/// 
+///
 /// # Returns
 /// * `Ok(())` if validation passes
 /// * `Err(String)` with descriptive error message if validation fails
@@ -35,26 +35,17 @@ where
     // For non-network paths, perform file system checks
     if !is_network_path(path) {
         if !path_obj.exists() {
-            return Err(format!(
-                "Database file does not exist: {}",
-                path
-            ));
+            return Err(format!("Database file does not exist: {}", path));
         }
 
         // Check if path is actually a file, not a directory
         if path_obj.is_dir() {
-            return Err(format!(
-                "Database file path is a directory, not a file: {}",
-                path
-            ));
+            return Err(format!("Database file path is a directory, not a file: {}", path));
         }
 
         // Check if path is a valid file
         if !path_obj.is_file() {
-            return Err(format!(
-                "Database file path is not a valid file: {}",
-                path
-            ));
+            return Err(format!("Database file path is not a valid file: {}", path));
         }
     }
 

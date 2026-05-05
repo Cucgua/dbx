@@ -1,5 +1,7 @@
 pub mod clickhouse_driver;
+pub mod duckdb_driver;
 pub mod elasticsearch_driver;
+pub mod file_validator;
 pub mod mongo_driver;
 pub mod mysql;
 pub mod oracle_driver;
@@ -8,8 +10,6 @@ pub mod redis_driver;
 pub mod sqlite;
 pub mod sqlserver;
 pub mod ssh_tunnel;
-pub mod file_validator;
-pub mod duckdb_driver;
 
 use std::future::Future;
 use std::time::Duration;
