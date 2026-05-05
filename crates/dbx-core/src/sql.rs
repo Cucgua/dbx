@@ -147,17 +147,11 @@ impl SqlStatementSplitter {
             }
 
             match ch {
-                '\'' if !self.in_double_quote
-                    && !self.in_backtick
-                    && self.previous != Some('\\') =>
-                {
+                '\'' if !self.in_double_quote && !self.in_backtick && self.previous != Some('\\') => {
                     self.in_single_quote = !self.in_single_quote;
                     self.buffer.push(ch);
                 }
-                '"' if !self.in_single_quote
-                    && !self.in_backtick
-                    && self.previous != Some('\\') =>
-                {
+                '"' if !self.in_single_quote && !self.in_backtick && self.previous != Some('\\') => {
                     self.in_double_quote = !self.in_double_quote;
                     self.buffer.push(ch);
                 }
@@ -351,10 +345,7 @@ mod tests {
         let mut splitter = SqlStatementSplitter::default();
 
         assert_eq!(splitter.push_chunk("SELECT 1; -"), vec!["SELECT 1"]);
-        assert_eq!(
-            splitter.push_chunk("- comment ; ignored\nSELECT 2;"),
-            vec!["-- comment ; ignored\nSELECT 2"]
-        );
+        assert_eq!(splitter.push_chunk("- comment ; ignored\nSELECT 2;"), vec!["-- comment ; ignored\nSELECT 2"]);
         assert_eq!(splitter.finish(), Vec::<String>::new());
     }
 
@@ -363,10 +354,7 @@ mod tests {
         let mut splitter = SqlStatementSplitter::default();
 
         assert_eq!(splitter.push_chunk("SELECT 1; /"), vec!["SELECT 1"]);
-        assert_eq!(
-            splitter.push_chunk("* comment ; ignored */\nSELECT 2;"),
-            vec!["/* comment ; ignored */\nSELECT 2"]
-        );
+        assert_eq!(splitter.push_chunk("* comment ; ignored */\nSELECT 2;"), vec!["/* comment ; ignored */\nSELECT 2"]);
         assert_eq!(splitter.finish(), Vec::<String>::new());
     }
 
@@ -402,14 +390,8 @@ mod tests {
     #[test]
     fn keeps_mysql_executable_comments_as_statements() {
         assert_eq!(
-            split_sql_script(
-                "/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;\nSELECT 1;",
-            )
-            .unwrap(),
-            vec![
-                "/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */",
-                "SELECT 1",
-            ]
+            split_sql_script("/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;\nSELECT 1;",).unwrap(),
+            vec!["/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */", "SELECT 1",]
         );
     }
 }

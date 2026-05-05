@@ -12,15 +12,11 @@ use tokio::sync::RwLock;
 // Stream cancel registry
 // ---------------------------------------------------------------------------
 
-static AI_STREAMS: LazyLock<RwLock<HashMap<String, Arc<AtomicBool>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+static AI_STREAMS: LazyLock<RwLock<HashMap<String, Arc<AtomicBool>>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub async fn register_stream(session_id: &str) -> Arc<AtomicBool> {
     let cancelled = Arc::new(AtomicBool::new(false));
-    AI_STREAMS
-        .write()
-        .await
-        .insert(session_id.to_string(), cancelled.clone());
+    AI_STREAMS.write().await.insert(session_id.to_string(), cancelled.clone());
     cancelled
 }
 
@@ -129,10 +125,7 @@ pub struct AiConversation {
 
 pub fn resolve_endpoint(config: &AiConfig) -> String {
     let ep = config.endpoint.trim().trim_end_matches('/');
-    if ep.ends_with("/chat/completions")
-        || ep.ends_with("/responses")
-        || ep.ends_with("/messages")
-    {
+    if ep.ends_with("/chat/completions") || ep.ends_with("/responses") || ep.ends_with("/messages") {
         return ep.to_string();
     }
     match config.provider {
@@ -149,11 +142,7 @@ pub fn resolve_endpoint(config: &AiConfig) -> String {
 
 pub fn stream_data_payload(line: &str) -> Option<&str> {
     let line = line.trim();
-    if line.is_empty()
-        || line.starts_with(':')
-        || line.starts_with("event:")
-        || line.starts_with("id:")
-    {
+    if line.is_empty() || line.starts_with(':') || line.starts_with("event:") || line.starts_with("id:") {
         return None;
     }
     if let Some(data) = line.strip_prefix("data:") {
@@ -175,11 +164,7 @@ pub fn claude_stream_text(event: &serde_json::Value) -> Option<&str> {
 pub fn openai_stream_text(event: &serde_json::Value) -> Option<&str> {
     event["choices"]
         .get(0)
-        .and_then(|choice| {
-            choice["delta"]["content"]
-                .as_str()
-                .or_else(|| choice["message"]["content"].as_str())
-        })
+        .and_then(|choice| choice["delta"]["content"].as_str().or_else(|| choice["message"]["content"].as_str()))
         .or_else(|| event["content"].as_str())
         .filter(|text| !text.is_empty())
 }
@@ -196,10 +181,7 @@ pub fn responses_stream_text(event: &serde_json::Value) -> Option<&str> {
 }
 
 pub fn extract_error(data: &serde_json::Value) -> Option<String> {
-    data["error"]["message"]
-        .as_str()
-        .or_else(|| data["error"].as_str())
-        .map(ToString::to_string)
+    data["error"]["message"].as_str().or_else(|| data["error"].as_str()).map(ToString::to_string)
 }
 
 pub fn build_responses_input(system_prompt: &str, messages: &[AiMessage]) -> serde_json::Value {
@@ -240,16 +222,10 @@ fn validate_config(config: &AiConfig) -> Result<(), String> {
 // Non-streaming calls
 // ---------------------------------------------------------------------------
 
-pub async fn call_claude(
-    client: &reqwest::Client,
-    request: AiCompletionRequest,
-) -> Result<String, String> {
+pub async fn call_claude(client: &reqwest::Client, request: AiCompletionRequest) -> Result<String, String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(
-        "x-api-key",
-        HeaderValue::from_str(&request.config.api_key).map_err(|e| e.to_string())?,
-    );
+    headers.insert("x-api-key", HeaderValue::from_str(&request.config.api_key).map_err(|e| e.to_string())?);
     headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 
     let body = json!({
@@ -281,25 +257,16 @@ pub async fn call_claude(
         .to_string())
 }
 
-pub async fn call_openai_compatible(
-    client: &reqwest::Client,
-    request: AiCompletionRequest,
-) -> Result<String, String> {
+pub async fn call_openai_compatible(client: &reqwest::Client, request: AiCompletionRequest) -> Result<String, String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", request.config.api_key))
-            .map_err(|e| e.to_string())?,
+        HeaderValue::from_str(&format!("Bearer {}", request.config.api_key)).map_err(|e| e.to_string())?,
     );
 
     let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
-    messages.extend(
-        request
-            .messages
-            .iter()
-            .map(|message| json!({ "role": message.role, "content": message.content })),
-    );
+    messages.extend(request.messages.iter().map(|message| json!({ "role": message.role, "content": message.content })));
 
     let body = json!({
         "model": request.config.model,
@@ -322,22 +289,15 @@ pub async fn call_openai_compatible(
         return Err(extract_error(&data).unwrap_or_else(|| format!("API error: {status}")));
     }
 
-    Ok(data["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string())
+    Ok(data["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string())
 }
 
-pub async fn call_responses_api(
-    client: &reqwest::Client,
-    request: AiCompletionRequest,
-) -> Result<String, String> {
+pub async fn call_responses_api(client: &reqwest::Client, request: AiCompletionRequest) -> Result<String, String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", request.config.api_key))
-            .map_err(|e| e.to_string())?,
+        HeaderValue::from_str(&format!("Bearer {}", request.config.api_key)).map_err(|e| e.to_string())?,
     );
 
     let body = json!({
@@ -365,9 +325,7 @@ pub async fn call_responses_api(
         .as_array()
         .and_then(|items| {
             items.iter().find_map(|item| {
-                item["content"]
-                    .as_array()
-                    .and_then(|parts| parts.iter().find_map(|p| p["text"].as_str()))
+                item["content"].as_array().and_then(|parts| parts.iter().find_map(|p| p["text"].as_str()))
             })
         })
         .unwrap_or_default()
@@ -381,18 +339,13 @@ pub async fn call_responses_api(
 pub async fn test_connection_core(config: &AiConfig) -> Result<String, String> {
     validate_config(config)?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client =
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build().map_err(|e| e.to_string())?;
 
     let request = AiCompletionRequest {
         config: config.clone(),
         system_prompt: String::new(),
-        messages: vec![AiMessage {
-            role: "user".into(),
-            content: "hi".into(),
-        }],
+        messages: vec![AiMessage { role: "user".into(), content: "hi".into() }],
         max_tokens: Some(1),
         temperature: Some(0.0),
     };
@@ -413,10 +366,8 @@ pub async fn test_connection_core(config: &AiConfig) -> Result<String, String> {
 pub async fn complete(request: &AiCompletionRequest) -> Result<String, String> {
     validate_config(&request.config)?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client =
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build().map_err(|e| e.to_string())?;
 
     match request.config.provider {
         AiProvider::Claude => call_claude(&client, request.clone()).await,
@@ -442,15 +393,11 @@ pub async fn stream(
 ) -> Result<(), String> {
     validate_config(&request.config)?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client =
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
 
     match request.config.provider {
-        AiProvider::Claude => {
-            stream_claude(&client, session_id, request, cancelled, &on_chunk).await
-        }
+        AiProvider::Claude => stream_claude(&client, session_id, request, cancelled, &on_chunk).await,
         AiProvider::Openai | AiProvider::Custom => {
             if request.config.api_style == AiApiStyle::Responses {
                 stream_responses_api(&client, session_id, request, cancelled, &on_chunk).await
@@ -470,10 +417,7 @@ async fn stream_claude(
 ) -> Result<(), String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(
-        "x-api-key",
-        HeaderValue::from_str(&request.config.api_key).map_err(|e| e.to_string())?,
-    );
+    headers.insert("x-api-key", HeaderValue::from_str(&request.config.api_key).map_err(|e| e.to_string())?);
     headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 
     let body = json!({
@@ -559,17 +503,11 @@ async fn stream_openai(
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", request.config.api_key))
-            .map_err(|e| e.to_string())?,
+        HeaderValue::from_str(&format!("Bearer {}", request.config.api_key)).map_err(|e| e.to_string())?,
     );
 
     let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
-    messages.extend(
-        request
-            .messages
-            .iter()
-            .map(|m| json!({ "role": m.role, "content": m.content })),
-    );
+    messages.extend(request.messages.iter().map(|m| json!({ "role": m.role, "content": m.content })));
 
     let body = json!({
         "model": request.config.model,
@@ -661,8 +599,7 @@ async fn stream_responses_api(
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", request.config.api_key))
-            .map_err(|e| e.to_string())?,
+        HeaderValue::from_str(&format!("Bearer {}", request.config.api_key)).map_err(|e| e.to_string())?,
     );
 
     let body = json!({
@@ -771,10 +708,7 @@ pub fn load_conversations(path: &Path) -> Result<Vec<AiConversation>, String> {
 }
 
 pub fn delete_conversation(path: &Path, id: &str) -> Result<(), String> {
-    let conversations: Vec<AiConversation> = read_conversations(path)?
-        .into_iter()
-        .filter(|c| c.id != id)
-        .collect();
+    let conversations: Vec<AiConversation> = read_conversations(path)?.into_iter().filter(|c| c.id != id).collect();
     write_conversations(path, &conversations)
 }
 

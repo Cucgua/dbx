@@ -31,11 +31,7 @@ pub async fn start_transfer(
 
     // Create a broadcast channel for progress
     let (tx, _) = tokio::sync::broadcast::channel::<String>(256);
-    state
-        .sse_channels
-        .write()
-        .await
-        .insert(transfer_id.clone(), tx.clone());
+    state.sse_channels.write().await.insert(transfer_id.clone(), tx.clone());
 
     let app = state.app.clone();
     let state_clone = state.clone();
@@ -56,9 +52,7 @@ pub async fn start_transfer(
             }
         };
 
-        let source_pool_key = match app
-            .get_or_create_pool(&req.source_connection_id, Some(&req.source_database))
-            .await
+        let source_pool_key = match app.get_or_create_pool(&req.source_connection_id, Some(&req.source_database)).await
         {
             Ok(k) => k,
             Err(e) => {
@@ -66,9 +60,7 @@ pub async fn start_transfer(
                 return;
             }
         };
-        let target_pool_key = match app
-            .get_or_create_pool(&req.target_connection_id, Some(&req.target_database))
-            .await
+        let target_pool_key = match app.get_or_create_pool(&req.target_connection_id, Some(&req.target_database)).await
         {
             Ok(k) => k,
             Err(e) => {
@@ -151,9 +143,7 @@ pub async fn start_transfer(
         state_clone.sse_channels.write().await.remove(&req.transfer_id);
     });
 
-    Ok(Json(
-        serde_json::json!({ "transferId": transfer_id }),
-    ))
+    Ok(Json(serde_json::json!({ "transferId": transfer_id })))
 }
 
 pub async fn transfer_progress(
@@ -161,9 +151,7 @@ pub async fn transfer_progress(
     Path(transfer_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, AppError> {
     let channels = state.sse_channels.read().await;
-    let tx = channels
-        .get(&transfer_id)
-        .ok_or_else(|| AppError("Transfer not found".to_string()))?;
+    let tx = channels.get(&transfer_id).ok_or_else(|| AppError("Transfer not found".to_string()))?;
     let rx = tx.subscribe();
     drop(channels);
     Ok(crate::sse::sse_from_channel(rx))

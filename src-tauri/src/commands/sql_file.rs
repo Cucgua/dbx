@@ -12,8 +12,7 @@ use crate::commands::connection::AppState;
 use crate::commands::query::execute_sql_statement;
 
 pub use dbx_core::sql::{
-    statement_summary, SqlFilePreview, SqlFileProgress, SqlFileRequest,
-    SqlFileStatus, SqlStatementSplitter,
+    statement_summary, SqlFilePreview, SqlFileProgress, SqlFileRequest, SqlFileStatus, SqlStatementSplitter,
 };
 
 static SQL_FILE_EXECUTIONS: std::sync::LazyLock<RwLock<HashMap<String, CancellationToken>>> =
@@ -38,25 +37,15 @@ struct SqlFileSummary {
 #[tauri::command]
 pub async fn preview_sql_file(file_path: String) -> Result<SqlFilePreview, String> {
     let path = PathBuf::from(&file_path);
-    let metadata = tokio::fs::metadata(&path)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut file = tokio::fs::File::open(&path)
-        .await
-        .map_err(|e| e.to_string())?;
+    let metadata = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?;
+    let mut file = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
     let mut buffer = vec![0; 4096];
-    let bytes_read = tokio::io::AsyncReadExt::read(&mut file, &mut buffer)
-        .await
-        .map_err(|e| e.to_string())?;
+    let bytes_read = tokio::io::AsyncReadExt::read(&mut file, &mut buffer).await.map_err(|e| e.to_string())?;
     buffer.truncate(bytes_read);
     let preview = String::from_utf8_lossy(&buffer).to_string();
 
     Ok(SqlFilePreview {
-        file_name: path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("script.sql")
-            .to_string(),
+        file_name: path.file_name().and_then(|name| name.to_str()).unwrap_or("script.sql").to_string(),
         file_path,
         size_bytes: metadata.len(),
         preview,
@@ -76,18 +65,7 @@ pub async fn execute_sql_file(
     }
 
     let started_at = Instant::now();
-    emit_progress(
-        &app,
-        &request.execution_id,
-        SqlFileStatus::Started,
-        0,
-        0,
-        0,
-        0,
-        started_at,
-        "",
-        None,
-    );
+    emit_progress(&app, &request.execution_id, SqlFileStatus::Started, 0, 0, 0, 0, started_at, "", None);
 
     let result = execute_sql_file_inner(&app, &state, &request, token, started_at).await;
     {
@@ -334,19 +312,14 @@ fn register_sql_file_execution(
     token: CancellationToken,
 ) -> Result<(), String> {
     if executions.contains_key(&execution_id) {
-        return Err(format!(
-            "SQL file execution '{execution_id}' already exists"
-        ));
+        return Err(format!("SQL file execution '{execution_id}' already exists"));
     }
 
     executions.insert(execution_id, token);
     Ok(())
 }
 
-fn remove_sql_file_execution(
-    executions: &mut HashMap<String, CancellationToken>,
-    execution_id: &str,
-) {
+fn remove_sql_file_execution(executions: &mut HashMap<String, CancellationToken>, execution_id: &str) {
     executions.remove(execution_id);
 }
 
@@ -394,11 +367,7 @@ fn statement_error_decision(
     );
 
     if continue_on_error {
-        return StatementErrorDecision {
-            progress: vec![statement_failed],
-            failure_count,
-            result: Ok(false),
-        };
+        return StatementErrorDecision { progress: vec![statement_failed], failure_count, result: Ok(false) };
     }
 
     let terminal_error = sql_file_progress(
@@ -413,11 +382,7 @@ fn statement_error_decision(
         Some(error.clone()),
     );
 
-    StatementErrorDecision {
-        progress: vec![statement_failed, terminal_error],
-        failure_count,
-        result: Err(error),
-    }
+    StatementErrorDecision { progress: vec![statement_failed, terminal_error], failure_count, result: Err(error) }
 }
 
 fn emit_progress(
@@ -559,11 +524,7 @@ async fn run_statements_for_test(
     }
 
     SqlFileSummary {
-        status: if token.is_cancelled() {
-            SqlFileStatus::Cancelled
-        } else {
-            SqlFileStatus::Done
-        },
+        status: if token.is_cancelled() { SqlFileStatus::Cancelled } else { SqlFileStatus::Done },
         success_count,
         failure_count,
         failed_statement_index,
@@ -586,12 +547,7 @@ mod execution_tests {
 
     #[tokio::test]
     async fn stops_on_first_failure_by_default() {
-        let summary = run_fake_script(
-            vec!["ok 1".into(), "fail 2".into(), "ok 3".into()],
-            false,
-            None,
-        )
-        .await;
+        let summary = run_fake_script(vec!["ok 1".into(), "fail 2".into(), "ok 3".into()], false, None).await;
 
         assert_eq!(summary.success_count, 1);
         assert_eq!(summary.failure_count, 1);
@@ -601,12 +557,7 @@ mod execution_tests {
 
     #[tokio::test]
     async fn continues_after_failure_when_enabled() {
-        let summary = run_fake_script(
-            vec!["ok 1".into(), "fail 2".into(), "ok 3".into()],
-            true,
-            None,
-        )
-        .await;
+        let summary = run_fake_script(vec!["ok 1".into(), "fail 2".into(), "ok 3".into()], true, None).await;
 
         assert_eq!(summary.success_count, 2);
         assert_eq!(summary.failure_count, 1);
@@ -615,12 +566,7 @@ mod execution_tests {
 
     #[tokio::test]
     async fn cancellation_stops_before_next_statement() {
-        let summary = run_fake_script(
-            vec!["ok 1".into(), "ok 2".into(), "ok 3".into()],
-            true,
-            Some(1),
-        )
-        .await;
+        let summary = run_fake_script(vec!["ok 1".into(), "ok 2".into(), "ok 3".into()], true, Some(1)).await;
 
         assert_eq!(summary.success_count, 1);
         assert_eq!(summary.status, SqlFileStatus::Cancelled);
@@ -628,15 +574,7 @@ mod execution_tests {
 
     #[test]
     fn file_io_errors_build_terminal_error_progress() {
-        let progress = file_io_error_progress(
-            "exec-1",
-            4,
-            2,
-            1,
-            17,
-            Instant::now(),
-            "read failed".to_string(),
-        );
+        let progress = file_io_error_progress("exec-1", 4, 2, 1, 17, Instant::now(), "read failed".to_string());
 
         assert_eq!(progress.execution_id, "exec-1");
         assert_eq!(progress.status, SqlFileStatus::Error);
@@ -655,13 +593,9 @@ mod execution_tests {
         let replacement = CancellationToken::new();
         executions.insert("dup".to_string(), original.clone());
 
-        let result =
-            register_sql_file_execution(&mut executions, "dup".to_string(), replacement.clone());
+        let result = register_sql_file_execution(&mut executions, "dup".to_string(), replacement.clone());
 
-        assert_eq!(
-            result.unwrap_err(),
-            "SQL file execution 'dup' already exists"
-        );
+        assert_eq!(result.unwrap_err(), "SQL file execution 'dup' already exists");
         assert_eq!(executions.len(), 1);
 
         executions.get("dup").unwrap().cancel();
@@ -720,17 +654,8 @@ mod execution_tests {
 
     #[test]
     fn progress_payload_serializes_camel_case_status() {
-        let progress = sql_file_progress(
-            "exec-1",
-            SqlFileStatus::StatementDone,
-            1,
-            1,
-            0,
-            3,
-            Instant::now(),
-            "select 1",
-            None,
-        );
+        let progress =
+            sql_file_progress("exec-1", SqlFileStatus::StatementDone, 1, 1, 0, 3, Instant::now(), "select 1", None);
 
         let value = serde_json::to_value(progress).unwrap();
 

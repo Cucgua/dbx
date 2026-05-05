@@ -62,9 +62,8 @@ pub async fn list_databases(
     State(state): State<Arc<WebState>>,
     Json(req): Json<MongoConnectionRequest>,
 ) -> Result<Json<Vec<String>>, AppError> {
-    let result = dbx_core::mongo_ops::mongo_list_databases_core(&state.app, &req.connection_id)
-        .await
-        .map_err(AppError)?;
+    let result =
+        dbx_core::mongo_ops::mongo_list_databases_core(&state.app, &req.connection_id).await.map_err(AppError)?;
     Ok(Json(result))
 }
 
@@ -72,13 +71,9 @@ pub async fn list_collections(
     State(state): State<Arc<WebState>>,
     Json(req): Json<MongoCollectionRequest>,
 ) -> Result<Json<Vec<String>>, AppError> {
-    let result = dbx_core::mongo_ops::mongo_list_collections_core(
-        &state.app,
-        &req.connection_id,
-        &req.database,
-    )
-    .await
-    .map_err(AppError)?;
+    let result = dbx_core::mongo_ops::mongo_list_collections_core(&state.app, &req.connection_id, &req.database)
+        .await
+        .map_err(AppError)?;
     Ok(Json(result))
 }
 

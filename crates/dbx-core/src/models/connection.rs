@@ -73,7 +73,10 @@ pub enum DatabaseType {
 impl ConnectionConfig {
     pub fn needs_bare_mysql(&self) -> bool {
         matches!(self.db_type, DatabaseType::Doris | DatabaseType::StarRocks)
-            || self.driver_profile.as_deref().map(|p| p.to_lowercase())
+            || self
+                .driver_profile
+                .as_deref()
+                .map(|p| p.to_lowercase())
                 .is_some_and(|p| matches!(p.as_str(), "doris" | "starrocks" | "selectdb" | "tdengine"))
     }
 
@@ -103,20 +106,17 @@ impl ConnectionConfig {
                 let scheme = if self.ssl { "rediss" } else { "redis" };
                 format!("{scheme}://{host}:{port}/")
             }
-            DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => format!("mysql://{host}:{port}{db_part}?{params}"),
+            DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => {
+                format!("mysql://{host}:{port}{db_part}?{params}")
+            }
             DatabaseType::Postgres | DatabaseType::Redshift => {
-                let suffix = if params.is_empty() {
-                    String::new()
-                } else {
-                    format!("?{params}")
-                };
+                let suffix = if params.is_empty() { String::new() } else { format!("?{params}") };
                 format!("postgres://{host}:{port}{db_part}{suffix}")
             }
             DatabaseType::ClickHouse => format!("http://{host}:{port}"),
-            DatabaseType::SqlServer => format!(
-                "server=tcp:{host},{port};database={}",
-                self.database.as_deref().unwrap_or("master")
-            ),
+            DatabaseType::SqlServer => {
+                format!("server=tcp:{host},{port};database={}", self.database.as_deref().unwrap_or("master"))
+            }
             DatabaseType::MongoDb => {
                 if let Some(cs) = self.connection_string.as_deref().filter(|s| !s.is_empty()) {
                     return cs.to_string();
@@ -154,20 +154,12 @@ impl ConnectionConfig {
                     format!("{scheme}://{username}:{password}@{host}:{port}/")
                 }
             }
-            DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => format!(
-                "mysql://{}:{}@{host}:{port}{db_part}?{params}",
-                username, password
-            ),
+            DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => {
+                format!("mysql://{}:{}@{host}:{port}{db_part}?{params}", username, password)
+            }
             DatabaseType::Postgres | DatabaseType::Redshift => {
-                let suffix = if params.is_empty() {
-                    String::new()
-                } else {
-                    format!("?{params}")
-                };
-                format!(
-                    "postgres://{}:{}@{host}:{port}{db_part}{suffix}",
-                    username, password
-                )
+                let suffix = if params.is_empty() { String::new() } else { format!("?{params}") };
+                format!("postgres://{}:{}@{host}:{port}{db_part}{suffix}", username, password)
             }
             DatabaseType::ClickHouse => format!("http://{host}:{port}"),
             DatabaseType::SqlServer => format!(
@@ -197,10 +189,15 @@ impl ConnectionConfig {
         let value = self.url_params.as_deref().unwrap_or("").trim();
         if self.needs_bare_mysql() {
             let v = value.trim_start_matches('?');
-            let filtered: Vec<&str> = v.split('&')
+            let filtered: Vec<&str> = v
+                .split('&')
                 .filter(|p| !p.is_empty() && !p.starts_with("charset=") && !p.starts_with("ssl-mode=preferred"))
                 .collect();
-            return if filtered.is_empty() { "ssl-mode=disabled".to_string() } else { format!("ssl-mode=disabled&{}", filtered.join("&")) };
+            return if filtered.is_empty() {
+                "ssl-mode=disabled".to_string()
+            } else {
+                format!("ssl-mode=disabled&{}", filtered.join("&"))
+            };
         }
         match self.db_type {
             DatabaseType::Mysql => {
@@ -209,18 +206,31 @@ impl ConnectionConfig {
                     base.to_string()
                 } else if value.contains("ssl-mode=") {
                     let v = value.trim_start_matches('?');
-                    if v.contains("charset=") { v.to_string() } else { format!("{v}&charset=utf8mb4") }
+                    if v.contains("charset=") {
+                        v.to_string()
+                    } else {
+                        format!("{v}&charset=utf8mb4")
+                    }
                 } else {
                     let v = value.trim_start_matches('?');
-                    if v.contains("charset=") { format!("ssl-mode=preferred&{v}") } else { format!("{base}&{v}") }
+                    if v.contains("charset=") {
+                        format!("ssl-mode=preferred&{v}")
+                    } else {
+                        format!("{base}&{v}")
+                    }
                 }
             }
             DatabaseType::Doris | DatabaseType::StarRocks => {
                 let v = value.trim_start_matches('?');
-                let filtered: Vec<&str> = v.split('&')
+                let filtered: Vec<&str> = v
+                    .split('&')
                     .filter(|p| !p.is_empty() && !p.starts_with("charset=") && !p.starts_with("ssl-mode=preferred"))
                     .collect();
-                if filtered.is_empty() { "ssl-mode=disabled".to_string() } else { format!("ssl-mode=disabled&{}", filtered.join("&")) }
+                if filtered.is_empty() {
+                    "ssl-mode=disabled".to_string()
+                } else {
+                    format!("ssl-mode=disabled&{}", filtered.join("&"))
+                }
             }
             DatabaseType::Postgres | DatabaseType::Redshift => value.trim_start_matches('?').to_string(),
             _ => value.trim_start_matches('?').to_string(),
@@ -308,10 +318,7 @@ mod tests {
         config.db_type = DatabaseType::Postgres;
         config.url_params = Some("sslmode=disable".to_string());
 
-        assert_eq!(
-            config.connection_url(),
-            "postgres://postgres:secret@10.1.2.3:2883/test?sslmode=disable"
-        );
+        assert_eq!(config.connection_url(), "postgres://postgres:secret@10.1.2.3:2883/test?sslmode=disable");
     }
 
     #[test]

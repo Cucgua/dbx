@@ -15,8 +15,12 @@ pub fn duckdb_execute(con: &duckdb::Connection, sql: &str) -> Result<db::QueryRe
     let start = std::time::Instant::now();
     let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT") || trimmed.starts_with("SHOW") || trimmed.starts_with("DESCRIBE")
-        || trimmed.starts_with("EXPLAIN") || trimmed.starts_with("WITH") || trimmed.starts_with("PRAGMA")
+    if trimmed.starts_with("SELECT")
+        || trimmed.starts_with("SHOW")
+        || trimmed.starts_with("DESCRIBE")
+        || trimmed.starts_with("EXPLAIN")
+        || trimmed.starts_with("WITH")
+        || trimmed.starts_with("PRAGMA")
     {
         let mut stmt = con.prepare(sql).map_err(|e| e.to_string())?;
         let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
@@ -28,27 +32,45 @@ pub fn duckdb_execute(con: &duckdb::Connection, sql: &str) -> Result<db::QueryRe
 
         let mut result_rows = Vec::new();
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-            if result_rows.len() >= MAX_ROWS { break; }
-            let vals: Vec<serde_json::Value> = (0..col_count).map(|i| {
-                row.get::<_, String>(i)
-                    .map(serde_json::Value::String)
-                    .or_else(|_| row.get::<_, i64>(i).map(|v| serde_json::Value::Number(v.into())))
-                    .or_else(|_| row.get::<_, f64>(i).map(|v| {
-                        serde_json::Number::from_f64(v)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
-                    }))
-                    .or_else(|_| row.get::<_, bool>(i).map(serde_json::Value::Bool))
-                    .unwrap_or(serde_json::Value::Null)
-            }).collect();
+            if result_rows.len() >= MAX_ROWS {
+                break;
+            }
+            let vals: Vec<serde_json::Value> = (0..col_count)
+                .map(|i| {
+                    row.get::<_, String>(i)
+                        .map(serde_json::Value::String)
+                        .or_else(|_| row.get::<_, i64>(i).map(|v| serde_json::Value::Number(v.into())))
+                        .or_else(|_| {
+                            row.get::<_, f64>(i).map(|v| {
+                                serde_json::Number::from_f64(v)
+                                    .map(serde_json::Value::Number)
+                                    .unwrap_or(serde_json::Value::Null)
+                            })
+                        })
+                        .or_else(|_| row.get::<_, bool>(i).map(serde_json::Value::Bool))
+                        .unwrap_or(serde_json::Value::Null)
+                })
+                .collect();
             result_rows.push(vals);
         }
 
         let truncated = result_rows.len() >= MAX_ROWS;
-        Ok(db::QueryResult { columns, rows: result_rows, affected_rows: 0, execution_time_ms: start.elapsed().as_millis(), truncated })
+        Ok(db::QueryResult {
+            columns,
+            rows: result_rows,
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated,
+        })
     } else {
         let affected = con.execute(sql, []).map_err(|e| e.to_string())?;
-        Ok(db::QueryResult { columns: vec![], rows: vec![], affected_rows: affected as u64, execution_time_ms: start.elapsed().as_millis(), truncated: false })
+        Ok(db::QueryResult {
+            columns: vec![],
+            rows: vec![],
+            affected_rows: affected as u64,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        })
     }
 }
 
@@ -79,16 +101,10 @@ pub fn canceled_error() -> String {
 }
 
 pub fn is_canceled(cancel_token: &Option<CancellationToken>) -> bool {
-    cancel_token
-        .as_ref()
-        .map(|token| token.is_cancelled())
-        .unwrap_or(false)
+    cancel_token.as_ref().map(|token| token.is_cancelled()).unwrap_or(false)
 }
 
-pub async fn wait_for_query<F>(
-    cancel_token: Option<CancellationToken>,
-    future: F,
-) -> Result<db::QueryResult, String>
+pub async fn wait_for_query<F>(cancel_token: Option<CancellationToken>, future: F) -> Result<db::QueryResult, String>
 where
     F: Future<Output = Result<db::QueryResult, String>>,
 {
@@ -110,9 +126,7 @@ where
             result = timeout(timeout_duration, future) => result.map_err(|_| timeout_error())?,
         }
     } else {
-        timeout(timeout_duration, future)
-            .await
-            .map_err(|_| timeout_error())?
+        timeout(timeout_duration, future).await.map_err(|_| timeout_error())?
     }
 }
 
@@ -143,23 +157,17 @@ pub async fn do_execute(
             let p = p.clone();
             let bare = *bare;
             drop(connections);
-            wait_for_query(cancel_token, db::mysql::execute_query(&p, sql, bare))
-                .await
-                .map(truncate_result)
+            wait_for_query(cancel_token, db::mysql::execute_query(&p, sql, bare)).await.map(truncate_result)
         }
         PoolKind::Postgres(p) => {
             let p = p.clone();
             drop(connections);
-            wait_for_query(cancel_token, db::postgres::execute_query(&p, sql))
-                .await
-                .map(truncate_result)
+            wait_for_query(cancel_token, db::postgres::execute_query(&p, sql)).await.map(truncate_result)
         }
         PoolKind::Sqlite(p) => {
             let p = p.clone();
             drop(connections);
-            wait_for_query(cancel_token, db::sqlite::execute_query(&p, sql))
-                .await
-                .map(truncate_result)
+            wait_for_query(cancel_token, db::sqlite::execute_query(&p, sql)).await.map(truncate_result)
         }
         PoolKind::ClickHouse(client) => {
             let client = client.clone();
@@ -180,9 +188,7 @@ pub async fn do_execute(
                 },
                 None => client.lock().await,
             };
-            wait_for_query(cancel_token, db::sqlserver::execute_query(&mut client, sql))
-                .await
-                .map(truncate_result)
+            wait_for_query(cancel_token, db::sqlserver::execute_query(&mut client, sql)).await.map(truncate_result)
         }
         PoolKind::Oracle(client) => {
             let client = client.clone();
@@ -195,9 +201,7 @@ pub async fn do_execute(
                 },
                 None => client.lock().await,
             };
-            wait_for_query(cancel_token, db::oracle_driver::execute_query(&*client, sql))
-                .await
-                .map(truncate_result)
+            wait_for_query(cancel_token, db::oracle_driver::execute_query(&*client, sql)).await.map(truncate_result)
         }
         PoolKind::Elasticsearch(_) => Err("Use document browser for Elasticsearch".to_string()),
         PoolKind::Redis(_) => Err("Use Redis-specific commands".to_string()),
@@ -244,9 +248,7 @@ pub async fn execute_multi_core(
     let statements = split_sql_statements(sql);
     if statements.len() <= 1 {
         let single_sql = statements.into_iter().next().unwrap_or_default();
-        let result = execute_sql_statement(
-            state, connection_id, database, &single_sql, cancel_token,
-        ).await?;
+        let result = execute_sql_statement(state, connection_id, database, &single_sql, cancel_token).await?;
         return Ok(vec![result]);
     }
 
@@ -262,9 +264,7 @@ pub async fn execute_multi_core(
             });
             break;
         }
-        match execute_sql_statement(
-            state, connection_id, database, stmt, cancel_token.clone(),
-        ).await {
+        match execute_sql_statement(state, connection_id, database, stmt, cancel_token.clone()).await {
             Ok(r) => results.push(r),
             Err(e) => {
                 results.push(db::QueryResult {
@@ -308,7 +308,9 @@ pub async fn execute_statements(
                 }
                 return Err(format!(
                     "Statement {} failed: {}. Previous {} statement(s) may have been committed.",
-                    i + 1, e, i
+                    i + 1,
+                    e,
+                    i
                 ));
             }
         }

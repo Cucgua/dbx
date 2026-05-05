@@ -2,27 +2,16 @@ use oracle_rs::{Config, Connection};
 use std::time::Instant;
 
 use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
-use crate::types::{
-    ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo,
-};
+use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub type OracleClient = Connection;
 
-pub async fn connect(
-    host: &str,
-    port: u16,
-    service: &str,
-    user: &str,
-    pass: &str,
-) -> Result<OracleClient, String> {
+pub async fn connect(host: &str, port: u16, service: &str, user: &str, pass: &str) -> Result<OracleClient, String> {
     let config = Config::new(host, port, service, user, pass);
-    tokio::time::timeout(
-        connection_timeout(),
-        Connection::connect_with_config(config),
-    )
-    .await
-    .map_err(|_| format!("Oracle connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
-    .map_err(|e| format!("Oracle connection failed: {e}"))
+    tokio::time::timeout(connection_timeout(), Connection::connect_with_config(config))
+        .await
+        .map_err(|_| format!("Oracle connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map_err(|e| format!("Oracle connection failed: {e}"))
 }
 
 fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
@@ -30,9 +19,9 @@ fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
         oracle_rs::Value::Null => serde_json::Value::Null,
         oracle_rs::Value::String(s) => serde_json::Value::String(s.clone()),
         oracle_rs::Value::Integer(n) => serde_json::Value::Number((*n).into()),
-        oracle_rs::Value::Float(f) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+        oracle_rs::Value::Float(f) => {
+            serde_json::Number::from_f64(*f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+        }
         oracle_rs::Value::Boolean(b) => serde_json::Value::Bool(*b),
         oracle_rs::Value::Json(v) => v.clone(),
         _ => serde_json::Value::String(format!("{val:?}")),
@@ -40,29 +29,15 @@ fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
 }
 
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
-    let result = conn
-        .query("SELECT username FROM all_users ORDER BY username", &[])
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(result
-        .rows
-        .iter()
-        .map(|row| DatabaseInfo {
-            name: row.get_string(0).unwrap_or("").to_string(),
-        })
-        .collect())
+    let result =
+        conn.query("SELECT username FROM all_users ORDER BY username", &[]).await.map_err(|e| e.to_string())?;
+    Ok(result.rows.iter().map(|row| DatabaseInfo { name: row.get_string(0).unwrap_or("").to_string() }).collect())
 }
 
 pub async fn list_schemas(conn: &OracleClient) -> Result<Vec<String>, String> {
-    let result = conn
-        .query("SELECT username FROM all_users ORDER BY username", &[])
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(result
-        .rows
-        .iter()
-        .map(|row| row.get_string(0).unwrap_or("").to_string())
-        .collect())
+    let result =
+        conn.query("SELECT username FROM all_users ORDER BY username", &[]).await.map_err(|e| e.to_string())?;
+    Ok(result.rows.iter().map(|row| row.get_string(0).unwrap_or("").to_string()).collect())
 }
 
 pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableInfo>, String> {
@@ -84,37 +59,36 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
         .collect())
 }
 
-pub async fn get_columns(
-    conn: &OracleClient,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<ColumnInfo>, String> {
+pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
 
-    let pk_result = conn.query(
-        &format!(
-            "SELECT cols.COLUMN_NAME FROM ALL_CONS_COLUMNS cols \
+    let pk_result = conn
+        .query(
+            &format!(
+                "SELECT cols.COLUMN_NAME FROM ALL_CONS_COLUMNS cols \
              JOIN ALL_CONSTRAINTS cons ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME AND cols.OWNER = cons.OWNER \
              WHERE cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = '{s}' AND cons.TABLE_NAME = '{t}'"
-        ),
-        &[],
-    ).await.map_err(|e| e.to_string())?;
-    let pk_names: std::collections::HashSet<String> = pk_result
-        .rows
-        .iter()
-        .filter_map(|row| row.get_string(0).map(|s| s.to_string()))
-        .collect();
+            ),
+            &[],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let pk_names: std::collections::HashSet<String> =
+        pk_result.rows.iter().filter_map(|row| row.get_string(0).map(|s| s.to_string())).collect();
 
-    let col_result = conn.query(
-        &format!(
-            "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_PRECISION, DATA_SCALE, DATA_LENGTH, CHAR_LENGTH \
+    let col_result = conn
+        .query(
+            &format!(
+                "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_PRECISION, DATA_SCALE, DATA_LENGTH, CHAR_LENGTH \
              FROM ALL_TAB_COLUMNS \
              WHERE OWNER = '{s}' AND TABLE_NAME = '{t}' \
              ORDER BY COLUMN_ID"
-        ),
-        &[],
-    ).await.map_err(|e| e.to_string())?;
+            ),
+            &[],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(col_result
         .rows
@@ -161,11 +135,7 @@ pub async fn get_columns(
         .collect())
 }
 
-pub async fn list_indexes(
-    conn: &OracleClient,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<IndexInfo>, String> {
+pub async fn list_indexes(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
     let sql = format!(
         "SELECT i.INDEX_NAME, \
          LISTAGG(ic.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY ic.COLUMN_POSITION) AS columns, \
@@ -189,11 +159,7 @@ pub async fn list_indexes(
             let cols_str = row.get_string(1).unwrap_or("");
             IndexInfo {
                 name: row.get_string(0).unwrap_or("").to_string(),
-                columns: cols_str
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .collect(),
+                columns: cols_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
                 is_unique: row.get_string(2).unwrap_or("") == "UNIQUE",
                 is_primary: row.get_i64(3).unwrap_or(0) == 1,
                 filter: None,
@@ -205,11 +171,7 @@ pub async fn list_indexes(
         .collect())
 }
 
-pub async fn list_foreign_keys(
-    conn: &OracleClient,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<ForeignKeyInfo>, String> {
+pub async fn list_foreign_keys(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
     let sql = format!(
         "SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME, rc.TABLE_NAME, rcc.COLUMN_NAME \
          FROM ALL_CONSTRAINTS c \
@@ -218,7 +180,8 @@ pub async fn list_foreign_keys(
          JOIN ALL_CONS_COLUMNS rcc ON rc.CONSTRAINT_NAME = rcc.CONSTRAINT_NAME AND rc.OWNER = rcc.OWNER \
          WHERE c.CONSTRAINT_TYPE = 'R' AND c.OWNER = '{s}' AND c.TABLE_NAME = '{t}' \
          ORDER BY c.CONSTRAINT_NAME",
-        s = schema.replace('\'', "''"), t = table.replace('\'', "''")
+        s = schema.replace('\'', "''"),
+        t = table.replace('\'', "''")
     );
     let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
     Ok(result
@@ -233,11 +196,7 @@ pub async fn list_foreign_keys(
         .collect())
 }
 
-pub async fn list_triggers(
-    conn: &OracleClient,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<TriggerInfo>, String> {
+pub async fn list_triggers(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
     let sql = format!(
         "SELECT TRIGGER_NAME, TRIGGERING_EVENT, TRIGGER_TYPE \
          FROM ALL_TRIGGERS \
@@ -276,11 +235,7 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
             .iter()
             .map(|row| {
                 (0..columns.len())
-                    .map(|i| {
-                        row.get(i)
-                            .map(|v| value_to_json(v))
-                            .unwrap_or(serde_json::Value::Null)
-                    })
+                    .map(|i| row.get(i).map(|v| value_to_json(v)).unwrap_or(serde_json::Value::Null))
                     .collect()
             })
             .collect();

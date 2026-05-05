@@ -69,9 +69,8 @@ pub async fn list_databases(
     State(state): State<Arc<WebState>>,
     Json(req): Json<RedisConnectionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let result = dbx_core::redis_ops::redis_list_databases_core(&state.app, &req.connection_id)
-        .await
-        .map_err(AppError)?;
+    let result =
+        dbx_core::redis_ops::redis_list_databases_core(&state.app, &req.connection_id).await.map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
@@ -96,9 +95,8 @@ pub async fn get_value(
     State(state): State<Arc<WebState>>,
     Json(req): Json<RedisKeyRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let result = dbx_core::redis_ops::redis_get_value_core(&state.app, &req.connection_id, &req.key)
-        .await
-        .map_err(AppError)?;
+    let result =
+        dbx_core::redis_ops::redis_get_value_core(&state.app, &req.connection_id, &req.key).await.map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
@@ -106,15 +104,9 @@ pub async fn set_string(
     State(state): State<Arc<WebState>>,
     Json(req): Json<RedisSetStringRequest>,
 ) -> Result<Json<()>, AppError> {
-    dbx_core::redis_ops::redis_set_string_core(
-        &state.app,
-        &req.connection_id,
-        &req.key,
-        &req.value,
-        req.ttl,
-    )
-    .await
-    .map_err(AppError)?;
+    dbx_core::redis_ops::redis_set_string_core(&state.app, &req.connection_id, &req.key, &req.value, req.ttl)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }
 
@@ -122,9 +114,7 @@ pub async fn delete_key(
     State(state): State<Arc<WebState>>,
     Json(req): Json<RedisKeyRequest>,
 ) -> Result<Json<()>, AppError> {
-    dbx_core::redis_ops::redis_delete_key_core(&state.app, &req.connection_id, &req.key)
-        .await
-        .map_err(AppError)?;
+    dbx_core::redis_ops::redis_delete_key_core(&state.app, &req.connection_id, &req.key).await.map_err(AppError)?;
     Ok(Json(()))
 }
 
@@ -133,15 +123,9 @@ pub async fn hash_set(
     Json(req): Json<RedisHashRequest>,
 ) -> Result<Json<()>, AppError> {
     let value = req.value.as_deref().unwrap_or("");
-    dbx_core::redis_ops::redis_hash_set_core(
-        &state.app,
-        &req.connection_id,
-        &req.key,
-        &req.field,
-        value,
-    )
-    .await
-    .map_err(AppError)?;
+    dbx_core::redis_ops::redis_hash_set_core(&state.app, &req.connection_id, &req.key, &req.field, value)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }
 
@@ -149,14 +133,9 @@ pub async fn hash_del(
     State(state): State<Arc<WebState>>,
     Json(req): Json<RedisHashRequest>,
 ) -> Result<Json<()>, AppError> {
-    dbx_core::redis_ops::redis_hash_del_core(
-        &state.app,
-        &req.connection_id,
-        &req.key,
-        &req.field,
-    )
-    .await
-    .map_err(AppError)?;
+    dbx_core::redis_ops::redis_hash_del_core(&state.app, &req.connection_id, &req.key, &req.field)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }
 
@@ -196,13 +175,8 @@ pub async fn set_remove(
     State(state): State<Arc<WebState>>,
     Json(req): Json<RedisSetRequest>,
 ) -> Result<Json<()>, AppError> {
-    dbx_core::redis_ops::redis_set_remove_core(
-        &state.app,
-        &req.connection_id,
-        &req.key,
-        &req.member,
-    )
-    .await
-    .map_err(AppError)?;
+    dbx_core::redis_ops::redis_set_remove_core(&state.app, &req.connection_id, &req.key, &req.member)
+        .await
+        .map_err(AppError)?;
     Ok(Json(()))
 }

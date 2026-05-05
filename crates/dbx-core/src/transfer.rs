@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use tokio::sync::RwLock;
 
 use crate::connection::{AppState, PoolKind};
@@ -50,7 +50,9 @@ pub enum TransferStatus {
 
 pub fn quote_identifier(name: &str, db_type: &DatabaseType) -> String {
     match db_type {
-        DatabaseType::Mysql | DatabaseType::ClickHouse | DatabaseType::Doris | DatabaseType::StarRocks => format!("`{}`", name.replace('`', "``")),
+        DatabaseType::Mysql | DatabaseType::ClickHouse | DatabaseType::Doris | DatabaseType::StarRocks => {
+            format!("`{}`", name.replace('`', "``"))
+        }
         DatabaseType::SqlServer => format!("[{}]", name.replace(']', "]]")),
         _ => format!("\"{}\"", name.replace('"', "\"\"")),
     }
@@ -69,10 +71,24 @@ pub fn escape_value(val: &serde_json::Value, db_type: &DatabaseType) -> String {
     match val {
         serde_json::Value::Null => "NULL".to_string(),
         serde_json::Value::Bool(b) => match db_type {
-            DatabaseType::Mysql | DatabaseType::Sqlite | DatabaseType::DuckDb | DatabaseType::Doris | DatabaseType::StarRocks => {
-                if *b { "1".to_string() } else { "0".to_string() }
+            DatabaseType::Mysql
+            | DatabaseType::Sqlite
+            | DatabaseType::DuckDb
+            | DatabaseType::Doris
+            | DatabaseType::StarRocks => {
+                if *b {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
             }
-            _ => if *b { "TRUE".to_string() } else { "FALSE".to_string() },
+            _ => {
+                if *b {
+                    "TRUE".to_string()
+                } else {
+                    "FALSE".to_string()
+                }
+            }
         },
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => {
@@ -160,20 +176,17 @@ pub fn map_column_type(source_type: &str, _source_db: &DatabaseType, target_db: 
             DatabaseType::Postgres => "TIMESTAMP".into(),
             _ => "DATETIME".into(),
         },
-        "timestamp" | "timestamptz" | "timestamp with time zone"
-        | "timestamp without time zone" => match target_db {
+        "timestamp" | "timestamptz" | "timestamp with time zone" | "timestamp without time zone" => match target_db {
             DatabaseType::Mysql => "DATETIME".into(),
             DatabaseType::SqlServer => "DATETIME2".into(),
             _ => "TIMESTAMP".into(),
         },
-        "blob" | "longblob" | "mediumblob" | "tinyblob" | "binary" | "varbinary" | "image" => {
-            match target_db {
-                DatabaseType::Postgres => "BYTEA".into(),
-                DatabaseType::Mysql => "BLOB".into(),
-                DatabaseType::SqlServer => "VARBINARY(MAX)".into(),
-                _ => "BLOB".into(),
-            }
-        }
+        "blob" | "longblob" | "mediumblob" | "tinyblob" | "binary" | "varbinary" | "image" => match target_db {
+            DatabaseType::Postgres => "BYTEA".into(),
+            DatabaseType::Mysql => "BLOB".into(),
+            DatabaseType::SqlServer => "VARBINARY(MAX)".into(),
+            _ => "BLOB".into(),
+        },
         "bytea" => match target_db {
             DatabaseType::Postgres => "BYTEA".into(),
             DatabaseType::Mysql => "BLOB".into(),
@@ -217,14 +230,13 @@ pub fn generate_create_table_ddl(
         })
         .collect();
 
-    let pks: Vec<String> = columns
-        .iter()
-        .filter(|c| c.is_primary_key)
-        .map(|c| quote_identifier(&c.name, target_db))
-        .collect();
+    let pks: Vec<String> =
+        columns.iter().filter(|c| c.is_primary_key).map(|c| quote_identifier(&c.name, target_db)).collect();
 
     let mut ddl = match target_db {
-        DatabaseType::SqlServer => format!("IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '{table}')\n"),
+        DatabaseType::SqlServer => {
+            format!("IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '{table}')\n")
+        }
         _ => String::new(),
     };
 
@@ -261,11 +273,7 @@ pub fn generate_insert(
     }
 
     let full_table = qualified_table(table, schema, db_type);
-    let col_list = columns
-        .iter()
-        .map(|c| quote_identifier(c, db_type))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let col_list = columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
 
     let value_rows: Vec<String> = rows
         .iter()
@@ -287,11 +295,7 @@ pub fn pagination_sql(
     limit: usize,
 ) -> String {
     let full_table = qualified_table(table, schema, db_type);
-    let col_list = columns
-        .iter()
-        .map(|c| quote_identifier(c, db_type))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let col_list = columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
 
     match db_type {
         DatabaseType::SqlServer | DatabaseType::Oracle => {
@@ -310,11 +314,7 @@ pub fn count_sql(table: &str, schema: &str, db_type: &DatabaseType) -> String {
     format!("SELECT COUNT(*) FROM {full_table}")
 }
 
-pub async fn execute_on_pool(
-    state: &AppState,
-    pool_key: &str,
-    sql: &str,
-) -> Result<db::QueryResult, String> {
+pub async fn execute_on_pool(state: &AppState, pool_key: &str, sql: &str) -> Result<db::QueryResult, String> {
     let connections = state.connections.lock().await;
     let pool = connections.get(pool_key).ok_or("Connection not found")?;
 
@@ -361,8 +361,10 @@ pub async fn execute_on_pool(
                 let con = con.lock().map_err(|e| e.to_string())?;
                 let start = std::time::Instant::now();
                 let trimmed = sql.trim().to_uppercase();
-                if trimmed.starts_with("SELECT") || trimmed.starts_with("SHOW")
-                    || trimmed.starts_with("DESCRIBE") || trimmed.starts_with("WITH")
+                if trimmed.starts_with("SELECT")
+                    || trimmed.starts_with("SHOW")
+                    || trimmed.starts_with("DESCRIBE")
+                    || trimmed.starts_with("WITH")
                     || trimmed.starts_with("PRAGMA")
                 {
                     let mut stmt = con.prepare(&sql).map_err(|e| e.to_string())?;
@@ -374,21 +376,40 @@ pub async fn execute_on_pool(
                         .collect();
                     let mut result_rows = Vec::new();
                     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                        let vals: Vec<serde_json::Value> = (0..col_count).map(|i| {
-                            row.get::<_, String>(i).map(serde_json::Value::String)
-                                .or_else(|_| row.get::<_, i64>(i).map(|v| serde_json::Value::Number(v.into())))
-                                .or_else(|_| row.get::<_, f64>(i).map(|v| {
-                                    serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
-                                }))
-                                .or_else(|_| row.get::<_, bool>(i).map(serde_json::Value::Bool))
-                                .unwrap_or(serde_json::Value::Null)
-                        }).collect();
+                        let vals: Vec<serde_json::Value> = (0..col_count)
+                            .map(|i| {
+                                row.get::<_, String>(i)
+                                    .map(serde_json::Value::String)
+                                    .or_else(|_| row.get::<_, i64>(i).map(|v| serde_json::Value::Number(v.into())))
+                                    .or_else(|_| {
+                                        row.get::<_, f64>(i).map(|v| {
+                                            serde_json::Number::from_f64(v)
+                                                .map(serde_json::Value::Number)
+                                                .unwrap_or(serde_json::Value::Null)
+                                        })
+                                    })
+                                    .or_else(|_| row.get::<_, bool>(i).map(serde_json::Value::Bool))
+                                    .unwrap_or(serde_json::Value::Null)
+                            })
+                            .collect();
                         result_rows.push(vals);
                     }
-                    Ok(db::QueryResult { columns, rows: result_rows, affected_rows: 0, execution_time_ms: start.elapsed().as_millis(), truncated: false })
+                    Ok(db::QueryResult {
+                        columns,
+                        rows: result_rows,
+                        affected_rows: 0,
+                        execution_time_ms: start.elapsed().as_millis(),
+                        truncated: false,
+                    })
                 } else {
                     let affected = con.execute(&sql, []).map_err(|e| e.to_string())?;
-                    Ok(db::QueryResult { columns: vec![], rows: vec![], affected_rows: affected as u64, execution_time_ms: start.elapsed().as_millis(), truncated: false })
+                    Ok(db::QueryResult {
+                        columns: vec![],
+                        rows: vec![],
+                        affected_rows: affected as u64,
+                        execution_time_ms: start.elapsed().as_millis(),
+                        truncated: false,
+                    })
                 }
             })
             .await
@@ -422,28 +443,34 @@ pub async fn get_columns_for_transfer(
         let table = table.to_string();
         return tokio::task::spawn_blocking(move || {
             let con = con.lock().map_err(|e| e.to_string())?;
-            let mut stmt = con.prepare(
-                "SELECT column_name, data_type, is_nullable, column_default
+            let mut stmt = con
+                .prepare(
+                    "SELECT column_name, data_type, is_nullable, column_default
                  FROM information_schema.columns
                  WHERE table_schema = 'main' AND table_name = ?
-                 ORDER BY ordinal_position"
-            ).map_err(|e| e.to_string())?;
-            let rows = stmt.query_map([&table], |row| {
-                Ok(db::ColumnInfo {
-                    name: row.get::<_, String>(0)?,
-                    data_type: row.get::<_, String>(1)?,
-                    is_nullable: row.get::<_, String>(2).unwrap_or_default() == "YES",
-                    column_default: row.get::<_, Option<String>>(3)?,
-                    is_primary_key: false,
-                    extra: None,
-                    comment: None,
-                    numeric_precision: None,
-                    numeric_scale: None,
-                    character_maximum_length: None,
+                 ORDER BY ordinal_position",
+                )
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([&table], |row| {
+                    Ok(db::ColumnInfo {
+                        name: row.get::<_, String>(0)?,
+                        data_type: row.get::<_, String>(1)?,
+                        is_nullable: row.get::<_, String>(2).unwrap_or_default() == "YES",
+                        column_default: row.get::<_, Option<String>>(3)?,
+                        is_primary_key: false,
+                        extra: None,
+                        comment: None,
+                        numeric_precision: None,
+                        numeric_scale: None,
+                        character_maximum_length: None,
+                    })
                 })
-            }).map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?;
             Ok(rows.filter_map(|r| r.ok()).collect())
-        }).await.map_err(|e| e.to_string())?;
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
 
     if let Some(PoolKind::ClickHouse(client)) = connections.get(pool_key) {
@@ -526,9 +553,14 @@ where
     // Get source columns (deduplicate by name)
     let columns = {
         let raw = get_columns_for_transfer(
-            state, source_pool_key, &request.source_connection_id,
-            &request.source_database, &request.source_schema, table,
-        ).await?;
+            state,
+            source_pool_key,
+            &request.source_connection_id,
+            &request.source_database,
+            &request.source_schema,
+            table,
+        )
+        .await?;
         let mut seen = std::collections::HashSet::new();
         raw.into_iter().filter(|c| seen.insert(c.name.clone())).collect::<Vec<_>>()
     };
@@ -544,13 +576,11 @@ where
     let total_rows = {
         let sql = count_sql(table, &request.source_schema, source_db_type);
         match execute_on_pool(state, source_pool_key, &sql).await {
-            Ok(result) => result.rows.first()
-                .and_then(|r| r.first())
-                .and_then(|v| match v {
-                    serde_json::Value::Number(n) => n.as_u64(),
-                    serde_json::Value::String(s) => s.parse::<u64>().ok(),
-                    _ => None,
-                }),
+            Ok(result) => result.rows.first().and_then(|r| r.first()).and_then(|v| match v {
+                serde_json::Value::Number(n) => n.as_u64(),
+                serde_json::Value::String(s) => s.parse::<u64>().ok(),
+                _ => None,
+            }),
             Err(e) => {
                 log::warn!("[transfer] count failed for {}: {}", table, e);
                 None
@@ -578,8 +608,7 @@ where
             DatabaseType::Sqlite | DatabaseType::DuckDb => format!("DELETE FROM {full_table}"),
             _ => format!("TRUNCATE TABLE {full_table}"),
         };
-        execute_on_pool(state, target_pool_key, &truncate_sql).await
-            .map_err(|e| format!("Failed to truncate: {e}"))?;
+        execute_on_pool(state, target_pool_key, &truncate_sql).await.map_err(|e| format!("Failed to truncate: {e}"))?;
     }
 
     // Transfer data in batches
@@ -602,7 +631,8 @@ where
 
         let insert_sql = generate_insert(&col_names, &result.rows, table, &request.target_schema, target_db_type);
         if !insert_sql.is_empty() {
-            execute_on_pool(state, target_pool_key, &insert_sql).await
+            execute_on_pool(state, target_pool_key, &insert_sql)
+                .await
                 .map_err(|e| format!("Insert failed at offset {offset}: {e}"))?;
         }
 

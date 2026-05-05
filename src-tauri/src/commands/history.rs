@@ -5,10 +5,7 @@ use super::connection::AppState;
 pub use dbx_core::history::HistoryEntry;
 
 #[tauri::command]
-pub async fn save_history(
-    state: State<'_, Arc<AppState>>,
-    entry: HistoryEntry,
-) -> Result<(), String> {
+pub async fn save_history(state: State<'_, Arc<AppState>>, entry: HistoryEntry) -> Result<(), String> {
     state.storage.save_history_entry(&entry).await
 }
 
@@ -27,9 +24,6 @@ pub async fn clear_history(state: State<'_, Arc<AppState>>) -> Result<(), String
 }
 
 #[tauri::command]
-pub async fn delete_history_entry(
-    state: State<'_, Arc<AppState>>,
-    id: String,
-) -> Result<(), String> {
+pub async fn delete_history_entry(state: State<'_, Arc<AppState>>, id: String) -> Result<(), String> {
     state.storage.delete_history_entry(&id).await
 }

@@ -35,24 +35,15 @@ pub async fn test_connection(
 
     // Store config temporarily
     let temp_id = format!("__test_{}", uuid::Uuid::new_v4());
-    app.configs
-        .lock()
-        .await
-        .insert(temp_id.clone(), config.clone());
+    app.configs.lock().await.insert(temp_id.clone(), config.clone());
 
     // Try to connect
-    let result = app
-        .get_or_create_pool(&temp_id, config.database.as_deref())
-        .await;
+    let result = app.get_or_create_pool(&temp_id, config.database.as_deref()).await;
 
     // Clean up any pool keys created for the temporary connection, including
     // database-scoped keys like "__test_uuid:database".
     let mut connections = app.connections.lock().await;
-    let temp_keys: Vec<String> = connections
-        .keys()
-        .filter(|key| key.starts_with(&temp_id))
-        .cloned()
-        .collect();
+    let temp_keys: Vec<String> = connections.keys().filter(|key| key.starts_with(&temp_id)).cloned().collect();
     for key in temp_keys {
         connections.remove(&key);
     }
@@ -73,15 +64,9 @@ pub async fn connect_db(
     let app = &state.app;
     let connection_id = config.id.clone();
 
-    app.configs
-        .lock()
-        .await
-        .insert(connection_id.clone(), config.clone());
+    app.configs.lock().await.insert(connection_id.clone(), config.clone());
 
-    let pool_key = app
-        .get_or_create_pool(&connection_id, config.database.as_deref())
-        .await
-        .map_err(AppError)?;
+    let pool_key = app.get_or_create_pool(&connection_id, config.database.as_deref()).await.map_err(AppError)?;
 
     Ok(Json(pool_key))
 }
@@ -94,11 +79,8 @@ pub async fn disconnect_db(
     let mut connections = app.connections.lock().await;
 
     // Remove all pool keys that start with this connection_id
-    let keys_to_remove: Vec<String> = connections
-        .keys()
-        .filter(|k| k.starts_with(&body.connection_id))
-        .cloned()
-        .collect();
+    let keys_to_remove: Vec<String> =
+        connections.keys().filter(|k| k.starts_with(&body.connection_id)).cloned().collect();
     for key in keys_to_remove {
         connections.remove(&key);
     }
@@ -114,23 +96,11 @@ pub async fn save_connections(
     State(state): State<Arc<WebState>>,
     Json(body): Json<SaveConnectionsRequest>,
 ) -> Result<Json<()>, AppError> {
-    state
-        .app
-        .storage
-        .save_connections(&body.configs)
-        .await
-        .map_err(AppError)?;
+    state.app.storage.save_connections(&body.configs).await.map_err(AppError)?;
     Ok(Json(()))
 }
 
-pub async fn load_connections(
-    State(state): State<Arc<WebState>>,
-) -> Result<Json<Vec<ConnectionConfig>>, AppError> {
-    let configs = state
-        .app
-        .storage
-        .load_connections()
-        .await
-        .map_err(AppError)?;
+pub async fn load_connections(State(state): State<Arc<WebState>>) -> Result<Json<Vec<ConnectionConfig>>, AppError> {
+    let configs = state.app.storage.load_connections().await.map_err(AppError)?;
     Ok(Json(configs))
 }

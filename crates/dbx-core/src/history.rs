@@ -45,9 +45,6 @@ pub fn clear_history_entries(path: &Path) -> Result<(), String> {
 }
 
 pub fn delete_history_entry_by_id(path: &Path, id: &str) -> Result<(), String> {
-    let entries: Vec<HistoryEntry> = read_all(path)?
-        .into_iter()
-        .filter(|e| e.id != id)
-        .collect();
+    let entries: Vec<HistoryEntry> = read_all(path)?.into_iter().filter(|e| e.id != id).collect();
     write_all(path, &entries)
 }

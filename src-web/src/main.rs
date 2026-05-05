@@ -28,28 +28,19 @@ async fn main() {
         )
         .init();
 
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .expect("Failed to install rustls crypto provider");
+    rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install rustls crypto provider");
 
     // Data directory
-    let data_dir = std::env::var("DBX_DATA_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            std::path::PathBuf::from(home).join(".dbx-web")
-        });
+    let data_dir = std::env::var("DBX_DATA_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(home).join(".dbx-web")
+    });
     std::fs::create_dir_all(&data_dir).expect("Failed to create data directory");
 
     let app_state = {
         let db_path = data_dir.join("dbx.db");
-        let storage = Storage::open(&db_path)
-            .await
-            .expect("Failed to open storage");
-        storage
-            .migrate_from_json(&data_dir)
-            .await
-            .expect("Failed to migrate JSON data");
+        let storage = Storage::open(&db_path).await.expect("Failed to open storage");
+        storage.migrate_from_json(&data_dir).await.expect("Failed to migrate JSON data");
         Arc::new(AppState::new(storage))
     };
 
@@ -66,17 +57,11 @@ async fn main() {
         password_hash,
         sessions: RwLock::new(HashSet::new()),
         sse_channels: RwLock::new(HashMap::new()),
-        login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit {
-            fail_count: 0,
-            locked_until: None,
-        }),
+        login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit { fail_count: 0, locked_until: None }),
     });
 
     // CORS
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
 
     // API routes
     let api = Router::new()
@@ -159,25 +144,18 @@ async fn main() {
         .with_state(web_state.clone());
 
     // Build app
-    let mut app = Router::new()
-        .nest("/api", api)
-        .layer(tower_http::trace::TraceLayer::new_for_http())
-        .layer(cors);
+    let mut app = Router::new().nest("/api", api).layer(tower_http::trace::TraceLayer::new_for_http()).layer(cors);
 
     // Static file serving
     if let Ok(static_dir) = std::env::var("DBX_STATIC_DIR") {
         use tower_http::services::{ServeDir, ServeFile};
         let index_path = format!("{}/index.html", static_dir);
-        let serve_dir = ServeDir::new(&static_dir)
-            .not_found_service(ServeFile::new(&index_path));
+        let serve_dir = ServeDir::new(&static_dir).not_found_service(ServeFile::new(&index_path));
         app = app.fallback_service(serve_dir);
     }
 
     // Bind address
-    let port: u16 = std::env::var("DBX_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(4224);
+    let port: u16 = std::env::var("DBX_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(4224);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     tracing::info!("DBX Web server starting on http://{}", addr);
@@ -185,10 +163,6 @@ async fn main() {
         tracing::info!("Password protection is enabled");
     }
 
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("Failed to bind address");
-    axum::serve(listener, app)
-        .await
-        .expect("Server error");
+    let listener = tokio::net::TcpListener::bind(addr).await.expect("Failed to bind address");
+    axum::serve(listener, app).await.expect("Server error");
 }

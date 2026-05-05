@@ -19,9 +19,7 @@ pub async fn list_databases(
     State(state): State<Arc<WebState>>,
     Query(q): Query<SchemaQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let result = dbx_core::schema::list_databases_core(&state.app, &q.connection_id)
-        .await
-        .map_err(AppError)?;
+    let result = dbx_core::schema::list_databases_core(&state.app, &q.connection_id).await.map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
@@ -30,9 +28,7 @@ pub async fn list_schemas(
     Query(q): Query<SchemaQuery>,
 ) -> Result<Json<Vec<String>>, AppError> {
     let database = q.database.as_deref().unwrap_or("");
-    let result = dbx_core::schema::list_schemas_core(&state.app, &q.connection_id, database)
-        .await
-        .map_err(AppError)?;
+    let result = dbx_core::schema::list_schemas_core(&state.app, &q.connection_id, database).await.map_err(AppError)?;
     Ok(Json(result))
 }
 
@@ -43,9 +39,7 @@ pub async fn list_tables(
     let database = q.database.as_deref().unwrap_or("");
     let schema = q.schema.as_deref().unwrap_or("");
     let result =
-        dbx_core::schema::list_tables_core(&state.app, &q.connection_id, database, schema)
-            .await
-            .map_err(AppError)?;
+        dbx_core::schema::list_tables_core(&state.app, &q.connection_id, database, schema).await.map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
@@ -56,15 +50,9 @@ pub async fn list_columns(
     let database = q.database.as_deref().unwrap_or("");
     let schema = q.schema.as_deref().unwrap_or("");
     let table = q.table.as_deref().unwrap_or("");
-    let result = dbx_core::schema::get_columns_core(
-        &state.app,
-        &q.connection_id,
-        database,
-        schema,
-        table,
-    )
-    .await
-    .map_err(AppError)?;
+    let result = dbx_core::schema::get_columns_core(&state.app, &q.connection_id, database, schema, table)
+        .await
+        .map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
@@ -75,15 +63,9 @@ pub async fn list_indexes(
     let database = q.database.as_deref().unwrap_or("");
     let schema = q.schema.as_deref().unwrap_or("");
     let table = q.table.as_deref().unwrap_or("");
-    let result = dbx_core::schema::list_indexes_core(
-        &state.app,
-        &q.connection_id,
-        database,
-        schema,
-        table,
-    )
-    .await
-    .map_err(AppError)?;
+    let result = dbx_core::schema::list_indexes_core(&state.app, &q.connection_id, database, schema, table)
+        .await
+        .map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
@@ -94,15 +76,9 @@ pub async fn list_foreign_keys(
     let database = q.database.as_deref().unwrap_or("");
     let schema = q.schema.as_deref().unwrap_or("");
     let table = q.table.as_deref().unwrap_or("");
-    let result = dbx_core::schema::list_foreign_keys_core(
-        &state.app,
-        &q.connection_id,
-        database,
-        schema,
-        table,
-    )
-    .await
-    .map_err(AppError)?;
+    let result = dbx_core::schema::list_foreign_keys_core(&state.app, &q.connection_id, database, schema, table)
+        .await
+        .map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
@@ -113,15 +89,9 @@ pub async fn list_triggers(
     let database = q.database.as_deref().unwrap_or("");
     let schema = q.schema.as_deref().unwrap_or("");
     let table = q.table.as_deref().unwrap_or("");
-    let result = dbx_core::schema::list_triggers_core(
-        &state.app,
-        &q.connection_id,
-        database,
-        schema,
-        table,
-    )
-    .await
-    .map_err(AppError)?;
+    let result = dbx_core::schema::list_triggers_core(&state.app, &q.connection_id, database, schema, table)
+        .await
+        .map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
@@ -132,14 +102,8 @@ pub async fn get_ddl(
     let database = q.database.as_deref().unwrap_or("");
     let schema = q.schema.as_deref().unwrap_or("");
     let table = q.table.as_deref().unwrap_or("");
-    let result = dbx_core::schema::get_table_ddl_core(
-        &state.app,
-        &q.connection_id,
-        database,
-        schema,
-        table,
-    )
-    .await
-    .map_err(AppError)?;
+    let result = dbx_core::schema::get_table_ddl_core(&state.app, &q.connection_id, database, schema, table)
+        .await
+        .map_err(AppError)?;
     Ok(Json(result))
 }

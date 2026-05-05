@@ -14,9 +14,7 @@ pub struct MongoDocumentResult {
 
 pub async fn connect(url: &str) -> Result<Client, String> {
     with_connection_timeout("MongoDB", async {
-        Client::with_uri_str(url)
-            .await
-            .map_err(|e| format!("MongoDB connection failed: {e}"))
+        Client::with_uri_str(url).await.map_err(|e| format!("MongoDB connection failed: {e}"))
     })
     .await
 }
@@ -30,18 +28,11 @@ pub async fn test_connection(client: &Client) -> Result<(), String> {
 }
 
 pub async fn list_databases(client: &Client) -> Result<Vec<String>, String> {
-    client
-        .list_database_names()
-        .await
-        .map_err(|e| e.to_string())
+    client.list_database_names().await.map_err(|e| e.to_string())
 }
 
 pub async fn list_collections(client: &Client, database: &str) -> Result<Vec<String>, String> {
-    client
-        .database(database)
-        .list_collection_names()
-        .await
-        .map_err(|e| e.to_string())
+    client.database(database).list_collection_names().await.map_err(|e| e.to_string())
 }
 
 pub async fn find_documents(
@@ -53,17 +44,9 @@ pub async fn find_documents(
 ) -> Result<MongoDocumentResult, String> {
     let col = client.database(database).collection::<Document>(collection);
 
-    let total = col
-        .count_documents(doc! {})
-        .await
-        .map_err(|e| e.to_string())?;
+    let total = col.count_documents(doc! {}).await.map_err(|e| e.to_string())?;
 
-    let mut cursor = col
-        .find(doc! {})
-        .skip(skip)
-        .limit(limit)
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut cursor = col.find(doc! {}).skip(skip).limit(limit).await.map_err(|e| e.to_string())?;
 
     let mut documents = Vec::new();
     while cursor.advance().await.map_err(|e| e.to_string())? {
@@ -94,31 +77,17 @@ pub async fn update_document(
     id: &str,
     doc_json: &str,
 ) -> Result<u64, String> {
-    let oid = mongodb::bson::oid::ObjectId::parse_str(id)
-        .map_err(|e| format!("Invalid ObjectId: {e}"))?;
-    let new_doc: Document =
-        serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
+    let oid = mongodb::bson::oid::ObjectId::parse_str(id).map_err(|e| format!("Invalid ObjectId: {e}"))?;
+    let new_doc: Document = serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
     let col = client.database(database).collection::<Document>(collection);
-    let result = col
-        .replace_one(doc! { "_id": oid }, new_doc)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = col.replace_one(doc! { "_id": oid }, new_doc).await.map_err(|e| e.to_string())?;
     Ok(result.modified_count)
 }
 
-pub async fn delete_document(
-    client: &Client,
-    database: &str,
-    collection: &str,
-    id: &str,
-) -> Result<u64, String> {
-    let oid = mongodb::bson::oid::ObjectId::parse_str(id)
-        .map_err(|e| format!("Invalid ObjectId: {e}"))?;
+pub async fn delete_document(client: &Client, database: &str, collection: &str, id: &str) -> Result<u64, String> {
+    let oid = mongodb::bson::oid::ObjectId::parse_str(id).map_err(|e| format!("Invalid ObjectId: {e}"))?;
     let col = client.database(database).collection::<Document>(collection);
-    let result = col
-        .delete_one(doc! { "_id": oid })
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = col.delete_one(doc! { "_id": oid }).await.map_err(|e| e.to_string())?;
     Ok(result.deleted_count)
 }
 

@@ -1,11 +1,8 @@
 use crate::connection::{AppState, PoolKind};
-use crate::db::mongo_driver::{self, MongoDocumentResult};
 use crate::db::elasticsearch_driver;
+use crate::db::mongo_driver::{self, MongoDocumentResult};
 
-pub async fn mongo_list_databases_core(
-    state: &AppState,
-    connection_id: &str,
-) -> Result<Vec<String>, String> {
+pub async fn mongo_list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<String>, String> {
     let connections = state.connections.lock().await;
     match connections.get(connection_id).ok_or("Not found")? {
         PoolKind::MongoDb(client) => mongo_driver::list_databases(client).await,
@@ -37,9 +34,7 @@ pub async fn mongo_find_documents_core(
 ) -> Result<MongoDocumentResult, String> {
     let connections = state.connections.lock().await;
     match connections.get(connection_id).ok_or("Not found")? {
-        PoolKind::MongoDb(client) => {
-            mongo_driver::find_documents(client, database, collection, skip, limit).await
-        }
+        PoolKind::MongoDb(client) => mongo_driver::find_documents(client, database, collection, skip, limit).await,
         PoolKind::Elasticsearch(client) => {
             let client = client.clone();
             drop(connections);
@@ -58,9 +53,7 @@ pub async fn mongo_insert_document_core(
 ) -> Result<String, String> {
     let connections = state.connections.lock().await;
     match connections.get(connection_id).ok_or("Not found")? {
-        PoolKind::MongoDb(client) => {
-            mongo_driver::insert_document(client, database, collection, doc_json).await
-        }
+        PoolKind::MongoDb(client) => mongo_driver::insert_document(client, database, collection, doc_json).await,
         PoolKind::Elasticsearch(client) => {
             let client = client.clone();
             drop(connections);
@@ -80,9 +73,7 @@ pub async fn mongo_update_document_core(
 ) -> Result<u64, String> {
     let connections = state.connections.lock().await;
     match connections.get(connection_id).ok_or("Not found")? {
-        PoolKind::MongoDb(client) => {
-            mongo_driver::update_document(client, database, collection, id, doc_json).await
-        }
+        PoolKind::MongoDb(client) => mongo_driver::update_document(client, database, collection, id, doc_json).await,
         PoolKind::Elasticsearch(client) => {
             let client = client.clone();
             drop(connections);
@@ -101,9 +92,7 @@ pub async fn mongo_delete_document_core(
 ) -> Result<u64, String> {
     let connections = state.connections.lock().await;
     match connections.get(connection_id).ok_or("Not found")? {
-        PoolKind::MongoDb(client) => {
-            mongo_driver::delete_document(client, database, collection, id).await
-        }
+        PoolKind::MongoDb(client) => mongo_driver::delete_document(client, database, collection, id).await,
         PoolKind::Elasticsearch(client) => {
             let client = client.clone();
             drop(connections);

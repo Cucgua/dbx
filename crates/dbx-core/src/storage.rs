@@ -58,20 +58,12 @@ const SCHEMA_STATEMENTS: &[&str] = &[
 impl Storage {
     pub async fn open(db_path: &Path) -> Result<Self, String> {
         let url = format!("sqlite:{}?mode=rwc", db_path.display());
-        let options = SqliteConnectOptions::from_str(&url)
-            .map_err(|e| e.to_string())?
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect_with(options)
-            .await
-            .map_err(|e| e.to_string())?;
+        let options = SqliteConnectOptions::from_str(&url).map_err(|e| e.to_string())?.create_if_missing(true);
+        let pool =
+            SqlitePoolOptions::new().max_connections(5).connect_with(options).await.map_err(|e| e.to_string())?;
 
         for statement in SCHEMA_STATEMENTS {
-            sqlx::query(statement)
-                .execute(&pool)
-                .await
-                .map_err(|e| e.to_string())?;
+            sqlx::query(statement).execute(&pool).await.map_err(|e| e.to_string())?;
         }
 
         Ok(Self { db: pool })
@@ -125,11 +117,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn load_history_entries(
-        &self,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<HistoryEntry>, String> {
+    pub async fn load_history_entries(&self, limit: usize, offset: usize) -> Result<Vec<HistoryEntry>, String> {
         let rows: Vec<HistoryRow> = sqlx::query_as(
             "SELECT id, connection_name, database, sql_text, executed_at, \
              execution_time_ms, success, error \
@@ -157,19 +145,12 @@ impl Storage {
     }
 
     pub async fn clear_history(&self) -> Result<(), String> {
-        sqlx::query("DELETE FROM history")
-            .execute(&self.db)
-            .await
-            .map_err(|e| e.to_string())?;
+        sqlx::query("DELETE FROM history").execute(&self.db).await.map_err(|e| e.to_string())?;
         Ok(())
     }
 
     pub async fn delete_history_entry(&self, id: &str) -> Result<(), String> {
-        sqlx::query("DELETE FROM history WHERE id = ?")
-            .bind(id)
-            .execute(&self.db)
-            .await
-            .map_err(|e| e.to_string())?;
+        sqlx::query("DELETE FROM history WHERE id = ?").bind(id).execute(&self.db).await.map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -190,15 +171,12 @@ impl Storage {
     }
 
     pub async fn load_ai_config(&self) -> Result<Option<AiConfig>, String> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT config_json FROM ai_config WHERE id = 1")
-                .fetch_optional(&self.db)
-                .await
-                .map_err(|e| e.to_string())?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT config_json FROM ai_config WHERE id = 1")
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
         match row {
-            Some((json,)) => serde_json::from_str(&json)
-                .map(Some)
-                .map_err(|e| e.to_string()),
+            Some((json,)) => serde_json::from_str(&json).map(Some).map_err(|e| e.to_string()),
             None => Ok(None),
         }
     }
@@ -221,8 +199,7 @@ struct AiConversationRow {
 
 impl Storage {
     pub async fn save_ai_conversation(&self, conv: &AiConversation) -> Result<(), String> {
-        let messages_json =
-            serde_json::to_string(&conv.messages).map_err(|e| e.to_string())?;
+        let messages_json = serde_json::to_string(&conv.messages).map_err(|e| e.to_string())?;
         sqlx::query(
             "INSERT OR REPLACE INTO ai_conversations \
              (id, title, connection_name, database, messages_json, created_at, updated_at) \
@@ -263,8 +240,7 @@ impl Storage {
 
         rows.into_iter()
             .map(|r| {
-                let messages: Vec<AiChatMessage> =
-                    serde_json::from_str(&r.messages_json).map_err(|e| e.to_string())?;
+                let messages: Vec<AiChatMessage> = serde_json::from_str(&r.messages_json).map_err(|e| e.to_string())?;
                 Ok(AiConversation {
                     id: r.id,
                     title: r.title,
@@ -296,10 +272,7 @@ impl Storage {
     pub async fn save_connections(&self, configs: &[ConnectionConfig]) -> Result<(), String> {
         let mut tx = self.db.begin().await.map_err(|e| e.to_string())?;
 
-        sqlx::query("DELETE FROM connections")
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        sqlx::query("DELETE FROM connections").execute(&mut *tx).await.map_err(|e| e.to_string())?;
 
         for config in configs {
             // Store config without secrets
@@ -319,49 +292,31 @@ impl Storage {
 
             // Store secrets
             persist_secret_in_tx(&mut tx, &config.id, "password", &config.password).await?;
-            persist_secret_in_tx(&mut tx, &config.id, "ssh_password", &config.ssh_password)
-                .await?;
-            persist_secret_in_tx(
-                &mut tx,
-                &config.id,
-                "ssh_key_passphrase",
-                &config.ssh_key_passphrase,
-            )
-            .await?;
+            persist_secret_in_tx(&mut tx, &config.id, "ssh_password", &config.ssh_password).await?;
+            persist_secret_in_tx(&mut tx, &config.id, "ssh_key_passphrase", &config.ssh_key_passphrase).await?;
             if let Some(cs) = &config.connection_string {
                 persist_secret_in_tx(&mut tx, &config.id, "connection_string", cs).await?;
             } else {
-                sqlx::query(
-                    "DELETE FROM connection_secrets WHERE connection_id = ? AND key = ?",
-                )
-                .bind(&config.id)
-                .bind("connection_string")
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
+                sqlx::query("DELETE FROM connection_secrets WHERE connection_id = ? AND key = ?")
+                    .bind(&config.id)
+                    .bind("connection_string")
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| e.to_string())?;
             }
         }
 
         // Remove secrets for connections that no longer exist
         if configs.is_empty() {
-            sqlx::query("DELETE FROM connection_secrets")
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
+            sqlx::query("DELETE FROM connection_secrets").execute(&mut *tx).await.map_err(|e| e.to_string())?;
         } else {
             let placeholders: Vec<&str> = configs.iter().map(|_| "?").collect();
-            let sql = format!(
-                "DELETE FROM connection_secrets WHERE connection_id NOT IN ({})",
-                placeholders.join(",")
-            );
+            let sql = format!("DELETE FROM connection_secrets WHERE connection_id NOT IN ({})", placeholders.join(","));
             let mut query = sqlx::query(&sql);
             for config in configs {
                 query = query.bind(&config.id);
             }
-            query
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
+            query.execute(&mut *tx).await.map_err(|e| e.to_string())?;
         }
 
         tx.commit().await.map_err(|e| e.to_string())?;
@@ -369,28 +324,17 @@ impl Storage {
     }
 
     pub async fn load_connections(&self) -> Result<Vec<ConnectionConfig>, String> {
-        let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT id, config_json FROM connections")
-                .fetch_all(&self.db)
-                .await
-                .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, config_json FROM connections")
+            .fetch_all(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let mut configs = Vec::new();
         for (id, json) in rows {
-            let mut config: ConnectionConfig =
-                serde_json::from_str(&json).map_err(|e| e.to_string())?;
-            config.password = self
-                .get_secret(&id, "password")
-                .await?
-                .unwrap_or_default();
-            config.ssh_password = self
-                .get_secret(&id, "ssh_password")
-                .await?
-                .unwrap_or_default();
-            config.ssh_key_passphrase = self
-                .get_secret(&id, "ssh_key_passphrase")
-                .await?
-                .unwrap_or_default();
+            let mut config: ConnectionConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            config.password = self.get_secret(&id, "password").await?.unwrap_or_default();
+            config.ssh_password = self.get_secret(&id, "ssh_password").await?.unwrap_or_default();
+            config.ssh_key_passphrase = self.get_secret(&id, "ssh_key_passphrase").await?.unwrap_or_default();
             config.connection_string = self.get_secret(&id, "connection_string").await?;
             configs.push(config);
         }
@@ -403,28 +347,18 @@ impl Storage {
 // ---------------------------------------------------------------------------
 
 impl Storage {
-    pub async fn get_secret(
-        &self,
-        connection_id: &str,
-        key: &str,
-    ) -> Result<Option<String>, String> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT secret FROM connection_secrets WHERE connection_id = ? AND key = ?",
-        )
-        .bind(connection_id)
-        .bind(key)
-        .fetch_optional(&self.db)
-        .await
-        .map_err(|e| e.to_string())?;
+    pub async fn get_secret(&self, connection_id: &str, key: &str) -> Result<Option<String>, String> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT secret FROM connection_secrets WHERE connection_id = ? AND key = ?")
+                .bind(connection_id)
+                .bind(key)
+                .fetch_optional(&self.db)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(row.map(|(s,)| s))
     }
 
-    pub async fn set_secret(
-        &self,
-        connection_id: &str,
-        key: &str,
-        secret: &str,
-    ) -> Result<(), String> {
+    pub async fn set_secret(&self, connection_id: &str, key: &str, secret: &str) -> Result<(), String> {
         sqlx::query(
             "INSERT OR REPLACE INTO connection_secrets (connection_id, key, secret) \
              VALUES (?, ?, ?)",
@@ -438,11 +372,7 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn delete_secret(
-        &self,
-        connection_id: &str,
-        key: &str,
-    ) -> Result<(), String> {
+    pub async fn delete_secret(&self, connection_id: &str, key: &str) -> Result<(), String> {
         sqlx::query("DELETE FROM connection_secrets WHERE connection_id = ? AND key = ?")
             .bind(connection_id)
             .bind(key)
@@ -458,10 +388,7 @@ impl Storage {
 // ---------------------------------------------------------------------------
 
 impl Storage {
-    pub async fn save_sidebar_layout(
-        &self,
-        layout: &serde_json::Value,
-    ) -> Result<(), String> {
+    pub async fn save_sidebar_layout(&self, layout: &serde_json::Value) -> Result<(), String> {
         let json = serde_json::to_string(layout).map_err(|e| e.to_string())?;
         sqlx::query("INSERT OR REPLACE INTO sidebar_layout (id, layout_json) VALUES (1, ?)")
             .bind(&json)
@@ -472,15 +399,12 @@ impl Storage {
     }
 
     pub async fn load_sidebar_layout(&self) -> Result<Option<serde_json::Value>, String> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT layout_json FROM sidebar_layout WHERE id = 1")
-                .fetch_optional(&self.db)
-                .await
-                .map_err(|e| e.to_string())?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT layout_json FROM sidebar_layout WHERE id = 1")
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
         match row {
-            Some((json,)) => serde_json::from_str(&json)
-                .map(Some)
-                .map_err(|e| e.to_string()),
+            Some((json,)) => serde_json::from_str(&json).map(Some).map_err(|e| e.to_string()),
             None => Ok(None),
         }
     }
@@ -509,8 +433,7 @@ impl Storage {
         let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let configs: Vec<ConnectionConfig> = serde_json::from_str(&json).unwrap_or_default();
         for config in &configs {
-            let config_json =
-                serde_json::to_string(config).map_err(|e| e.to_string())?;
+            let config_json = serde_json::to_string(config).map_err(|e| e.to_string())?;
             sqlx::query("INSERT OR IGNORE INTO connections (id, config_json) VALUES (?, ?)")
                 .bind(&config.id)
                 .bind(&config_json)
@@ -528,8 +451,7 @@ impl Storage {
             return Ok(());
         }
         let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        let secrets: std::collections::HashMap<String, String> =
-            serde_json::from_str(&json).unwrap_or_default();
+        let secrets: std::collections::HashMap<String, String> = serde_json::from_str(&json).unwrap_or_default();
         for (key, secret) in &secrets {
             // key format: "connection:{id}:{field}"
             let parts: Vec<&str> = key.splitn(3, ':').collect();
@@ -588,10 +510,7 @@ impl Storage {
         let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
         // Only migrate if the table is empty
         let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM ai_config")
-                .fetch_one(&self.db)
-                .await
-                .map_err(|e| e.to_string())?;
+            sqlx::query_as("SELECT COUNT(*) FROM ai_config").fetch_one(&self.db).await.map_err(|e| e.to_string())?;
         if count.0 == 0 {
             sqlx::query("INSERT OR IGNORE INTO ai_config (id, config_json) VALUES (1, ?)")
                 .bind(&json)
@@ -609,11 +528,9 @@ impl Storage {
             return Ok(());
         }
         let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        let conversations: Vec<AiConversation> =
-            serde_json::from_str(&json).unwrap_or_default();
+        let conversations: Vec<AiConversation> = serde_json::from_str(&json).unwrap_or_default();
         for conv in &conversations {
-            let messages_json =
-                serde_json::to_string(&conv.messages).map_err(|e| e.to_string())?;
+            let messages_json = serde_json::to_string(&conv.messages).map_err(|e| e.to_string())?;
             sqlx::query(
                 "INSERT OR IGNORE INTO ai_conversations \
                  (id, title, connection_name, database, messages_json, \
@@ -641,19 +558,16 @@ impl Storage {
             return Ok(());
         }
         let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        let count: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM sidebar_layout")
-                .fetch_one(&self.db)
-                .await
-                .map_err(|e| e.to_string())?;
-        if count.0 == 0 {
-            sqlx::query(
-                "INSERT OR IGNORE INTO sidebar_layout (id, layout_json) VALUES (1, ?)",
-            )
-            .bind(&json)
-            .execute(&self.db)
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sidebar_layout")
+            .fetch_one(&self.db)
             .await
             .map_err(|e| e.to_string())?;
+        if count.0 == 0 {
+            sqlx::query("INSERT OR IGNORE INTO sidebar_layout (id, layout_json) VALUES (1, ?)")
+                .bind(&json)
+                .execute(&self.db)
+                .await
+                .map_err(|e| e.to_string())?;
         }
         std::fs::rename(&path, data_dir.join("sidebar_layout.json.bak")).ok();
         Ok(())

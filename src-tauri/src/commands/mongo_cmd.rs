@@ -53,7 +53,8 @@ pub async fn mongo_update_document(
     id: String,
     doc_json: String,
 ) -> Result<u64, String> {
-    dbx_core::mongo_ops::mongo_update_document_core(&state, &connection_id, &database, &collection, &id, &doc_json).await
+    dbx_core::mongo_ops::mongo_update_document_core(&state, &connection_id, &database, &collection, &id, &doc_json)
+        .await
 }
 
 #[tauri::command]

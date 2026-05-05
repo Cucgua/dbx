@@ -5,9 +5,7 @@ use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
-use crate::types::{
-    ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo,
-};
+use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub type SqlServerClient = Client<Compat<TcpStream>>;
 
@@ -48,13 +46,10 @@ async fn try_connect(
         .await
         .map_err(|_| format!("SQL Server connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
         .map_err(|e| format!("SQL Server connection failed: {e}"))?;
-    tokio::time::timeout(
-        connection_timeout(),
-        Client::connect(config, tcp.compat_write()),
-    )
-    .await
-    .map_err(|_| format!("SQL Server handshake timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
-    .map_err(|e| format!("SQL Server connection failed: {e}"))
+    tokio::time::timeout(connection_timeout(), Client::connect(config, tcp.compat_write()))
+        .await
+        .map_err(|_| format!("SQL Server handshake timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map_err(|e| format!("SQL Server connection failed: {e}"))
 }
 
 fn row_to_json(row: &tiberius::Row) -> Vec<serde_json::Value> {
@@ -69,9 +64,7 @@ fn row_to_json(row: &tiberius::Row) -> Vec<serde_json::Value> {
             } else if let Some(v) = row.try_get::<i64, _>(i).ok().flatten() {
                 serde_json::Value::Number(v.into())
             } else if let Some(v) = row.try_get::<f64, _>(i).ok().flatten() {
-                serde_json::Number::from_f64(v)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null)
+                serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
             } else if let Some(v) = row.try_get::<bool, _>(i).ok().flatten() {
                 serde_json::Value::Bool(v)
             } else {
@@ -82,20 +75,9 @@ fn row_to_json(row: &tiberius::Row) -> Vec<serde_json::Value> {
 }
 
 pub async fn list_databases(client: &mut SqlServerClient) -> Result<Vec<DatabaseInfo>, String> {
-    let stream = client
-        .query("SELECT name FROM sys.databases ORDER BY name", &[])
-        .await
-        .map_err(|e| e.to_string())?;
-    let rows = stream
-        .into_first_result()
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(rows
-        .iter()
-        .map(|row| DatabaseInfo {
-            name: row.get::<&str, _>(0).unwrap_or("").to_string(),
-        })
-        .collect())
+    let stream = client.query("SELECT name FROM sys.databases ORDER BY name", &[]).await.map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|row| DatabaseInfo { name: row.get::<&str, _>(0).unwrap_or("").to_string() }).collect())
 }
 
 pub async fn list_schemas(client: &mut SqlServerClient) -> Result<Vec<String>, String> {
@@ -108,29 +90,17 @@ pub async fn list_schemas(client: &mut SqlServerClient) -> Result<Vec<String>, S
         )
         .await
         .map_err(|e| e.to_string())?;
-    let rows = stream
-        .into_first_result()
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(rows
-        .iter()
-        .map(|row| row.get::<&str, _>(0).unwrap_or("").to_string())
-        .collect())
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|row| row.get::<&str, _>(0).unwrap_or("").to_string()).collect())
 }
 
-pub async fn list_tables(
-    client: &mut SqlServerClient,
-    schema: &str,
-) -> Result<Vec<TableInfo>, String> {
+pub async fn list_tables(client: &mut SqlServerClient, schema: &str) -> Result<Vec<TableInfo>, String> {
     let sql = format!(
         "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{}' ORDER BY TABLE_NAME",
         schema.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream
-        .into_first_result()
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows
         .iter()
         .map(|row| TableInfo {
@@ -140,11 +110,7 @@ pub async fn list_tables(
         .collect())
 }
 
-pub async fn get_columns(
-    client: &mut SqlServerClient,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<ColumnInfo>, String> {
+pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let sql = format!(
         "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, c.COLUMN_DEFAULT, \
          CASE WHEN kcu.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_PK, \
@@ -158,10 +124,7 @@ pub async fn get_columns(
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream
-        .into_first_result()
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows
         .iter()
         .map(|row| {
@@ -216,11 +179,7 @@ pub async fn get_columns(
         .collect())
 }
 
-pub async fn list_indexes(
-    client: &mut SqlServerClient,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<IndexInfo>, String> {
+pub async fn list_indexes(client: &mut SqlServerClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
     let sql = format!(
         "SELECT i.name, \
          STRING_AGG(CASE WHEN ic.is_included_column = 0 THEN c.name END, ',') WITHIN GROUP (ORDER BY ic.key_ordinal) AS columns, \
@@ -236,10 +195,7 @@ pub async fn list_indexes(
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream
-        .into_first_result()
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows
         .iter()
         .map(|row| {
@@ -247,11 +203,7 @@ pub async fn list_indexes(
             let inc_str = row.get::<&str, _>(5).unwrap_or("");
             IndexInfo {
                 name: row.get::<&str, _>(0).unwrap_or("").to_string(),
-                columns: cols_str
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .collect(),
+                columns: cols_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
                 is_unique: row.get::<bool, _>(2).unwrap_or(false),
                 is_primary: row.get::<bool, _>(3).unwrap_or(false),
                 filter: row.get::<&str, _>(6).map(|s| s.to_string()),
@@ -281,13 +233,11 @@ pub async fn list_foreign_keys(
          JOIN sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id \
          WHERE fk.parent_object_id = OBJECT_ID('{s}.{t}') \
          ORDER BY fk.name",
-        s = schema.replace('\'', "''"), t = table.replace('\'', "''")
+        s = schema.replace('\'', "''"),
+        t = table.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream
-        .into_first_result()
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows
         .iter()
         .map(|row| ForeignKeyInfo {
@@ -310,13 +260,11 @@ pub async fn list_triggers(
          JOIN sys.trigger_events te ON t.object_id = te.object_id \
          WHERE t.parent_id = OBJECT_ID('{s}.{t}') \
          ORDER BY t.name",
-        s = schema.replace('\'', "''"), t = table.replace('\'', "''")
+        s = schema.replace('\'', "''"),
+        t = table.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream
-        .into_first_result()
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows
         .iter()
         .map(|row| TriggerInfo {
@@ -341,19 +289,11 @@ pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<Qu
             .columns()
             .await
             .map_err(|e| e.to_string())?
-            .map(|cols| {
-                cols.iter()
-                    .map(|c| c.name().to_string())
-                    .collect::<Vec<_>>()
-            })
+            .map(|cols| cols.iter().map(|c| c.name().to_string()).collect::<Vec<_>>())
             .unwrap_or_default();
 
-        let rows = stream
-            .into_first_result()
-            .await
-            .map_err(|e| e.to_string())?;
-        let result_rows: Vec<Vec<serde_json::Value>> =
-            rows.iter().map(|row| row_to_json(row)).collect();
+        let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
+        let result_rows: Vec<Vec<serde_json::Value>> = rows.iter().map(|row| row_to_json(row)).collect();
 
         Ok(QueryResult {
             columns: columns_meta,

@@ -24,10 +24,7 @@ impl FileSecretStore {
     }
 
     fn read_store(&self) -> HashMap<String, String> {
-        std::fs::read_to_string(&self.path)
-            .ok()
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default()
+        std::fs::read_to_string(&self.path).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
     }
 
     fn write_store(&self, map: &HashMap<String, String>) -> Result<(), String> {
@@ -64,12 +61,7 @@ pub fn save_connections_to_file(
         persist_secret(store, &config.id, MAIN_PASSWORD_KEY, &config.password)?;
         persist_secret(store, &config.id, SSH_PASSWORD_KEY, &config.ssh_password)?;
         persist_secret(store, &config.id, SSH_KEY_PASSPHRASE_KEY, &config.ssh_key_passphrase)?;
-        persist_optional_secret(
-            store,
-            &config.id,
-            CONNECTION_STRING_KEY,
-            config.connection_string.as_deref(),
-        )?;
+        persist_optional_secret(store, &config.id, CONNECTION_STRING_KEY, config.connection_string.as_deref())?;
     }
 
     write_sanitized_connections(path, configs)
@@ -113,11 +105,7 @@ pub fn load_connections_from_file(
             needs_rewrite = true;
         }
 
-        match config
-            .connection_string
-            .as_deref()
-            .filter(|secret| !secret.is_empty())
-        {
+        match config.connection_string.as_deref().filter(|secret| !secret.is_empty()) {
             Some(secret) => {
                 store.set_secret(&config.id, CONNECTION_STRING_KEY, secret)?;
                 needs_rewrite = true;
@@ -220,8 +208,8 @@ pub fn secret_account(connection_id: &str, key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        load_connections_from_file, save_connections_to_file, ConnectionSecretStore,
-        CONNECTION_STRING_KEY, MAIN_PASSWORD_KEY, SSH_PASSWORD_KEY,
+        load_connections_from_file, save_connections_to_file, ConnectionSecretStore, CONNECTION_STRING_KEY,
+        MAIN_PASSWORD_KEY, SSH_PASSWORD_KEY,
     };
     use crate::models::connection::{ConnectionConfig, DatabaseType};
     use std::cell::RefCell;
@@ -236,48 +224,31 @@ mod tests {
 
     impl MemorySecretStore {
         fn set_existing(&self, connection_id: &str, key: &str, value: &str) {
-            self.values
-                .borrow_mut()
-                .insert(secret_key(connection_id, key), value.to_string());
+            self.values.borrow_mut().insert(secret_key(connection_id, key), value.to_string());
         }
 
         fn get_existing(&self, connection_id: &str, key: &str) -> Option<String> {
-            self.values
-                .borrow()
-                .get(&secret_key(connection_id, key))
-                .cloned()
+            self.values.borrow().get(&secret_key(connection_id, key)).cloned()
         }
 
         fn was_deleted(&self, connection_id: &str, key: &str) -> bool {
-            self.deleted
-                .borrow()
-                .contains(&secret_key(connection_id, key))
+            self.deleted.borrow().contains(&secret_key(connection_id, key))
         }
     }
 
     impl ConnectionSecretStore for MemorySecretStore {
         fn set_secret(&self, connection_id: &str, key: &str, secret: &str) -> Result<(), String> {
-            self.values
-                .borrow_mut()
-                .insert(secret_key(connection_id, key), secret.to_string());
+            self.values.borrow_mut().insert(secret_key(connection_id, key), secret.to_string());
             Ok(())
         }
 
         fn get_secret(&self, connection_id: &str, key: &str) -> Result<Option<String>, String> {
-            Ok(self
-                .values
-                .borrow()
-                .get(&secret_key(connection_id, key))
-                .cloned())
+            Ok(self.values.borrow().get(&secret_key(connection_id, key)).cloned())
         }
 
         fn delete_secret(&self, connection_id: &str, key: &str) -> Result<(), String> {
-            self.values
-                .borrow_mut()
-                .remove(&secret_key(connection_id, key));
-            self.deleted
-                .borrow_mut()
-                .push(secret_key(connection_id, key));
+            self.values.borrow_mut().remove(&secret_key(connection_id, key));
+            self.deleted.borrow_mut().push(secret_key(connection_id, key));
             Ok(())
         }
     }
@@ -287,10 +258,7 @@ mod tests {
     }
 
     fn temp_connections_file(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "dbx-connection-secrets-test-{}-{name}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("dbx-connection-secrets-test-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("connections.json")
     }
@@ -335,14 +303,8 @@ mod tests {
 
         save_connections_to_file(&path, &configs, &store).unwrap();
 
-        assert_eq!(
-            store.get_existing("main", MAIN_PASSWORD_KEY).as_deref(),
-            Some("db-secret")
-        );
-        assert_eq!(
-            store.get_existing("main", SSH_PASSWORD_KEY).as_deref(),
-            Some("ssh-secret")
-        );
+        assert_eq!(store.get_existing("main", MAIN_PASSWORD_KEY).as_deref(), Some("db-secret"));
+        assert_eq!(store.get_existing("main", SSH_PASSWORD_KEY).as_deref(), Some("ssh-secret"));
         let persisted = read_configs(&path);
         assert_eq!(persisted[0].password, "");
         assert_eq!(persisted[0].ssh_password, "");
@@ -374,14 +336,8 @@ mod tests {
 
         assert_eq!(loaded[0].password, "plain-db");
         assert_eq!(loaded[0].ssh_password, "plain-ssh");
-        assert_eq!(
-            store.get_existing("legacy", MAIN_PASSWORD_KEY).as_deref(),
-            Some("plain-db")
-        );
-        assert_eq!(
-            store.get_existing("legacy", SSH_PASSWORD_KEY).as_deref(),
-            Some("plain-ssh")
-        );
+        assert_eq!(store.get_existing("legacy", MAIN_PASSWORD_KEY).as_deref(), Some("plain-db"));
+        assert_eq!(store.get_existing("legacy", SSH_PASSWORD_KEY).as_deref(), Some("plain-ssh"));
         let persisted = read_configs(&path);
         assert_eq!(persisted[0].password, "");
         assert_eq!(persisted[0].ssh_password, "");
@@ -401,10 +357,7 @@ mod tests {
 
         assert!(store.was_deleted("old", MAIN_PASSWORD_KEY));
         assert!(store.was_deleted("old", SSH_PASSWORD_KEY));
-        assert_eq!(
-            store.get_existing("kept", MAIN_PASSWORD_KEY).as_deref(),
-            Some("new-db")
-        );
+        assert_eq!(store.get_existing("kept", MAIN_PASSWORD_KEY).as_deref(), Some("new-db"));
     }
 
     #[test]
@@ -418,18 +371,13 @@ mod tests {
         save_connections_to_file(&path, &[config], &store).unwrap();
 
         assert_eq!(
-            store
-                .get_existing("mongo", CONNECTION_STRING_KEY)
-                .as_deref(),
+            store.get_existing("mongo", CONNECTION_STRING_KEY).as_deref(),
             Some("mongodb://user:secret@localhost/app")
         );
         let persisted = read_configs(&path);
         assert_eq!(persisted[0].connection_string, None);
 
         let loaded = load_connections_from_file(&path, &store).unwrap();
-        assert_eq!(
-            loaded[0].connection_string.as_deref(),
-            Some("mongodb://user:secret@localhost/app")
-        );
+        assert_eq!(loaded[0].connection_string.as_deref(), Some("mongodb://user:secret@localhost/app"));
     }
 }

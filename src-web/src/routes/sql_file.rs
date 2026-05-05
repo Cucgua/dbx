@@ -3,8 +3,8 @@ use std::sync::Arc;
 use axum::extract::{Multipart, Path, State};
 use axum::response::sse::{Event, Sse};
 use axum::Json;
-use dbx_core::sql;
 use dbx_core::query;
+use dbx_core::sql;
 use futures::stream::Stream;
 use serde::Deserialize;
 
@@ -40,15 +40,8 @@ pub async fn preview_sql_file(
     let tmp_dir = state.data_dir.join("tmp");
     std::fs::create_dir_all(&tmp_dir).map_err(|e| AppError(e.to_string()))?;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError(e.to_string()))?
-    {
-        let file_name = field
-            .file_name()
-            .unwrap_or("upload.sql")
-            .to_string();
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError(e.to_string()))? {
+        let file_name = field.file_name().unwrap_or("upload.sql").to_string();
         let data = field.bytes().await.map_err(|e| AppError(e.to_string()))?;
 
         let file_path = tmp_dir.join(&file_name);
@@ -77,11 +70,7 @@ pub async fn execute_sql_file(
     let execution_id = req.execution_id.clone();
 
     let (tx, _) = tokio::sync::broadcast::channel::<String>(256);
-    state
-        .sse_channels
-        .write()
-        .await
-        .insert(execution_id.clone(), tx.clone());
+    state.sse_channels.write().await.insert(execution_id.clone(), tx.clone());
 
     let app = state.app.clone();
     let state_clone = state.clone();
@@ -149,9 +138,7 @@ pub async fn execute_sql_file(
                 let _ = tx.send(json);
             }
 
-            match query::execute_sql_statement(&app, &req.connection_id, &req.database, stmt, None)
-                .await
-            {
+            match query::execute_sql_statement(&app, &req.connection_id, &req.database, stmt, None).await {
                 Ok(result) => {
                     success_count += 1;
                     total_affected += result.affected_rows;
@@ -220,9 +207,7 @@ pub async fn sql_file_progress(
     Path(execution_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, AppError> {
     let channels = state.sse_channels.read().await;
-    let tx = channels
-        .get(&execution_id)
-        .ok_or_else(|| AppError("Execution not found".to_string()))?;
+    let tx = channels.get(&execution_id).ok_or_else(|| AppError("Execution not found".to_string()))?;
     let rx = tx.subscribe();
     drop(channels);
     Ok(crate::sse::sse_from_channel(rx))

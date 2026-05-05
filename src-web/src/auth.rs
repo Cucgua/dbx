@@ -24,18 +24,11 @@ pub struct AuthCheckResponse {
 const MAX_ATTEMPTS: u32 = 5;
 const LOCKOUT_SECS: u64 = 60;
 
-pub async fn login(
-    State(state): State<Arc<WebState>>,
-    Json(body): Json<LoginRequest>,
-) -> Result<Response, StatusCode> {
+pub async fn login(State(state): State<Arc<WebState>>, Json(body): Json<LoginRequest>) -> Result<Response, StatusCode> {
     let password_hash = match &state.password_hash {
         Some(h) => h,
         None => {
-            return Ok((
-                StatusCode::OK,
-                Json(serde_json::json!({"ok": true})),
-            )
-                .into_response());
+            return Ok((StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response());
         }
     };
 
@@ -48,7 +41,8 @@ pub async fn login(
                 return Ok((
                     StatusCode::TOO_MANY_REQUESTS,
                     Json(serde_json::json!({"error": format!("请 {remaining} 秒后再试")})),
-                ).into_response());
+                )
+                    .into_response());
             }
         }
     }
@@ -78,12 +72,7 @@ pub async fn login(
     state.sessions.write().await.insert(token.clone());
 
     let cookie = format!("dbx_session={token}; Path=/; HttpOnly; SameSite=Lax");
-    Ok((
-        StatusCode::OK,
-        [("set-cookie", cookie.as_str())],
-        Json(serde_json::json!({"ok": true})),
-    )
-        .into_response())
+    Ok((StatusCode::OK, [("set-cookie", cookie.as_str())], Json(serde_json::json!({"ok": true}))).into_response())
 }
 
 pub async fn check(State(state): State<Arc<WebState>>, req: Request<axum::body::Body>) -> Json<AuthCheckResponse> {
@@ -102,12 +91,7 @@ pub async fn logout(State(state): State<Arc<WebState>>, req: Request<axum::body:
         state.sessions.write().await.remove(&token);
     }
     let cookie = "dbx_session=; Path=/; HttpOnly; Max-Age=0";
-    (
-        StatusCode::OK,
-        [("set-cookie", cookie)],
-        Json(serde_json::json!({"ok": true})),
-    )
-        .into_response()
+    (StatusCode::OK, [("set-cookie", cookie)], Json(serde_json::json!({"ok": true}))).into_response()
 }
 
 fn extract_session_token<B>(req: &Request<B>) -> Option<String> {

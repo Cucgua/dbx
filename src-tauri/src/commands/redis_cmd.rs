@@ -5,10 +5,7 @@ use crate::commands::connection::AppState;
 use dbx_core::db::redis_driver::{RedisScanResult, RedisValue};
 
 #[tauri::command]
-pub async fn redis_list_databases(
-    state: State<'_, Arc<AppState>>,
-    connection_id: String,
-) -> Result<Vec<u32>, String> {
+pub async fn redis_list_databases(state: State<'_, Arc<AppState>>, connection_id: String) -> Result<Vec<u32>, String> {
     dbx_core::redis_ops::redis_list_databases_core(&state, &connection_id).await
 }
 
@@ -56,7 +53,10 @@ pub async fn redis_delete_key(
 #[tauri::command]
 pub async fn redis_hash_set(
     state: State<'_, Arc<AppState>>,
-    connection_id: String, key: String, field: String, value: String,
+    connection_id: String,
+    key: String,
+    field: String,
+    value: String,
 ) -> Result<(), String> {
     dbx_core::redis_ops::redis_hash_set_core(&state, &connection_id, &key, &field, &value).await
 }
@@ -64,7 +64,9 @@ pub async fn redis_hash_set(
 #[tauri::command]
 pub async fn redis_hash_del(
     state: State<'_, Arc<AppState>>,
-    connection_id: String, key: String, field: String,
+    connection_id: String,
+    key: String,
+    field: String,
 ) -> Result<(), String> {
     dbx_core::redis_ops::redis_hash_del_core(&state, &connection_id, &key, &field).await
 }
@@ -72,7 +74,9 @@ pub async fn redis_hash_del(
 #[tauri::command]
 pub async fn redis_list_push(
     state: State<'_, Arc<AppState>>,
-    connection_id: String, key: String, value: String,
+    connection_id: String,
+    key: String,
+    value: String,
 ) -> Result<(), String> {
     dbx_core::redis_ops::redis_list_push_core(&state, &connection_id, &key, &value).await
 }
@@ -80,7 +84,9 @@ pub async fn redis_list_push(
 #[tauri::command]
 pub async fn redis_list_remove(
     state: State<'_, Arc<AppState>>,
-    connection_id: String, key: String, index: i64,
+    connection_id: String,
+    key: String,
+    index: i64,
 ) -> Result<(), String> {
     dbx_core::redis_ops::redis_list_remove_core(&state, &connection_id, &key, index).await
 }
@@ -88,7 +94,9 @@ pub async fn redis_list_remove(
 #[tauri::command]
 pub async fn redis_set_add(
     state: State<'_, Arc<AppState>>,
-    connection_id: String, key: String, member: String,
+    connection_id: String,
+    key: String,
+    member: String,
 ) -> Result<(), String> {
     dbx_core::redis_ops::redis_set_add_core(&state, &connection_id, &key, &member).await
 }
@@ -96,7 +104,9 @@ pub async fn redis_set_add(
 #[tauri::command]
 pub async fn redis_set_remove(
     state: State<'_, Arc<AppState>>,
-    connection_id: String, key: String, member: String,
+    connection_id: String,
+    key: String,
+    member: String,
 ) -> Result<(), String> {
     dbx_core::redis_ops::redis_set_remove_core(&state, &connection_id, &key, &member).await
 }

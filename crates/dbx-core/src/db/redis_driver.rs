@@ -29,44 +29,26 @@ pub struct RedisValue {
 
 pub async fn connect(url: &str) -> Result<redis::aio::MultiplexedConnection, String> {
     let client = redis::Client::open(url).map_err(|e| format!("Redis connection failed: {e}"))?;
-    let mut con = tokio::time::timeout(
-        connection_timeout(),
-        client.get_multiplexed_async_connection(),
-    )
-    .await
-    .map_err(|_| format!("Redis connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
-    .map_err(|e| format!("Redis connection failed: {e}"))?;
+    let mut con = tokio::time::timeout(connection_timeout(), client.get_multiplexed_async_connection())
+        .await
+        .map_err(|_| format!("Redis connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map_err(|e| format!("Redis connection failed: {e}"))?;
 
-    tokio::time::timeout(
-        connection_timeout(),
-        redis::cmd("PING").query_async::<String>(&mut con),
-    )
-    .await
-    .map_err(|_| format!("Redis ping timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
-    .map_err(|e| format!("Redis authentication failed or command rejected: {e}"))?;
+    tokio::time::timeout(connection_timeout(), redis::cmd("PING").query_async::<String>(&mut con))
+        .await
+        .map_err(|_| format!("Redis ping timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map_err(|e| format!("Redis authentication failed or command rejected: {e}"))?;
 
     Ok(con)
 }
 
-pub async fn list_databases(
-    con: &mut redis::aio::MultiplexedConnection,
-) -> Result<Vec<u32>, String> {
-    let configured_count = redis::cmd("CONFIG")
-        .arg("GET")
-        .arg("databases")
-        .query_async(con)
-        .await
-        .ok()
-        .and_then(parse_database_count);
+pub async fn list_databases(con: &mut redis::aio::MultiplexedConnection) -> Result<Vec<u32>, String> {
+    let configured_count =
+        redis::cmd("CONFIG").arg("GET").arg("databases").query_async(con).await.ok().and_then(parse_database_count);
 
     let keyspace_dbs = list_keyspace_databases(con).await.unwrap_or_default();
     let database_count = configured_count.unwrap_or(DEFAULT_REDIS_DATABASES);
-    let max_db = keyspace_dbs
-        .iter()
-        .copied()
-        .max()
-        .map(|db| db + 1)
-        .unwrap_or(0);
+    let max_db = keyspace_dbs.iter().copied().max().map(|db| db + 1).unwrap_or(0);
     let visible_count = database_count.max(max_db).max(1);
 
     Ok((0..visible_count).collect())
@@ -88,14 +70,8 @@ fn parse_database_count(value: redis::Value) -> Option<u32> {
     })
 }
 
-async fn list_keyspace_databases(
-    con: &mut redis::aio::MultiplexedConnection,
-) -> Result<Vec<u32>, String> {
-    let info: String = redis::cmd("INFO")
-        .arg("keyspace")
-        .query_async(con)
-        .await
-        .map_err(|e| e.to_string())?;
+async fn list_keyspace_databases(con: &mut redis::aio::MultiplexedConnection) -> Result<Vec<u32>, String> {
+    let info: String = redis::cmd("INFO").arg("keyspace").query_async(con).await.map_err(|e| e.to_string())?;
 
     let mut dbs = Vec::new();
     for line in info.lines() {
@@ -111,11 +87,7 @@ async fn list_keyspace_databases(
 }
 
 pub async fn select_db(con: &mut redis::aio::MultiplexedConnection, db: u32) -> Result<(), String> {
-    redis::cmd("SELECT")
-        .arg(db)
-        .query_async(con)
-        .await
-        .map_err(|e| e.to_string())
+    redis::cmd("SELECT").arg(db).query_async(con).await.map_err(|e| e.to_string())
 }
 
 pub async fn scan_keys_page(
@@ -136,35 +108,18 @@ pub async fn scan_keys_page(
 
     let mut result = Vec::new();
     for key in &keys {
-        let key_type: String = redis::cmd("TYPE")
-            .arg(key.as_str())
-            .query_async(con)
-            .await
-            .unwrap_or_else(|_| "unknown".to_string());
+        let key_type: String =
+            redis::cmd("TYPE").arg(key.as_str()).query_async(con).await.unwrap_or_else(|_| "unknown".to_string());
 
         let ttl: i64 = con.ttl(key.as_str()).await.unwrap_or(-1);
 
-        result.push(RedisKeyInfo {
-            key: key.clone(),
-            key_type,
-            ttl,
-        });
+        result.push(RedisKeyInfo { key: key.clone(), key_type, ttl });
     }
-    Ok(RedisScanResult {
-        cursor: next_cursor,
-        keys: result,
-    })
+    Ok(RedisScanResult { cursor: next_cursor, keys: result })
 }
 
-pub async fn get_value(
-    con: &mut redis::aio::MultiplexedConnection,
-    key: &str,
-) -> Result<RedisValue, String> {
-    let key_type: String = redis::cmd("TYPE")
-        .arg(key)
-        .query_async(con)
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn get_value(con: &mut redis::aio::MultiplexedConnection, key: &str) -> Result<RedisValue, String> {
+    let key_type: String = redis::cmd("TYPE").arg(key).query_async(con).await.map_err(|e| e.to_string())?;
 
     let ttl: i64 = con.ttl(key).await.unwrap_or(-1);
 
@@ -182,33 +137,20 @@ pub async fn get_value(
             serde_json::json!(v)
         }
         "zset" => {
-            let v: Vec<(String, f64)> = con
-                .zrange_withscores(key, 0, -1)
-                .await
-                .map_err(|e| e.to_string())?;
-            serde_json::json!(v
-                .iter()
-                .map(|(m, s)| serde_json::json!({"member": m, "score": s}))
-                .collect::<Vec<_>>())
+            let v: Vec<(String, f64)> = con.zrange_withscores(key, 0, -1).await.map_err(|e| e.to_string())?;
+            serde_json::json!(v.iter().map(|(m, s)| serde_json::json!({"member": m, "score": s})).collect::<Vec<_>>())
         }
         "hash" => {
             let v: Vec<(String, String)> = con.hgetall(key).await.map_err(|e| e.to_string())?;
-            let map: serde_json::Map<String, serde_json::Value> = v
-                .into_iter()
-                .map(|(k, v)| (k, serde_json::Value::String(v)))
-                .collect();
+            let map: serde_json::Map<String, serde_json::Value> =
+                v.into_iter().map(|(k, v)| (k, serde_json::Value::String(v))).collect();
             serde_json::Value::Object(map)
         }
         "stream" => get_stream_entries(con, key).await?,
         _ => serde_json::Value::Null,
     };
 
-    Ok(RedisValue {
-        key: key.to_string(),
-        key_type,
-        ttl,
-        value,
-    })
+    Ok(RedisValue { key: key.to_string(), key_type, ttl, value })
 }
 
 async fn get_stream_entries(
@@ -286,23 +228,16 @@ pub async fn set_string(
     value: &str,
     ttl: Option<i64>,
 ) -> Result<(), String> {
-    con.set::<_, _, ()>(key, value)
-        .await
-        .map_err(|e| e.to_string())?;
+    con.set::<_, _, ()>(key, value).await.map_err(|e| e.to_string())?;
     if let Some(t) = ttl {
         if t > 0 {
-            con.expire::<_, ()>(key, t)
-                .await
-                .map_err(|e| e.to_string())?;
+            con.expire::<_, ()>(key, t).await.map_err(|e| e.to_string())?;
         }
     }
     Ok(())
 }
 
-pub async fn delete_key(
-    con: &mut redis::aio::MultiplexedConnection,
-    key: &str,
-) -> Result<(), String> {
+pub async fn delete_key(con: &mut redis::aio::MultiplexedConnection, key: &str) -> Result<(), String> {
     con.del::<_, ()>(key).await.map_err(|e| e.to_string())
 }
 
@@ -312,67 +247,29 @@ pub async fn hash_set(
     field: &str,
     value: &str,
 ) -> Result<(), String> {
-    con.hset::<_, _, _, ()>(key, field, value)
-        .await
-        .map_err(|e| e.to_string())
+    con.hset::<_, _, _, ()>(key, field, value).await.map_err(|e| e.to_string())
 }
 
-pub async fn hash_del(
-    con: &mut redis::aio::MultiplexedConnection,
-    key: &str,
-    field: &str,
-) -> Result<(), String> {
-    con.hdel::<_, _, ()>(key, field)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn hash_del(con: &mut redis::aio::MultiplexedConnection, key: &str, field: &str) -> Result<(), String> {
+    con.hdel::<_, _, ()>(key, field).await.map_err(|e| e.to_string())
 }
 
-pub async fn list_push(
-    con: &mut redis::aio::MultiplexedConnection,
-    key: &str,
-    value: &str,
-) -> Result<(), String> {
-    con.rpush::<_, _, ()>(key, value)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn list_push(con: &mut redis::aio::MultiplexedConnection, key: &str, value: &str) -> Result<(), String> {
+    con.rpush::<_, _, ()>(key, value).await.map_err(|e| e.to_string())
 }
 
-pub async fn list_remove(
-    con: &mut redis::aio::MultiplexedConnection,
-    key: &str,
-    index: i64,
-) -> Result<(), String> {
+pub async fn list_remove(con: &mut redis::aio::MultiplexedConnection, key: &str, index: i64) -> Result<(), String> {
     let placeholder = "__DELETED_PLACEHOLDER__";
-    redis::cmd("LSET")
-        .arg(key)
-        .arg(index)
-        .arg(placeholder)
-        .query_async::<()>(con)
-        .await
-        .map_err(|e| e.to_string())?;
-    con.lrem::<_, _, ()>(key, 1, placeholder)
-        .await
-        .map_err(|e| e.to_string())
+    redis::cmd("LSET").arg(key).arg(index).arg(placeholder).query_async::<()>(con).await.map_err(|e| e.to_string())?;
+    con.lrem::<_, _, ()>(key, 1, placeholder).await.map_err(|e| e.to_string())
 }
 
-pub async fn set_add(
-    con: &mut redis::aio::MultiplexedConnection,
-    key: &str,
-    member: &str,
-) -> Result<(), String> {
-    con.sadd::<_, _, ()>(key, member)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn set_add(con: &mut redis::aio::MultiplexedConnection, key: &str, member: &str) -> Result<(), String> {
+    con.sadd::<_, _, ()>(key, member).await.map_err(|e| e.to_string())
 }
 
-pub async fn set_remove(
-    con: &mut redis::aio::MultiplexedConnection,
-    key: &str,
-    member: &str,
-) -> Result<(), String> {
-    con.srem::<_, _, ()>(key, member)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn set_remove(con: &mut redis::aio::MultiplexedConnection, key: &str, member: &str) -> Result<(), String> {
+    con.srem::<_, _, ()>(key, member).await.map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -387,12 +284,7 @@ mod tests {
     fn parses_stream_entries() {
         let raw = RedisRawValue::Array(vec![RedisRawValue::Array(vec![
             bulk("1714470000000-0"),
-            RedisRawValue::Array(vec![
-                bulk("event"),
-                bulk("login"),
-                bulk("user_id"),
-                bulk("42"),
-            ]),
+            RedisRawValue::Array(vec![bulk("event"), bulk("login"), bulk("user_id"), bulk("42")]),
         ])]);
 
         let parsed = parse_stream_entries(raw);

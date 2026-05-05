@@ -8,10 +8,7 @@ use crate::commands::connection::AppState;
 use crate::commands::transfer::get_db_type;
 
 // Re-export types for backward compatibility
-pub use dbx_core::table_import::{
-    TableImportPreview, TableImportProgress,
-    TableImportRequest, TableImportSummary,
-};
+pub use dbx_core::table_import::{TableImportPreview, TableImportProgress, TableImportRequest, TableImportSummary};
 
 static CANCELLED_IMPORTS: std::sync::LazyLock<RwLock<HashSet<String>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashSet::new()));
@@ -44,9 +41,7 @@ pub async fn import_table_file(
     let pool_key = if request.database.is_empty() {
         request.connection_id.clone()
     } else {
-        state
-            .get_or_create_pool(&request.connection_id, Some(&request.database))
-            .await?
+        state.get_or_create_pool(&request.connection_id, Some(&request.database)).await?
     };
 
     let result = dbx_core::table_import::import_table_file_core(

@@ -34,9 +34,7 @@ pub async fn execute_query(
     State(state): State<Arc<WebState>>,
     Json(req): Json<ExecuteQueryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let execution_id = req
-        .execution_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let execution_id = req.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let registered = state.app.running_queries.register(execution_id);
     let cancel_token = registered.token();
@@ -59,9 +57,7 @@ pub async fn execute_multi(
     State(state): State<Arc<WebState>>,
     Json(req): Json<ExecuteQueryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let execution_id = req
-        .execution_id
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let execution_id = req.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let registered = state.app.running_queries.register(execution_id);
     let cancel_token = registered.token();
@@ -84,14 +80,9 @@ pub async fn execute_batch(
     State(state): State<Arc<WebState>>,
     Json(req): Json<ExecuteBatchRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let result = dbx_core::query::execute_statements(
-        &state.app,
-        &req.connection_id,
-        &req.database,
-        &req.statements,
-    )
-    .await
-    .map_err(AppError)?;
+    let result = dbx_core::query::execute_statements(&state.app, &req.connection_id, &req.database, &req.statements)
+        .await
+        .map_err(AppError)?;
 
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
@@ -109,14 +100,9 @@ pub async fn execute_script(
     Json(req): Json<ExecuteQueryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let statements = dbx_core::sql::split_sql_statements(&req.sql);
-    let result = dbx_core::query::execute_statements(
-        &state.app,
-        &req.connection_id,
-        &req.database,
-        &statements,
-    )
-    .await
-    .map_err(AppError)?;
+    let result = dbx_core::query::execute_statements(&state.app, &req.connection_id, &req.database, &statements)
+        .await
+        .map_err(AppError)?;
 
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tauri::{Emitter, AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -82,7 +82,10 @@ pub fn start(app_handle: AppHandle, state: Arc<AppState>) {
     });
 }
 
-fn find_config_by_name<'a>(configs: &'a [crate::models::connection::ConnectionConfig], name: &str) -> Option<&'a crate::models::connection::ConnectionConfig> {
+fn find_config_by_name<'a>(
+    configs: &'a [crate::models::connection::ConnectionConfig],
+    name: &str,
+) -> Option<&'a crate::models::connection::ConnectionConfig> {
     configs.iter().find(|c| c.name.eq_ignore_ascii_case(name))
 }
 
@@ -94,14 +97,21 @@ async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
 async fn handle_open_table(app: &AppHandle, state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
     let req: OpenTableRequest = match serde_json::from_str(body) {
         Ok(r) => r,
-        Err(_) => { respond(stream, "400 Bad Request", "").await; return; }
+        Err(_) => {
+            respond(stream, "400 Bad Request", "").await;
+            return;
+        }
     };
     let configs = match state.storage.load_connections().await {
         Ok(c) => c,
-        Err(_) => { respond(stream, "500 Internal Server Error", "").await; return; }
+        Err(_) => {
+            respond(stream, "500 Internal Server Error", "").await;
+            return;
+        }
     };
     let Some(config) = find_config_by_name(&configs, &req.connection_name) else {
-        respond(stream, "404 Not Found", "Connection not found").await; return;
+        respond(stream, "404 Not Found", "Connection not found").await;
+        return;
     };
     let event = McpOpenTableEvent {
         connection_id: config.id.clone(),
@@ -116,14 +126,21 @@ async fn handle_open_table(app: &AppHandle, state: &Arc<AppState>, body: &str, s
 async fn handle_execute_query(app: &AppHandle, state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
     let req: ExecuteQueryRequest = match serde_json::from_str(body) {
         Ok(r) => r,
-        Err(_) => { respond(stream, "400 Bad Request", "").await; return; }
+        Err(_) => {
+            respond(stream, "400 Bad Request", "").await;
+            return;
+        }
     };
     let configs = match state.storage.load_connections().await {
         Ok(c) => c,
-        Err(_) => { respond(stream, "500 Internal Server Error", "").await; return; }
+        Err(_) => {
+            respond(stream, "500 Internal Server Error", "").await;
+            return;
+        }
     };
     let Some(config) = find_config_by_name(&configs, &req.connection_name) else {
-        respond(stream, "404 Not Found", "Connection not found").await; return;
+        respond(stream, "404 Not Found", "Connection not found").await;
+        return;
     };
     let event = McpExecuteQueryEvent {
         connection_id: config.id.clone(),

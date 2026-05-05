@@ -36,12 +36,9 @@ where
 }
 
 pub async fn probe_tcp_endpoint(label: &str, host: &str, port: u16) -> Result<(), String> {
-    tokio::time::timeout(
-        tcp_probe_timeout(),
-        tokio::net::TcpStream::connect((host, port)),
-    )
-    .await
-    .map_err(|_| format!("{label} TCP connection timed out ({TCP_PROBE_TIMEOUT_SECS}s)"))?
-    .map(|_| ())
-    .map_err(|e| format!("{label} TCP connection failed: {e}"))
+    tokio::time::timeout(tcp_probe_timeout(), tokio::net::TcpStream::connect((host, port)))
+        .await
+        .map_err(|_| format!("{label} TCP connection timed out ({TCP_PROBE_TIMEOUT_SECS}s)"))?
+        .map(|_| ())
+        .map_err(|e| format!("{label} TCP connection failed: {e}"))
 }

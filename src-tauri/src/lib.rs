@@ -9,9 +9,7 @@ use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .expect("Failed to install rustls crypto provider");
+    rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install rustls crypto provider");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -21,26 +19,17 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+                app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())?;
             }
 
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| e.to_string())
-                .expect("Failed to resolve app data dir");
+            let data_dir =
+                app.path().app_data_dir().map_err(|e| e.to_string()).expect("Failed to resolve app data dir");
             std::fs::create_dir_all(&data_dir).expect("Failed to create data dir");
             let db_path = data_dir.join("dbx.db");
 
             let storage = tauri::async_runtime::block_on(async {
                 let s = Storage::open(&db_path).await.expect("Failed to open storage");
-                s.migrate_from_json(&data_dir)
-                    .await
-                    .expect("Failed to migrate JSON data");
+                s.migrate_from_json(&data_dir).await.expect("Failed to migrate JSON data");
                 s
             });
 

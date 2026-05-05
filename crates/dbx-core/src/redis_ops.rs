@@ -1,10 +1,7 @@
 use crate::connection::{AppState, PoolKind};
 use crate::db::redis_driver::{self, RedisScanResult, RedisValue};
 
-pub async fn redis_list_databases_core(
-    state: &AppState,
-    connection_id: &str,
-) -> Result<Vec<u32>, String> {
+pub async fn redis_list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<u32>, String> {
     let connections = state.connections.lock().await;
     let pool = connections.get(connection_id).ok_or("Connection not found")?;
     match pool {
@@ -36,11 +33,7 @@ pub async fn redis_scan_keys_core(
     }
 }
 
-pub async fn redis_get_value_core(
-    state: &AppState,
-    connection_id: &str,
-    key: &str,
-) -> Result<RedisValue, String> {
+pub async fn redis_get_value_core(state: &AppState, connection_id: &str, key: &str) -> Result<RedisValue, String> {
     let connections = state.connections.lock().await;
     let pool = connections.get(connection_id).ok_or("Connection not found")?;
     match pool {
@@ -70,11 +63,7 @@ pub async fn redis_set_string_core(
     }
 }
 
-pub async fn redis_delete_key_core(
-    state: &AppState,
-    connection_id: &str,
-    key: &str,
-) -> Result<(), String> {
+pub async fn redis_delete_key_core(state: &AppState, connection_id: &str, key: &str) -> Result<(), String> {
     let connections = state.connections.lock().await;
     let pool = connections.get(connection_id).ok_or("Connection not found")?;
     match pool {
@@ -100,12 +89,7 @@ pub async fn redis_hash_set_core(
     }
 }
 
-pub async fn redis_hash_del_core(
-    state: &AppState,
-    connection_id: &str,
-    key: &str,
-    field: &str,
-) -> Result<(), String> {
+pub async fn redis_hash_del_core(state: &AppState, connection_id: &str, key: &str, field: &str) -> Result<(), String> {
     let connections = state.connections.lock().await;
     match connections.get(connection_id).ok_or("Not found")? {
         PoolKind::Redis(con) => redis_driver::hash_del(&mut *con.lock().await, key, field).await,
@@ -113,12 +97,7 @@ pub async fn redis_hash_del_core(
     }
 }
 
-pub async fn redis_list_push_core(
-    state: &AppState,
-    connection_id: &str,
-    key: &str,
-    value: &str,
-) -> Result<(), String> {
+pub async fn redis_list_push_core(state: &AppState, connection_id: &str, key: &str, value: &str) -> Result<(), String> {
     let connections = state.connections.lock().await;
     match connections.get(connection_id).ok_or("Not found")? {
         PoolKind::Redis(con) => redis_driver::list_push(&mut *con.lock().await, key, value).await,
@@ -139,12 +118,7 @@ pub async fn redis_list_remove_core(
     }
 }
 
-pub async fn redis_set_add_core(
-    state: &AppState,
-    connection_id: &str,
-    key: &str,
-    member: &str,
-) -> Result<(), String> {
+pub async fn redis_set_add_core(state: &AppState, connection_id: &str, key: &str, member: &str) -> Result<(), String> {
     let connections = state.connections.lock().await;
     match connections.get(connection_id).ok_or("Not found")? {
         PoolKind::Redis(con) => redis_driver::set_add(&mut *con.lock().await, key, member).await,

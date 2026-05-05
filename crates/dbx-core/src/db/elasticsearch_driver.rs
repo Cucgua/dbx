@@ -16,15 +16,9 @@ impl EsClient {
             (Some(u), Some(p)) if !u.is_empty() => Some((u.to_string(), p.to_string())),
             _ => None,
         };
-        let http = HttpClient::builder()
-            .connect_timeout(connection_timeout())
-            .build()
-            .unwrap_or_else(|_| HttpClient::new());
-        Self {
-            http,
-            base_url: url.trim_end_matches('/').to_string(),
-            auth,
-        }
+        let http =
+            HttpClient::builder().connect_timeout(connection_timeout()).build().unwrap_or_else(|_| HttpClient::new());
+        Self { http, base_url: url.trim_end_matches('/').to_string(), auth }
     }
 
     fn get(&self, path: &str) -> reqwest::RequestBuilder {
@@ -58,21 +52,13 @@ impl EsClient {
 
 impl Clone for EsClient {
     fn clone(&self) -> Self {
-        Self {
-            http: self.http.clone(),
-            base_url: self.base_url.clone(),
-            auth: self.auth.clone(),
-        }
+        Self { http: self.http.clone(), base_url: self.base_url.clone(), auth: self.auth.clone() }
     }
 }
 
 pub async fn test_connection(client: &EsClient) -> Result<(), String> {
     let resp = with_connection_timeout("Elasticsearch", async {
-        client
-            .get("/")
-            .send()
-            .await
-            .map_err(|e| format!("Elasticsearch connection failed: {e}"))
+        client.get("/").send().await.map_err(|e| format!("Elasticsearch connection failed: {e}"))
     })
     .await?;
     if !resp.status().is_success() {
@@ -97,15 +83,8 @@ pub async fn list_indices(client: &EsClient) -> Result<Vec<String>, String> {
         let body = resp.text().await.unwrap_or_default();
         return Err(format!("Elasticsearch error: {body}"));
     }
-    let indices: Vec<CatIndex> = resp
-        .json()
-        .await
-        .map_err(|e| format!("Elasticsearch parse error: {e}"))?;
-    let mut names: Vec<String> = indices
-        .into_iter()
-        .filter(|i| !i.index.starts_with('.'))
-        .map(|i| i.index)
-        .collect();
+    let indices: Vec<CatIndex> = resp.json().await.map_err(|e| format!("Elasticsearch parse error: {e}"))?;
+    let mut names: Vec<String> = indices.into_iter().filter(|i| !i.index.starts_with('.')).map(|i| i.index).collect();
     names.sort();
     Ok(names)
 }
@@ -147,22 +126,14 @@ pub async fn find_documents(
     });
 
     let path = format!("/{}/_search", index);
-    let resp = client
-        .post(&path)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Elasticsearch request failed: {e}"))?;
+    let resp = client.post(&path).json(&body).send().await.map_err(|e| format!("Elasticsearch request failed: {e}"))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
         return Err(format!("Elasticsearch error: {body}"));
     }
 
-    let result: SearchResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Elasticsearch parse error: {e}"))?;
+    let result: SearchResponse = resp.json().await.map_err(|e| format!("Elasticsearch parse error: {e}"))?;
 
     let documents: Vec<serde_json::Value> = result
         .hits
@@ -178,56 +149,29 @@ pub async fn find_documents(
         })
         .collect();
 
-    Ok(MongoDocumentResult {
-        documents,
-        total: result.hits.total.value,
-    })
+    Ok(MongoDocumentResult { documents, total: result.hits.total.value })
 }
 
-pub async fn insert_document(
-    client: &EsClient,
-    index: &str,
-    doc_json: &str,
-) -> Result<String, String> {
-    let doc: serde_json::Value =
-        serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
+pub async fn insert_document(client: &EsClient, index: &str, doc_json: &str) -> Result<String, String> {
+    let doc: serde_json::Value = serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
 
     let path = format!("/{}/_doc?refresh=true", index);
-    let resp = client
-        .post(&path)
-        .json(&doc)
-        .send()
-        .await
-        .map_err(|e| format!("Elasticsearch request failed: {e}"))?;
+    let resp = client.post(&path).json(&doc).send().await.map_err(|e| format!("Elasticsearch request failed: {e}"))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
         return Err(format!("Elasticsearch error: {body}"));
     }
 
-    let result: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Elasticsearch parse error: {e}"))?;
+    let result: serde_json::Value = resp.json().await.map_err(|e| format!("Elasticsearch parse error: {e}"))?;
     Ok(result["_id"].as_str().unwrap_or("").to_string())
 }
 
-pub async fn update_document(
-    client: &EsClient,
-    index: &str,
-    id: &str,
-    doc_json: &str,
-) -> Result<u64, String> {
-    let doc: serde_json::Value =
-        serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
+pub async fn update_document(client: &EsClient, index: &str, id: &str, doc_json: &str) -> Result<u64, String> {
+    let doc: serde_json::Value = serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
 
     let path = format!("/{}/_doc/{}?refresh=true", index, id);
-    let resp = client
-        .put(&path)
-        .json(&doc)
-        .send()
-        .await
-        .map_err(|e| format!("Elasticsearch request failed: {e}"))?;
+    let resp = client.put(&path).json(&doc).send().await.map_err(|e| format!("Elasticsearch request failed: {e}"))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -239,11 +183,7 @@ pub async fn update_document(
 
 pub async fn delete_document(client: &EsClient, index: &str, id: &str) -> Result<u64, String> {
     let path = format!("/{}/_doc/{}?refresh=true", index, id);
-    let resp = client
-        .delete(&path)
-        .send()
-        .await
-        .map_err(|e| format!("Elasticsearch request failed: {e}"))?;
+    let resp = client.delete(&path).send().await.map_err(|e| format!("Elasticsearch request failed: {e}"))?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
