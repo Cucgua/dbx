@@ -63,6 +63,13 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
             .unwrap_or(serde_json::Value::Null);
     }
 
+    if upper == "UUID" {
+        return row
+            .try_get::<uuid::Uuid, _>(idx)
+            .map(|v| serde_json::Value::String(v.to_string()))
+            .unwrap_or(serde_json::Value::Null);
+    }
+
     row.try_get::<String, _>(idx)
         .map(serde_json::Value::String)
         .or_else(|_| row.try_get::<i64, _>(idx).map(|v| serde_json::Value::Number(v.into())))
