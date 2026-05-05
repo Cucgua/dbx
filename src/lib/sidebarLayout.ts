@@ -100,7 +100,10 @@ export function buildTreeNodesFromLayout(
   return orderPinnedFirst(nodes);
 }
 
-export function findConnectionLocation(layout: SidebarLayout, connectionId: string): { entryIndex: number; groupId?: string; innerIndex?: number } | null {
+export function findConnectionLocation(
+  layout: SidebarLayout,
+  connectionId: string,
+): { entryIndex: number; groupId?: string; innerIndex?: number } | null {
   for (let i = 0; i < layout.order.length; i++) {
     const entry = layout.order[i];
     if (entry.type === "connection" && entry.id === connectionId) {
@@ -117,16 +120,22 @@ export function findConnectionLocation(layout: SidebarLayout, connectionId: stri
 }
 
 function removeConnectionFromLayout(order: SidebarOrderEntry[], connectionId: string): SidebarOrderEntry[] {
-  return order.map((entry) => {
-    if (entry.type === "connection" && entry.id === connectionId) return null;
-    if (entry.type === "group") {
-      return { ...entry, connectionIds: entry.connectionIds.filter((id) => id !== connectionId) };
-    }
-    return entry;
-  }).filter(Boolean) as SidebarOrderEntry[];
+  return order
+    .map((entry) => {
+      if (entry.type === "connection" && entry.id === connectionId) return null;
+      if (entry.type === "group") {
+        return { ...entry, connectionIds: entry.connectionIds.filter((id) => id !== connectionId) };
+      }
+      return entry;
+    })
+    .filter(Boolean) as SidebarOrderEntry[];
 }
 
-export function moveConnectionToGroup(layout: SidebarLayout, connectionId: string, targetGroupId: string | null): SidebarLayout {
+export function moveConnectionToGroup(
+  layout: SidebarLayout,
+  connectionId: string,
+  targetGroupId: string | null,
+): SidebarLayout {
   const order = removeConnectionFromLayout([...layout.order], connectionId);
 
   if (targetGroupId) {
@@ -165,14 +174,21 @@ export function reorderEntry(
   return reorderConnection(layout, draggedId, targetId, position);
 }
 
-function reorderGroup(layout: SidebarLayout, draggedId: string, targetId: string, position: DropPosition): SidebarLayout {
+function reorderGroup(
+  layout: SidebarLayout,
+  draggedId: string,
+  targetId: string,
+  position: DropPosition,
+): SidebarLayout {
   const order = [...layout.order];
   const draggedIndex = order.findIndex((e) => e.type === "group" && e.id === draggedId);
   if (draggedIndex < 0) return layout;
 
   const [dragged] = order.splice(draggedIndex, 1);
 
-  let targetIndex = order.findIndex((e) => (e.type === "group" && e.id === targetId) || (e.type === "connection" && e.id === targetId));
+  let targetIndex = order.findIndex(
+    (e) => (e.type === "group" && e.id === targetId) || (e.type === "connection" && e.id === targetId),
+  );
   if (targetIndex < 0) {
     order.push(dragged);
   } else {
@@ -183,7 +199,12 @@ function reorderGroup(layout: SidebarLayout, draggedId: string, targetId: string
   return { ...layout, order };
 }
 
-function reorderConnection(layout: SidebarLayout, draggedId: string, targetId: string, position: DropPosition): SidebarLayout {
+function reorderConnection(
+  layout: SidebarLayout,
+  draggedId: string,
+  targetId: string,
+  position: DropPosition,
+): SidebarLayout {
   const order = removeConnectionFromLayout([...layout.order], draggedId);
 
   const targetLoc = findConnectionLocation({ ...layout, order }, targetId);
@@ -227,7 +248,7 @@ export function createGroup(layout: SidebarLayout, name: string): { layout: Side
 export function renameGroup(layout: SidebarLayout, groupId: string, name: string): SidebarLayout {
   return {
     ...layout,
-    groups: layout.groups.map((g) => g.id === groupId ? { ...g, name } : g),
+    groups: layout.groups.map((g) => (g.id === groupId ? { ...g, name } : g)),
   };
 }
 
@@ -251,7 +272,7 @@ export function deleteGroup(layout: SidebarLayout, groupId: string): SidebarLayo
 export function toggleGroupCollapsed(layout: SidebarLayout, groupId: string): SidebarLayout {
   return {
     ...layout,
-    groups: layout.groups.map((g) => g.id === groupId ? { ...g, collapsed: !g.collapsed } : g),
+    groups: layout.groups.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g)),
   };
 }
 

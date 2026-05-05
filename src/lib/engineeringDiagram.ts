@@ -110,8 +110,7 @@ function chunkAttributes(items: AttributeDraft[], size: number): AttributeDraft[
 
 function rowWidth(items: AttributeDraft[]): number {
   if (items.length === 0) return 0;
-  return items.reduce((width, item) => width + item.width, 0) +
-    (items.length - 1) * ATTRIBUTE_GAP_X;
+  return items.reduce((width, item) => width + item.width, 0) + (items.length - 1) * ATTRIBUTE_GAP_X;
 }
 
 function horizontalBlockSize(items: AttributeDraft[]): BlockSize {
@@ -154,12 +153,7 @@ function distributeAttributes(table: DiagramTable): Record<AttributeSide, Attrib
   return groups;
 }
 
-function localAttributeNode(
-  table: DiagramTable,
-  item: AttributeDraft,
-  x: number,
-  y: number,
-): EngineeringAttributeNode {
+function localAttributeNode(table: DiagramTable, item: AttributeDraft, x: number, y: number): EngineeringAttributeNode {
   return {
     id: `${table.name}:${item.column.name}`,
     tableName: table.name,
@@ -204,12 +198,14 @@ function buildEngineeringCluster(table: DiagramTable): EngineeringCluster {
   });
 
   groups.right.forEach((item, index) => {
-    attributes.push(localAttributeNode(
-      table,
-      item,
-      centerX + centerWidth + rightGap + (rightSize.width - item.width) / 2,
-      centerY + (centerHeight - rightSize.height) / 2 + index * (ENGINEERING_ATTRIBUTE_HEIGHT + ATTRIBUTE_GAP_Y),
-    ));
+    attributes.push(
+      localAttributeNode(
+        table,
+        item,
+        centerX + centerWidth + rightGap + (rightSize.width - item.width) / 2,
+        centerY + (centerHeight - rightSize.height) / 2 + index * (ENGINEERING_ATTRIBUTE_HEIGHT + ATTRIBUTE_GAP_Y),
+      ),
+    );
   });
 
   chunkAttributes(groups.bottom, HORIZONTAL_ATTRIBUTE_COLUMNS).forEach((row, rowIndex) => {
@@ -222,12 +218,14 @@ function buildEngineeringCluster(table: DiagramTable): EngineeringCluster {
   });
 
   groups.left.forEach((item, index) => {
-    attributes.push(localAttributeNode(
-      table,
-      item,
-      (leftSize.width - item.width) / 2,
-      centerY + (centerHeight - leftSize.height) / 2 + index * (ENGINEERING_ATTRIBUTE_HEIGHT + ATTRIBUTE_GAP_Y),
-    ));
+    attributes.push(
+      localAttributeNode(
+        table,
+        item,
+        (leftSize.width - item.width) / 2,
+        centerY + (centerHeight - leftSize.height) / 2 + index * (ENGINEERING_ATTRIBUTE_HEIGHT + ATTRIBUTE_GAP_Y),
+      ),
+    );
   });
 
   return {
@@ -253,23 +251,20 @@ function orderedTableRows(tables: DiagramTable[], positions: Record<string, Diag
       y: Math.floor(fallbackIndex / columnsPerRow),
     },
   }));
-  const ys = [...new Set(ordered.map((item) => positionKey(item.position.y)))]
-    .sort((left, right) => Number(left) - Number(right));
+  const ys = [...new Set(ordered.map((item) => positionKey(item.position.y)))].sort(
+    (left, right) => Number(left) - Number(right),
+  );
 
   return ys.map((y) =>
     ordered
       .filter((item) => positionKey(item.position.y) === y)
       .sort((left, right) => left.position.x - right.position.x)
-      .map((item) => item.table)
+      .map((item) => item.table),
   );
 }
 
 function normalizeDiagram(diagram: Omit<EngineeringDiagram, "canvas">): EngineeringDiagram {
-  const rects = [
-    ...diagram.entities,
-    ...diagram.attributes,
-    ...diagram.relationships,
-  ];
+  const rects = [...diagram.entities, ...diagram.attributes, ...diagram.relationships];
   if (rects.length === 0) {
     return {
       ...diagram,
@@ -334,11 +329,13 @@ export function buildEngineeringDiagram(
         width: ENGINEERING_ENTITY_WIDTH,
         height: ENGINEERING_ENTITY_HEIGHT,
       });
-      attributes.push(...cluster.attributes.map((attribute) => ({
-        ...attribute,
-        x: originX + attribute.x,
-        y: originY + attribute.y,
-      })));
+      attributes.push(
+        ...cluster.attributes.map((attribute) => ({
+          ...attribute,
+          x: originX + attribute.x,
+          y: originY + attribute.y,
+        })),
+      );
 
       nextX += cluster.width + ENGINEERING_CLUSTER_GAP_X;
     });
@@ -357,18 +354,20 @@ export function buildEngineeringDiagram(
 
     const sourceCenter = entityCenter(source);
     const targetCenter = entityCenter(target);
-    return [{
-      id: relationship.id,
-      label: relationshipLabel(relationship),
-      sourceTable: relationship.sourceTable,
-      targetTable: relationship.targetTable,
-      sourceCardinality: "N",
-      targetCardinality: "1",
-      x: (sourceCenter.x + targetCenter.x) / 2 - ENGINEERING_RELATIONSHIP_WIDTH / 2,
-      y: (sourceCenter.y + targetCenter.y) / 2 - ENGINEERING_RELATIONSHIP_HEIGHT / 2,
-      width: ENGINEERING_RELATIONSHIP_WIDTH,
-      height: ENGINEERING_RELATIONSHIP_HEIGHT,
-    }];
+    return [
+      {
+        id: relationship.id,
+        label: relationshipLabel(relationship),
+        sourceTable: relationship.sourceTable,
+        targetTable: relationship.targetTable,
+        sourceCardinality: "N",
+        targetCardinality: "1",
+        x: (sourceCenter.x + targetCenter.x) / 2 - ENGINEERING_RELATIONSHIP_WIDTH / 2,
+        y: (sourceCenter.y + targetCenter.y) / 2 - ENGINEERING_RELATIONSHIP_HEIGHT / 2,
+        width: ENGINEERING_RELATIONSHIP_WIDTH,
+        height: ENGINEERING_RELATIONSHIP_HEIGHT,
+      },
+    ];
   });
 
   return normalizeDiagram({

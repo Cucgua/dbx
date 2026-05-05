@@ -1,21 +1,117 @@
 const SQL_KEYWORDS = [
-  "SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER",
-  "ON", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET", "INSERT",
-  "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "VIEW",
-  "AS", "AND", "OR", "NOT", "IN", "IS", "NULL", "LIKE", "DISTINCT",
-  "UNION", "ALL", "EXISTS", "BETWEEN", "CASE", "WHEN", "THEN", "ELSE", "END",
-  "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "CAST",
-  "ALTER", "DROP", "ADD", "COLUMN", "INDEX", "PRIMARY", "KEY", "FOREIGN",
-  "REFERENCES", "CONSTRAINT", "DEFAULT", "CHECK", "UNIQUE",
-  "BEGIN", "COMMIT", "ROLLBACK", "TRUNCATE", "EXPLAIN", "ANALYZE",
-  "WITH", "RECURSIVE", "OVER", "PARTITION BY", "ROW_NUMBER", "RANK", "DENSE_RANK",
-  "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE", "NTILE",
-  "CROSS", "FULL", "NATURAL", "USING", "LATERAL", "UNNEST",
-  "FILTER", "EXCLUDE", "REPLACE", "QUALIFY", "PIVOT", "UNPIVOT",
-  "ASOF", "POSITIONAL", "ANTI", "SEMI", "SAMPLE", "TABLESAMPLE",
-  "STRUCT", "MAP", "LIST", "ARRAY", "LAMBDA", "LIST_TRANSFORM",
-  "READ_CSV", "READ_PARQUET", "READ_JSON", "COPY", "EXPORT", "IMPORT",
-  "DESCRIBE", "SHOW", "SUMMARIZE", "PRAGMA",
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "JOIN",
+  "LEFT",
+  "RIGHT",
+  "INNER",
+  "OUTER",
+  "ON",
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "INSERT",
+  "INTO",
+  "VALUES",
+  "UPDATE",
+  "SET",
+  "DELETE",
+  "CREATE",
+  "TABLE",
+  "VIEW",
+  "AS",
+  "AND",
+  "OR",
+  "NOT",
+  "IN",
+  "IS",
+  "NULL",
+  "LIKE",
+  "DISTINCT",
+  "UNION",
+  "ALL",
+  "EXISTS",
+  "BETWEEN",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+  "COALESCE",
+  "CAST",
+  "ALTER",
+  "DROP",
+  "ADD",
+  "COLUMN",
+  "INDEX",
+  "PRIMARY",
+  "KEY",
+  "FOREIGN",
+  "REFERENCES",
+  "CONSTRAINT",
+  "DEFAULT",
+  "CHECK",
+  "UNIQUE",
+  "BEGIN",
+  "COMMIT",
+  "ROLLBACK",
+  "TRUNCATE",
+  "EXPLAIN",
+  "ANALYZE",
+  "WITH",
+  "RECURSIVE",
+  "OVER",
+  "PARTITION BY",
+  "ROW_NUMBER",
+  "RANK",
+  "DENSE_RANK",
+  "LAG",
+  "LEAD",
+  "FIRST_VALUE",
+  "LAST_VALUE",
+  "NTILE",
+  "CROSS",
+  "FULL",
+  "NATURAL",
+  "USING",
+  "LATERAL",
+  "UNNEST",
+  "FILTER",
+  "EXCLUDE",
+  "REPLACE",
+  "QUALIFY",
+  "PIVOT",
+  "UNPIVOT",
+  "ASOF",
+  "POSITIONAL",
+  "ANTI",
+  "SEMI",
+  "SAMPLE",
+  "TABLESAMPLE",
+  "STRUCT",
+  "MAP",
+  "LIST",
+  "ARRAY",
+  "LAMBDA",
+  "LIST_TRANSFORM",
+  "READ_CSV",
+  "READ_PARQUET",
+  "READ_JSON",
+  "COPY",
+  "EXPORT",
+  "IMPORT",
+  "DESCRIBE",
+  "SHOW",
+  "SUMMARIZE",
+  "PRAGMA",
 ];
 
 const TABLE_TRIGGER_KEYWORDS = new Set(["from", "join", "update", "into", "table", "describe", "explain"]);
@@ -97,16 +193,15 @@ export function getSqlCompletionContext(sql: string, cursor: number): SqlComplet
   const plainMatch = /([A-Za-z_][\w$]*)$/.exec(beforeCursor);
   const prefix = dottedMatch?.[2] ?? plainMatch?.[1] ?? "";
   const qualifier = dottedMatch?.[1];
-  const bareStart = qualifier
-    ? cursor - prefix.length
-    : cursor - (plainMatch?.[1]?.length ?? 0);
+  const bareStart = qualifier ? cursor - prefix.length : cursor - (plainMatch?.[1]?.length ?? 0);
   const beforeToken = beforeCursor.slice(0, Math.max(0, bareStart)).trimEnd();
   const lastWord = /([A-Za-z_][\w$]*)$/.exec(beforeToken)?.[1]?.toLowerCase() ?? "";
   const referencedTables = extractReferencedTables(sql);
 
-  const afterTableTrigger = TABLE_TRIGGER_KEYWORDS.has(lastWord)
-    || (JOIN_MODIFIERS.has(lastWord) && isFollowedByJoin(beforeToken))
-    || isInTableListContext(beforeToken);
+  const afterTableTrigger =
+    TABLE_TRIGGER_KEYWORDS.has(lastWord) ||
+    (JOIN_MODIFIERS.has(lastWord) && isFollowedByJoin(beforeToken)) ||
+    isInTableListContext(beforeToken);
 
   return {
     prefix,
@@ -118,7 +213,8 @@ export function getSqlCompletionContext(sql: string, cursor: number): SqlComplet
 }
 
 function extractReferencedTables(sql: string): SqlCompletionReferencedTable[] {
-  const pattern = /\b(?:from|join|update|into)\s+((?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*))?)(?:\s+(?:as\s+)?([A-Za-z_][\w$]*))?/gi;
+  const pattern =
+    /\b(?:from|join|update|into)\s+((?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*))?)(?:\s+(?:as\s+)?([A-Za-z_][\w$]*))?/gi;
   const referenced: SqlCompletionReferencedTable[] = [];
   for (const match of sql.matchAll(pattern)) {
     const rawName = match[1];
@@ -132,13 +228,16 @@ function extractReferencedTables(sql: string): SqlCompletionReferencedTable[] {
 }
 
 function splitQualifiedName(input: string): [string | undefined, string | undefined] {
-  const parts = input.split(".").map((part) => unquoteIdentifier(part.trim())).filter(Boolean);
+  const parts = input
+    .split(".")
+    .map((part) => unquoteIdentifier(part.trim()))
+    .filter(Boolean);
   if (parts.length >= 2) return [parts[0], parts[1]];
   return [parts[0], undefined];
 }
 
 function unquoteIdentifier(value: string): string {
-  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("`") && value.endsWith("`"))) {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("`") && value.endsWith("`"))) {
     return value.slice(1, -1);
   }
   return value;
@@ -189,13 +288,11 @@ function buildColumnItems(
 }
 
 function buildKeywordItems(prefix: string): SqlCompletionItem[] {
-  return SQL_KEYWORDS
-    .filter((keyword) => matchesPrefix(keyword, prefix))
-    .map((keyword) => ({
-      label: keyword,
-      type: "keyword" as const,
-      boost: computeBoost(keyword, prefix),
-    }));
+  return SQL_KEYWORDS.filter((keyword) => matchesPrefix(keyword, prefix)).map((keyword) => ({
+    label: keyword,
+    type: "keyword" as const,
+    boost: computeBoost(keyword, prefix),
+  }));
 }
 
 function matchesPrefix(candidate: string, prefix: string): boolean {

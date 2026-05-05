@@ -6,10 +6,7 @@ import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { formatSqlText, type SqlFormatDialect } from "@/lib/sqlFormatter";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import {
-  buildSqlCompletionItemsFromContext,
-  getSqlCompletionContext,
-} from "@/lib/sqlCompletion";
+import { buildSqlCompletionItemsFromContext, getSqlCompletionContext } from "@/lib/sqlCompletion";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 
 const props = defineProps<{
@@ -23,9 +20,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:modelValue": [value: string];
-  "selectionChange": [value: string];
-  "cursorChange": [pos: number];
-  "formatError": [message: string];
+  selectionChange: [value: string];
+  cursorChange: [pos: number];
+  formatError: [message: string];
   execute: [sql: string];
 }>();
 
@@ -51,7 +48,7 @@ function setFontSize(size: number) {
           editorFontTheme(editorViewModule.EditorView, next, ss.fontFamily, {
             fixedHeight: true,
             scrollable: true,
-          })
+          }),
         ),
       ],
     });
@@ -104,10 +101,7 @@ async function formatCurrentSql() {
   }
 }
 
-async function provideSqlCompletions(
-  currentState: import("@codemirror/state").EditorState,
-  position: number,
-) {
+async function provideSqlCompletions(currentState: import("@codemirror/state").EditorState, position: number) {
   if (!props.connectionId || !props.database) return null;
 
   const completionContext = getSqlCompletionContext(currentState.doc.toString(), position);
@@ -116,20 +110,24 @@ async function provideSqlCompletions(
 
   if (completionContext.suggestColumns) {
     const relatedTables = completionContext.qualifier
-      ? completionContext.referencedTables.filter((table) => table.alias === completionContext.qualifier || table.name === completionContext.qualifier)
+      ? completionContext.referencedTables.filter(
+          (table) => table.alias === completionContext.qualifier || table.name === completionContext.qualifier,
+        )
       : completionContext.referencedTables;
 
-    await Promise.all(relatedTables.map(async (table) => {
-      const cacheKey = table.schema ? `${table.schema}.${table.name}` : table.name;
-      if (columnsByTable.has(cacheKey)) return;
-      const columns = await connectionStore.listCompletionColumns(
-        props.connectionId!,
-        props.database!,
-        table.name,
-        table.schema,
-      );
-      columnsByTable.set(cacheKey, columns);
-    }));
+    await Promise.all(
+      relatedTables.map(async (table) => {
+        const cacheKey = table.schema ? `${table.schema}.${table.name}` : table.name;
+        if (columnsByTable.has(cacheKey)) return;
+        const columns = await connectionStore.listCompletionColumns(
+          props.connectionId!,
+          props.database!,
+          table.name,
+          table.schema,
+        );
+        columnsByTable.set(cacheKey, columns);
+      }),
+    );
   }
 
   const items = buildSqlCompletionItemsFromContext(completionContext, {
@@ -174,7 +172,8 @@ onMounted(async () => {
   const ss = settingsStore.editorSettings;
 
   const baseDialect = props.dialect === "postgres" ? PostgreSQL : MySQL;
-  const extraKeywords = "PIVOT UNPIVOT EXCLUDE REPLACE QUALIFY ASOF POSITIONAL ANTI SEMI SAMPLE TABLESAMPLE STRUCT MAP LIST ARRAY LAMBDA UNNEST LATERAL FILTER RECURSIVE SUMMARIZE PRAGMA READ_CSV READ_PARQUET READ_JSON DESCRIBE SHOW COPY EXPORT IMPORT";
+  const extraKeywords =
+    "PIVOT UNPIVOT EXCLUDE REPLACE QUALIFY ASOF POSITIONAL ANTI SEMI SAMPLE TABLESAMPLE STRUCT MAP LIST ARRAY LAMBDA UNNEST LATERAL FILTER RECURSIVE SUMMARIZE PRAGMA READ_CSV READ_PARQUET READ_JSON DESCRIBE SHOW COPY EXPORT IMPORT";
   const dialect = SQLDialect.define({
     ...baseDialect.spec,
     keywords: (baseDialect.spec.keywords || "") + " " + extraKeywords,
@@ -227,9 +226,7 @@ onMounted(async () => {
       sql({ dialect }),
       autocompletion({
         activateOnTyping: true,
-        override: [
-          async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos),
-        ],
+        override: [async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos)],
       }),
       codeMirrorTheme.of(theme),
       runKeymap,
@@ -253,7 +250,7 @@ onMounted(async () => {
         editorFontTheme(EditorView, ss.fontSize, ss.fontFamily, {
           fixedHeight: true,
           scrollable: true,
-        })
+        }),
       ),
       EditorView.domEventHandlers({
         wheel(event) {
@@ -278,14 +275,14 @@ watch(
         changes: { from: 0, to: view.value.state.doc.length, insert: val },
       });
     }
-  }
+  },
 );
 
 watch(
   () => props.formatRequestId,
   (val, oldVal) => {
     if (val && val !== oldVal) formatCurrentSql();
-  }
+  },
 );
 
 // Reactively apply editor settings changes (theme, font family, font size)
@@ -301,12 +298,12 @@ watch(
           editorFontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily, {
             fixedHeight: true,
             scrollable: true,
-          })
+          }),
         ),
       ],
     });
   },
-  { deep: true }
+  { deep: true },
 );
 
 onBeforeUnmount(() => {

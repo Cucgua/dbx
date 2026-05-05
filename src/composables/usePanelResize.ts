@@ -5,7 +5,7 @@ export function usePanelResize() {
   const aiPanelWidth = ref(Number(localStorage.getItem("dbx-ai-panel-width")) || 360);
   const historyWidth = ref(Number(localStorage.getItem("dbx-history-width")) || 288);
 
-  function startPanelResize(widthRef: Ref<number>, storageKey: string, direction: 'left' | 'right') {
+  function startPanelResize(widthRef: Ref<number>, storageKey: string, direction: "left" | "right") {
     return (e: MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
@@ -13,7 +13,7 @@ export function usePanelResize() {
 
       const onMouseMove = (ev: MouseEvent) => {
         const delta = ev.clientX - startX;
-        widthRef.value = Math.max(180, Math.min(800, startWidth + (direction === 'right' ? delta : -delta)));
+        widthRef.value = Math.max(180, Math.min(800, startWidth + (direction === "right" ? delta : -delta)));
       };
 
       const onMouseUp = () => {
@@ -27,9 +27,9 @@ export function usePanelResize() {
     };
   }
 
-  const startSidebarResize = startPanelResize(sidebarWidth, "dbx-sidebar-width", 'right');
-  const startAiPanelResize = startPanelResize(aiPanelWidth, "dbx-ai-panel-width", 'left');
-  const startHistoryResize = startPanelResize(historyWidth, "dbx-history-width", 'left');
+  const startSidebarResize = startPanelResize(sidebarWidth, "dbx-sidebar-width", "right");
+  const startAiPanelResize = startPanelResize(aiPanelWidth, "dbx-ai-panel-width", "left");
+  const startHistoryResize = startPanelResize(historyWidth, "dbx-history-width", "left");
 
   return {
     sidebarWidth,

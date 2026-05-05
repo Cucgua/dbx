@@ -31,7 +31,10 @@ export function buildDataGridSaveStatements(options: DataGridSaveStatementOption
     const row = options.rows[rowIndex];
     if (!row) continue;
     const sets = changes
-      .map(([columnIndex, value]) => `${quoteIdent(options.databaseType, options.columns[columnIndex])} = ${formatGridSqlLiteral(value)}`)
+      .map(
+        ([columnIndex, value]) =>
+          `${quoteIdent(options.databaseType, options.columns[columnIndex])} = ${formatGridSqlLiteral(value)}`,
+      )
       .join(", ");
     const where = buildPrimaryKeyWhere(options.databaseType, options.tableMeta.primaryKeys, options.columns, row);
     statements.push(`UPDATE ${table} SET ${sets} WHERE ${where};`);

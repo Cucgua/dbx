@@ -2,16 +2,47 @@
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-  Database, Table, Columns3, Eye, ChevronRight, ChevronDown,
-  Loader2, FolderOpen, FolderClosed, Trash2, TerminalSquare, RefreshCw,
-  Copy, TableProperties, Key, Link, Zap, ListTree, Pencil, Plug, Unplug,
-  Pin, ArrowRightLeft, Download, FileCode, Network, FileUp, PencilRuler, Search,
-  FolderInput, FolderPlus,
+  Database,
+  Table,
+  Columns3,
+  Eye,
+  ChevronRight,
+  ChevronDown,
+  Loader2,
+  FolderOpen,
+  FolderClosed,
+  Trash2,
+  TerminalSquare,
+  RefreshCw,
+  Copy,
+  TableProperties,
+  Key,
+  Link,
+  Zap,
+  ListTree,
+  Pencil,
+  Plug,
+  Unplug,
+  Pin,
+  ArrowRightLeft,
+  Download,
+  FileCode,
+  Network,
+  FileUp,
+  PencilRuler,
+  Search,
+  FolderInput,
+  FolderPlus,
 } from "lucide-vue-next";
 import {
-  ContextMenu, ContextMenuContent, ContextMenuItem,
-  ContextMenuSeparator, ContextMenuTrigger,
-  ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
 } from "@/components/ui/context-menu";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
@@ -29,9 +60,7 @@ import { qualifiedTableName as buildQualifiedTableName, quoteTableIdentifier } f
 import { treeNodeRowAction } from "@/lib/treeNodeClick";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -53,8 +82,28 @@ const emit = defineEmits<{
 
 const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
 const diagramSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
-const databaseSearchSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift", "duckdb", "clickhouse"]);
-const tableImportSupportedTypes = new Set(["mysql", "postgres", "sqlite", "duckdb", "clickhouse", "sqlserver", "oracle", "doris", "starrocks", "redshift"]);
+const databaseSearchSupportedTypes = new Set([
+  "mysql",
+  "postgres",
+  "sqlite",
+  "sqlserver",
+  "oracle",
+  "redshift",
+  "duckdb",
+  "clickhouse",
+]);
+const tableImportSupportedTypes = new Set([
+  "mysql",
+  "postgres",
+  "sqlite",
+  "duckdb",
+  "clickhouse",
+  "sqlserver",
+  "oracle",
+  "doris",
+  "starrocks",
+  "redshift",
+]);
 const tableStructureSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver"]);
 const fieldLineageSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
 const isExportingDatabase = ref(false);
@@ -151,47 +200,50 @@ async function toggle() {
     return;
   }
 
-  if (node.isExpanded) { node.isExpanded = false; return; }
+  if (node.isExpanded) {
+    node.isExpanded = false;
+    return;
+  }
 
   try {
-  if (node.type === "connection" && node.connectionId) {
-    const config = connectionStore.getConfig(node.connectionId);
-    if (config?.db_type === "redis") {
-      await connectionStore.loadRedisDatabases(node.connectionId);
-    } else if (config?.db_type === "mongodb" || config?.db_type === "elasticsearch") {
-      await connectionStore.loadMongoDatabases(node.connectionId);
-    } else {
-      await connectionStore.loadDatabases(node.connectionId);
+    if (node.type === "connection" && node.connectionId) {
+      const config = connectionStore.getConfig(node.connectionId);
+      if (config?.db_type === "redis") {
+        await connectionStore.loadRedisDatabases(node.connectionId);
+      } else if (config?.db_type === "mongodb" || config?.db_type === "elasticsearch") {
+        await connectionStore.loadMongoDatabases(node.connectionId);
+      } else {
+        await connectionStore.loadDatabases(node.connectionId);
+      }
+    } else if (node.type === "redis-db" && node.connectionId && node.database) {
+      const tabTitle = `${connectionStore.getConfig(node.connectionId)?.name || "Redis"}:db${node.database}`;
+      queryStore.createTab(node.connectionId, node.database, tabTitle, "redis");
+    } else if (node.type === "mongo-db" && node.connectionId && node.database) {
+      await connectionStore.loadMongoCollections(node.connectionId, node.database);
+    } else if (node.type === "mongo-collection" && node.connectionId && node.database) {
+      const tabTitle = `${node.database}.${node.label}`;
+      const tab = queryStore.createTab(node.connectionId, node.database, tabTitle, "mongo");
+      queryStore.updateSql(tab, node.label);
+    } else if (node.type === "database" && node.connectionId && node.database) {
+      const config = connectionStore.getConfig(node.connectionId);
+      if (config?.db_type === "postgres" || config?.db_type === "sqlserver") {
+        await connectionStore.loadSchemas(node.connectionId, node.database);
+      } else {
+        await connectionStore.loadTables(node.connectionId, node.database);
+      }
+    } else if (node.type === "schema" && node.connectionId && node.database && node.schema) {
+      await connectionStore.loadTables(node.connectionId, node.database, node.schema);
+    } else if ((node.type === "table" || node.type === "view") && node.connectionId && node.database) {
+      await connectionStore.loadTableGroups(node.connectionId, node.database, node.label, node.schema);
+    } else if (node.type === "group-columns" && node.connectionId && node.database && node.tableName) {
+      await connectionStore.loadColumns(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-indexes" && node.connectionId && node.database && node.tableName) {
+      await connectionStore.loadIndexes(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-fkeys" && node.connectionId && node.database && node.tableName) {
+      await connectionStore.loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-triggers" && node.connectionId && node.database && node.tableName) {
+      await connectionStore.loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
     }
-  } else if (node.type === "redis-db" && node.connectionId && node.database) {
-    const tabTitle = `${connectionStore.getConfig(node.connectionId)?.name || "Redis"}:db${node.database}`;
-    queryStore.createTab(node.connectionId, node.database, tabTitle, "redis");
-  } else if (node.type === "mongo-db" && node.connectionId && node.database) {
-    await connectionStore.loadMongoCollections(node.connectionId, node.database);
-  } else if (node.type === "mongo-collection" && node.connectionId && node.database) {
-    const tabTitle = `${node.database}.${node.label}`;
-    const tab = queryStore.createTab(node.connectionId, node.database, tabTitle, "mongo");
-    queryStore.updateSql(tab, node.label);
-  } else if (node.type === "database" && node.connectionId && node.database) {
-    const config = connectionStore.getConfig(node.connectionId);
-    if (config?.db_type === "postgres" || config?.db_type === "sqlserver") {
-      await connectionStore.loadSchemas(node.connectionId, node.database);
-    } else {
-      await connectionStore.loadTables(node.connectionId, node.database);
-    }
-  } else if (node.type === "schema" && node.connectionId && node.database && node.schema) {
-    await connectionStore.loadTables(node.connectionId, node.database, node.schema);
-  } else if ((node.type === "table" || node.type === "view") && node.connectionId && node.database) {
-    await connectionStore.loadTableGroups(node.connectionId, node.database, node.label, node.schema);
-  } else if (node.type === "group-columns" && node.connectionId && node.database && node.tableName) {
-    await connectionStore.loadColumns(node.connectionId, node.database, node.tableName, node.schema);
-  } else if (node.type === "group-indexes" && node.connectionId && node.database && node.tableName) {
-    await connectionStore.loadIndexes(node.connectionId, node.database, node.tableName, node.schema);
-  } else if (node.type === "group-fkeys" && node.connectionId && node.database && node.tableName) {
-    await connectionStore.loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema);
-  } else if (node.type === "group-triggers" && node.connectionId && node.database && node.tableName) {
-    await connectionStore.loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
-  }
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -218,9 +270,10 @@ async function openData() {
     await connectionStore.ensureConnected(node.connectionId);
     if (!config) throw new Error("Connection config not found");
 
-    const qualifiedName = (config.db_type === "postgres" || config.db_type === "oracle" || config.db_type === "sqlserver") && node.schema
-      ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
-      : quoteIdent(node.label);
+    const qualifiedName =
+      (config.db_type === "postgres" || config.db_type === "oracle" || config.db_type === "sqlserver") && node.schema
+        ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
+        : quoteIdent(node.label);
 
     const querySchema = node.schema || node.database;
     const columns = await api.getColumns(node.connectionId, node.database, querySchema, node.label);
@@ -333,9 +386,8 @@ async function fetchExportTableRows(
 
   while (rows.length < DATABASE_EXPORT_ROW_LIMIT) {
     const remaining = DATABASE_EXPORT_ROW_LIMIT - rows.length;
-    const limit = databaseType === "sqlserver"
-      ? DATABASE_EXPORT_ROW_LIMIT
-      : Math.min(DATABASE_EXPORT_PAGE_SIZE, remaining);
+    const limit =
+      databaseType === "sqlserver" ? DATABASE_EXPORT_ROW_LIMIT : Math.min(DATABASE_EXPORT_PAGE_SIZE, remaining);
     const sql = buildExportPageSql({
       databaseType,
       schema: table.schema,
@@ -362,7 +414,10 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
   if (isTauriRuntime()) {
     const { save } = await import("@tauri-apps/plugin-dialog");
     const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    const path = await save({ defaultPath: defaultFileName, filters: [{ name: filterName, extensions: [filterExt] }] });
+    const path = await save({
+      defaultPath: defaultFileName,
+      filters: [{ name: filterName, extensions: [filterExt] }],
+    });
     if (path) await writeTextFile(path, content);
   } else {
     const blob = new Blob([content], { type: "text/plain" });
@@ -401,9 +456,7 @@ async function exportDatabase() {
       });
     }
 
-    const scopeName = node.type === "schema" && node.schema
-      ? `${node.database}.${node.schema}`
-      : node.database;
+    const scopeName = node.type === "schema" && node.schema ? `${node.database}.${node.schema}` : node.database;
     const content = buildDatabaseSqlExport({
       databaseName: scopeName,
       tables: exportedTables,
@@ -412,7 +465,13 @@ async function exportDatabase() {
     });
 
     await saveFileContent(content, `${safeFileName(scopeName)}.sql`, "SQL", "sql");
-    toast(t("contextMenu.exportDatabaseSuccess", { count: exportedTables.length, limit: DATABASE_EXPORT_ROW_LIMIT }), 3000);
+    toast(
+      t("contextMenu.exportDatabaseSuccess", {
+        count: exportedTables.length,
+        limit: DATABASE_EXPORT_ROW_LIMIT,
+      }),
+      3000,
+    );
   } catch (e: any) {
     console.error("Export database failed:", e);
     toast(t("contextMenu.exportDatabaseFailed", { message: e?.message || String(e) }), 5000);
@@ -441,9 +500,10 @@ async function exportData(format: "csv" | "json" | "sql") {
 
   try {
     await connectionStore.ensureConnected(node.connectionId);
-    const qualifiedName = (config.db_type === "postgres" || config.db_type === "oracle" || config.db_type === "sqlserver") && node.schema
-      ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
-      : quoteIdent(node.label);
+    const qualifiedName =
+      (config.db_type === "postgres" || config.db_type === "oracle" || config.db_type === "sqlserver") && node.schema
+        ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
+        : quoteIdent(node.label);
     const result = await api.executeQuery(node.connectionId, node.database, `SELECT * FROM ${qualifiedName}`);
 
     let content: string;
@@ -459,7 +519,9 @@ async function exportData(format: "csv" | "json" | "sql") {
       ext = "json";
       const data = result.rows.map((row) => {
         const obj: Record<string, unknown> = {};
-        result.columns.forEach((col, i) => { obj[col] = row[i]; });
+        result.columns.forEach((col, i) => {
+          obj[col] = row[i];
+        });
         return obj;
       });
       content = JSON.stringify(data, null, 2);
@@ -467,11 +529,13 @@ async function exportData(format: "csv" | "json" | "sql") {
       ext = "sql";
       const cols = result.columns.map((c) => quoteIdent(c)).join(", ");
       const lines = result.rows.map((row) => {
-        const vals = row.map((v) => {
-          if (v === null) return "NULL";
-          if (typeof v === "number" || typeof v === "boolean") return String(v);
-          return `'${String(v).replace(/'/g, "''")}'`;
-        }).join(", ");
+        const vals = row
+          .map((v) => {
+            if (v === null) return "NULL";
+            if (typeof v === "number" || typeof v === "boolean") return String(v);
+            return `'${String(v).replace(/'/g, "''")}'`;
+          })
+          .join(", ");
         return `INSERT INTO ${qualifiedName} (${cols}) VALUES (${vals});`;
       });
       content = lines.join("\n");
@@ -596,25 +660,50 @@ const canOpenDatabaseSearch = computed(() => {
 });
 const canOpenTableImport = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return props.node.type === "table" && !!props.node.database && !!config && tableImportSupportedTypes.has(config.db_type);
+  return (
+    props.node.type === "table" && !!props.node.database && !!config && tableImportSupportedTypes.has(config.db_type)
+  );
 });
 const canOpenStructureEditor = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return props.node.type === "table" && !!props.node.database && !!config && tableStructureSupportedTypes.has(config.db_type);
+  return (
+    props.node.type === "table" && !!props.node.database && !!config && tableStructureSupportedTypes.has(config.db_type)
+  );
 });
 const canOpenFieldLineage = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return props.node.type === "column" && !!props.node.database && !!props.node.tableName && !!config && fieldLineageSupportedTypes.has(config.db_type);
+  return (
+    props.node.type === "column" &&
+    !!props.node.database &&
+    !!props.node.tableName &&
+    !!config &&
+    fieldLineageSupportedTypes.has(config.db_type)
+  );
 });
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));
 const hasTypeMenu = computed(() => {
   const t = props.node.type;
-  return t === "connection" || t === "database" || t === "schema" || t === "table" || t === "view" || t === "column" || isGroupLabel(props.node);
+  return (
+    t === "connection" ||
+    t === "database" ||
+    t === "schema" ||
+    t === "table" ||
+    t === "view" ||
+    t === "column" ||
+    isGroupLabel(props.node)
+  );
 });
-const columnComment = computed(() => props.node.type === "column" && props.node.meta && "comment" in props.node.meta ? (props.node.meta as any).comment : null);
+const columnComment = computed(() =>
+  props.node.type === "column" && props.node.meta && "comment" in props.node.meta
+    ? (props.node.meta as any).comment
+    : null,
+);
 const paddingLeft = `${props.depth * 16 + 8}px`;
-const isConnected = computed(() =>
-  props.node.type === "connection" && !!props.node.connectionId && connectionStore.connectedIds.has(props.node.connectionId)
+const isConnected = computed(
+  () =>
+    props.node.type === "connection" &&
+    !!props.node.connectionId &&
+    connectionStore.connectedIds.has(props.node.connectionId),
 );
 
 function connectionIconType(connectionId?: string) {
@@ -637,9 +726,7 @@ const visibleChildren = computed(() => {
 
 const hasMoreChildren = computed(() => (props.node.children?.length ?? 0) > displayLimit.value);
 
-const remainingCount = computed(() =>
-  (props.node.children?.length ?? 0) - displayLimit.value
-);
+const remainingCount = computed(() => (props.node.children?.length ?? 0) - displayLimit.value);
 
 function togglePin() {
   connectionStore.toggleTreeNodePin(props.node.id);
@@ -661,11 +748,15 @@ function startRenameGroup() {
   emit("rename-started");
 }
 
-watch(() => props.pendingRename, (val) => {
-  if (val && props.node.type === "connection-group") {
-    startRenameGroup();
-  }
-}, { immediate: true });
+watch(
+  () => props.pendingRename,
+  (val) => {
+    if (val && props.node.type === "connection-group") {
+      startRenameGroup();
+    }
+  },
+  { immediate: true },
+);
 
 function finishRenameGroup() {
   isRenamingGroup.value = false;
@@ -728,31 +819,30 @@ const currentGroupId = computed(() => {
 // --- Drag and Drop ---
 import { useDragSort } from "@/composables/useDragSort";
 
-const { state: dragState, startDrag, updateTarget, clearTarget } = useDragSort(
-  (draggedId, targetId, position) => connectionStore.reorderSidebarEntry(draggedId, targetId, position),
-);
+const {
+  state: dragState,
+  startDrag,
+  updateTarget,
+  clearTarget,
+} = useDragSort((draggedId, targetId, position) => connectionStore.reorderSidebarEntry(draggedId, targetId, position));
 
 const isDraggable = computed(() => {
   if (props.dragDisabled) return false;
   return props.node.type === "connection" || props.node.type === "connection-group";
 });
 
-const isDropTarget = computed(() =>
-  props.node.type === "connection" || props.node.type === "connection-group",
-);
+const isDropTarget = computed(() => props.node.type === "connection" || props.node.type === "connection-group");
 
-const showDropBefore = computed(() =>
-  dragState.active && dragState.targetId === props.node.id && dragState.dropPosition === "before",
+const showDropBefore = computed(
+  () => dragState.active && dragState.targetId === props.node.id && dragState.dropPosition === "before",
 );
-const showDropAfter = computed(() =>
-  dragState.active && dragState.targetId === props.node.id && dragState.dropPosition === "after",
+const showDropAfter = computed(
+  () => dragState.active && dragState.targetId === props.node.id && dragState.dropPosition === "after",
 );
-const showDropInside = computed(() =>
-  dragState.active && dragState.targetId === props.node.id && dragState.dropPosition === "inside",
+const showDropInside = computed(
+  () => dragState.active && dragState.targetId === props.node.id && dragState.dropPosition === "inside",
 );
-const isDragging = computed(() =>
-  dragState.active && dragState.draggedId === props.node.id,
-);
+const isDragging = computed(() => dragState.active && dragState.draggedId === props.node.id);
 </script>
 
 <template>
@@ -771,8 +861,16 @@ const isDragging = computed(() =>
           @mousemove="isDropTarget ? updateTarget($event, node.id, node.type) : undefined"
           @mouseleave="clearTarget(node.id)"
         >
-          <div v-if="showDropBefore" class="absolute right-2 top-0 h-0.5 bg-primary rounded-full pointer-events-none" :style="{ left: paddingLeft }" />
-          <div v-if="showDropAfter" class="absolute right-2 bottom-0 h-0.5 bg-primary rounded-full pointer-events-none" :style="{ left: paddingLeft }" />
+          <div
+            v-if="showDropBefore"
+            class="absolute right-2 top-0 h-0.5 bg-primary rounded-full pointer-events-none"
+            :style="{ left: paddingLeft }"
+          />
+          <div
+            v-if="showDropAfter"
+            class="absolute right-2 bottom-0 h-0.5 bg-primary rounded-full pointer-events-none"
+            :style="{ left: paddingLeft }"
+          />
           <template v-if="canExpand">
             <button
               type="button"
@@ -785,9 +883,22 @@ const isDragging = computed(() =>
             </button>
           </template>
           <span v-else class="w-3.5 h-3.5 shrink-0" />
-          <DatabaseIcon v-if="node.type === 'connection'" :db-type="connectionIconType(node.connectionId)" class="w-3.5 h-3.5 shrink-0" />
-          <component v-else :is="getIconInfo(node)?.icon || Database" class="w-3.5 h-3.5 shrink-0" :class="getIconInfo(node)?.colorClass" />
-          <span v-if="node.type === 'connection'" class="h-3 w-1.5 rounded-full shrink-0" :style="{ backgroundColor: connectionColor || '#9ca3af' }" />
+          <DatabaseIcon
+            v-if="node.type === 'connection'"
+            :db-type="connectionIconType(node.connectionId)"
+            class="w-3.5 h-3.5 shrink-0"
+          />
+          <component
+            v-else
+            :is="getIconInfo(node)?.icon || Database"
+            class="w-3.5 h-3.5 shrink-0"
+            :class="getIconInfo(node)?.colorClass"
+          />
+          <span
+            v-if="node.type === 'connection'"
+            class="h-3 w-1.5 rounded-full shrink-0"
+            :style="{ backgroundColor: connectionColor || '#9ca3af' }"
+          />
           <input
             v-if="isRenamingGroup"
             v-model="renameInput"
@@ -799,8 +910,15 @@ const isDragging = computed(() =>
             @vue:mounted="($event: any) => $event.el.focus()"
           />
           <span v-else class="min-w-0 flex-1 truncate">{{ isGroupLabel(node) ? t(node.label) : node.label }}</span>
-          <span v-if="columnComment" class="truncate text-muted-foreground/60 text-[10px] max-w-[40%]">{{ columnComment }}</span>
-          <span v-if="node.type === 'connection' && node.connectionId && connectionStore.connectedIds.has(node.connectionId)" class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+          <span v-if="columnComment" class="truncate text-muted-foreground/60 text-[10px] max-w-[40%]">{{
+            columnComment
+          }}</span>
+          <span
+            v-if="
+              node.type === 'connection' && node.connectionId && connectionStore.connectedIds.has(node.connectionId)
+            "
+            class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0"
+          />
           <button
             v-if="canPin"
             class="rounded p-0.5 text-muted-foreground hover:bg-muted-foreground/15 hover:text-foreground focus:opacity-100"
@@ -812,7 +930,13 @@ const isDragging = computed(() =>
           </button>
         </div>
         <template v-if="node.isExpanded && node.children">
-          <TreeItem v-for="child in visibleChildren" :key="child.id" :node="child" :depth="depth + 1" :drag-disabled="dragDisabled" />
+          <TreeItem
+            v-for="child in visibleChildren"
+            :key="child.id"
+            :node="child"
+            :depth="depth + 1"
+            :drag-disabled="dragDisabled"
+          />
           <div
             v-if="hasMoreChildren"
             class="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent text-xs text-muted-foreground"
@@ -820,7 +944,7 @@ const isDragging = computed(() =>
             @click="showMore"
           >
             <Loader2 v-if="node.isLoading" class="w-3 h-3 shrink-0 animate-spin" />
-            <span>{{ t('sidebar.showMore', { count: Math.min(CHILDREN_PAGE_SIZE, remainingCount) }) }}</span>
+            <span>{{ t("sidebar.showMore", { count: Math.min(CHILDREN_PAGE_SIZE, remainingCount) }) }}</span>
           </div>
         </template>
       </div>
@@ -829,27 +953,27 @@ const isDragging = computed(() =>
     <ContextMenuContent class="w-auto min-w-36">
       <ContextMenuItem v-if="canPin" @click="togglePin">
         <Pin class="w-4 h-4" :class="{ 'fill-current': isPinned }" />
-        {{ isPinned ? t('contextMenu.unpin') : t('contextMenu.pin') }}
+        {{ isPinned ? t("contextMenu.unpin") : t("contextMenu.pin") }}
       </ContextMenuItem>
       <ContextMenuSeparator v-if="canPin && hasTypeMenu" />
 
       <template v-if="node.type === 'connection'">
         <ContextMenuItem v-if="!isConnected" @click="toggle">
-          <Plug class="w-4 h-4" /> {{ t('contextMenu.openConnection') }}
+          <Plug class="w-4 h-4" /> {{ t("contextMenu.openConnection") }}
         </ContextMenuItem>
         <ContextMenuItem v-else @click="disconnectConnection">
-          <Unplug class="w-4 h-4" /> {{ t('contextMenu.closeConnection') }}
+          <Unplug class="w-4 h-4" /> {{ t("contextMenu.closeConnection") }}
         </ContextMenuItem>
         <ContextMenuItem @click="newQuery">
-          <TerminalSquare class="w-4 h-4" /> {{ t('contextMenu.newQuery') }}
+          <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
-          <FileCode class="w-4 h-4" /> {{ t('sqlFile.title') }}
+          <FileCode class="w-4 h-4" /> {{ t("sqlFile.title") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub v-if="availableGroups.length > 0 || currentGroupId">
           <ContextMenuSubTrigger>
-            <FolderInput class="w-4 h-4" /> {{ t('connectionGroup.moveToGroup') }}
+            <FolderInput class="w-4 h-4" /> {{ t("connectionGroup.moveToGroup") }}
           </ContextMenuSubTrigger>
           <ContextMenuSubContent>
             <ContextMenuItem
@@ -862,89 +986,89 @@ const isDragging = computed(() =>
             </ContextMenuItem>
             <ContextMenuSeparator v-if="currentGroupId" />
             <ContextMenuItem v-if="currentGroupId" @click="moveToGroup(null)">
-              {{ t('connectionGroup.ungrouped') }}
+              {{ t("connectionGroup.ungrouped") }}
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem @click="moveToNewGroup">
-              <FolderPlus class="w-4 h-4" /> {{ t('connectionGroup.newGroup') }}
+              <FolderPlus class="w-4 h-4" /> {{ t("connectionGroup.newGroup") }}
             </ContextMenuItem>
           </ContextMenuSubContent>
         </ContextMenuSub>
         <ContextMenuItem v-else @click="moveToNewGroup">
-          <FolderPlus class="w-4 h-4" /> {{ t('connectionGroup.moveToNewGroup') }}
+          <FolderPlus class="w-4 h-4" /> {{ t("connectionGroup.moveToNewGroup") }}
         </ContextMenuItem>
         <ContextMenuItem @click="refresh">
-          <RefreshCw class="w-4 h-4" /> {{ t('contextMenu.refreshChildren') }}
+          <RefreshCw class="w-4 h-4" /> {{ t("contextMenu.refreshChildren") }}
         </ContextMenuItem>
         <ContextMenuItem @click="editConnection">
-          <Pencil class="w-4 h-4" /> {{ t('contextMenu.editConnection') }}
+          <Pencil class="w-4 h-4" /> {{ t("contextMenu.editConnection") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem class="text-destructive" @click="deleteConnection">
-          <Trash2 class="w-4 h-4" /> {{ t('contextMenu.deleteConnection') }}
+          <Trash2 class="w-4 h-4" /> {{ t("contextMenu.deleteConnection") }}
         </ContextMenuItem>
       </template>
 
       <template v-if="node.type === 'connection-group'">
         <ContextMenuItem @click="startRenameGroup">
-          <Pencil class="w-4 h-4" /> {{ t('connectionGroup.renameGroup') }}
+          <Pencil class="w-4 h-4" /> {{ t("connectionGroup.renameGroup") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem class="text-destructive" @click="deleteConnectionGroup">
-          <Trash2 class="w-4 h-4" /> {{ t('connectionGroup.deleteGroup') }}
+          <Trash2 class="w-4 h-4" /> {{ t("connectionGroup.deleteGroup") }}
         </ContextMenuItem>
       </template>
 
       <template v-if="node.type === 'database' || node.type === 'schema'">
         <ContextMenuItem @click="newQuery">
-          <TerminalSquare class="w-4 h-4" /> {{ t('contextMenu.newQuery') }}
+          <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
-          <FileCode class="w-4 h-4" /> {{ t('sqlFile.title') }}
+          <FileCode class="w-4 h-4" /> {{ t("sqlFile.title") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenDiagram" @click="openDiagram">
-          <Network class="w-4 h-4" /> {{ t('diagram.open') }}
+          <Network class="w-4 h-4" /> {{ t("diagram.open") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenDatabaseSearch" @click="openDatabaseSearch">
-          <Search class="w-4 h-4" /> {{ t('databaseSearch.open') }}
+          <Search class="w-4 h-4" /> {{ t("databaseSearch.open") }}
         </ContextMenuItem>
         <ContextMenuItem @click="refresh">
-          <RefreshCw class="w-4 h-4" /> {{ t('contextMenu.refreshChildren') }}
+          <RefreshCw class="w-4 h-4" /> {{ t("contextMenu.refreshChildren") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem @click="openTransfer">
-          <ArrowRightLeft class="w-4 h-4" /> {{ t('transfer.dataTransfer') }}
+          <ArrowRightLeft class="w-4 h-4" /> {{ t("transfer.dataTransfer") }}
         </ContextMenuItem>
         <ContextMenuItem @click="openSchemaDiff">
-          <ArrowRightLeft class="w-4 h-4" /> {{ t('diff.title') }}
+          <ArrowRightLeft class="w-4 h-4" /> {{ t("diff.title") }}
         </ContextMenuItem>
         <ContextMenuItem :disabled="isExportingDatabase" @click="exportDatabase">
           <Loader2 v-if="isExportingDatabase" class="w-4 h-4 animate-spin" />
           <Download v-else class="w-4 h-4" />
-          {{ t('contextMenu.exportDatabase') }}
+          {{ t("contextMenu.exportDatabase") }}
         </ContextMenuItem>
       </template>
 
       <template v-if="node.type === 'table' || node.type === 'view'">
         <ContextMenuItem @click="openData">
-          <TableProperties class="w-4 h-4" /> {{ t('contextMenu.viewData') }}
+          <TableProperties class="w-4 h-4" /> {{ t("contextMenu.viewData") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenStructureEditor" @click="openStructureEditor">
-          <PencilRuler class="w-4 h-4" /> {{ t('contextMenu.editStructure') }}
+          <PencilRuler class="w-4 h-4" /> {{ t("contextMenu.editStructure") }}
         </ContextMenuItem>
         <ContextMenuItem @click="newQuery">
-          <TerminalSquare class="w-4 h-4" /> {{ t('contextMenu.newQuery') }}
+          <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenDiagram" @click="openDiagram">
-          <Network class="w-4 h-4" /> {{ t('diagram.open') }}
+          <Network class="w-4 h-4" /> {{ t("diagram.open") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenTableImport" @click="openTableImport">
-          <FileUp class="w-4 h-4" /> {{ t('contextMenu.importData') }}
+          <FileUp class="w-4 h-4" /> {{ t("contextMenu.importData") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub>
           <ContextMenuSubTrigger>
-            <Download class="w-4 h-4" /> {{ t('contextMenu.exportData') }}
+            <Download class="w-4 h-4" /> {{ t("contextMenu.exportData") }}
           </ContextMenuSubTrigger>
           <ContextMenuSubContent>
             <ContextMenuItem @click="exportData('csv')">CSV</ContextMenuItem>
@@ -953,42 +1077,49 @@ const isDragging = computed(() =>
           </ContextMenuSubContent>
         </ContextMenuSub>
         <ContextMenuItem @click="exportStructure">
-          <FileCode class="w-4 h-4" /> {{ t('contextMenu.exportStructure') }}
+          <FileCode class="w-4 h-4" /> {{ t("contextMenu.exportStructure") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem @click="refresh">
-          <RefreshCw class="w-4 h-4" /> {{ t('contextMenu.refreshChildren') }}
+          <RefreshCw class="w-4 h-4" /> {{ t("contextMenu.refreshChildren") }}
         </ContextMenuItem>
       </template>
 
       <template v-if="node.type === 'column'">
         <ContextMenuItem v-if="canOpenFieldLineage" @click="openFieldLineage">
-          <Network class="w-4 h-4" /> {{ t('lineage.open') }}
+          <Network class="w-4 h-4" /> {{ t("lineage.open") }}
         </ContextMenuItem>
       </template>
 
       <template v-if="isGroupLabel(node)">
         <ContextMenuItem @click="refresh">
-          <RefreshCw class="w-4 h-4" /> {{ t('contextMenu.refreshChildren') }}
+          <RefreshCw class="w-4 h-4" /> {{ t("contextMenu.refreshChildren") }}
         </ContextMenuItem>
       </template>
 
       <ContextMenuSeparator v-if="hasTypeMenu" />
-      <ContextMenuItem @click="copyName">
-        <Copy class="w-4 h-4" /> {{ t('contextMenu.copyName') }}
-      </ContextMenuItem>
+      <ContextMenuItem @click="copyName"> <Copy class="w-4 h-4" /> {{ t("contextMenu.copyName") }} </ContextMenuItem>
     </ContextMenuContent>
   </ContextMenu>
 
   <Dialog v-model:open="showDeleteConfirm">
     <DialogContent class="sm:max-w-[400px]">
       <DialogHeader>
-        <DialogTitle>{{ t('contextMenu.confirmDeleteTitle') }}</DialogTitle>
+        <DialogTitle>{{ t("contextMenu.confirmDeleteTitle") }}</DialogTitle>
       </DialogHeader>
-      <p class="text-sm text-muted-foreground">{{ t('contextMenu.confirmDeleteMessage', { name: node.label }) }}</p>
+      <p class="text-sm text-muted-foreground">
+        {{ t("contextMenu.confirmDeleteMessage", { name: node.label }) }}
+      </p>
       <DialogFooter>
-        <Button variant="outline" @click="showDeleteConfirm = false">{{ t('dangerDialog.cancel') }}</Button>
-        <Button variant="destructive" @click="showDeleteConfirm = false; confirmDelete()">{{ t('contextMenu.deleteConnection') }}</Button>
+        <Button variant="outline" @click="showDeleteConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button
+          variant="destructive"
+          @click="
+            showDeleteConfirm = false;
+            confirmDelete();
+          "
+          >{{ t("contextMenu.deleteConnection") }}</Button
+        >
       </DialogFooter>
     </DialogContent>
   </Dialog>
@@ -996,7 +1127,7 @@ const isDragging = computed(() =>
   <Dialog v-model:open="showMoveToNewGroupDialog">
     <DialogContent class="sm:max-w-[360px]">
       <DialogHeader>
-        <DialogTitle>{{ t('connectionGroup.createGroup') }}</DialogTitle>
+        <DialogTitle>{{ t("connectionGroup.createGroup") }}</DialogTitle>
       </DialogHeader>
       <Input
         v-model="moveToNewGroupName"
@@ -1004,8 +1135,10 @@ const isDragging = computed(() =>
         @keydown.enter.prevent="confirmMoveToNewGroup"
       />
       <DialogFooter>
-        <Button variant="outline" @click="showMoveToNewGroupDialog = false">{{ t('dangerDialog.cancel') }}</Button>
-        <Button :disabled="!moveToNewGroupName.trim()" @click="confirmMoveToNewGroup">{{ t('connectionGroup.createGroup') }}</Button>
+        <Button variant="outline" @click="showMoveToNewGroupDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="!moveToNewGroupName.trim()" @click="confirmMoveToNewGroup">{{
+          t("connectionGroup.createGroup")
+        }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
@@ -1013,12 +1146,14 @@ const isDragging = computed(() =>
   <Dialog v-model:open="showDeleteGroupConfirm">
     <DialogContent class="sm:max-w-[400px]">
       <DialogHeader>
-        <DialogTitle>{{ t('connectionGroup.deleteGroupConfirmTitle') }}</DialogTitle>
+        <DialogTitle>{{ t("connectionGroup.deleteGroupConfirmTitle") }}</DialogTitle>
       </DialogHeader>
-      <p class="text-sm text-muted-foreground">{{ t('connectionGroup.deleteGroupConfirmMessage', { name: node.label }) }}</p>
+      <p class="text-sm text-muted-foreground">
+        {{ t("connectionGroup.deleteGroupConfirmMessage", { name: node.label }) }}
+      </p>
       <DialogFooter>
-        <Button variant="outline" @click="showDeleteGroupConfirm = false">{{ t('dangerDialog.cancel') }}</Button>
-        <Button variant="destructive" @click="confirmDeleteGroup">{{ t('connectionGroup.deleteGroup') }}</Button>
+        <Button variant="outline" @click="showDeleteGroupConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button variant="destructive" @click="confirmDeleteGroup">{{ t("connectionGroup.deleteGroup") }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>

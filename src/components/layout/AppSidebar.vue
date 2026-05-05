@@ -22,7 +22,7 @@ const { t } = useI18n();
   <div class="h-full shrink-0 relative select-none" :style="{ width: sidebarWidth + 'px' }">
     <div class="h-full flex flex-col overflow-hidden">
       <div class="h-9 flex items-center px-3 text-xs font-medium text-muted-foreground border-b bg-muted/20">
-        {{ t('sidebar.connections') }}
+        {{ t("sidebar.connections") }}
         <span class="flex-1" />
         <Tooltip>
           <TooltipTrigger as-child>
@@ -30,7 +30,7 @@ const { t } = useI18n();
               <Upload class="h-3 w-3" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{{ t('sidebar.import') }}</TooltipContent>
+          <TooltipContent>{{ t("sidebar.import") }}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger as-child>
@@ -38,7 +38,7 @@ const { t } = useI18n();
               <Download class="h-3 w-3" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{{ t('sidebar.export') }}</TooltipContent>
+          <TooltipContent>{{ t("sidebar.export") }}</TooltipContent>
         </Tooltip>
       </div>
       <div class="flex-1 overflow-y-auto">

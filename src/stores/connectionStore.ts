@@ -41,11 +41,36 @@ export const useConnectionStore = defineStore("connection", () => {
   const transferSource = ref<{ connectionId: string; database: string } | null>(null);
   const schemaDiffSource = ref<{ connectionId: string; database: string } | null>(null);
   const sqlFileSource = ref<{ connectionId: string; database: string } | null>(null);
-  const diagramSource = ref<{ connectionId: string; database: string; schema?: string; tableName?: string } | null>(null);
-  const tableImportSource = ref<{ connectionId: string; database: string; schema?: string; tableName: string } | null>(null);
-  const structureEditorSource = ref<{ connectionId: string; database: string; schema?: string; tableName: string } | null>(null);
-  const fieldLineageSource = ref<{ connectionId: string; database: string; schema?: string; tableName: string; columnName: string } | null>(null);
-  const databaseSearchSource = ref<{ connectionId: string; database: string; schema?: string } | null>(null);
+  const diagramSource = ref<{
+    connectionId: string;
+    database: string;
+    schema?: string;
+    tableName?: string;
+  } | null>(null);
+  const tableImportSource = ref<{
+    connectionId: string;
+    database: string;
+    schema?: string;
+    tableName: string;
+  } | null>(null);
+  const structureEditorSource = ref<{
+    connectionId: string;
+    database: string;
+    schema?: string;
+    tableName: string;
+  } | null>(null);
+  const fieldLineageSource = ref<{
+    connectionId: string;
+    database: string;
+    schema?: string;
+    tableName: string;
+    columnName: string;
+  } | null>(null);
+  const databaseSearchSource = ref<{
+    connectionId: string;
+    database: string;
+    schema?: string;
+  } | null>(null);
   const sidebarLayout = ref<SidebarLayout>(emptyLayout());
   let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -135,7 +160,8 @@ export const useConnectionStore = defineStore("connection", () => {
     const node = findNode(treeNodes.value, id);
     if (node) node.pinned = next.has(id);
 
-    const isConnectionOrGroup = treeNodes.value.some((n) => n.id === id) ||
+    const isConnectionOrGroup =
+      treeNodes.value.some((n) => n.id === id) ||
       treeNodes.value.some((n) => n.type === "connection-group" && n.children?.some((c) => c.id === id));
     if (isConnectionOrGroup) {
       rebuildTreeNodes();
@@ -260,15 +286,18 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       await ensureConnected(connectionId);
       const databases = await api.listDatabases(connectionId);
-      setChildren(node, databases.map((db) => ({
-        id: `${connectionId}:${db.name}`,
-        label: db.name,
-        type: "database" as const,
-        connectionId,
-        database: db.name,
-        isExpanded: false,
-        children: [],
-      })));
+      setChildren(
+        node,
+        databases.map((db) => ({
+          id: `${connectionId}:${db.name}`,
+          label: db.name,
+          type: "database" as const,
+          connectionId,
+          database: db.name,
+          isExpanded: false,
+          children: [],
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -283,15 +312,18 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       await ensureConnected(connectionId);
       const dbs = await api.redisListDatabases(connectionId);
-      setChildren(node, dbs.map((db) => ({
-        id: `${connectionId}:db${db}`,
-        label: `db${db}`,
-        type: "redis-db" as const,
-        connectionId,
-        database: String(db),
-        isExpanded: false,
-        children: [],
-      })));
+      setChildren(
+        node,
+        dbs.map((db) => ({
+          id: `${connectionId}:db${db}`,
+          label: `db${db}`,
+          type: "redis-db" as const,
+          connectionId,
+          database: String(db),
+          isExpanded: false,
+          children: [],
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -306,15 +338,18 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       await ensureConnected(connectionId);
       const dbs = await api.mongoListDatabases(connectionId);
-      setChildren(node, dbs.map((db) => ({
-        id: `${connectionId}:${db}`,
-        label: db,
-        type: "mongo-db" as const,
-        connectionId,
-        database: db,
-        isExpanded: false,
-        children: [],
-      })));
+      setChildren(
+        node,
+        dbs.map((db) => ({
+          id: `${connectionId}:${db}`,
+          label: db,
+          type: "mongo-db" as const,
+          connectionId,
+          database: db,
+          isExpanded: false,
+          children: [],
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -329,14 +364,17 @@ export const useConnectionStore = defineStore("connection", () => {
     node.isLoading = true;
     try {
       const collections = await api.mongoListCollections(connectionId, database);
-      setChildren(node, collections.map((col) => ({
-        id: `${nodeId}:${col}`,
-        label: col,
-        type: "mongo-collection" as const,
-        connectionId,
-        database,
-        isExpanded: false,
-      })));
+      setChildren(
+        node,
+        collections.map((col) => ({
+          id: `${nodeId}:${col}`,
+          label: col,
+          type: "mongo-collection" as const,
+          connectionId,
+          database,
+          isExpanded: false,
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -351,16 +389,19 @@ export const useConnectionStore = defineStore("connection", () => {
     node.isLoading = true;
     try {
       const schemas = await api.listSchemas(connectionId, database);
-      setChildren(node, schemas.map((s) => ({
-        id: `${connectionId}:${database}:${s}`,
-        label: s,
-        type: "schema" as const,
-        connectionId,
-        database,
-        schema: s,
-        isExpanded: false,
-        children: [],
-      })));
+      setChildren(
+        node,
+        schemas.map((s) => ({
+          id: `${connectionId}:${database}:${s}`,
+          label: s,
+          type: "schema" as const,
+          connectionId,
+          database,
+          schema: s,
+          isExpanded: false,
+          children: [],
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -368,9 +409,7 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   async function loadTables(connectionId: string, database: string, schema?: string) {
-    const nodeId = schema
-      ? `${connectionId}:${database}:${schema}`
-      : `${connectionId}:${database}`;
+    const nodeId = schema ? `${connectionId}:${database}:${schema}` : `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
     if (!node) return;
 
@@ -378,16 +417,19 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       const querySchema = schema || database;
       const tables = await api.listTables(connectionId, database, querySchema);
-      setChildren(node, tables.map((t) => ({
-        id: `${nodeId}:${t.name}`,
-        label: t.name,
-        type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
-        connectionId,
-        database,
-        schema,
-        isExpanded: false,
-        children: [],
-      })));
+      setChildren(
+        node,
+        tables.map((t) => ({
+          id: `${nodeId}:${t.name}`,
+          label: t.name,
+          type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
+          connectionId,
+          database,
+          schema,
+          isExpanded: false,
+          children: [],
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -395,17 +437,55 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   async function loadTableGroups(connectionId: string, database: string, table: string, schema?: string) {
-    const parentId = schema
-      ? `${connectionId}:${database}:${schema}:${table}`
-      : `${connectionId}:${database}:${table}`;
+    const parentId = schema ? `${connectionId}:${database}:${schema}:${table}` : `${connectionId}:${database}:${table}`;
     const node = findNode(treeNodes.value, parentId);
     if (!node) return;
 
     setChildren(node, [
-      { id: `${parentId}:__columns`, label: "tree.columns", type: "group-columns", connectionId, database, schema, tableName: table, isExpanded: false, children: [] },
-      { id: `${parentId}:__indexes`, label: "tree.indexes", type: "group-indexes", connectionId, database, schema, tableName: table, isExpanded: false, children: [] },
-      { id: `${parentId}:__fkeys`, label: "tree.foreignKeys", type: "group-fkeys", connectionId, database, schema, tableName: table, isExpanded: false, children: [] },
-      { id: `${parentId}:__triggers`, label: "tree.triggers", type: "group-triggers", connectionId, database, schema, tableName: table, isExpanded: false, children: [] },
+      {
+        id: `${parentId}:__columns`,
+        label: "tree.columns",
+        type: "group-columns",
+        connectionId,
+        database,
+        schema,
+        tableName: table,
+        isExpanded: false,
+        children: [],
+      },
+      {
+        id: `${parentId}:__indexes`,
+        label: "tree.indexes",
+        type: "group-indexes",
+        connectionId,
+        database,
+        schema,
+        tableName: table,
+        isExpanded: false,
+        children: [],
+      },
+      {
+        id: `${parentId}:__fkeys`,
+        label: "tree.foreignKeys",
+        type: "group-fkeys",
+        connectionId,
+        database,
+        schema,
+        tableName: table,
+        isExpanded: false,
+        children: [],
+      },
+      {
+        id: `${parentId}:__triggers`,
+        label: "tree.triggers",
+        type: "group-triggers",
+        connectionId,
+        database,
+        schema,
+        tableName: table,
+        isExpanded: false,
+        children: [],
+      },
     ]);
     node.isExpanded = true;
   }
@@ -421,16 +501,19 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       const querySchema = schema || database;
       const columns = await api.getColumns(connectionId, database, querySchema, table);
-      setChildren(node, columns.map((col) => ({
-        id: `${parentId}:${col.name}`,
-        label: `${col.name} (${col.data_type})`,
-        type: "column" as const,
-        connectionId,
-        database,
-        schema,
-        tableName: table,
-        meta: col,
-      })));
+      setChildren(
+        node,
+        columns.map((col) => ({
+          id: `${parentId}:${col.name}`,
+          label: `${col.name} (${col.data_type})`,
+          type: "column" as const,
+          connectionId,
+          database,
+          schema,
+          tableName: table,
+          meta: col,
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -448,15 +531,18 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       const querySchema = schema || database;
       const indexes = await api.listIndexes(connectionId, database, querySchema, table);
-      setChildren(node, indexes.map((idx) => ({
-        id: `${parentId}:${idx.name}`,
-        label: `${idx.name} (${idx.columns.join(", ")})`,
-        type: "index" as const,
-        connectionId,
-        database,
-        schema,
-        meta: idx,
-      })));
+      setChildren(
+        node,
+        indexes.map((idx) => ({
+          id: `${parentId}:${idx.name}`,
+          label: `${idx.name} (${idx.columns.join(", ")})`,
+          type: "index" as const,
+          connectionId,
+          database,
+          schema,
+          meta: idx,
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -474,15 +560,18 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       const querySchema = schema || database;
       const fkeys = await api.listForeignKeys(connectionId, database, querySchema, table);
-      setChildren(node, fkeys.map((fk) => ({
-        id: `${parentId}:${fk.name}`,
-        label: `${fk.column} → ${fk.ref_table}.${fk.ref_column}`,
-        type: "fkey" as const,
-        connectionId,
-        database,
-        schema,
-        meta: fk,
-      })));
+      setChildren(
+        node,
+        fkeys.map((fk) => ({
+          id: `${parentId}:${fk.name}`,
+          label: `${fk.column} → ${fk.ref_table}.${fk.ref_column}`,
+          type: "fkey" as const,
+          connectionId,
+          database,
+          schema,
+          meta: fk,
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -500,15 +589,18 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       const querySchema = schema || database;
       const triggers = await api.listTriggers(connectionId, database, querySchema, table);
-      setChildren(node, triggers.map((tr) => ({
-        id: `${parentId}:${tr.name}`,
-        label: `${tr.name} (${tr.timing} ${tr.event})`,
-        type: "trigger" as const,
-        connectionId,
-        database,
-        schema,
-        meta: tr,
-      })));
+      setChildren(
+        node,
+        triggers.map((tr) => ({
+          id: `${parentId}:${tr.name}`,
+          label: `${tr.name} (${tr.timing} ${tr.event})`,
+          type: "trigger" as const,
+          connectionId,
+          database,
+          schema,
+          meta: tr,
+        })),
+      );
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -536,7 +628,7 @@ export const useConnectionStore = defineStore("connection", () => {
           return tables.map((table) => ({
             name: table.name,
             schema,
-            type: table.table_type === "VIEW" ? "view" as const : "table" as const,
+            type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
           }));
         }),
       );
@@ -547,7 +639,7 @@ export const useConnectionStore = defineStore("connection", () => {
     const tables = await api.listTables(connectionId, database, database);
     completionTablesCache.value[cacheKey] = tables.map((table) => ({
       name: table.name,
-      type: table.table_type === "VIEW" ? "view" as const : "table" as const,
+      type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
     }));
     return completionTablesCache.value[cacheKey];
   }
@@ -637,7 +729,10 @@ export const useConnectionStore = defineStore("connection", () => {
     if (isTauriRuntime()) {
       const { save } = await import("@tauri-apps/plugin-dialog");
       const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await save({ filters: [{ name: "JSON", extensions: ["json"] }], defaultPath: "dbx-connections.json" });
+      const path = await save({
+        filters: [{ name: "JSON", extensions: ["json"] }],
+        defaultPath: "dbx-connections.json",
+      });
       if (!path) return;
       await writeTextFile(path, content);
     } else {
@@ -657,7 +752,10 @@ export const useConnectionStore = defineStore("connection", () => {
     if (isTauriRuntime()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await open({ filters: [{ name: "JSON", extensions: ["json"] }], multiple: false });
+      const path = await open({
+        filters: [{ name: "JSON", extensions: ["json"] }],
+        multiple: false,
+      });
       if (!path) return null;
       content = await readTextFile(path as string);
     } else {
@@ -667,7 +765,10 @@ export const useConnectionStore = defineStore("connection", () => {
         input.accept = ".json";
         input.onchange = () => {
           const file = input.files?.[0];
-          if (!file) { reject(new Error("No file selected")); return; }
+          if (!file) {
+            reject(new Error("No file selected"));
+            return;
+          }
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result as string);
           reader.onerror = () => reject(reader.error);
@@ -682,7 +783,10 @@ export const useConnectionStore = defineStore("connection", () => {
     return { content, encrypted: isEncryptedConfig(parsed) };
   }
 
-  async function importConnectionsFromFile(content: string, passphrase: string | null): Promise<{ count: number; layout?: SidebarLayout }> {
+  async function importConnectionsFromFile(
+    content: string,
+    passphrase: string | null,
+  ): Promise<{ count: number; layout?: SidebarLayout }> {
     let imported: ConnectionConfig[];
     let importedLayout: SidebarLayout | undefined;
     const parsed = JSON.parse(content);
@@ -716,7 +820,9 @@ export const useConnectionStore = defineStore("connection", () => {
 
     let count = 0;
     for (const config of imported) {
-      const duplicate = connections.value.find((c) => c.name === config.name && c.host === config.host && c.port === config.port);
+      const duplicate = connections.value.find(
+        (c) => c.name === config.name && c.host === config.host && c.port === config.port,
+      );
       if (!duplicate) {
         config.id = crypto.randomUUID();
         const normalized = normalizeConnection(config);

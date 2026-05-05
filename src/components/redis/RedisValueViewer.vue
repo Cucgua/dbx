@@ -38,8 +38,10 @@ const deleteDetails = computed(() => {
   const pending = pendingDelete.value;
   if (!pending) return "";
   if (pending.kind === "key") return t("dangerDialog.redisKeyDetails", { key: props.keyName });
-  if (pending.kind === "hash") return t("dangerDialog.redisHashFieldDetails", { key: props.keyName, field: pending.field });
-  if (pending.kind === "list") return t("dangerDialog.redisListItemDetails", { key: props.keyName, index: pending.index });
+  if (pending.kind === "hash")
+    return t("dangerDialog.redisHashFieldDetails", { key: props.keyName, field: pending.field });
+  if (pending.kind === "list")
+    return t("dangerDialog.redisListItemDetails", { key: props.keyName, index: pending.index });
   return t("dangerDialog.redisSetMemberDetails", { key: props.keyName, member: pending.member });
 });
 
@@ -147,7 +149,7 @@ onMounted(load);
 <template>
   <div class="h-full flex flex-col overflow-hidden">
     <div v-if="loading" class="flex-1 flex items-center justify-center text-muted-foreground">
-      {{ t('common.loading') }}
+      {{ t("common.loading") }}
     </div>
 
     <template v-else-if="data">
@@ -156,35 +158,65 @@ onMounted(load);
         <span class="font-mono text-sm font-medium truncate">{{ data.key }}</span>
         <Badge variant="secondary" class="text-xs">{{ data.key_type }}</Badge>
         <Badge v-if="data.ttl > 0" variant="outline" class="text-xs">TTL: {{ data.ttl }}s</Badge>
-        <Badge v-else-if="data.ttl === -1" variant="outline" class="text-xs opacity-50">{{ t('redis.noExpiry') }}</Badge>
+        <Badge v-else-if="data.ttl === -1" variant="outline" class="text-xs opacity-50">{{
+          t("redis.noExpiry")
+        }}</Badge>
         <span class="flex-1" />
         <Button variant="ghost" size="icon" class="h-7 w-7" @click="load"><RefreshCw class="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" class="h-7 w-7" @click="copyValue"><Copy class="h-3.5 w-3.5" /></Button>
-        <Button variant="ghost" size="icon" class="h-7 w-7 text-destructive" @click="requestDeleteKey"><Trash2 class="h-3.5 w-3.5" /></Button>
+        <Button variant="ghost" size="icon" class="h-7 w-7 text-destructive" @click="requestDeleteKey"
+          ><Trash2 class="h-3.5 w-3.5"
+        /></Button>
       </div>
 
       <!-- String -->
       <div v-if="data.key_type === 'string'" class="flex-1 flex flex-col overflow-hidden">
-        <textarea v-model="editValue" class="flex-1 p-4 font-mono text-sm bg-background resize-none outline-none" @input="isEditing = true" />
+        <textarea
+          v-model="editValue"
+          class="flex-1 p-4 font-mono text-sm bg-background resize-none outline-none"
+          @input="isEditing = true"
+        />
         <div v-if="isEditing" class="px-4 py-2 border-t flex justify-end gap-2 shrink-0">
-          <Button variant="ghost" size="sm" @click="isEditing = false; editValue = String(data.value)">{{ t('grid.discard') }}</Button>
-          <Button size="sm" @click="saveString"><Save class="w-3 h-3 mr-1" /> {{ t('grid.save') }}</Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            @click="
+              isEditing = false;
+              editValue = String(data.value);
+            "
+            >{{ t("grid.discard") }}</Button
+          >
+          <Button size="sm" @click="saveString"><Save class="w-3 h-3 mr-1" /> {{ t("grid.save") }}</Button>
         </div>
       </div>
 
       <!-- List -->
       <div v-else-if="data.key_type === 'list'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
-          <span class="text-xs text-muted-foreground">{{ t('redis.items', { count: Array.isArray(data.value) ? data.value.length : 0 }) }}</span>
+          <span class="text-xs text-muted-foreground">{{
+            t("redis.items", { count: Array.isArray(data.value) ? data.value.length : 0 })
+          }}</span>
           <span class="flex-1" />
           <Input v-model="newValue" class="h-6 w-40 text-xs" placeholder="value" @keydown.enter="listPush" />
-          <Button variant="ghost" size="sm" class="h-6 text-xs" @click="listPush"><Plus class="w-3 h-3 mr-1" />Push</Button>
+          <Button variant="ghost" size="sm" class="h-6 text-xs" @click="listPush"
+            ><Plus class="w-3 h-3 mr-1" />Push</Button
+          >
         </div>
         <div class="flex-1 overflow-y-auto">
-          <div v-for="(item, idx) in data.value" :key="idx" class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-2 group">
+          <div
+            v-for="(item, idx) in data.value"
+            :key="idx"
+            class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-2 group"
+          >
             <span class="text-muted-foreground text-xs w-8 shrink-0">{{ idx }}</span>
             <span class="truncate flex-1">{{ item }}</span>
-            <Button variant="ghost" size="icon" class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive" @click="requestListRemove(Number(idx))"><Trash2 class="w-3 h-3" /></Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+              @click="requestListRemove(Number(idx))"
+              ><Trash2 class="w-3 h-3"
+            /></Button>
           </div>
         </div>
       </div>
@@ -192,15 +224,29 @@ onMounted(load);
       <!-- Set -->
       <div v-else-if="data.key_type === 'set'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
-          <span class="text-xs text-muted-foreground">{{ t('redis.items', { count: Array.isArray(data.value) ? data.value.length : 0 }) }}</span>
+          <span class="text-xs text-muted-foreground">{{
+            t("redis.items", { count: Array.isArray(data.value) ? data.value.length : 0 })
+          }}</span>
           <span class="flex-1" />
           <Input v-model="newValue" class="h-6 w-40 text-xs" placeholder="member" @keydown.enter="setAdd" />
-          <Button variant="ghost" size="sm" class="h-6 text-xs" @click="setAdd"><Plus class="w-3 h-3 mr-1" />Add</Button>
+          <Button variant="ghost" size="sm" class="h-6 text-xs" @click="setAdd"
+            ><Plus class="w-3 h-3 mr-1" />Add</Button
+          >
         </div>
         <div class="flex-1 overflow-y-auto">
-          <div v-for="(item, idx) in data.value" :key="idx" class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-2 group">
+          <div
+            v-for="(item, idx) in data.value"
+            :key="idx"
+            class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-2 group"
+          >
             <span class="truncate flex-1">{{ item }}</span>
-            <Button variant="ghost" size="icon" class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive" @click="requestSetRemove(String(item))"><Trash2 class="w-3 h-3" /></Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+              @click="requestSetRemove(String(item))"
+              ><Trash2 class="w-3 h-3"
+            /></Button>
           </div>
         </div>
       </div>
@@ -208,17 +254,31 @@ onMounted(load);
       <!-- Hash -->
       <div v-else-if="data.key_type === 'hash'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
-          <span class="text-xs text-muted-foreground">{{ t('redis.fields', { count: Object.keys(data.value || {}).length }) }}</span>
+          <span class="text-xs text-muted-foreground">{{
+            t("redis.fields", { count: Object.keys(data.value || {}).length })
+          }}</span>
           <span class="flex-1" />
           <Input v-model="newField" class="h-6 w-24 text-xs" placeholder="field" />
           <Input v-model="newValue" class="h-6 w-32 text-xs" placeholder="value" @keydown.enter="hashSet" />
-          <Button variant="ghost" size="sm" class="h-6 text-xs" @click="hashSet"><Plus class="w-3 h-3 mr-1" />Set</Button>
+          <Button variant="ghost" size="sm" class="h-6 text-xs" @click="hashSet"
+            ><Plus class="w-3 h-3 mr-1" />Set</Button
+          >
         </div>
         <div class="flex-1 overflow-y-auto">
-          <div v-for="(val, field) in data.value" :key="String(field)" class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-3 group">
+          <div
+            v-for="(val, field) in data.value"
+            :key="String(field)"
+            class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-3 group"
+          >
             <span class="text-blue-500 shrink-0 min-w-24">{{ field }}</span>
             <span class="truncate text-muted-foreground flex-1">{{ val }}</span>
-            <Button variant="ghost" size="icon" class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive" @click="requestHashDel(String(field))"><Trash2 class="w-3 h-3" /></Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+              @click="requestHashDel(String(field))"
+              ><Trash2 class="w-3 h-3"
+            /></Button>
           </div>
         </div>
       </div>
@@ -226,9 +286,13 @@ onMounted(load);
       <!-- Sorted Set (readonly) -->
       <div v-else-if="data.key_type === 'zset'" class="flex-1 overflow-auto">
         <div class="px-4 py-1 text-xs text-muted-foreground border-b">
-          {{ t('redis.members', { count: Array.isArray(data.value) ? data.value.length : 0 }) }}
+          {{ t("redis.members", { count: Array.isArray(data.value) ? data.value.length : 0 }) }}
         </div>
-        <div v-for="(item, idx) in data.value" :key="idx" class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-3">
+        <div
+          v-for="(item, idx) in data.value"
+          :key="idx"
+          class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-3"
+        >
           <span class="text-muted-foreground text-xs w-16 shrink-0">{{ item.score }}</span>
           <span class="truncate">{{ item.member }}</span>
         </div>
@@ -237,11 +301,19 @@ onMounted(load);
       <!-- Stream (readonly) -->
       <div v-else-if="data.key_type === 'stream'" class="flex-1 overflow-auto">
         <div class="px-4 py-1 text-xs text-muted-foreground border-b">
-          {{ t('redis.entries', { count: Array.isArray(data.value) ? data.value.length : 0 }) }}
+          {{ t("redis.entries", { count: Array.isArray(data.value) ? data.value.length : 0 }) }}
         </div>
-        <div v-for="entry in data.value" :key="entry.id" class="px-4 py-2 border-b text-sm font-mono hover:bg-accent/50">
+        <div
+          v-for="entry in data.value"
+          :key="entry.id"
+          class="px-4 py-2 border-b text-sm font-mono hover:bg-accent/50"
+        >
           <div class="mb-1 text-xs text-muted-foreground">{{ entry.id }}</div>
-          <div v-for="(val, field) in entry.fields" :key="String(field)" class="grid grid-cols-[minmax(6rem,0.35fr)_1fr] gap-3 py-0.5">
+          <div
+            v-for="(val, field) in entry.fields"
+            :key="String(field)"
+            class="grid grid-cols-[minmax(6rem,0.35fr)_1fr] gap-3 py-0.5"
+          >
             <span class="truncate text-blue-500">{{ field }}</span>
             <span class="truncate text-muted-foreground">{{ val }}</span>
           </div>

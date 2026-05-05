@@ -12,12 +12,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useQueryStore } from "@/stores/queryStore";
 import { useTabScroll } from "@/composables/useTabScroll";
-import {
-  connectionColor,
-  tabDisplayTitle,
-  tabTooltipLines,
-  tabModeLabel,
-} from "@/lib/tabPresentation";
+import { connectionColor, tabDisplayTitle, tabTooltipLines, tabModeLabel } from "@/lib/tabPresentation";
 
 const { t } = useI18n();
 const queryStore = useQueryStore();
@@ -25,21 +20,27 @@ const queryStore = useQueryStore();
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const { canScrollLeft, canScrollRight, updateScrollButtons, scrollTabs } = useTabScroll(tabsContainerRef);
 
-watch(() => queryStore.tabs.length, () => {
-  nextTick(updateScrollButtons);
-});
+watch(
+  () => queryStore.tabs.length,
+  () => {
+    nextTick(updateScrollButtons);
+  },
+);
 
-watch(() => queryStore.activeTabId, () => {
-  nextTick(() => {
-    const container = tabsContainerRef.value;
-    if (!container) return;
-    const activeEl = container.querySelector('[data-active-tab="true"]');
-    if (activeEl) {
-      activeEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-    }
-    updateScrollButtons();
-  });
-});
+watch(
+  () => queryStore.activeTabId,
+  () => {
+    nextTick(() => {
+      const container = tabsContainerRef.value;
+      if (!container) return;
+      const activeEl = container.querySelector('[data-active-tab="true"]');
+      if (activeEl) {
+        activeEl.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+      }
+      updateScrollButtons();
+    });
+  },
+);
 </script>
 
 <template>
@@ -55,23 +56,25 @@ watch(() => queryStore.activeTabId, () => {
     <div
       ref="tabsContainerRef"
       class="flex-1 flex items-center overflow-x-auto min-w-0"
-      style="-ms-overflow-style:none;scrollbar-width:none;-webkit-overflow-scrolling:touch"
+      style="-ms-overflow-style: none; scrollbar-width: none; -webkit-overflow-scrolling: touch"
       @scroll="updateScrollButtons"
     >
-      <ContextMenu
-        v-for="tab in queryStore.tabs"
-        :key="tab.id"
-      >
+      <ContextMenu v-for="tab in queryStore.tabs" :key="tab.id">
         <ContextMenuTrigger as-child>
           <Tooltip>
             <TooltipTrigger as-child>
               <div
                 class="group flex min-w-38 items-center gap-1 px-1 h-full text-xs cursor-pointer border-r transition-colors whitespace-nowrap"
-                :class="tab.id === queryStore.activeTabId ? 'bg-background font-medium' : 'font-normal text-muted-foreground'"
+                :class="
+                  tab.id === queryStore.activeTabId ? 'bg-background font-medium' : 'font-normal text-muted-foreground'
+                "
                 :data-active-tab="tab.id === queryStore.activeTabId"
                 @click="queryStore.activeTabId = tab.id"
               >
-                <span class="h-4 w-1 rounded-full shrink-0" :style="{ backgroundColor: connectionColor(tab.connectionId) || '#9ca3af' }" />
+                <span
+                  class="h-4 w-1 rounded-full shrink-0"
+                  :style="{ backgroundColor: connectionColor(tab.connectionId) || '#9ca3af' }"
+                />
                 <span class="min-w-0 truncate flex-1">{{ tabDisplayTitle(tab) }}</span>
                 <Tooltip>
                   <TooltipTrigger as-child>
@@ -83,11 +86,15 @@ watch(() => queryStore.activeTabId, () => {
                       <Pin class="h-3 w-3" :class="{ 'fill-current': tab.pinned }" />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent>{{ tab.pinned ? t('contextMenu.unpin') : t('contextMenu.pin') }}</TooltipContent>
+                  <TooltipContent>{{ tab.pinned ? t("contextMenu.unpin") : t("contextMenu.pin") }}</TooltipContent>
                 </Tooltip>
                 <span
                   class="shrink-0 rounded border px-1 text-[10px] leading-4"
-                  :class="tab.mode === 'data' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300' : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300'"
+                  :class="
+                    tab.mode === 'data'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
+                      : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300'
+                  "
                 >
                   {{ tabModeLabel(tab) }}
                 </span>
@@ -111,23 +118,20 @@ watch(() => queryStore.activeTabId, () => {
         <ContextMenuContent class="w-44">
           <ContextMenuItem @click="queryStore.togglePinnedTab(tab.id)">
             <Pin class="w-3.5 h-3.5 mr-2" :class="{ 'fill-current': tab.pinned }" />
-            {{ tab.pinned ? t('contextMenu.unpin') : t('contextMenu.pin') }}
+            {{ tab.pinned ? t("contextMenu.unpin") : t("contextMenu.pin") }}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem @click="queryStore.closeTab(tab.id)">
             <X class="w-3.5 h-3.5 mr-2" />
-            {{ t('contextMenu.closeTab') }}
+            {{ t("contextMenu.closeTab") }}
           </ContextMenuItem>
-          <ContextMenuItem
-            :disabled="queryStore.tabs.length <= 1"
-            @click="queryStore.closeOtherTabs(tab.id)"
-          >
+          <ContextMenuItem :disabled="queryStore.tabs.length <= 1" @click="queryStore.closeOtherTabs(tab.id)">
             <X class="w-3.5 h-3.5 mr-2" />
-            {{ t('contextMenu.closeOtherTabs') }}
+            {{ t("contextMenu.closeOtherTabs") }}
           </ContextMenuItem>
           <ContextMenuItem variant="destructive" @click="queryStore.closeAllTabs">
             <X class="w-3.5 h-3.5 mr-2" />
-            {{ t('contextMenu.closeAllTabs') }}
+            {{ t("contextMenu.closeAllTabs") }}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>

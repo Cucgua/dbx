@@ -57,87 +57,111 @@ export function useDialogSources() {
   if (!watchersRegistered) {
     watchersRegistered = true;
 
-  watch(() => connectionStore.transferSource, (v) => {
-    if (v) {
-      transferPrefillConnectionId.value = v.connectionId;
-      transferPrefillDatabase.value = v.database;
-      showTransferDialog.value = true;
-      connectionStore.transferSource = null;
-    }
-  });
+    watch(
+      () => connectionStore.transferSource,
+      (v) => {
+        if (v) {
+          transferPrefillConnectionId.value = v.connectionId;
+          transferPrefillDatabase.value = v.database;
+          showTransferDialog.value = true;
+          connectionStore.transferSource = null;
+        }
+      },
+    );
 
-  watch(() => connectionStore.schemaDiffSource, (v) => {
-    if (v) {
-      schemaDiffPrefillConnectionId.value = v.connectionId;
-      schemaDiffPrefillDatabase.value = v.database;
-      showSchemaDiffDialog.value = true;
-      connectionStore.schemaDiffSource = null;
-    }
-  });
+    watch(
+      () => connectionStore.schemaDiffSource,
+      (v) => {
+        if (v) {
+          schemaDiffPrefillConnectionId.value = v.connectionId;
+          schemaDiffPrefillDatabase.value = v.database;
+          showSchemaDiffDialog.value = true;
+          connectionStore.schemaDiffSource = null;
+        }
+      },
+    );
 
-  watch(() => connectionStore.sqlFileSource, (v) => {
-    if (v) {
-      sqlFilePrefillConnectionId.value = v.connectionId;
-      sqlFilePrefillDatabase.value = v.database;
-      showSqlFileDialog.value = true;
-      connectionStore.sqlFileSource = null;
-    }
-  });
+    watch(
+      () => connectionStore.sqlFileSource,
+      (v) => {
+        if (v) {
+          sqlFilePrefillConnectionId.value = v.connectionId;
+          sqlFilePrefillDatabase.value = v.database;
+          showSqlFileDialog.value = true;
+          connectionStore.sqlFileSource = null;
+        }
+      },
+    );
 
-  watch(() => connectionStore.diagramSource, (v) => {
-    if (v) {
-      diagramPrefillConnectionId.value = v.connectionId;
-      diagramPrefillDatabase.value = v.database;
-      diagramPrefillSchema.value = v.schema ?? "";
-      diagramFocusTableName.value = v.tableName ?? "";
-      showDiagramDialog.value = true;
-      connectionStore.diagramSource = null;
-    }
-  });
+    watch(
+      () => connectionStore.diagramSource,
+      (v) => {
+        if (v) {
+          diagramPrefillConnectionId.value = v.connectionId;
+          diagramPrefillDatabase.value = v.database;
+          diagramPrefillSchema.value = v.schema ?? "";
+          diagramFocusTableName.value = v.tableName ?? "";
+          showDiagramDialog.value = true;
+          connectionStore.diagramSource = null;
+        }
+      },
+    );
 
-  watch(() => connectionStore.tableImportSource, (v) => {
-    if (v) {
-      tableImportPrefillConnectionId.value = v.connectionId;
-      tableImportPrefillDatabase.value = v.database;
-      tableImportPrefillSchema.value = v.schema ?? "";
-      tableImportPrefillTable.value = v.tableName;
-      showTableImportDialog.value = true;
-      connectionStore.tableImportSource = null;
-    }
-  });
+    watch(
+      () => connectionStore.tableImportSource,
+      (v) => {
+        if (v) {
+          tableImportPrefillConnectionId.value = v.connectionId;
+          tableImportPrefillDatabase.value = v.database;
+          tableImportPrefillSchema.value = v.schema ?? "";
+          tableImportPrefillTable.value = v.tableName;
+          showTableImportDialog.value = true;
+          connectionStore.tableImportSource = null;
+        }
+      },
+    );
 
-  watch(() => connectionStore.structureEditorSource, (v) => {
-    if (v) {
-      structurePrefillConnectionId.value = v.connectionId;
-      structurePrefillDatabase.value = v.database;
-      structurePrefillSchema.value = v.schema ?? "";
-      structurePrefillTable.value = v.tableName;
-      showStructureEditorDialog.value = true;
-      connectionStore.structureEditorSource = null;
-    }
-  });
+    watch(
+      () => connectionStore.structureEditorSource,
+      (v) => {
+        if (v) {
+          structurePrefillConnectionId.value = v.connectionId;
+          structurePrefillDatabase.value = v.database;
+          structurePrefillSchema.value = v.schema ?? "";
+          structurePrefillTable.value = v.tableName;
+          showStructureEditorDialog.value = true;
+          connectionStore.structureEditorSource = null;
+        }
+      },
+    );
 
-  watch(() => connectionStore.fieldLineageSource, (v) => {
-    if (v) {
-      lineagePrefillConnectionId.value = v.connectionId;
-      lineagePrefillDatabase.value = v.database;
-      lineagePrefillSchema.value = v.schema ?? "";
-      lineagePrefillTable.value = v.tableName;
-      lineagePrefillColumn.value = v.columnName;
-      showFieldLineageDialog.value = true;
-      connectionStore.fieldLineageSource = null;
-    }
-  });
+    watch(
+      () => connectionStore.fieldLineageSource,
+      (v) => {
+        if (v) {
+          lineagePrefillConnectionId.value = v.connectionId;
+          lineagePrefillDatabase.value = v.database;
+          lineagePrefillSchema.value = v.schema ?? "";
+          lineagePrefillTable.value = v.tableName;
+          lineagePrefillColumn.value = v.columnName;
+          showFieldLineageDialog.value = true;
+          connectionStore.fieldLineageSource = null;
+        }
+      },
+    );
 
-  watch(() => connectionStore.databaseSearchSource, (v) => {
-    if (v) {
-      databaseSearchPrefillConnectionId.value = v.connectionId;
-      databaseSearchPrefillDatabase.value = v.database;
-      databaseSearchPrefillSchema.value = v.schema ?? "";
-      showDatabaseSearchDialog.value = true;
-      connectionStore.databaseSearchSource = null;
-    }
-  });
+    watch(
+      () => connectionStore.databaseSearchSource,
+      (v) => {
+        if (v) {
+          databaseSearchPrefillConnectionId.value = v.connectionId;
+          databaseSearchPrefillDatabase.value = v.database;
+          databaseSearchPrefillSchema.value = v.schema ?? "";
+          showDatabaseSearchDialog.value = true;
+          connectionStore.databaseSearchSource = null;
+        }
+      },
+    );
   } // end watchersRegistered
 
   // Config export/import helpers
@@ -189,7 +213,8 @@ export function useDialogSources() {
         showImportLayoutConfirm.value = true;
       }
     } catch (e: any) {
-      configPassphraseError.value = e?.message === "wrong_passphrase" ? t("configExport.wrongPassphrase") : (e?.message || String(e));
+      configPassphraseError.value =
+        e?.message === "wrong_passphrase" ? t("configExport.wrongPassphrase") : e?.message || String(e);
     }
   }
 

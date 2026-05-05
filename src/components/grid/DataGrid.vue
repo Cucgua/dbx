@@ -7,18 +7,42 @@ const globalDdlOpen = ref(false);
 import { computed, nextTick, onUnmounted, watch } from "vue";
 import { useElementSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
-import { ArrowUp, ArrowDown, Download, Plus, Trash2, Save, ChevronLeft, ChevronRight, Search, Inbox, SearchX, Code2, Copy, Loader2, X, Undo2, WrapText, Info, Rows3 } from "lucide-vue-next";
+import {
+  ArrowUp,
+  ArrowDown,
+  Download,
+  Plus,
+  Trash2,
+  Save,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  Inbox,
+  SearchX,
+  Code2,
+  Copy,
+  Loader2,
+  X,
+  Undo2,
+  WrapText,
+  Info,
+  Rows3,
+} from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
-  ContextMenu, ContextMenuContent, ContextMenuItem,
-  ContextMenuSeparator, ContextMenuTrigger,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import type { QueryResult, ColumnInfo, DatabaseType } from "@/types/database";
@@ -122,11 +146,45 @@ function shortTypeName(t: string): string {
 function typeColorClass(t: string): string {
   // Strip precision/scale suffix like (20,6)
   const base = t.replace(/\(.*\)$/, "").toLowerCase();
-  if (["int", "int2", "int4", "int8", "smallint", "bigint", "integer", "serial", "bigserial", "tinyint", "mediumint"].includes(base)) return "text-blue-500";
-  if (["float4", "float8", "double", "decimal", "numeric", "real", "float", "money"].includes(base)) return "text-cyan-500";
-  if (["varchar", "text", "char", "character varying", "character", "string", "nvarchar", "nchar", "ntext", "longtext", "mediumtext", "tinytext", "clob"].includes(base)) return "text-green-500";
+  if (
+    [
+      "int",
+      "int2",
+      "int4",
+      "int8",
+      "smallint",
+      "bigint",
+      "integer",
+      "serial",
+      "bigserial",
+      "tinyint",
+      "mediumint",
+    ].includes(base)
+  )
+    return "text-blue-500";
+  if (["float4", "float8", "double", "decimal", "numeric", "real", "float", "money"].includes(base))
+    return "text-cyan-500";
+  if (
+    [
+      "varchar",
+      "text",
+      "char",
+      "character varying",
+      "character",
+      "string",
+      "nvarchar",
+      "nchar",
+      "ntext",
+      "longtext",
+      "mediumtext",
+      "tinytext",
+      "clob",
+    ].includes(base)
+  )
+    return "text-green-500";
   if (["bool", "boolean", "bit"].includes(base)) return "text-orange-500";
-  if (["timestamp", "timestamptz", "datetime", "date", "time", "timetz", "datetime2", "smalldatetime"].includes(base)) return "text-purple-500";
+  if (["timestamp", "timestamptz", "datetime", "date", "time", "timetz", "datetime2", "smalldatetime"].includes(base))
+    return "text-purple-500";
   if (["json", "jsonb", "xml", "array"].includes(base)) return "text-pink-500";
   if (["uuid", "uniqueidentifier"].includes(base)) return "text-amber-500";
   if (["bytea", "blob", "binary", "varbinary", "image"].includes(base)) return "text-red-400";
@@ -218,10 +276,7 @@ function dismissSuggestions() {
 
 function navigateSuggestion(delta: number) {
   if (searchSuggestions.value.length === 0) return;
-  suggestionIndex.value = Math.min(
-    Math.max(suggestionIndex.value + delta, 0),
-    searchSuggestions.value.length - 1,
-  );
+  suggestionIndex.value = Math.min(Math.max(suggestionIndex.value + delta, 0), searchSuggestions.value.length - 1);
 }
 
 const PAIRS: Record<string, string> = { "'": "'", '"': '"', "(": ")" };
@@ -325,7 +380,9 @@ function onResizeStart(colIdx: number, event: MouseEvent) {
   const onUp = () => {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
-    requestAnimationFrame(() => { isResizing = false; });
+    requestAnimationFrame(() => {
+      isResizing = false;
+    });
   };
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
@@ -351,7 +408,7 @@ const columnVars = computed(() => {
     vars[`--col-w-${i}`] = `${w}px`;
   });
   vars["--row-num-w"] = `${ROW_NUM_WIDTH}px`;
-  vars['--total-w'] = `${totalWidth.value}px`;
+  vars["--total-w"] = `${totalWidth.value}px`;
   return vars;
 });
 
@@ -365,8 +422,8 @@ const isFullPage = computed(() => props.result.rows.length >= pageSize.value);
 const canUseWhereSearch = computed(() => !!props.tableMeta && !!props.onExecuteSql);
 const isWhereSearch = computed(() => canUseWhereSearch.value && /^\s*where\b/i.test(searchText.value));
 const wherePredicate = computed(() => normalizeWhereInput(searchText.value));
-const activeWhereInput = computed(() => isWhereSearch.value && wherePredicate.value ? searchText.value : undefined);
-const clientSearchText = computed(() => isWhereSearch.value ? "" : searchText.value);
+const activeWhereInput = computed(() => (isWhereSearch.value && wherePredicate.value ? searchText.value : undefined));
+const clientSearchText = computed(() => (isWhereSearch.value ? "" : searchText.value));
 
 function prevPage() {
   if (currentPage.value <= 1) return;
@@ -397,9 +454,7 @@ const dirtyRowCount = computed(() => dirtyRows.value.size);
 const newRowCount = computed(() => newRows.value.length);
 const deletedRowCount = computed(() => deletedRows.value.size);
 const pendingChangeCount = computed(() => dirtyRowCount.value + newRowCount.value + deletedRowCount.value);
-const hasPendingChanges = computed(() =>
-  pendingChangeCount.value > 0
-);
+const hasPendingChanges = computed(() => pendingChangeCount.value > 0);
 
 const sortedRows = computed(() => {
   let rows = props.result.rows.map((row, sourceIndex) => ({ row, sourceIndex }));
@@ -440,25 +495,37 @@ const displayItems = computed<RowItem[]>(() => {
     return { id: sourceIndex, sourceIndex, data, isNew: false, isDeleted, isDirtyCol, status };
   });
   newRows.value.forEach((row, i) => {
-    items.push({ id: -(i + 1), newIndex: i, data: row, isNew: true, isDeleted: false, isDirtyCol: cols.map(() => false), status: "new" });
+    items.push({
+      id: -(i + 1),
+      newIndex: i,
+      data: row,
+      isNew: true,
+      isDeleted: false,
+      isDirtyCol: cols.map(() => false),
+      status: "new",
+    });
   });
   return items.filter((item) => matchesRowStatusFilter(item.status, rowStatusFilter.value));
 });
 const hasVisibleRows = computed(() => displayItems.value.length > 0);
 const hasActiveFilter = computed(() => !!clientSearchText.value || rowStatusFilter.value !== "all");
 const totalFilterableRowCount = computed(() => props.result.rows.length + newRows.value.length);
-const emptyTitle = computed(() => hasActiveFilter.value ? t('grid.noFilteredRows') : t('grid.noRows'));
-const emptyDescription = computed(() => hasActiveFilter.value ? t('grid.noFilteredRowsDescription') : t('grid.noRowsDescription'));
+const emptyTitle = computed(() => (hasActiveFilter.value ? t("grid.noFilteredRows") : t("grid.noRows")));
+const emptyDescription = computed(() =>
+  hasActiveFilter.value ? t("grid.noFilteredRowsDescription") : t("grid.noRowsDescription"),
+);
 const selectedRange = computed<CellSelectionRange | null>(() => {
   if (!selectionAnchor.value || !selectionFocus.value) return null;
   return normalizeSelectionRange(selectionAnchor.value, selectionFocus.value);
 });
 const visibleSelectionRows = computed(() => displayItems.value.map((item) => item.data));
-const selectedCells = computed(() => extractSelection(props.result.columns, visibleSelectionRows.value, selectedRange.value));
+const selectedCells = computed(() =>
+  extractSelection(props.result.columns, visibleSelectionRows.value, selectedRange.value),
+);
 const selectedCellCount = computed(() => selectedCells.value.columns.length * selectedCells.value.rows.length);
 const hasCellSelection = computed(() => selectedCellCount.value > 0);
 const selectionSummary = computed(() => t("grid.selectedCells", { count: selectedCellCount.value }));
-const contextRowItem = computed(() => contextCell.value ? getRowItem(contextCell.value.rowId) : undefined);
+const contextRowItem = computed(() => (contextCell.value ? getRowItem(contextCell.value.rowId) : undefined));
 const activeCellDetail = computed(() => {
   const cell = detailCell.value;
   if (!cell) return null;
@@ -494,8 +561,14 @@ const activeCellDetail = computed(() => {
 function toggleSort(colName: string) {
   if (isResizing) return;
   if (sortCol.value === colName) {
-    if (sortDir.value === "asc") { sortDir.value = "desc"; emit("sort", colName, "desc", activeWhereInput.value); }
-    else { sortCol.value = null; sortDir.value = "asc"; emit("sort", colName, null, activeWhereInput.value); }
+    if (sortDir.value === "asc") {
+      sortDir.value = "desc";
+      emit("sort", colName, "desc", activeWhereInput.value);
+    } else {
+      sortCol.value = null;
+      sortDir.value = "asc";
+      emit("sort", colName, null, activeWhereInput.value);
+    }
   } else {
     sortCol.value = colName;
     sortDir.value = "asc";
@@ -546,7 +619,9 @@ function escapeVal(value: CellValue): string {
   return formatGridSqlLiteral(value);
 }
 
-function isNull(value: unknown): boolean { return value === null; }
+function isNull(value: unknown): boolean {
+  return value === null;
+}
 
 function rowNumberStatusClass(item: RowItem): string {
   if (item.status === "new") {
@@ -692,8 +767,14 @@ function cancelEdit() {
 }
 
 function onEditKeydown(e: KeyboardEvent) {
-  if (e.key === "Enter") { e.preventDefault(); commitEdit(); }
-  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancelEdit(); }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    commitEdit();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    cancelEdit();
+  }
 }
 
 function addRow() {
@@ -724,7 +805,7 @@ const pendingDeleteRowId = ref<number | null>(null);
 const deleteRowDetails = computed(() =>
   props.tableMeta?.tableName
     ? t("dangerDialog.deleteRowDetails", { table: props.tableMeta.tableName })
-    : t("dangerDialog.deleteRowDetailsNoTable")
+    : t("dangerDialog.deleteRowDetailsNoTable"),
 );
 
 function requestDeleteRow(rowId: number) {
@@ -842,7 +923,7 @@ function showCellDetails(rowIndex: number, colIndex: number) {
 
 function copyText(text: string) {
   navigator.clipboard.writeText(text);
-  toast(t('grid.copied'));
+  toast(t("grid.copied"));
 }
 
 function copySelectionTsv() {
@@ -879,9 +960,7 @@ function copyDetailSqlCondition() {
   const detail = activeCellDetail.value;
   if (!detail) return;
   const column = quoteIdent(detail.column);
-  const condition = detail.value === null
-    ? `${column} IS NULL`
-    : `${column} = ${escapeVal(detail.value)}`;
+  const condition = detail.value === null ? `${column} IS NULL` : `${column} = ${escapeVal(detail.value)}`;
   copyText(condition);
 }
 
@@ -912,13 +991,16 @@ function transposeNav(delta: number) {
   }
 }
 
-watch(() => props.result, () => {
-  clearCellSelection();
-  showCellDetail.value = false;
-  detailCell.value = null;
-  showTranspose.value = false;
-  transposeRowIndex.value = null;
-});
+watch(
+  () => props.result,
+  () => {
+    clearCellSelection();
+    showCellDetail.value = false;
+    detailCell.value = null;
+    showTranspose.value = false;
+    transposeRowIndex.value = null;
+  },
+);
 
 // --- Copy/Export ---
 function onCellContext(rowId: number, rowIndex: number, colIdx: number) {
@@ -940,15 +1022,15 @@ function copyRow() {
   const item = getRowItem(contextCell.value.rowId);
   if (!item) return;
   const obj: Record<string, unknown> = {};
-  props.result.columns.forEach((col, i) => { obj[col] = item.data[i]; });
+  props.result.columns.forEach((col, i) => {
+    obj[col] = item.data[i];
+  });
   copyText(JSON.stringify(obj, null, 2));
 }
 
 function copyAll() {
   const header = props.result.columns.join("\t");
-  const body = displayItems.value
-    .map((item) => item.data.map((c) => formatCell(c)).join("\t"))
-    .join("\n");
+  const body = displayItems.value.map((item) => item.data.map((c) => formatCell(c)).join("\t")).join("\n");
   copyText(`${header}\n${body}`);
 }
 
@@ -956,7 +1038,10 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
   if (isTauriRuntime()) {
     const { save } = await import("@tauri-apps/plugin-dialog");
     const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    const path = await save({ defaultPath: defaultFileName, filters: [{ name: filterName, extensions: [filterExt] }] });
+    const path = await save({
+      defaultPath: defaultFileName,
+      filters: [{ name: filterName, extensions: [filterExt] }],
+    });
     if (path) await writeTextFile(path, content);
   } else {
     const blob = new Blob([content], { type: "text/plain" });
@@ -972,16 +1057,16 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
 async function exportCsv() {
   const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const header = props.result.columns.map(escape).join(",");
-  const body = displayItems.value
-    .map((item) => item.data.map((c) => escape(formatCell(c))).join(","))
-    .join("\n");
+  const body = displayItems.value.map((item) => item.data.map((c) => escape(formatCell(c))).join(",")).join("\n");
   await saveFileContent(`${header}\n${body}`, "export.csv", "CSV", "csv");
 }
 
 async function exportJson() {
   const data = displayItems.value.map((item) => {
     const obj: Record<string, unknown> = {};
-    props.result.columns.forEach((col, i) => { obj[col] = item.data[i]; });
+    props.result.columns.forEach((col, i) => {
+      obj[col] = item.data[i];
+    });
     return obj;
   });
   await saveFileContent(JSON.stringify(data, null, 2), "export.json", "JSON", "json");
@@ -999,7 +1084,7 @@ const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "")
 function copySql() {
   if (!props.sql) return;
   navigator.clipboard.writeText(props.sql);
-  toast(t('grid.copied'));
+  toast(t("grid.copied"));
 }
 
 const showDdl = globalDdlOpen;
@@ -1047,7 +1132,7 @@ if (showDdl.value && props.tableMeta && props.connectionId) {
 
 function copyDdl() {
   navigator.clipboard.writeText(ddlContent.value);
-  toast(t('grid.copied'));
+  toast(t("grid.copied"));
 }
 
 function toggleDdlWrap() {
@@ -1081,7 +1166,8 @@ onUnmounted(() => {
   finishCellSelection();
 });
 
-const SQL_KEYWORDS = /\b(CREATE|TABLE|INDEX|UNIQUE|PRIMARY|KEY|FOREIGN|REFERENCES|CONSTRAINT|NOT|NULL|DEFAULT|INT|INTEGER|BIGINT|SMALLINT|VARCHAR|CHARACTER|VARYING|TEXT|BOOLEAN|DOUBLE|PRECISION|REAL|FLOAT|NUMERIC|DECIMAL|TIMESTAMP|DATE|TIME|SERIAL|AUTOINCREMENT|AUTO_INCREMENT|IF|EXISTS|ON|SET|CASCADE|RESTRICT|CHECK|WITH|WITHOUT|ZONE)\b/gi;
+const SQL_KEYWORDS =
+  /\b(CREATE|TABLE|INDEX|UNIQUE|PRIMARY|KEY|FOREIGN|REFERENCES|CONSTRAINT|NOT|NULL|DEFAULT|INT|INTEGER|BIGINT|SMALLINT|VARCHAR|CHARACTER|VARYING|TEXT|BOOLEAN|DOUBLE|PRECISION|REAL|FLOAT|NUMERIC|DECIMAL|TIMESTAMP|DATE|TIME|SERIAL|AUTOINCREMENT|AUTO_INCREMENT|IF|EXISTS|ON|SET|CASCADE|RESTRICT|CHECK|WITH|WITHOUT|ZONE)\b/gi;
 
 function highlightSql(sql: string): string {
   const tokens: string[] = [];
@@ -1103,7 +1189,9 @@ function highlightSql(sql: string): string {
 
 function escapeAndHighlightKeywords(s: string): string {
   return s
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
     .replace(SQL_KEYWORDS, '<span class="ddl-kw">$1</span>');
 }
 </script>
@@ -1127,7 +1215,11 @@ function escapeAndHighlightKeywords(s: string): string {
               @keydown="onSearchKeydown"
               @click="updateSuggestionPosition"
             />
-            <span ref="measureRef" class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none" aria-hidden="true" />
+            <span
+              ref="measureRef"
+              class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
+              aria-hidden="true"
+            />
             <!-- Suggestion dropdown -->
             <div
               v-if="searchSuggestions.length > 0"
@@ -1139,7 +1231,10 @@ function escapeAndHighlightKeywords(s: string): string {
                 :key="sug"
                 class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
                 :class="idx === suggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
-                @mousedown.prevent="suggestionIndex = idx; acceptSuggestion()"
+                @mousedown.prevent="
+                  suggestionIndex = idx;
+                  acceptSuggestion();
+                "
                 @mouseenter="suggestionIndex = idx"
               >
                 <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
@@ -1155,11 +1250,11 @@ function escapeAndHighlightKeywords(s: string): string {
                 <SelectValue :placeholder="t('grid.filterRows')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">{{ t('grid.filterAllRows') }}</SelectItem>
-                <SelectItem value="changed">{{ t('grid.filterChangedRows') }}</SelectItem>
-                <SelectItem value="edited">{{ t('grid.statusEdited') }}</SelectItem>
-                <SelectItem value="new">{{ t('grid.statusNew') }}</SelectItem>
-                <SelectItem value="deleted">{{ t('grid.statusDeleted') }}</SelectItem>
+                <SelectItem value="all">{{ t("grid.filterAllRows") }}</SelectItem>
+                <SelectItem value="changed">{{ t("grid.filterChangedRows") }}</SelectItem>
+                <SelectItem value="edited">{{ t("grid.statusEdited") }}</SelectItem>
+                <SelectItem value="new">{{ t("grid.statusNew") }}</SelectItem>
+                <SelectItem value="deleted">{{ t("grid.statusDeleted") }}</SelectItem>
               </SelectContent>
             </Select>
             <span v-if="hasActiveFilter" class="text-xs text-muted-foreground">
@@ -1175,12 +1270,25 @@ function escapeAndHighlightKeywords(s: string): string {
             >
               <Loader2 v-if="isApplyingWhere" class="w-3 h-3 mr-1 animate-spin" />
               <Search v-else class="w-3 h-3 mr-1" />
-              {{ t('grid.applyWhere') }}
+              {{ t("grid.applyWhere") }}
             </Button>
-            <Button v-if="editable && tableMeta" variant="ghost" size="sm" class="h-5 text-xs px-1.5 shrink-0" @click="addRow">
-              <Plus class="w-3 h-3 mr-1" /> {{ t('grid.addRow') }}
+            <Button
+              v-if="editable && tableMeta"
+              variant="ghost"
+              size="sm"
+              class="h-5 text-xs px-1.5 shrink-0"
+              @click="addRow"
+            >
+              <Plus class="w-3 h-3 mr-1" /> {{ t("grid.addRow") }}
             </Button>
-            <Button v-if="tableMeta && connectionId" variant="ghost" size="sm" class="h-5 text-xs px-1.5 shrink-0" :class="{ 'bg-accent': showDdl }" @click="toggleDdl">
+            <Button
+              v-if="tableMeta && connectionId"
+              variant="ghost"
+              size="sm"
+              class="h-5 text-xs px-1.5 shrink-0"
+              :class="{ 'bg-accent': showDdl }"
+              @click="toggleDdl"
+            >
               <Code2 class="w-3 h-3 mr-1" /> DDL
             </Button>
           </div>
@@ -1188,124 +1296,129 @@ function escapeAndHighlightKeywords(s: string): string {
           <div class="flex-1 flex min-h-0 overflow-hidden">
             <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
               <!-- Sticky header -->
-          <div ref="headerRef" class="shrink-0 bg-muted z-10 border-b border-border overflow-hidden">
-            <div class="flex text-xs font-medium" :style="{ width: 'var(--total-w)' }">
-              <div class="shrink-0 px-2 py-1.5 border-r border-border text-center text-muted-foreground select-none" :style="{ width: 'var(--row-num-w)' }">#</div>
-              <div
-                v-for="(col, colIdx) in result.columns"
-                :key="col"
-                class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/50 select-none relative overflow-hidden"
-                :style="{ width: `var(--col-w-${colIdx})` }"
-                :title="columnCommentMap.get(col)"
-                @click="toggleSort(col)"
-              >
-                <span class="flex min-w-0 items-center gap-1 overflow-hidden">
-                  <span class="min-w-0 truncate">{{ col }}</span>
-                  <ArrowUp v-if="sortCol === col && sortDir === 'asc'" class="h-3 w-3 shrink-0" />
-                  <ArrowDown v-else-if="sortCol === col && sortDir === 'desc'" class="h-3 w-3 shrink-0" />
-                  <span
-                    v-if="columnTypeMap.get(col)"
-                    class="shrink overflow-hidden truncate text-[10px] font-normal"
-                    :class="typeColorClass(columnTypeMap.get(col)!)"
+              <div ref="headerRef" class="shrink-0 bg-muted z-10 border-b border-border overflow-hidden">
+                <div class="flex text-xs font-medium" :style="{ width: 'var(--total-w)' }">
+                  <div
+                    class="shrink-0 px-2 py-1.5 border-r border-border text-center text-muted-foreground select-none"
+                    :style="{ width: 'var(--row-num-w)' }"
                   >
-                    #{{ columnTypeMap.get(col) }}
-                  </span>
-                </span>
-                <div
-                  class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
-                  @mousedown.stop="onResizeStart(colIdx, $event)"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div
-            v-if="!hasVisibleRows"
-            class="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground"
-          >
-            <component
-              :is="hasActiveFilter ? SearchX : Inbox"
-              class="h-8 w-8 text-muted-foreground/50"
-              aria-hidden="true"
-            />
-            <div class="space-y-1">
-              <div class="text-sm font-medium text-foreground">{{ emptyTitle }}</div>
-              <div class="text-xs">{{ emptyDescription }}</div>
-            </div>
-          </div>
-
-          <!-- Virtual scrolled rows -->
-          <RecycleScroller
-            v-else
-            ref="scrollerRef"
-            class="data-grid-scroller flex-1 overflow-x-auto"
-            :items="displayItems"
-            :item-size="26"
-            key-field="id"
-            @scroll="syncHeaderScroll"
-          >
-            <template #default="{ item, index }">
-              <div
-                class="flex text-xs border-b border-border hover:bg-accent/50"
-                :class="{
-                  'bg-destructive/5 opacity-70': item.isDeleted,
-                  'bg-primary/5': item.isNew,
-                  'bg-muted/30': !item.isNew && !item.isDeleted && index % 2 === 1,
-                }"
-                :style="{ height: '26px', width: 'var(--total-w)' }"
-              >
-                <div
-                  class="shrink-0 px-2 py-1 border-r border-border text-center select-none"
-                  :class="rowNumberStatusClass(item)"
-                  :style="{ width: 'var(--row-num-w)' }"
-                >
-                  {{ index + 1 }}
-                </div>
-                <div
-                  v-for="(cell, colIdx) in item.data"
-                  :key="colIdx"
-                  class="group/cell shrink-0 px-3 py-1 border-r border-border whitespace-nowrap overflow-hidden text-ellipsis relative select-none"
-                  :style="{ width: `var(--col-w-${colIdx})` }"
-                  :class="{
-                    'text-muted-foreground italic': isNull(cell),
-                    'bg-yellow-500/10': item.isDirtyCol[colIdx],
-                    'cell-selected': cellIsSelected(index, colIdx),
-                    'tabular-nums': typeof cell === 'number',
-                    'cursor-text hover:bg-accent/50': editable && !item.isDeleted,
-                    'line-through': item.isDeleted,
-                  }"
-                  @mousedown="beginCellSelection(index, colIdx, $event)"
-                  @mouseenter="extendCellSelection(index, colIdx)"
-                  @dblclick="editable && !item.isDeleted && startEdit(item.id, colIdx)"
-                  @contextmenu="onCellContext(item.id, index, colIdx)"
-                >
-                  <template v-if="editingCell?.rowId === item.id && editingCell?.col === colIdx">
-                    <input
-                      v-model="editValue"
-                      autocapitalize="off"
-                      autocorrect="off"
-                      spellcheck="false"
-                      class="cell-edit-input absolute inset-0 bg-background border-2 border-primary px-2 py-0.5 text-xs outline-none z-10"
-                      @blur="commitEdit"
-                      @click.stop
-                      @keydown.stop="onEditKeydown"
+                    #
+                  </div>
+                  <div
+                    v-for="(col, colIdx) in result.columns"
+                    :key="col"
+                    class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/50 select-none relative overflow-hidden"
+                    :style="{ width: `var(--col-w-${colIdx})` }"
+                    :title="columnCommentMap.get(col)"
+                    @click="toggleSort(col)"
+                  >
+                    <span class="flex min-w-0 items-center gap-1 overflow-hidden">
+                      <span class="min-w-0 truncate">{{ col }}</span>
+                      <ArrowUp v-if="sortCol === col && sortDir === 'asc'" class="h-3 w-3 shrink-0" />
+                      <ArrowDown v-else-if="sortCol === col && sortDir === 'desc'" class="h-3 w-3 shrink-0" />
+                      <span
+                        v-if="columnTypeMap.get(col)"
+                        class="shrink overflow-hidden truncate text-[10px] font-normal"
+                        :class="typeColorClass(columnTypeMap.get(col)!)"
+                      >
+                        #{{ columnTypeMap.get(col) }}
+                      </span>
+                    </span>
+                    <div
+                      class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
+                      @mousedown.stop="onResizeStart(colIdx, $event)"
                     />
-                  </template>
-                  <template v-else>
-                    {{ formatCell(cell) }}
-                    <button
-                      class="absolute right-0.5 top-0.5 hidden h-5 w-5 items-center justify-center rounded bg-background/90 text-muted-foreground shadow-sm ring-1 ring-border hover:text-foreground group-hover/cell:flex"
-                      :title="t('grid.cellDetails')"
-                      @mousedown.stop
-                      @click.stop="showCellDetails(index, colIdx)"
-                    >
-                      <Info class="h-3 w-3" />
-                    </button>
-                  </template>
+                  </div>
                 </div>
               </div>
-            </template>
-          </RecycleScroller>
+
+              <div
+                v-if="!hasVisibleRows"
+                class="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground"
+              >
+                <component
+                  :is="hasActiveFilter ? SearchX : Inbox"
+                  class="h-8 w-8 text-muted-foreground/50"
+                  aria-hidden="true"
+                />
+                <div class="space-y-1">
+                  <div class="text-sm font-medium text-foreground">{{ emptyTitle }}</div>
+                  <div class="text-xs">{{ emptyDescription }}</div>
+                </div>
+              </div>
+
+              <!-- Virtual scrolled rows -->
+              <RecycleScroller
+                v-else
+                ref="scrollerRef"
+                class="data-grid-scroller flex-1 overflow-x-auto"
+                :items="displayItems"
+                :item-size="26"
+                key-field="id"
+                @scroll="syncHeaderScroll"
+              >
+                <template #default="{ item, index }">
+                  <div
+                    class="flex text-xs border-b border-border hover:bg-accent/50"
+                    :class="{
+                      'bg-destructive/5 opacity-70': item.isDeleted,
+                      'bg-primary/5': item.isNew,
+                      'bg-muted/30': !item.isNew && !item.isDeleted && index % 2 === 1,
+                    }"
+                    :style="{ height: '26px', width: 'var(--total-w)' }"
+                  >
+                    <div
+                      class="shrink-0 px-2 py-1 border-r border-border text-center select-none"
+                      :class="rowNumberStatusClass(item)"
+                      :style="{ width: 'var(--row-num-w)' }"
+                    >
+                      {{ index + 1 }}
+                    </div>
+                    <div
+                      v-for="(cell, colIdx) in item.data"
+                      :key="colIdx"
+                      class="group/cell shrink-0 px-3 py-1 border-r border-border whitespace-nowrap overflow-hidden text-ellipsis relative select-none"
+                      :style="{ width: `var(--col-w-${colIdx})` }"
+                      :class="{
+                        'text-muted-foreground italic': isNull(cell),
+                        'bg-yellow-500/10': item.isDirtyCol[colIdx],
+                        'cell-selected': cellIsSelected(index, colIdx),
+                        'tabular-nums': typeof cell === 'number',
+                        'cursor-text hover:bg-accent/50': editable && !item.isDeleted,
+                        'line-through': item.isDeleted,
+                      }"
+                      @mousedown="beginCellSelection(index, colIdx, $event)"
+                      @mouseenter="extendCellSelection(index, colIdx)"
+                      @dblclick="editable && !item.isDeleted && startEdit(item.id, colIdx)"
+                      @contextmenu="onCellContext(item.id, index, colIdx)"
+                    >
+                      <template v-if="editingCell?.rowId === item.id && editingCell?.col === colIdx">
+                        <input
+                          v-model="editValue"
+                          autocapitalize="off"
+                          autocorrect="off"
+                          spellcheck="false"
+                          class="cell-edit-input absolute inset-0 bg-background border-2 border-primary px-2 py-0.5 text-xs outline-none z-10"
+                          @blur="commitEdit"
+                          @click.stop
+                          @keydown.stop="onEditKeydown"
+                        />
+                      </template>
+                      <template v-else>
+                        {{ formatCell(cell) }}
+                        <button
+                          class="absolute right-0.5 top-0.5 hidden h-5 w-5 items-center justify-center rounded bg-background/90 text-muted-foreground shadow-sm ring-1 ring-border hover:text-foreground group-hover/cell:flex"
+                          :title="t('grid.cellDetails')"
+                          @mousedown.stop
+                          @click.stop="showCellDetails(index, colIdx)"
+                        >
+                          <Info class="h-3 w-3" />
+                        </button>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </RecycleScroller>
             </div>
             <!-- DDL Drawer -->
             <div
@@ -1324,7 +1437,13 @@ function escapeAndHighlightKeywords(s: string): string {
                 <Button variant="ghost" size="icon" class="h-5 w-5" @click="copyDdl">
                   <Copy class="w-3 h-3" />
                 </Button>
-                <Button variant="ghost" size="icon" class="h-5 w-5" :class="{ 'bg-accent': ddlWrap }" @click="toggleDdlWrap">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5"
+                  :class="{ 'bg-accent': ddlWrap }"
+                  @click="toggleDdlWrap"
+                >
                   <WrapText class="w-3 h-3" />
                 </Button>
                 <Button variant="ghost" size="icon" class="h-5 w-5" @click="showDdl = false">
@@ -1348,7 +1467,7 @@ function escapeAndHighlightKeywords(s: string): string {
             >
               <div class="h-9 flex items-center gap-2 px-3 border-b shrink-0 bg-muted/20">
                 <Info class="w-3.5 h-3.5 text-muted-foreground" />
-                <span class="text-xs font-medium flex-1 min-w-0 truncate">{{ t('grid.cellDetails') }}</span>
+                <span class="text-xs font-medium flex-1 min-w-0 truncate">{{ t("grid.cellDetails") }}</span>
                 <Button variant="ghost" size="icon" class="h-5 w-5" @click="showCellDetail = false">
                   <X class="w-3 h-3" />
                 </Button>
@@ -1356,52 +1475,62 @@ function escapeAndHighlightKeywords(s: string): string {
 
               <div class="flex-1 min-h-0 overflow-auto p-3 text-xs space-y-3">
                 <div class="space-y-1">
-                  <div class="text-muted-foreground">{{ t('grid.columnName') }}</div>
+                  <div class="text-muted-foreground">{{ t("grid.columnName") }}</div>
                   <div class="font-medium break-all">{{ activeCellDetail.column }}</div>
                 </div>
                 <div class="grid grid-cols-2 gap-3">
                   <div class="space-y-1">
-                    <div class="text-muted-foreground">{{ t('grid.rowNumber') }}</div>
+                    <div class="text-muted-foreground">{{ t("grid.rowNumber") }}</div>
                     <div>{{ activeCellDetail.rowNumber }}</div>
                   </div>
                   <div class="space-y-1">
-                    <div class="text-muted-foreground">{{ t('grid.columnType') }}</div>
-                    <div :class="activeCellDetail.type ? typeColorClass(activeCellDetail.type) : 'text-muted-foreground'">
-                      {{ activeCellDetail.type || '-' }}
+                    <div class="text-muted-foreground">{{ t("grid.columnType") }}</div>
+                    <div
+                      :class="activeCellDetail.type ? typeColorClass(activeCellDetail.type) : 'text-muted-foreground'"
+                    >
+                      {{ activeCellDetail.type || "-" }}
                     </div>
                   </div>
                   <div class="space-y-1">
-                    <div class="text-muted-foreground">{{ t('grid.nullValue') }}</div>
-                    <div>{{ activeCellDetail.value === null ? 'true' : 'false' }}</div>
+                    <div class="text-muted-foreground">{{ t("grid.nullValue") }}</div>
+                    <div>{{ activeCellDetail.value === null ? "true" : "false" }}</div>
                   </div>
                   <div class="space-y-1">
-                    <div class="text-muted-foreground">{{ t('grid.valueLength') }}</div>
+                    <div class="text-muted-foreground">{{ t("grid.valueLength") }}</div>
                     <div>{{ activeCellDetail.length }}</div>
                   </div>
                 </div>
                 <div class="space-y-1">
-                  <div class="text-muted-foreground">{{ t('grid.columnComment') }}</div>
-                  <div class="whitespace-pre-wrap break-words">{{ activeCellDetail.comment || t('grid.noComment') }}</div>
+                  <div class="text-muted-foreground">{{ t("grid.columnComment") }}</div>
+                  <div class="whitespace-pre-wrap break-words">
+                    {{ activeCellDetail.comment || t("grid.noComment") }}
+                  </div>
                 </div>
                 <div class="space-y-1">
-                  <div class="text-muted-foreground">{{ t('grid.cellValue') }}</div>
-                  <pre class="max-h-56 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words">{{ activeCellDetail.rawValue }}</pre>
+                  <div class="text-muted-foreground">{{ t("grid.cellValue") }}</div>
+                  <pre
+                    class="max-h-56 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words"
+                    >{{ activeCellDetail.rawValue }}</pre
+                  >
                 </div>
                 <div v-if="activeCellDetail.formattedJson" class="space-y-1">
-                  <div class="text-muted-foreground">{{ t('grid.formattedJson') }}</div>
-                  <pre class="max-h-72 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words">{{ activeCellDetail.formattedJson }}</pre>
+                  <div class="text-muted-foreground">{{ t("grid.formattedJson") }}</div>
+                  <pre
+                    class="max-h-72 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words"
+                    >{{ activeCellDetail.formattedJson }}</pre
+                  >
                 </div>
               </div>
 
               <div class="border-t p-2 grid grid-cols-1 gap-1">
                 <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailValue">
-                  <Copy class="w-3 h-3 mr-2" /> {{ t('grid.copyValue') }}
+                  <Copy class="w-3 h-3 mr-2" /> {{ t("grid.copyValue") }}
                 </Button>
                 <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailColumnName">
-                  <Copy class="w-3 h-3 mr-2" /> {{ t('grid.copyColumnName') }}
+                  <Copy class="w-3 h-3 mr-2" /> {{ t("grid.copyColumnName") }}
                 </Button>
                 <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailSqlCondition">
-                  <Code2 class="w-3 h-3 mr-2" /> {{ t('grid.copySqlCondition') }}
+                  <Code2 class="w-3 h-3 mr-2" /> {{ t("grid.copySqlCondition") }}
                 </Button>
               </div>
             </div>
@@ -1412,13 +1541,27 @@ function escapeAndHighlightKeywords(s: string): string {
             >
               <div class="h-9 flex items-center gap-2 px-3 border-b shrink-0 bg-muted/20">
                 <Rows3 class="w-3.5 h-3.5 text-muted-foreground" />
-                <span class="text-xs font-medium">{{ t('grid.transpose') }}</span>
-                <span class="text-xs text-muted-foreground">{{ t('grid.rowNumber') }} {{ (transposeRowIndex ?? 0) + 1 }}</span>
+                <span class="text-xs font-medium">{{ t("grid.transpose") }}</span>
+                <span class="text-xs text-muted-foreground"
+                  >{{ t("grid.rowNumber") }} {{ (transposeRowIndex ?? 0) + 1 }}</span
+                >
                 <span class="flex-1" />
-                <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="transposeRowIndex === 0" @click="transposeNav(-1)">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5"
+                  :disabled="transposeRowIndex === 0"
+                  @click="transposeNav(-1)"
+                >
                   <ChevronLeft class="w-3 h-3" />
                 </Button>
-                <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="transposeRowIndex === displayItems.length - 1" @click="transposeNav(1)">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5"
+                  :disabled="transposeRowIndex === displayItems.length - 1"
+                  @click="transposeNav(1)"
+                >
                   <ChevronRight class="w-3 h-3" />
                 </Button>
                 <Button variant="ghost" size="icon" class="h-5 w-5" @click="showTranspose = false">
@@ -1435,7 +1578,9 @@ function escapeAndHighlightKeywords(s: string): string {
                     >
                       <td class="px-3 py-1.5 font-medium text-muted-foreground whitespace-nowrap w-1/3 align-top">
                         <div>{{ field.column }}</div>
-                        <div v-if="field.type" :class="typeColorClass(field.type)" class="text-[10px]">{{ field.type }}</div>
+                        <div v-if="field.type" :class="typeColorClass(field.type)" class="text-[10px]">
+                          {{ field.type }}
+                        </div>
                       </td>
                       <td class="px-3 py-1.5 break-all" :class="{ 'text-muted-foreground italic': field.isNull }">
                         {{ field.display }}
@@ -1450,63 +1595,66 @@ function escapeAndHighlightKeywords(s: string): string {
       </ContextMenuTrigger>
 
       <ContextMenuContent class="w-60">
-        <ContextMenuItem @click="copyCell">{{ t('grid.copyCell') }}</ContextMenuItem>
-        <ContextMenuItem @click="copyRow">{{ t('grid.copyRow') }}</ContextMenuItem>
-        <ContextMenuItem @click="copyAll">{{ t('grid.copyAll') }}</ContextMenuItem>
+        <ContextMenuItem @click="copyCell">{{ t("grid.copyCell") }}</ContextMenuItem>
+        <ContextMenuItem @click="copyRow">{{ t("grid.copyRow") }}</ContextMenuItem>
+        <ContextMenuItem @click="copyAll">{{ t("grid.copyAll") }}</ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem v-if="contextCell" @click="openTranspose(contextCell.rowIndex)">
-          <Rows3 class="w-3.5 h-3.5 mr-2" /> {{ t('grid.transpose') }}
+          <Rows3 class="w-3.5 h-3.5 mr-2" /> {{ t("grid.transpose") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <template v-if="hasCellSelection">
-          <ContextMenuItem @click="copySelectionTsv">{{ t('grid.copySelectionTsv') }}</ContextMenuItem>
-          <ContextMenuItem @click="copySelectionCsv">{{ t('grid.copySelectionCsv') }}</ContextMenuItem>
-          <ContextMenuItem @click="copySelectionJson">{{ t('grid.copySelectionJson') }}</ContextMenuItem>
-          <ContextMenuItem @click="copySelectionSqlInList">{{ t('grid.copySelectionSql') }}</ContextMenuItem>
-          <ContextMenuItem @click="clearCellSelection">{{ t('grid.clearSelection') }}</ContextMenuItem>
+          <ContextMenuItem @click="copySelectionTsv">{{ t("grid.copySelectionTsv") }}</ContextMenuItem>
+          <ContextMenuItem @click="copySelectionCsv">{{ t("grid.copySelectionCsv") }}</ContextMenuItem>
+          <ContextMenuItem @click="copySelectionJson">{{ t("grid.copySelectionJson") }}</ContextMenuItem>
+          <ContextMenuItem @click="copySelectionSqlInList">{{ t("grid.copySelectionSql") }}</ContextMenuItem>
+          <ContextMenuItem @click="clearCellSelection">{{ t("grid.clearSelection") }}</ContextMenuItem>
           <ContextMenuSeparator />
         </template>
         <template v-if="editable && contextRowItem">
           <ContextMenuItem v-if="contextRowItem.isDeleted" @click="restoreRow(contextRowItem.id)">
-            <Undo2 class="w-3.5 h-3.5 mr-2" /> {{ t('grid.restoreRow') }}
+            <Undo2 class="w-3.5 h-3.5 mr-2" /> {{ t("grid.restoreRow") }}
           </ContextMenuItem>
           <ContextMenuItem v-else class="text-destructive" @click="deleteSelectedRow">
-            <Trash2 class="w-3.5 h-3.5 mr-2" /> {{ t('grid.deleteRow') }}
+            <Trash2 class="w-3.5 h-3.5 mr-2" /> {{ t("grid.deleteRow") }}
           </ContextMenuItem>
           <ContextMenuSeparator />
         </template>
-        <ContextMenuItem @click="exportCsv">{{ t('grid.exportCsv') }}</ContextMenuItem>
-        <ContextMenuItem @click="exportJson">{{ t('grid.exportJson') }}</ContextMenuItem>
-        <ContextMenuItem @click="exportMarkdown">{{ t('grid.exportMarkdown') }}</ContextMenuItem>
+        <ContextMenuItem @click="exportCsv">{{ t("grid.exportCsv") }}</ContextMenuItem>
+        <ContextMenuItem @click="exportJson">{{ t("grid.exportJson") }}</ContextMenuItem>
+        <ContextMenuItem @click="exportMarkdown">{{ t("grid.exportMarkdown") }}</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
 
     <div v-if="!hasData" class="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-      {{ t('grid.querySuccess') }}
+      {{ t("grid.querySuccess") }}
     </div>
 
     <!-- Error bar -->
-    <div v-if="saveError" class="px-3 py-1.5 border-t bg-destructive/10 text-destructive text-xs shrink-0 flex items-center gap-2">
+    <div
+      v-if="saveError"
+      class="px-3 py-1.5 border-t bg-destructive/10 text-destructive text-xs shrink-0 flex items-center gap-2"
+    >
       <span class="flex-1">{{ saveError }}</span>
-      <button class="hover:underline" @click="saveError = ''">{{ t('grid.dismiss') }}</button>
+      <button class="hover:underline" @click="saveError = ''">{{ t("grid.dismiss") }}</button>
     </div>
 
     <!-- Bottom status bar -->
     <div class="flex items-center gap-2 px-3 py-1 border-t text-xs text-muted-foreground bg-muted/30 shrink-0">
-      <span v-if="hasData">{{ t('grid.totalRows', { count: result.rows.length }) }}</span>
-      <span v-else>{{ t('grid.rowsAffected', { count: result.affected_rows }) }}</span>
+      <span v-if="hasData">{{ t("grid.totalRows", { count: result.rows.length }) }}</span>
+      <span v-else>{{ t("grid.rowsAffected", { count: result.affected_rows }) }}</span>
       <span>{{ result.execution_time_ms }}ms</span>
       <span v-if="hasCellSelection" class="text-foreground">{{ selectionSummary }}</span>
 
       <template v-if="editable && tableMeta">
         <span v-if="hasPendingChanges" class="ml-2 text-foreground">
-          {{ t('grid.pendingChanges', { count: pendingChangeCount }) }}
+          {{ t("grid.pendingChanges", { count: pendingChangeCount }) }}
         </span>
         <Button v-if="hasPendingChanges" variant="default" size="sm" class="h-5 text-xs ml-2" @click="saveChanges">
-          <Save class="w-3 h-3 mr-1" /> {{ t('grid.save') }}
+          <Save class="w-3 h-3 mr-1" /> {{ t("grid.save") }}
         </Button>
         <Button v-if="hasPendingChanges" variant="ghost" size="sm" class="h-5 text-xs" @click="discardChanges">
-          {{ t('grid.discard') }}
+          {{ t("grid.discard") }}
         </Button>
         <Button variant="ghost" size="sm" class="h-5 text-xs" @click="toggleDdl">
           <Code2 class="w-3 h-3 mr-1" /> DDL
@@ -1518,12 +1666,12 @@ function escapeAndHighlightKeywords(s: string): string {
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
             <Button variant="ghost" size="sm" class="h-5 text-xs px-1.5">
-              {{ pageSize }}{{ t('grid.rowsPerPageShort') }}
+              {{ pageSize }}{{ t("grid.rowsPerPageShort") }}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent>
             <DropdownMenuItem v-for="s in [50, 100, 500, 1000]" :key="s" @click="changePageSize(s)">
-              {{ s }} {{ t('grid.rowsPerPageShort') }}
+              {{ s }} {{ t("grid.rowsPerPageShort") }}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -1543,9 +1691,9 @@ function escapeAndHighlightKeywords(s: string): string {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
-          <DropdownMenuItem @click="exportCsv">{{ t('grid.exportCsv') }}</DropdownMenuItem>
-          <DropdownMenuItem @click="exportJson">{{ t('grid.exportJson') }}</DropdownMenuItem>
-          <DropdownMenuItem @click="exportMarkdown">{{ t('grid.exportMarkdown') }}</DropdownMenuItem>
+          <DropdownMenuItem @click="exportCsv">{{ t("grid.exportCsv") }}</DropdownMenuItem>
+          <DropdownMenuItem @click="exportJson">{{ t("grid.exportJson") }}</DropdownMenuItem>
+          <DropdownMenuItem @click="exportMarkdown">{{ t("grid.exportMarkdown") }}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 

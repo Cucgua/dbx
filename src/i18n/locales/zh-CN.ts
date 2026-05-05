@@ -181,7 +181,8 @@ export default {
   },
   welcome: {
     title: "数据库工作台",
-    subtitle: "选择左侧连接开始浏览结构，或直接创建查询标签页。DBX 支持多种数据库、查询历史、数据表格编辑和 AI SQL 助手。",
+    subtitle:
+      "选择左侧连接开始浏览结构，或直接创建查询标签页。DBX 支持多种数据库、查询历史、数据表格编辑和 AI SQL 助手。",
     connections: "连接",
     connected: "已连接",
     databaseTypes: "数据库类型",

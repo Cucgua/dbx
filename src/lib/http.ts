@@ -171,19 +171,11 @@ export async function executeMulti(
   return post("/api/query/execute-multi", { connectionId, database, sql, executionId });
 }
 
-export async function executeBatch(
-  connectionId: string,
-  database: string,
-  statements: string[],
-): Promise<QueryResult> {
+export async function executeBatch(connectionId: string, database: string, statements: string[]): Promise<QueryResult> {
   return post("/api/query/execute-batch", { connectionId, database, statements });
 }
 
-export async function executeScript(
-  connectionId: string,
-  database: string,
-  sql: string,
-): Promise<QueryResult> {
+export async function executeScript(connectionId: string, database: string, sql: string): Promise<QueryResult> {
   return post("/api/query/execute-script", { connectionId, database, sql });
 }
 
@@ -294,9 +286,7 @@ export async function cancelSqlFileExecution(executionId: string): Promise<boole
   return post("/api/sql-file/cancel", { executionId });
 }
 
-export async function listenSqlFileProgress(
-  _handler: (progress: SqlFileProgress) => void,
-): Promise<() => void> {
+export async function listenSqlFileProgress(_handler: (progress: SqlFileProgress) => void): Promise<() => void> {
   // For HTTP mode we need an executionId, but the tauri API does not take one.
   // The SSE endpoint requires a specific executionId. As a workaround we return
   // a no-op unlisten; callers that need progress in web mode should use

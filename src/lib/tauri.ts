@@ -134,11 +134,21 @@ export async function getColumns(
   return invoke("get_columns", { connectionId, database, schema, table });
 }
 
-export async function executeQuery(connectionId: string, database: string, sql: string, executionId?: string): Promise<QueryResult> {
+export async function executeQuery(
+  connectionId: string,
+  database: string,
+  sql: string,
+  executionId?: string,
+): Promise<QueryResult> {
   return invoke("execute_query", { connectionId, database, sql, executionId });
 }
 
-export async function executeMulti(connectionId: string, database: string, sql: string, executionId?: string): Promise<QueryResult[]> {
+export async function executeMulti(
+  connectionId: string,
+  database: string,
+  sql: string,
+  executionId?: string,
+): Promise<QueryResult[]> {
   return invoke("execute_multi", { connectionId, database, sql, executionId });
 }
 
@@ -154,19 +164,39 @@ export async function executeScript(connectionId: string, database: string, sql:
   return invoke("execute_script", { connectionId, database, sql });
 }
 
-export async function listIndexes(connectionId: string, database: string, schema: string, table: string): Promise<IndexInfo[]> {
+export async function listIndexes(
+  connectionId: string,
+  database: string,
+  schema: string,
+  table: string,
+): Promise<IndexInfo[]> {
   return invoke("list_indexes", { connectionId, database, schema, table });
 }
 
-export async function listForeignKeys(connectionId: string, database: string, schema: string, table: string): Promise<ForeignKeyInfo[]> {
+export async function listForeignKeys(
+  connectionId: string,
+  database: string,
+  schema: string,
+  table: string,
+): Promise<ForeignKeyInfo[]> {
   return invoke("list_foreign_keys", { connectionId, database, schema, table });
 }
 
-export async function listTriggers(connectionId: string, database: string, schema: string, table: string): Promise<TriggerInfo[]> {
+export async function listTriggers(
+  connectionId: string,
+  database: string,
+  schema: string,
+  table: string,
+): Promise<TriggerInfo[]> {
   return invoke("list_triggers", { connectionId, database, schema, table });
 }
 
-export async function getTableDdl(connectionId: string, database: string, schema: string, table: string): Promise<string> {
+export async function getTableDdl(
+  connectionId: string,
+  database: string,
+  schema: string,
+  table: string,
+): Promise<string> {
   return invoke("get_table_ddl", { connectionId, database, schema, table });
 }
 
@@ -223,7 +253,13 @@ export async function redisListDatabases(connectionId: string): Promise<number[]
   return invoke("redis_list_databases", { connectionId });
 }
 
-export async function redisScanKeys(connectionId: string, db: number, cursor: number, pattern: string, count: number): Promise<RedisScanResult> {
+export async function redisScanKeys(
+  connectionId: string,
+  db: number,
+  cursor: number,
+  pattern: string,
+  count: number,
+): Promise<RedisScanResult> {
   return invoke("redis_scan_keys", { connectionId, db, cursor, pattern, count });
 }
 
@@ -277,19 +313,41 @@ export async function mongoListCollections(connectionId: string, database: strin
   return invoke("mongo_list_collections", { connectionId, database });
 }
 
-export async function mongoFindDocuments(connectionId: string, database: string, collection: string, skip: number, limit: number): Promise<MongoDocumentResult> {
+export async function mongoFindDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  skip: number,
+  limit: number,
+): Promise<MongoDocumentResult> {
   return invoke("mongo_find_documents", { connectionId, database, collection, skip, limit });
 }
 
-export async function mongoInsertDocument(connectionId: string, database: string, collection: string, docJson: string): Promise<string> {
+export async function mongoInsertDocument(
+  connectionId: string,
+  database: string,
+  collection: string,
+  docJson: string,
+): Promise<string> {
   return invoke("mongo_insert_document", { connectionId, database, collection, docJson });
 }
 
-export async function mongoUpdateDocument(connectionId: string, database: string, collection: string, id: string, docJson: string): Promise<number> {
+export async function mongoUpdateDocument(
+  connectionId: string,
+  database: string,
+  collection: string,
+  id: string,
+  docJson: string,
+): Promise<number> {
   return invoke("mongo_update_document", { connectionId, database, collection, id, docJson });
 }
 
-export async function mongoDeleteDocument(connectionId: string, database: string, collection: string, id: string): Promise<number> {
+export async function mongoDeleteDocument(
+  connectionId: string,
+  database: string,
+  collection: string,
+  id: string,
+): Promise<number> {
   return invoke("mongo_delete_document", { connectionId, database, collection, id });
 }
 
@@ -370,9 +428,7 @@ export async function cancelSqlFileExecution(executionId: string): Promise<boole
   return invoke("cancel_sql_file_execution", { executionId });
 }
 
-export async function listenSqlFileProgress(
-  handler: (progress: SqlFileProgress) => void,
-): Promise<UnlistenFn> {
+export async function listenSqlFileProgress(handler: (progress: SqlFileProgress) => void): Promise<UnlistenFn> {
   return listen<SqlFileProgress>("sql-file-progress", (event) => handler(event.payload));
 }
 

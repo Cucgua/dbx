@@ -30,13 +30,7 @@ export interface DiagramLayoutOptions {
 }
 
 function relationshipId(sourceTable: string, fk: ForeignKeyInfo): string {
-  return [
-    sourceTable,
-    fk.name || "foreign_key",
-    fk.column,
-    fk.ref_table,
-    fk.ref_column,
-  ].join(":");
+  return [sourceTable, fk.name || "foreign_key", fk.column, fk.ref_table, fk.ref_column].join(":");
 }
 
 export function buildDiagramRelationships(tables: DiagramTable[]): DiagramRelationship[] {
@@ -62,15 +56,18 @@ export function filterDiagramTables(tables: DiagramTable[], query: string): Diag
 
   return tables.filter((table) => {
     if (table.name.toLowerCase().includes(q)) return true;
-    if (table.columns.some((column) =>
-      column.name.toLowerCase().includes(q) ||
-      column.data_type.toLowerCase().includes(q)
-    )) return true;
-    return table.foreignKeys.some((fk) =>
-      fk.name.toLowerCase().includes(q) ||
-      fk.column.toLowerCase().includes(q) ||
-      fk.ref_table.toLowerCase().includes(q) ||
-      fk.ref_column.toLowerCase().includes(q)
+    if (
+      table.columns.some(
+        (column) => column.name.toLowerCase().includes(q) || column.data_type.toLowerCase().includes(q),
+      )
+    )
+      return true;
+    return table.foreignKeys.some(
+      (fk) =>
+        fk.name.toLowerCase().includes(q) ||
+        fk.column.toLowerCase().includes(q) ||
+        fk.ref_table.toLowerCase().includes(q) ||
+        fk.ref_column.toLowerCase().includes(q),
     );
   });
 }
@@ -86,15 +83,17 @@ export function layoutDiagramTables(
   const gapY = options.gapY ?? 40;
   const margin = options.margin ?? 40;
 
-  return Object.fromEntries(tables.map((table, index) => {
-    const col = index % columnsPerRow;
-    const row = Math.floor(index / columnsPerRow);
-    return [
-      table.name,
-      {
-        x: margin + col * (cardWidth + gapX),
-        y: margin + row * (rowHeight + gapY),
-      },
-    ];
-  }));
+  return Object.fromEntries(
+    tables.map((table, index) => {
+      const col = index % columnsPerRow;
+      const row = Math.floor(index / columnsPerRow);
+      return [
+        table.name,
+        {
+          x: margin + col * (cardWidth + gapX),
+          y: margin + row * (rowHeight + gapY),
+        },
+      ];
+    }),
+  );
 }

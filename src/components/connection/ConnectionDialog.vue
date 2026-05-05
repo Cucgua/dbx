@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -88,34 +85,104 @@ const colorOptions = [
   { value: "#a855f7", class: "bg-purple-500", labelKey: "connection.colorPurple" },
 ];
 
-const driverProfiles: Record<string, { type: DatabaseType; port: number; user: string; label: string; icon: string; urlParams?: string }> = {
-  mysql:      { type: "mysql",      port: 3306,  user: "root",     label: "MySQL",       icon: "mysql",    urlParams: "" },
-  postgres:   { type: "postgres",   port: 5432,  user: "postgres", label: "PostgreSQL",  icon: "postgres", urlParams: "" },
-  redis:      { type: "redis",      port: 6379,  user: "",         label: "Redis",       icon: "redis" },
-  sqlite:     { type: "sqlite",     port: 0,     user: "",         label: "SQLite",      icon: "sqlite" },
-  duckdb:     { type: "duckdb",     port: 0,     user: "",         label: "DuckDB",      icon: "duckdb" },
-  mongodb:    { type: "mongodb",    port: 27017, user: "",         label: "MongoDB",     icon: "mongodb" },
-  clickhouse: { type: "clickhouse", port: 8123,  user: "default",  label: "ClickHouse",  icon: "clickhouse" },
-  sqlserver:  { type: "sqlserver",  port: 1433,  user: "sa",       label: "SQL Server",  icon: "sqlserver" },
-  oracle:     { type: "oracle",     port: 1521,  user: "system",   label: "Oracle",      icon: "oracle" },
-  elasticsearch: { type: "elasticsearch", port: 9200, user: "", label: "Elasticsearch", icon: "elasticsearch" },
-  mariadb:    { type: "mysql",      port: 3306,  user: "root",     label: "MariaDB",     icon: "mariadb" },
-  tidb:       { type: "mysql",      port: 4000,  user: "root",     label: "TiDB",        icon: "tidb" },
-  oceanbase:  { type: "mysql",      port: 2881,  user: "root",     label: "OceanBase",   icon: "oceanbase" },
-  goldendb:   { type: "mysql",      port: 3306,  user: "root",     label: "GoldenDB",    icon: "goldendb" },
-  opengauss:  { type: "postgres",   port: 5432,  user: "gaussdb",  label: "openGauss",   icon: "opengauss", urlParams: "sslmode=disable" },
-  gaussdb:    { type: "postgres",   port: 5432,  user: "gaussdb",  label: "GaussDB",     icon: "gaussdb" },
-  kingbase:   { type: "postgres",   port: 54321, user: "system",   label: "KingBase",    icon: "kingbase" },
-  vastbase:   { type: "postgres",   port: 5432,  user: "vastbase", label: "Vastbase",    icon: "vastbase" },
-  doris:      { type: "mysql",      port: 9030,  user: "root",     label: "Doris",       icon: "doris",    urlParams: "" },
-  selectdb:   { type: "mysql",      port: 9030,  user: "root",     label: "SelectDB",    icon: "selectdb", urlParams: "" },
-  starrocks:  { type: "mysql",      port: 9030,  user: "root",     label: "StarRocks",   icon: "starrocks", urlParams: "" },
-  redshift:   { type: "postgres",   port: 5439,  user: "awsuser",  label: "Redshift",    icon: "redshift" },
-  cockroachdb:{ type: "postgres",   port: 26257, user: "root",     label: "CockroachDB", icon: "cockroachdb" },
-  dm:         { type: "postgres",   port: 5236,  user: "SYSDBA",   label: "DM (Dameng)", icon: "dm" },
-  tdengine:   { type: "mysql",      port: 6030,  user: "root",     label: "TDengine",    icon: "tdengine" },
-  custom_mysql:    { type: "mysql",    port: 3306, user: "root",     label: "Custom",       icon: "mysql",    urlParams: "" },
-  custom_postgres: { type: "postgres", port: 5432, user: "postgres", label: "Custom",  icon: "postgres", urlParams: "" },
+const driverProfiles: Record<
+  string,
+  {
+    type: DatabaseType;
+    port: number;
+    user: string;
+    label: string;
+    icon: string;
+    urlParams?: string;
+  }
+> = {
+  mysql: { type: "mysql", port: 3306, user: "root", label: "MySQL", icon: "mysql", urlParams: "" },
+  postgres: {
+    type: "postgres",
+    port: 5432,
+    user: "postgres",
+    label: "PostgreSQL",
+    icon: "postgres",
+    urlParams: "",
+  },
+  redis: { type: "redis", port: 6379, user: "", label: "Redis", icon: "redis" },
+  sqlite: { type: "sqlite", port: 0, user: "", label: "SQLite", icon: "sqlite" },
+  duckdb: { type: "duckdb", port: 0, user: "", label: "DuckDB", icon: "duckdb" },
+  mongodb: { type: "mongodb", port: 27017, user: "", label: "MongoDB", icon: "mongodb" },
+  clickhouse: {
+    type: "clickhouse",
+    port: 8123,
+    user: "default",
+    label: "ClickHouse",
+    icon: "clickhouse",
+  },
+  sqlserver: { type: "sqlserver", port: 1433, user: "sa", label: "SQL Server", icon: "sqlserver" },
+  oracle: { type: "oracle", port: 1521, user: "system", label: "Oracle", icon: "oracle" },
+  elasticsearch: {
+    type: "elasticsearch",
+    port: 9200,
+    user: "",
+    label: "Elasticsearch",
+    icon: "elasticsearch",
+  },
+  mariadb: { type: "mysql", port: 3306, user: "root", label: "MariaDB", icon: "mariadb" },
+  tidb: { type: "mysql", port: 4000, user: "root", label: "TiDB", icon: "tidb" },
+  oceanbase: { type: "mysql", port: 2881, user: "root", label: "OceanBase", icon: "oceanbase" },
+  goldendb: { type: "mysql", port: 3306, user: "root", label: "GoldenDB", icon: "goldendb" },
+  opengauss: {
+    type: "postgres",
+    port: 5432,
+    user: "gaussdb",
+    label: "openGauss",
+    icon: "opengauss",
+    urlParams: "sslmode=disable",
+  },
+  gaussdb: { type: "postgres", port: 5432, user: "gaussdb", label: "GaussDB", icon: "gaussdb" },
+  kingbase: { type: "postgres", port: 54321, user: "system", label: "KingBase", icon: "kingbase" },
+  vastbase: { type: "postgres", port: 5432, user: "vastbase", label: "Vastbase", icon: "vastbase" },
+  doris: { type: "mysql", port: 9030, user: "root", label: "Doris", icon: "doris", urlParams: "" },
+  selectdb: {
+    type: "mysql",
+    port: 9030,
+    user: "root",
+    label: "SelectDB",
+    icon: "selectdb",
+    urlParams: "",
+  },
+  starrocks: {
+    type: "mysql",
+    port: 9030,
+    user: "root",
+    label: "StarRocks",
+    icon: "starrocks",
+    urlParams: "",
+  },
+  redshift: { type: "postgres", port: 5439, user: "awsuser", label: "Redshift", icon: "redshift" },
+  cockroachdb: {
+    type: "postgres",
+    port: 26257,
+    user: "root",
+    label: "CockroachDB",
+    icon: "cockroachdb",
+  },
+  dm: { type: "postgres", port: 5236, user: "SYSDBA", label: "DM (Dameng)", icon: "dm" },
+  tdengine: { type: "mysql", port: 6030, user: "root", label: "TDengine", icon: "tdengine" },
+  custom_mysql: {
+    type: "mysql",
+    port: 3306,
+    user: "root",
+    label: "Custom",
+    icon: "mysql",
+    urlParams: "",
+  },
+  custom_postgres: {
+    type: "postgres",
+    port: 5432,
+    user: "postgres",
+    label: "Custom",
+    icon: "postgres",
+    urlParams: "",
+  },
 };
 
 function profileForConfig(config: ConnectionConfig) {
@@ -139,7 +206,7 @@ function applyProfile(val: string, preserveConnectionFields = false) {
   form.value.db_type = profile.type;
   form.value.driver_profile = val;
   form.value.driver_label = isCustomCompatibleProfile()
-    ? (customDriverName.value.trim() || profile.label)
+    ? customDriverName.value.trim() || profile.label
     : profile.label;
 
   if (!preserveConnectionFields) {
@@ -149,51 +216,59 @@ function applyProfile(val: string, preserveConnectionFields = false) {
   }
 }
 
-watch(() => props.editConfig, (config) => {
-  if (config) {
-    const profile = profileForConfig(config);
-    editingId.value = config.id;
-    form.value = {
-      name: config.name,
-      db_type: config.db_type,
-      driver_profile: profile,
-      driver_label: config.driver_label || driverProfiles[profile]?.label || config.db_type,
-      url_params: config.url_params || "",
-      host: config.host,
-      port: config.port,
-      username: config.username,
-      password: config.password,
-      database: config.database,
-      color: config.color || "",
-      ssh_enabled: config.ssh_enabled || false,
-      ssh_host: config.ssh_host || "",
-      ssh_port: config.ssh_port || 22,
-      ssh_user: config.ssh_user || "",
-      ssh_password: config.ssh_password || "",
-      ssh_key_path: config.ssh_key_path || "",
-      ssh_key_passphrase: config.ssh_key_passphrase || "",
-      ssh_expose_lan: config.ssh_expose_lan || false,
-      ssl: config.ssl || false,
-      connection_string: config.connection_string,
-    };
-    selectedType.value = profile;
-    mongoUseUrl.value = !!config.connection_string;
-    customDriverName.value = isCustomCompatibleProfile() ? (config.driver_label || "") : "";
-    dialogStep.value = "config";
-    configTab.value = "connection";
-  } else {
-    editingId.value = null;
-    form.value = defaultForm();
-    selectedType.value = "mysql";
-    customDriverName.value = "";
-    dialogStep.value = "select";
-    configTab.value = "connection";
-  }
-  resetTestState();
-});
+watch(
+  () => props.editConfig,
+  (config) => {
+    if (config) {
+      const profile = profileForConfig(config);
+      editingId.value = config.id;
+      form.value = {
+        name: config.name,
+        db_type: config.db_type,
+        driver_profile: profile,
+        driver_label: config.driver_label || driverProfiles[profile]?.label || config.db_type,
+        url_params: config.url_params || "",
+        host: config.host,
+        port: config.port,
+        username: config.username,
+        password: config.password,
+        database: config.database,
+        color: config.color || "",
+        ssh_enabled: config.ssh_enabled || false,
+        ssh_host: config.ssh_host || "",
+        ssh_port: config.ssh_port || 22,
+        ssh_user: config.ssh_user || "",
+        ssh_password: config.ssh_password || "",
+        ssh_key_path: config.ssh_key_path || "",
+        ssh_key_passphrase: config.ssh_key_passphrase || "",
+        ssh_expose_lan: config.ssh_expose_lan || false,
+        ssl: config.ssl || false,
+        connection_string: config.connection_string,
+      };
+      selectedType.value = profile;
+      mongoUseUrl.value = !!config.connection_string;
+      customDriverName.value = isCustomCompatibleProfile() ? config.driver_label || "" : "";
+      dialogStep.value = "config";
+      configTab.value = "connection";
+    } else {
+      editingId.value = null;
+      form.value = defaultForm();
+      selectedType.value = "mysql";
+      customDriverName.value = "";
+      dialogStep.value = "select";
+      configTab.value = "connection";
+    }
+    resetTestState();
+  },
+);
 
 const isEditing = ref(false);
-watch(() => editingId.value, (v) => { isEditing.value = !!v; });
+watch(
+  () => editingId.value,
+  (v) => {
+    isEditing.value = !!v;
+  },
+);
 
 function onDbTypeChange(val: string) {
   customDriverName.value = "";
@@ -202,15 +277,33 @@ function onDbTypeChange(val: string) {
 }
 
 const iconTypeMap: Record<string, string> = {
-  mysql: "mysql", postgres: "postgres", sqlite: "sqlite", redis: "redis",
-  mongodb: "mongodb", duckdb: "duckdb", clickhouse: "clickhouse", sqlserver: "sqlserver",
+  mysql: "mysql",
+  postgres: "postgres",
+  sqlite: "sqlite",
+  redis: "redis",
+  mongodb: "mongodb",
+  duckdb: "duckdb",
+  clickhouse: "clickhouse",
+  sqlserver: "sqlserver",
   oracle: "oracle",
   elasticsearch: "elasticsearch",
-  mariadb: "mariadb", tidb: "tidb", oceanbase: "oceanbase", goldendb: "goldendb",
-  opengauss: "opengauss", gaussdb: "gaussdb", kingbase: "kingbase", vastbase: "vastbase",
-  doris: "doris", selectdb: "selectdb", starrocks: "starrocks", redshift: "redshift",
-  cockroachdb: "cockroachdb", tdengine: "tdengine", dm: "dm",
-  custom_mysql: "mysql", custom_postgres: "postgres",
+  mariadb: "mariadb",
+  tidb: "tidb",
+  oceanbase: "oceanbase",
+  goldendb: "goldendb",
+  opengauss: "opengauss",
+  gaussdb: "gaussdb",
+  kingbase: "kingbase",
+  vastbase: "vastbase",
+  doris: "doris",
+  selectdb: "selectdb",
+  starrocks: "starrocks",
+  redshift: "redshift",
+  cockroachdb: "cockroachdb",
+  tdengine: "tdengine",
+  dm: "dm",
+  custom_mysql: "mysql",
+  custom_postgres: "postgres",
 };
 
 const dbOptions = [
@@ -264,13 +357,11 @@ const filteredDbCategories = computed<DbCategory[]>(() => {
       ...category,
       options: category.options.filter((option) => {
         const profile = driverProfiles[option.value];
-        return [
-          option.label,
-          option.value,
-          profile?.label,
-          profile?.type,
-          category.title,
-        ].some((value) => String(value || "").toLowerCase().includes(keyword));
+        return [option.label, option.value, profile?.label, profile?.type, category.title].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(keyword),
+        );
       }),
     }))
     .filter((category) => category.options.length > 0);
@@ -379,7 +470,8 @@ async function save() {
       open.value = false;
       await nextTick();
       emit("connectStarted", config.name);
-      void store.connect(config)
+      void store
+        .connect(config)
         .then(() => {
           emit("connectSucceeded", config.name);
         })
@@ -398,7 +490,7 @@ async function save() {
 
 const dialogTitle = ref("");
 watch([() => editingId.value, () => open.value], () => {
-  dialogTitle.value = editingId.value ? t('connection.editTitle') : t('connection.title');
+  dialogTitle.value = editingId.value ? t("connection.editTitle") : t("connection.title");
 });
 
 async function browseSshKeyPath() {
@@ -419,7 +511,7 @@ async function browseSshKeyPath() {
   <Dialog v-model:open="open">
     <DialogContent :class="dialogStep === 'select' ? 'sm:max-w-[760px]' : 'sm:max-w-[560px]'">
       <DialogHeader>
-        <DialogTitle>{{ editingId ? t('connection.editTitle') : t('connection.title') }}</DialogTitle>
+        <DialogTitle>{{ editingId ? t("connection.editTitle") : t("connection.title") }}</DialogTitle>
       </DialogHeader>
 
       <template v-if="dialogStep === 'select'">
@@ -471,12 +563,18 @@ async function browseSshKeyPath() {
                   :key="opt.value"
                   type="button"
                   class="group flex min-h-24 flex-col items-center justify-center gap-2 rounded-xl border bg-background/70 p-3 text-center transition hover:-translate-y-0.5 hover:border-primary/40 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  :class="selectedType === opt.value ? 'border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30' : 'border-border'"
+                  :class="
+                    selectedType === opt.value
+                      ? 'border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30'
+                      : 'border-border'
+                  "
                   :aria-pressed="selectedType === opt.value"
                   @click="onDbTypeChange(opt.value)"
                   @dblclick="goToConnectionStep(opt.value)"
                 >
-                  <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-muted/60 transition group-hover:bg-background">
+                  <span
+                    class="flex h-10 w-10 items-center justify-center rounded-xl bg-muted/60 transition group-hover:bg-background"
+                  >
                     <DatabaseIcon :db-type="iconTypeMap[opt.value]" class="h-6 w-6" />
                   </span>
                   <span class="max-w-full truncate text-sm font-medium">{{ opt.label }}</span>
@@ -489,7 +587,9 @@ async function browseSshKeyPath() {
                   :key="opt.value"
                   type="button"
                   class="flex items-center gap-3 rounded-lg border bg-background px-3 py-2 text-left transition hover:border-primary/40 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  :class="selectedType === opt.value ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border'"
+                  :class="
+                    selectedType === opt.value ? 'border-primary bg-primary/10 ring-1 ring-primary/30' : 'border-border'
+                  "
                   :aria-pressed="selectedType === opt.value"
                   @click="onDbTypeChange(opt.value)"
                   @dblclick="goToConnectionStep(opt.value)"
@@ -501,8 +601,11 @@ async function browseSshKeyPath() {
               </div>
             </section>
 
-            <div v-if="!hasDbPickerResults" class="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
-              {{ t('connection.noDatabaseMatches') }}
+            <div
+              v-if="!hasDbPickerResults"
+              class="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground"
+            >
+              {{ t("connection.noDatabaseMatches") }}
             </div>
           </div>
         </div>
@@ -510,259 +613,334 @@ async function browseSshKeyPath() {
         <DialogFooter class="flex items-center gap-2">
           <div class="mr-auto flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
             <DatabaseIcon :db-type="selectedDbIcon" class="h-4 w-4 shrink-0" />
-            <span class="truncate">{{ t('connection.selectedDatabase') }}: {{ selectedProfile().label }}</span>
+            <span class="truncate">{{ t("connection.selectedDatabase") }}: {{ selectedProfile().label }}</span>
           </div>
           <Button :disabled="!hasDbPickerResults" @click="goToConnectionStep()">
-            {{ t('connection.next') }}
+            {{ t("connection.next") }}
             <ChevronRight class="h-4 w-4" />
           </Button>
         </DialogFooter>
       </template>
 
       <template v-else>
-      <div class="space-y-3">
-        <Tabs v-model="configTab" class="min-h-0">
-          <div class="flex items-center justify-between border-b pb-2">
-            <TabsList>
-              <TabsTrigger value="connection">{{ t('connection.basicTab') }}</TabsTrigger>
-              <TabsTrigger v-if="canUseSsh" value="ssh">{{ t('connection.sshTunnel') }}</TabsTrigger>
-            </TabsList>
-          </div>
-
-          <TabsContent value="connection" class="m-0">
-      <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label class="text-right">{{ t('connection.name') }}</Label>
-          <Input v-model="form.name" class="col-span-3" :placeholder="t('connection.namePlaceholder')" />
-        </div>
-
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label class="text-right">{{ t('connection.type') }}</Label>
-          <div class="col-span-3 flex items-center gap-2 rounded-md border bg-muted/20 px-3 py-2">
-            <DatabaseIcon :db-type="selectedDbIcon" class="h-4 w-4 shrink-0" />
-            <span class="min-w-0 flex-1 truncate text-sm">{{ selectedProfile().label }}</span>
-          </div>
-        </div>
-
-        <div v-if="isCustomCompatibleProfile()" class="grid grid-cols-4 items-center gap-4">
-          <Label class="text-right">{{ t('connection.driverName') }}</Label>
-          <Input v-model="customDriverName" class="col-span-3" :placeholder="t('connection.driverNamePlaceholder')" />
-        </div>
-
-        <div class="grid grid-cols-4 items-center gap-4">
-          <Label class="text-right">{{ t('connection.color') }}</Label>
-          <div class="col-span-3 flex items-center gap-1.5">
-            <button
-              v-for="color in colorOptions"
-              :key="color.value || 'none'"
-              type="button"
-              class="h-6 w-6 rounded-full border ring-offset-background transition hover:scale-105"
-              :class="[color.class, form.color === color.value ? 'ring-2 ring-ring ring-offset-2' : 'border-border']"
-              :title="t(color.labelKey)"
-              @click="form.color = color.value"
-            />
-          </div>
-        </div>
-
-        <!-- SQLite / DuckDB: file path only -->
-        <template v-if="form.db_type === 'sqlite' || form.db_type === 'duckdb'">
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.filePath') }}</Label>
-            <Input v-model="form.host" class="col-span-3" placeholder="/path/to/database.db" />
-          </div>
-        </template>
-
-        <!-- Redis: host, port, user, password, ssl -->
-        <template v-else-if="form.db_type === 'redis'">
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.host') }}</Label>
-            <Input v-model="form.host" class="col-span-2" />
-            <Input v-model.number="form.port" type="number" class="col-span-1" />
-          </div>
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.user') }}</Label>
-            <Input v-model="form.username" class="col-span-3" placeholder="default" />
-          </div>
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.password') }}</Label>
-            <Input v-model="form.password" type="password" class="col-span-3" :placeholder="t('connection.databasePlaceholder')" />
-          </div>
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right text-xs">SSL/TLS</Label>
-            <div class="col-span-3">
-              <input type="checkbox" v-model="form.ssl" class="mr-2" />
-              <span class="text-xs text-muted-foreground">{{ t('connection.sshEnable') }}</span>
+        <div class="space-y-3">
+          <Tabs v-model="configTab" class="min-h-0">
+            <div class="flex items-center justify-between border-b pb-2">
+              <TabsList>
+                <TabsTrigger value="connection">{{ t("connection.basicTab") }}</TabsTrigger>
+                <TabsTrigger v-if="canUseSsh" value="ssh">{{ t("connection.sshTunnel") }}</TabsTrigger>
+              </TabsList>
             </div>
-          </div>
-        </template>
 
-        <!-- MongoDB: URL or form -->
-        <template v-else-if="form.db_type === 'mongodb'">
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right text-xs">{{ t('connection.mode') }}</Label>
-            <div class="col-span-3 flex gap-2">
-              <Button size="sm" :variant="mongoUseUrl ? 'outline' : 'default'" @click="mongoUseUrl = false">{{ t('connection.modeForm') }}</Button>
-              <Button size="sm" :variant="mongoUseUrl ? 'default' : 'outline'" @click="mongoUseUrl = true">URL</Button>
-            </div>
-          </div>
-          <template v-if="mongoUseUrl">
-            <div class="grid grid-cols-4 items-start gap-4">
-              <Label class="text-right mt-2">URL</Label>
-              <textarea
-                v-model="form.connection_string"
-                class="col-span-3 flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="mongodb+srv://user:pass@cluster.mongodb.net/mydb"
-              />
-            </div>
-          </template>
-          <template v-else>
-            <div class="grid grid-cols-4 items-center gap-4">
-              <Label class="text-right">{{ t('connection.host') }}</Label>
-              <Input v-model="form.host" class="col-span-2" />
-              <Input v-model.number="form.port" type="number" class="col-span-1" />
-            </div>
-            <div class="grid grid-cols-4 items-center gap-4">
-              <Label class="text-right">{{ t('connection.user') }}</Label>
-              <Input v-model="form.username" class="col-span-3" />
-            </div>
-            <div class="grid grid-cols-4 items-center gap-4">
-              <Label class="text-right">{{ t('connection.password') }}</Label>
-              <Input v-model="form.password" type="password" class="col-span-3" />
-            </div>
-            <div class="grid grid-cols-4 items-center gap-4">
-              <Label class="text-right">{{ t('connection.database') }}</Label>
-              <Input v-model="form.database" class="col-span-3" :placeholder="t('connection.databasePlaceholder')" />
-            </div>
-          </template>
-        </template>
+            <TabsContent value="connection" class="m-0">
+              <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right">{{ t("connection.name") }}</Label>
+                  <Input v-model="form.name" class="col-span-3" :placeholder="t('connection.namePlaceholder')" />
+                </div>
 
-        <!-- MySQL / PostgreSQL: host, port, user, password, database -->
-        <template v-else>
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.host') }}</Label>
-            <Input v-model="form.host" class="col-span-2" />
-            <Input v-model.number="form.port" type="number" class="col-span-1" />
-          </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right">{{ t("connection.type") }}</Label>
+                  <div class="col-span-3 flex items-center gap-2 rounded-md border bg-muted/20 px-3 py-2">
+                    <DatabaseIcon :db-type="selectedDbIcon" class="h-4 w-4 shrink-0" />
+                    <span class="min-w-0 flex-1 truncate text-sm">{{ selectedProfile().label }}</span>
+                  </div>
+                </div>
 
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.user') }}</Label>
-            <Input v-model="form.username" class="col-span-3" />
-          </div>
+                <div v-if="isCustomCompatibleProfile()" class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right">{{ t("connection.driverName") }}</Label>
+                  <Input
+                    v-model="customDriverName"
+                    class="col-span-3"
+                    :placeholder="t('connection.driverNamePlaceholder')"
+                  />
+                </div>
 
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.password') }}</Label>
-            <Input v-model="form.password" type="password" class="col-span-3" />
-          </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right">{{ t("connection.color") }}</Label>
+                  <div class="col-span-3 flex items-center gap-1.5">
+                    <button
+                      v-for="color in colorOptions"
+                      :key="color.value || 'none'"
+                      type="button"
+                      class="h-6 w-6 rounded-full border ring-offset-background transition hover:scale-105"
+                      :class="[
+                        color.class,
+                        form.color === color.value ? 'ring-2 ring-ring ring-offset-2' : 'border-border',
+                      ]"
+                      :title="t(color.labelKey)"
+                      @click="form.color = color.value"
+                    />
+                  </div>
+                </div>
 
-          <div class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.database') }}</Label>
-            <Input v-model="form.database" class="col-span-3" :placeholder="t('connection.databasePlaceholder')" />
-          </div>
+                <!-- SQLite / DuckDB: file path only -->
+                <template v-if="form.db_type === 'sqlite' || form.db_type === 'duckdb'">
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.filePath") }}</Label>
+                    <Input v-model="form.host" class="col-span-3" placeholder="/path/to/database.db" />
+                  </div>
+                </template>
 
-          <div v-if="selectedType === 'dm'" class="grid grid-cols-4 items-center gap-4">
-            <span />
-            <p class="col-span-3 text-xs text-muted-foreground">{{ t('connection.dmCompatHint') }}</p>
-          </div>
+                <!-- Redis: host, port, user, password, ssl -->
+                <template v-else-if="form.db_type === 'redis'">
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.host") }}</Label>
+                    <Input v-model="form.host" class="col-span-2" />
+                    <Input v-model.number="form.port" type="number" class="col-span-1" />
+                  </div>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.user") }}</Label>
+                    <Input v-model="form.username" class="col-span-3" placeholder="default" />
+                  </div>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.password") }}</Label>
+                    <Input
+                      v-model="form.password"
+                      type="password"
+                      class="col-span-3"
+                      :placeholder="t('connection.databasePlaceholder')"
+                    />
+                  </div>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right text-xs">SSL/TLS</Label>
+                    <div class="col-span-3">
+                      <input type="checkbox" v-model="form.ssl" class="mr-2" />
+                      <span class="text-xs text-muted-foreground">{{ t("connection.sshEnable") }}</span>
+                    </div>
+                  </div>
+                </template>
 
-          <div v-if="form.db_type === 'mysql' || form.db_type === 'postgres'" class="grid grid-cols-4 items-center gap-4">
-            <Label class="text-right">{{ t('connection.urlParams') }}</Label>
-            <Input v-model="form.url_params" class="col-span-3" :placeholder="form.db_type === 'postgres' ? 'sslmode=disable' : 'charset=utf8mb4'" />
-          </div>
-        </template>
+                <!-- MongoDB: URL or form -->
+                <template v-else-if="form.db_type === 'mongodb'">
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right text-xs">{{ t("connection.mode") }}</Label>
+                    <div class="col-span-3 flex gap-2">
+                      <Button size="sm" :variant="mongoUseUrl ? 'outline' : 'default'" @click="mongoUseUrl = false">{{
+                        t("connection.modeForm")
+                      }}</Button>
+                      <Button size="sm" :variant="mongoUseUrl ? 'default' : 'outline'" @click="mongoUseUrl = true"
+                        >URL</Button
+                      >
+                    </div>
+                  </div>
+                  <template v-if="mongoUseUrl">
+                    <div class="grid grid-cols-4 items-start gap-4">
+                      <Label class="text-right mt-2">URL</Label>
+                      <textarea
+                        v-model="form.connection_string"
+                        class="col-span-3 flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        placeholder="mongodb+srv://user:pass@cluster.mongodb.net/mydb"
+                      />
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.host") }}</Label>
+                      <Input v-model="form.host" class="col-span-2" />
+                      <Input v-model.number="form.port" type="number" class="col-span-1" />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.user") }}</Label>
+                      <Input v-model="form.username" class="col-span-3" />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.password") }}</Label>
+                      <Input v-model="form.password" type="password" class="col-span-3" />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.database") }}</Label>
+                      <Input
+                        v-model="form.database"
+                        class="col-span-3"
+                        :placeholder="t('connection.databasePlaceholder')"
+                      />
+                    </div>
+                  </template>
+                </template>
 
-      </div>
-          </TabsContent>
+                <!-- MySQL / PostgreSQL: host, port, user, password, database -->
+                <template v-else>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.host") }}</Label>
+                    <Input v-model="form.host" class="col-span-2" />
+                    <Input v-model.number="form.port" type="number" class="col-span-1" />
+                  </div>
 
-          <TabsContent v-if="canUseSsh" value="ssh" class="m-0">
-            <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
-              <div class="grid grid-cols-4 items-center gap-4">
-                <Label class="text-right text-xs">{{ t('connection.sshTunnel') }}</Label>
-                <label class="col-span-3 flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" v-model="form.ssh_enabled" class="mr-0" />
-                  <span class="text-xs text-muted-foreground">{{ t('connection.sshEnable') }}</span>
-                </label>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.user") }}</Label>
+                    <Input v-model="form.username" class="col-span-3" />
+                  </div>
+
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.password") }}</Label>
+                    <Input v-model="form.password" type="password" class="col-span-3" />
+                  </div>
+
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.database") }}</Label>
+                    <Input
+                      v-model="form.database"
+                      class="col-span-3"
+                      :placeholder="t('connection.databasePlaceholder')"
+                    />
+                  </div>
+
+                  <div v-if="selectedType === 'dm'" class="grid grid-cols-4 items-center gap-4">
+                    <span />
+                    <p class="col-span-3 text-xs text-muted-foreground">
+                      {{ t("connection.dmCompatHint") }}
+                    </p>
+                  </div>
+
+                  <div
+                    v-if="form.db_type === 'mysql' || form.db_type === 'postgres'"
+                    class="grid grid-cols-4 items-center gap-4"
+                  >
+                    <Label class="text-right">{{ t("connection.urlParams") }}</Label>
+                    <Input
+                      v-model="form.url_params"
+                      class="col-span-3"
+                      :placeholder="form.db_type === 'postgres' ? 'sslmode=disable' : 'charset=utf8mb4'"
+                    />
+                  </div>
+                </template>
               </div>
-              <div class="grid grid-cols-4 items-center gap-4">
-                <Label class="text-right text-xs">{{ t('connection.sshHost') }}</Label>
-                <Input v-model="form.ssh_host" class="col-span-2" placeholder="ssh.example.com" :disabled="!form.ssh_enabled" />
-                <Input v-model.number="form.ssh_port" type="number" class="col-span-1" :disabled="!form.ssh_enabled" />
-              </div>
-              <div class="grid grid-cols-4 items-center gap-4">
-                <Label class="text-right text-xs">{{ t('connection.sshUser') }}</Label>
-                <Input v-model="form.ssh_user" class="col-span-3" placeholder="root" :disabled="!form.ssh_enabled" />
-              </div>
-              <div class="grid grid-cols-4 items-center gap-4">
-                <Label class="text-right text-xs">{{ t('connection.sshPassword') }}</Label>
-                <Input v-model="form.ssh_password" type="password" class="col-span-3" :placeholder="t('connection.sshPasswordPlaceholder')" :disabled="!form.ssh_enabled" />
-              </div>
-              <div class="grid grid-cols-4 items-center gap-4">
-                <Label class="text-right text-xs">{{ t('connection.sshKeyPath') }}</Label>
-                <div class="col-span-3 flex items-center gap-1">
-                  <Input v-model="form.ssh_key_path" class="flex-1" placeholder="~/.ssh/id_rsa" :disabled="!form.ssh_enabled" />
-                  <Tooltip>
-                    <TooltipTrigger as-child>
-                      <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" :disabled="!form.ssh_enabled" @click="browseSshKeyPath">
-                        <FolderOpen class="h-4 w-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{{ t('connection.sshKeyPathBrowse') }}</TooltipContent>
-                  </Tooltip>
+            </TabsContent>
+
+            <TabsContent v-if="canUseSsh" value="ssh" class="m-0">
+              <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.sshTunnel") }}</Label>
+                  <label class="col-span-3 flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" v-model="form.ssh_enabled" class="mr-0" />
+                    <span class="text-xs text-muted-foreground">{{ t("connection.sshEnable") }}</span>
+                  </label>
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.sshHost") }}</Label>
+                  <Input
+                    v-model="form.ssh_host"
+                    class="col-span-2"
+                    placeholder="ssh.example.com"
+                    :disabled="!form.ssh_enabled"
+                  />
+                  <Input
+                    v-model.number="form.ssh_port"
+                    type="number"
+                    class="col-span-1"
+                    :disabled="!form.ssh_enabled"
+                  />
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.sshUser") }}</Label>
+                  <Input v-model="form.ssh_user" class="col-span-3" placeholder="root" :disabled="!form.ssh_enabled" />
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.sshPassword") }}</Label>
+                  <Input
+                    v-model="form.ssh_password"
+                    type="password"
+                    class="col-span-3"
+                    :placeholder="t('connection.sshPasswordPlaceholder')"
+                    :disabled="!form.ssh_enabled"
+                  />
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.sshKeyPath") }}</Label>
+                  <div class="col-span-3 flex items-center gap-1">
+                    <Input
+                      v-model="form.ssh_key_path"
+                      class="flex-1"
+                      placeholder="~/.ssh/id_rsa"
+                      :disabled="!form.ssh_enabled"
+                    />
+                    <Tooltip>
+                      <TooltipTrigger as-child>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-9 w-9 shrink-0"
+                          :disabled="!form.ssh_enabled"
+                          @click="browseSshKeyPath"
+                        >
+                          <FolderOpen class="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{{ t("connection.sshKeyPathBrowse") }}</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.sshKeyPassphrase") }}</Label>
+                  <Input
+                    v-model="form.ssh_key_passphrase"
+                    type="password"
+                    class="col-span-3"
+                    :placeholder="t('connection.sshKeyPassphrasePlaceholder')"
+                    :disabled="!form.ssh_enabled"
+                  />
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <span />
+                  <label
+                    class="col-span-3 flex items-center gap-2"
+                    :class="form.ssh_enabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'"
+                  >
+                    <input type="checkbox" v-model="form.ssh_expose_lan" class="mr-0" :disabled="!form.ssh_enabled" />
+                    <span class="text-xs text-muted-foreground">{{ t("connection.sshExposeLan") }}</span>
+                  </label>
                 </div>
               </div>
-              <div class="grid grid-cols-4 items-center gap-4">
-                <Label class="text-right text-xs">{{ t('connection.sshKeyPassphrase') }}</Label>
-                <Input v-model="form.ssh_key_passphrase" type="password" class="col-span-3" :placeholder="t('connection.sshKeyPassphrasePlaceholder')" :disabled="!form.ssh_enabled" />
-              </div>
-              <div class="grid grid-cols-4 items-center gap-4">
-                <span />
-                <label
-                  class="col-span-3 flex items-center gap-2"
-                  :class="form.ssh_enabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'"
-                >
-                  <input type="checkbox" v-model="form.ssh_expose_lan" class="mr-0" :disabled="!form.ssh_enabled" />
-                  <span class="text-xs text-muted-foreground">{{ t('connection.sshExposeLan') }}</span>
-                </label>
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
-      </div>
-
-      <DialogFooter class="flex min-w-0 items-center gap-2 sm:flex-nowrap">
-        <div class="mr-auto flex min-w-0 flex-1 basis-0 items-center gap-2 overflow-hidden">
-          <Button v-if="!editingId" variant="outline" class="shrink-0" :disabled="isSaving" @click="backToDatabasePicker">
-            <ArrowLeft class="h-4 w-4" />
-            {{ t('connection.back') }}
-          </Button>
-          <template v-if="testResult">
-            <span
-              class="block min-w-0 flex-1 basis-0 truncate text-xs"
-              :class="testResult.ok ? 'text-green-600' : 'text-red-600'"
-              :title="testResultMessage"
-              role="status"
-              aria-live="polite"
-            >
-              {{ testResultMessage }}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              class="h-5 w-5 shrink-0"
-              :title="t('connection.copyTestResult')"
-              :aria-label="t('connection.copyTestResult')"
-              @click="copyTestResult"
-            >
-              <Copy class="h-3 w-3" />
-            </Button>
-          </template>
+            </TabsContent>
+          </Tabs>
         </div>
-        <Button variant="outline" class="shrink-0" :disabled="isTesting || isSaving" @click="testConnection">
-          {{ isTesting ? t('connection.testing') : t('connection.test') }}
-        </Button>
-        <Button class="shrink-0" @click="save" :disabled="isSaving || !form.name || (!form.host && !(mongoUseUrl && form.connection_string))">
-          {{ isSaving ? t('common.loading') : (editingId ? t('connection.save') : t('connection.saveAndConnect')) }}
-        </Button>
-      </DialogFooter>
+
+        <DialogFooter class="flex min-w-0 items-center gap-2 sm:flex-nowrap">
+          <div class="mr-auto flex min-w-0 flex-1 basis-0 items-center gap-2 overflow-hidden">
+            <Button
+              v-if="!editingId"
+              variant="outline"
+              class="shrink-0"
+              :disabled="isSaving"
+              @click="backToDatabasePicker"
+            >
+              <ArrowLeft class="h-4 w-4" />
+              {{ t("connection.back") }}
+            </Button>
+            <template v-if="testResult">
+              <span
+                class="block min-w-0 flex-1 basis-0 truncate text-xs"
+                :class="testResult.ok ? 'text-green-600' : 'text-red-600'"
+                :title="testResultMessage"
+                role="status"
+                aria-live="polite"
+              >
+                {{ testResultMessage }}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                class="h-5 w-5 shrink-0"
+                :title="t('connection.copyTestResult')"
+                :aria-label="t('connection.copyTestResult')"
+                @click="copyTestResult"
+              >
+                <Copy class="h-3 w-3" />
+              </Button>
+            </template>
+          </div>
+          <Button variant="outline" class="shrink-0" :disabled="isTesting || isSaving" @click="testConnection">
+            {{ isTesting ? t("connection.testing") : t("connection.test") }}
+          </Button>
+          <Button
+            class="shrink-0"
+            @click="save"
+            :disabled="isSaving || !form.name || (!form.host && !(mongoUseUrl && form.connection_string))"
+          >
+            {{ isSaving ? t("common.loading") : editingId ? t("connection.save") : t("connection.saveAndConnect") }}
+          </Button>
+        </DialogFooter>
       </template>
     </DialogContent>
   </Dialog>

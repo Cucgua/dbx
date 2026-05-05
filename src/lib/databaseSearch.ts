@@ -23,29 +23,9 @@ export interface SearchResultWhereOptions {
   matchedColumns?: string[];
 }
 
-const TEXT_TYPES = [
-  "char",
-  "text",
-  "clob",
-  "varchar",
-  "nvarchar",
-  "nchar",
-  "uuid",
-  "uniqueidentifier",
-  "enum",
-];
+const TEXT_TYPES = ["char", "text", "clob", "varchar", "nvarchar", "nchar", "uuid", "uniqueidentifier", "enum"];
 
-const NUMBER_TYPES = [
-  "int",
-  "serial",
-  "number",
-  "numeric",
-  "decimal",
-  "float",
-  "double",
-  "real",
-  "money",
-];
+const NUMBER_TYPES = ["int", "serial", "number", "numeric", "decimal", "float", "double", "real", "money"];
 
 const SKIPPED_TYPES = ["blob", "binary", "bytea", "image", "geometry", "geography"];
 
@@ -85,7 +65,9 @@ function sqlStringLiteral(value: string): string {
 }
 
 function likePattern(term: string): string {
-  return `%${cleanTerm(term).toLowerCase().replace(/[~%_]/g, (match) => `~${match}`)}%`;
+  return `%${cleanTerm(term)
+    .toLowerCase()
+    .replace(/[~%_]/g, (match) => `~${match}`)}%`;
 }
 
 function textCastExpression(databaseType: DatabaseType | undefined, identifier: string): string {
@@ -96,7 +78,11 @@ function textCastExpression(databaseType: DatabaseType | undefined, identifier: 
   return `LOWER(CAST(${identifier} AS TEXT))`;
 }
 
-function sqlValueLiteral(databaseType: DatabaseType | undefined, column: ColumnInfo | undefined, value: unknown): string {
+function sqlValueLiteral(
+  databaseType: DatabaseType | undefined,
+  column: ColumnInfo | undefined,
+  value: unknown,
+): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
@@ -119,7 +105,9 @@ export function buildDatabaseSearchSql(options: DatabaseSearchSqlOptions): Datab
 
   for (const column of textColumns) {
     const identifier = quoteTableIdentifier(options.databaseType, column.name);
-    conditions.push(`${textCastExpression(options.databaseType, identifier)} LIKE ${sqlStringLiteral(likePattern(term))} ESCAPE '~'`);
+    conditions.push(
+      `${textCastExpression(options.databaseType, identifier)} LIKE ${sqlStringLiteral(likePattern(term))} ESCAPE '~'`,
+    );
   }
 
   for (const column of numericColumns) {
@@ -197,12 +185,13 @@ export function buildSearchResultWhere(options: SearchResultWhereOptions): strin
     valueByColumn.set(column.toLowerCase(), options.row[index]);
   });
 
-  const primaryColumns = options.columns.filter((column) =>
-    column.is_primary_key && valueByColumn.get(column.name.toLowerCase()) !== undefined,
+  const primaryColumns = options.columns.filter(
+    (column) => column.is_primary_key && valueByColumn.get(column.name.toLowerCase()) !== undefined,
   );
-  const fallbackColumns = options.columns.filter((column) =>
-    (options.matchedColumns ?? []).some((name) => name.toLowerCase() === column.name.toLowerCase()) &&
-    valueByColumn.get(column.name.toLowerCase()) !== undefined,
+  const fallbackColumns = options.columns.filter(
+    (column) =>
+      (options.matchedColumns ?? []).some((name) => name.toLowerCase() === column.name.toLowerCase()) &&
+      valueByColumn.get(column.name.toLowerCase()) !== undefined,
   );
   const selectedColumns = (primaryColumns.length ? primaryColumns : fallbackColumns).slice(0, 3);
 

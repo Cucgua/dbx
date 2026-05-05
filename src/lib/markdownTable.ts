@@ -9,7 +9,7 @@ export function formatMarkdownTable(data: MarkdownTableData): string {
   const normalizedColumns = data.columns.map(markdownCell);
   const normalizedRows = data.rows.map((row) => row.map((cell) => markdownCell(displayCell(cell))));
   const widths = normalizedColumns.map((column, index) =>
-    Math.max(column.length, ...normalizedRows.map((row) => row[index]?.length ?? 0), 3)
+    Math.max(column.length, ...normalizedRows.map((row) => row[index]?.length ?? 0), 3),
   );
   const header = `| ${normalizedColumns.map((column, index) => pad(column, widths[index])).join(" | ")} |`;
   const separator = `| ${widths.map((width) => "-".repeat(width)).join(" | ")} |`;

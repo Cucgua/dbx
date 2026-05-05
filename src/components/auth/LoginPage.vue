@@ -34,7 +34,9 @@ async function login() {
 </script>
 
 <template>
-  <div class="flex items-center justify-center h-screen bg-gradient-to-br from-background via-background to-blue-950/20">
+  <div
+    class="flex items-center justify-center h-screen bg-gradient-to-br from-background via-background to-blue-950/20"
+  >
     <div class="w-[360px] space-y-8">
       <div class="flex flex-col items-center gap-4">
         <img src="/logo.png" alt="DBX" class="w-20 h-20 rounded-2xl shadow-lg shadow-blue-500/20" />
@@ -63,9 +65,7 @@ async function login() {
         </Button>
       </form>
 
-      <p class="text-center text-xs text-muted-foreground/50">
-        Powered by DBX
-      </p>
+      <p class="text-center text-xs text-muted-foreground/50">Powered by DBX</p>
     </div>
   </div>
 </template>

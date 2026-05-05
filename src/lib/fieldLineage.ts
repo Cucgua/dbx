@@ -131,9 +131,10 @@ function viewLineage(target: Required<FieldLineageTarget>, views: FieldLineageVi
         confidence,
         direction: "reference" as const,
         title: `${view.name} references ${target.column}`,
-        description: confidence === "likely"
-          ? `View definition mentions both ${target.table} and ${target.column}.`
-          : `View definition mentions ${target.column}.`,
+        description:
+          confidence === "likely"
+            ? `View definition mentions both ${target.table} and ${target.column}.`
+            : `View definition mentions ${target.column}.`,
         schema: view.schema,
         table: view.name,
         sqlSnippet: snippetAround(view.ddl, target.column),
@@ -171,7 +172,8 @@ function sameNameLineage(target: Required<FieldLineageTarget>, tables: FieldLine
         confidence: "possible",
         direction: "reference",
         title: `${table.name}.${column}`,
-        description: "Another field has the same name. This is a possible semantic relationship, not a verified dependency.",
+        description:
+          "Another field has the same name. This is a possible semantic relationship, not a verified dependency.",
         schema: table.schema,
         table: table.name,
         column,

@@ -10,7 +10,7 @@ export function useTheme() {
     if (!isTauriRuntime()) return;
     import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
       getCurrentWindow()
-        .setTheme(isDark.value ? "dark" as Theme : "light" as Theme)
+        .setTheme(isDark.value ? ("dark" as Theme) : ("light" as Theme))
         .catch(() => {});
     });
   }

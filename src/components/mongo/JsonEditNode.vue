@@ -8,14 +8,17 @@ import type { EditNode, EditNodeKind } from "@/types/editor";
 
 defineOptions({ name: "JsonEditNode" });
 
-const props = withDefaults(defineProps<{
-  node: EditNode;
-  removable?: boolean;
-  parentKind?: EditNodeKind | "root";
-}>(), {
-  removable: true,
-  parentKind: "root",
-});
+const props = withDefaults(
+  defineProps<{
+    node: EditNode;
+    removable?: boolean;
+    parentKind?: EditNodeKind | "root";
+  }>(),
+  {
+    removable: true,
+    parentKind: "root",
+  },
+);
 
 const emit = defineEmits<{
   (e: "remove"): void;
@@ -54,7 +57,7 @@ function fieldRows(value: string): number {
 
 function fieldValueTone(value: string): string {
   const trimmed = value.trim();
-  if (trimmed.startsWith("\"")) return "is-string";
+  if (trimmed.startsWith('"')) return "is-string";
   if (/^(true|false)$/i.test(trimmed)) return "is-boolean";
   if (/^(null|NULL)$/i.test(trimmed)) return "is-null";
   if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return "is-number";
@@ -136,11 +139,11 @@ function confirmRemoveChild() {
         wrap="soft"
       />
       <div v-else class="json-edit-container-open">
-        <span>{{ node.kind === 'array' ? '[' : '{' }}</span>
+        <span>{{ node.kind === "array" ? "[" : "{" }}</span>
         <span class="json-edit-count">{{ node.children.length }}</span>
       </div>
 
-      <span class="json-edit-comma">{{ node.kind === 'value' ? ',' : '' }}</span>
+      <span class="json-edit-comma">{{ node.kind === "value" ? "," : "" }}</span>
 
       <Button
         v-if="removable"
@@ -152,14 +155,10 @@ function confirmRemoveChild() {
       >
         <Trash2 class="w-3 h-3" />
       </Button>
-      <span v-else-if="node.readonlyValue" class="json-edit-lock">{{ t('mongo.readonlyId') }}</span>
+      <span v-else-if="node.readonlyValue" class="json-edit-lock">{{ t("mongo.readonlyId") }}</span>
     </div>
 
-    <div
-      v-if="isContainer"
-      class="json-edit-children"
-      :style="{ '--mongo-key-width': childKeyWidth }"
-    >
+    <div v-if="isContainer" class="json-edit-children" :style="{ '--mongo-key-width': childKeyWidth }">
       <JsonEditNode
         v-for="(child, idx) in node.children"
         :key="child.key"
@@ -170,12 +169,10 @@ function confirmRemoveChild() {
       />
 
       <Button variant="ghost" size="sm" class="json-edit-add" @click="addChild">
-        <Plus class="w-3 h-3 mr-1" /> {{ t('mongo.addField') }}
+        <Plus class="w-3 h-3 mr-1" /> {{ t("mongo.addField") }}
       </Button>
 
-      <div class="json-edit-close">
-        {{ node.kind === 'array' ? ']' : '}' }}<span class="json-edit-comma">,</span>
-      </div>
+      <div class="json-edit-close">{{ node.kind === "array" ? "]" : "}" }}<span class="json-edit-comma">,</span></div>
     </div>
 
     <DangerConfirmDialog

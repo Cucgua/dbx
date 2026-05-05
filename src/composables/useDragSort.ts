@@ -24,7 +24,13 @@ const state = reactive<DragState>({
   startY: 0,
 });
 
-let pending: { id: string; type: string; x: number; y: number; sourceEl: HTMLElement | null } | null = null;
+let pending: {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  sourceEl: HTMLElement | null;
+} | null = null;
 let onDropCallback: ((draggedId: string, targetId: string, position: DropPosition) => void) | null = null;
 let ghostEl: HTMLElement | null = null;
 

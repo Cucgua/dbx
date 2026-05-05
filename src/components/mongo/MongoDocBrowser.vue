@@ -34,9 +34,7 @@ const error = ref("");
 const editFields = ref<EditNode[]>([]);
 const showDeleteConfirm = ref(false);
 
-type PendingDelete =
-  | { kind: "document"; index: number }
-  | { kind: "field"; index: number; name: string };
+type PendingDelete = { kind: "document"; index: number } | { kind: "field"; index: number; name: string };
 
 const pendingDelete = ref<PendingDelete | null>(null);
 
@@ -67,8 +65,11 @@ async function load() {
   error.value = "";
   try {
     const result = await api.mongoFindDocuments(
-      props.connectionId, props.database, props.collection,
-      page.value * pageSize, pageSize
+      props.connectionId,
+      props.database,
+      props.collection,
+      page.value * pageSize,
+      pageSize,
     );
     documents.value = result.documents.map(asRecord);
     total.value = result.total;
@@ -106,7 +107,7 @@ function startEdit() {
   const doc = selectedDoc.value;
   if (!doc) return;
   editFields.value = Object.entries(doc).map(([name, value]) =>
-    createEditNode(name, value, name === "_id", name === "_id")
+    createEditNode(name, value, name === "_id", name === "_id"),
   );
   isEditing.value = true;
   isNew.value = false;
@@ -148,7 +149,7 @@ function createEditNode(keyName: string, value: unknown, readonlyKey: boolean, r
       readonlyKey,
       readonlyValue,
       children: Object.entries(value as JsonRecord).map(([childName, child]) =>
-        createEditNode(childName, child, readonlyValue, readonlyValue)
+        createEditNode(childName, child, readonlyValue, readonlyValue),
       ),
     };
   }
@@ -193,7 +194,7 @@ function parseFieldValue(raw: string): unknown {
   if (trimmed === "NULL") return null;
   if (/^(true|false|null)$/i.test(trimmed)) return JSON.parse(trimmed.toLowerCase());
   if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
-  if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith("\"")) {
+  if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith('"')) {
     return JSON.parse(trimmed);
   }
   return raw;
@@ -235,8 +236,17 @@ async function saveDoc() {
     } else if (selectedIdx.value !== null) {
       const current = documents.value[selectedIdx.value];
       const id = current?._id;
-      if (!id) { error.value = "No _id field"; return; }
-      await api.mongoUpdateDocument(props.connectionId, props.database, props.collection, String(id), JSON.stringify(doc));
+      if (!id) {
+        error.value = "No _id field";
+        return;
+      }
+      await api.mongoUpdateDocument(
+        props.connectionId,
+        props.database,
+        props.collection,
+        String(id),
+        JSON.stringify(doc),
+      );
     }
     isEditing.value = false;
     isNew.value = false;
@@ -254,7 +264,10 @@ async function applyDeleteDoc(idx: number) {
   error.value = "";
   try {
     await api.mongoDeleteDocument(props.connectionId, props.database, props.collection, String(id));
-    if (selectedIdx.value === idx) { selectedIdx.value = null; editJson.value = ""; }
+    if (selectedIdx.value === idx) {
+      selectedIdx.value = null;
+      editJson.value = "";
+    }
     await load();
   } catch (e: unknown) {
     error.value = String(e);
@@ -291,16 +304,15 @@ function nextPage() {
 
 function docPreview(doc: JsonRecord): string {
   const id = doc._id || "";
-  const keys = Object.keys(doc).filter(k => k !== "_id").slice(0, 3);
-  const preview = keys.map(k => `${k}: ${JSON.stringify(doc[k]).substring(0, 30)}`).join(", ");
+  const keys = Object.keys(doc)
+    .filter((k) => k !== "_id")
+    .slice(0, 3);
+  const preview = keys.map((k) => `${k}: ${JSON.stringify(doc[k]).substring(0, 30)}`).join(", ");
   return `${id} - ${preview}`;
 }
 
 function highlightedJson(json: string): string {
-  const escaped = json
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  const escaped = json.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   return escaped.replace(
     /("(?:\\u[a-fA-F0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(?:true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
@@ -322,104 +334,121 @@ onMounted(load);
     <!-- Document list (left) -->
     <Pane :size="30" :min-size="15" :max-size="50">
       <div class="h-full flex flex-col overflow-hidden">
-      <div class="h-9 flex items-center gap-1 px-3 border-b shrink-0 text-xs text-muted-foreground">
-        <span>{{ t('mongo.documents', { count: total }) }}</span>
-        <span class="flex-1" />
-        <Button variant="ghost" size="icon" class="h-5 w-5" @click="startNew"><Plus class="h-3 w-3" /></Button>
-        <Button variant="ghost" size="icon" class="h-5 w-5" @click="load"><RefreshCw class="h-3 w-3" :class="{ 'animate-spin': loading }" /></Button>
-      </div>
+        <div class="h-9 flex items-center gap-1 px-3 border-b shrink-0 text-xs text-muted-foreground">
+          <span>{{ t("mongo.documents", { count: total }) }}</span>
+          <span class="flex-1" />
+          <Button variant="ghost" size="icon" class="h-5 w-5" @click="startNew"><Plus class="h-3 w-3" /></Button>
+          <Button variant="ghost" size="icon" class="h-5 w-5" @click="load"
+            ><RefreshCw class="h-3 w-3" :class="{ 'animate-spin': loading }"
+          /></Button>
+        </div>
 
-      <div class="flex-1 overflow-y-auto">
-        <div
-          v-for="(doc, idx) in documents"
-          :key="idx"
-          class="px-3 py-1.5 border-b text-xs font-mono cursor-pointer hover:bg-accent/50 flex items-center gap-2 group"
-          :class="{ 'bg-accent': selectedIdx === idx }"
-          @click="selectDoc(idx)"
-        >
-          <span class="truncate flex-1">{{ docPreview(doc) }}</span>
-          <Button variant="ghost" size="icon" class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive shrink-0" @click.stop="requestDeleteDoc(idx)">
-            <Trash2 class="w-3 h-3" />
+        <div class="flex-1 overflow-y-auto">
+          <div
+            v-for="(doc, idx) in documents"
+            :key="idx"
+            class="px-3 py-1.5 border-b text-xs font-mono cursor-pointer hover:bg-accent/50 flex items-center gap-2 group"
+            :class="{ 'bg-accent': selectedIdx === idx }"
+            @click="selectDoc(idx)"
+          >
+            <span class="truncate flex-1">{{ docPreview(doc) }}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive shrink-0"
+              @click.stop="requestDeleteDoc(idx)"
+            >
+              <Trash2 class="w-3 h-3" />
+            </Button>
+          </div>
+          <div v-if="documents.length === 0 && !loading" class="px-3 py-8 text-center text-muted-foreground text-xs">
+            {{ t("mongo.emptyCollection") }}
+          </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex items-center justify-center gap-2 px-3 py-1 border-t text-xs text-muted-foreground shrink-0">
+          <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="page <= 0" @click="prevPage">
+            <ChevronLeft class="h-3 w-3" />
+          </Button>
+          <span>{{ page + 1 }} / {{ Math.max(1, Math.ceil(total / pageSize)) }}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-5 w-5"
+            :disabled="(page + 1) * pageSize >= total"
+            @click="nextPage"
+          >
+            <ChevronRight class="h-3 w-3" />
           </Button>
         </div>
-        <div v-if="documents.length === 0 && !loading" class="px-3 py-8 text-center text-muted-foreground text-xs">
-          {{ t('mongo.emptyCollection') }}
-        </div>
       </div>
-
-      <!-- Pagination -->
-      <div class="flex items-center justify-center gap-2 px-3 py-1 border-t text-xs text-muted-foreground shrink-0">
-        <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="page <= 0" @click="prevPage">
-          <ChevronLeft class="h-3 w-3" />
-        </Button>
-        <span>{{ page + 1 }} / {{ Math.max(1, Math.ceil(total / pageSize)) }}</span>
-        <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="(page + 1) * pageSize >= total" @click="nextPage">
-          <ChevronRight class="h-3 w-3" />
-        </Button>
-      </div>
-    </div>
     </Pane>
 
     <!-- Document viewer/editor (right) -->
     <Pane :size="70">
-    <div class="h-full flex flex-col min-w-0 overflow-hidden">
-      <template v-if="selectedIdx !== null || isNew">
-        <div class="h-9 flex items-center gap-2 px-4 border-b bg-muted/30 shrink-0">
-          <Badge variant="secondary" class="text-xs">{{ isNew ? 'New' : selectedDoc?._id }}</Badge>
-          <span class="flex-1" />
-          <Button v-if="!isEditing" variant="ghost" size="sm" class="h-6 text-xs" @click="startEdit">{{ t('mongo.edit') }}</Button>
-          <template v-if="isEditing">
-            <Button variant="ghost" size="sm" class="h-6 text-xs" @click="addField">
-              <Plus class="w-3 h-3 mr-1" /> {{ t('mongo.addField') }}
-            </Button>
-            <Button variant="ghost" size="sm" class="h-6 text-xs" @click="cancelEdit">{{ t('grid.discard') }}</Button>
-            <Button size="sm" class="h-6 text-xs" @click="saveDoc"><Save class="w-3 h-3 mr-1" />{{ t('grid.save') }}</Button>
-          </template>
-        </div>
-
-        <div v-if="isEditing" class="flex-1 overflow-auto bg-muted/10">
-          <div class="json-edit min-w-fit p-5 font-mono text-[13px] leading-6" :style="{ '--mongo-key-width': editKeyWidth }">
-            <div class="json-edit-brace">{</div>
-
-            <JsonEditNode
-              v-for="(field, idx) in editFields"
-              :key="field.key"
-              :node="field"
-              parent-kind="root"
-              :removable="!field.readonlyValue"
-              @remove="requestRemoveField(idx)"
-            />
-
-            <Button variant="ghost" size="sm" class="json-edit-add" @click="addField">
-              <Plus class="w-3 h-3 mr-1" /> {{ t('mongo.addField') }}
-            </Button>
-
-            <div class="json-edit-brace">}</div>
+      <div class="h-full flex flex-col min-w-0 overflow-hidden">
+        <template v-if="selectedIdx !== null || isNew">
+          <div class="h-9 flex items-center gap-2 px-4 border-b bg-muted/30 shrink-0">
+            <Badge variant="secondary" class="text-xs">{{ isNew ? "New" : selectedDoc?._id }}</Badge>
+            <span class="flex-1" />
+            <Button v-if="!isEditing" variant="ghost" size="sm" class="h-6 text-xs" @click="startEdit">{{
+              t("mongo.edit")
+            }}</Button>
+            <template v-if="isEditing">
+              <Button variant="ghost" size="sm" class="h-6 text-xs" @click="addField">
+                <Plus class="w-3 h-3 mr-1" /> {{ t("mongo.addField") }}
+              </Button>
+              <Button variant="ghost" size="sm" class="h-6 text-xs" @click="cancelEdit">{{ t("grid.discard") }}</Button>
+              <Button size="sm" class="h-6 text-xs" @click="saveDoc"
+                ><Save class="w-3 h-3 mr-1" />{{ t("grid.save") }}</Button
+              >
+            </template>
           </div>
+
+          <div v-if="isEditing" class="flex-1 overflow-auto bg-muted/10">
+            <div
+              class="json-edit min-w-fit p-5 font-mono text-[13px] leading-6"
+              :style="{ '--mongo-key-width': editKeyWidth }"
+            >
+              <div class="json-edit-brace">{</div>
+
+              <JsonEditNode
+                v-for="(field, idx) in editFields"
+                :key="field.key"
+                :node="field"
+                parent-kind="root"
+                :removable="!field.readonlyValue"
+                @remove="requestRemoveField(idx)"
+              />
+
+              <Button variant="ghost" size="sm" class="json-edit-add" @click="addField">
+                <Plus class="w-3 h-3 mr-1" /> {{ t("mongo.addField") }}
+              </Button>
+
+              <div class="json-edit-brace">}</div>
+            </div>
+          </div>
+
+          <div v-else class="flex-1 overflow-auto bg-muted/10">
+            <pre class="json-viewer min-w-fit p-5 font-mono text-[13px] leading-6" v-html="highlightedJson(editJson)" />
+          </div>
+        </template>
+        <div v-else class="h-full flex items-center justify-center text-muted-foreground text-sm">
+          {{ t("mongo.selectDocument") }}
         </div>
 
-        <div v-else class="flex-1 overflow-auto bg-muted/10">
-          <pre
-            class="json-viewer min-w-fit p-5 font-mono text-[13px] leading-6"
-            v-html="highlightedJson(editJson)"
-          />
+        <div v-if="error" class="px-3 py-1.5 border-t bg-destructive/10 text-destructive text-xs shrink-0">
+          {{ error }}
         </div>
-      </template>
-      <div v-else class="h-full flex items-center justify-center text-muted-foreground text-sm">
-        {{ t('mongo.selectDocument') }}
+        <DangerConfirmDialog
+          v-model:open="showDeleteConfirm"
+          :message="t('dangerDialog.deleteMessage')"
+          :details="deleteDetails"
+          :confirm-label="t('dangerDialog.deleteConfirm')"
+          @confirm="confirmDelete"
+        />
       </div>
-
-      <div v-if="error" class="px-3 py-1.5 border-t bg-destructive/10 text-destructive text-xs shrink-0">
-        {{ error }}
-      </div>
-      <DangerConfirmDialog
-        v-model:open="showDeleteConfirm"
-        :message="t('dangerDialog.deleteMessage')"
-        :details="deleteDetails"
-        :confirm-label="t('dangerDialog.deleteConfirm')"
-        @confirm="confirmDelete"
-      />
-    </div>
     </Pane>
   </Splitpanes>
 </template>
@@ -489,5 +518,4 @@ onMounted(load);
 :global(.dark) :deep(.json-null) {
   color: #94a3b8;
 }
-
 </style>

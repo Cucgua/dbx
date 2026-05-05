@@ -29,10 +29,7 @@ export function normalizeSelectionRange(anchor: CellPosition, focus: CellPositio
 export function isCellInSelection(rowIndex: number, colIndex: number, range: CellSelectionRange | null): boolean {
   if (!range) return false;
   return (
-    rowIndex >= range.startRow
-    && rowIndex <= range.endRow
-    && colIndex >= range.startCol
-    && colIndex <= range.endCol
+    rowIndex >= range.startRow && rowIndex <= range.endRow && colIndex >= range.startCol && colIndex <= range.endCol
   );
 }
 
@@ -71,17 +68,13 @@ function sqlValue(value: GridCellValue): string {
 
 export function formatSelectionAsTsv(selection: SelectionData): string {
   const header = selection.columns.join("\t");
-  const body = selection.rows
-    .map((row) => row.map(displayValue).join("\t"))
-    .join("\n");
+  const body = selection.rows.map((row) => row.map(displayValue).join("\t")).join("\n");
   return [header, body].filter(Boolean).join("\n");
 }
 
 export function formatSelectionAsCsv(selection: SelectionData): string {
   const header = selection.columns.map(csvValue).join(",");
-  const body = selection.rows
-    .map((row) => row.map(csvValue).join(","))
-    .join("\n");
+  const body = selection.rows.map((row) => row.map(csvValue).join(",")).join("\n");
   return [header, body].filter(Boolean).join("\n");
 }
 
