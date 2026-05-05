@@ -211,15 +211,17 @@ function initApp() {
 }
 
 async function reconnectRestoredTabs() {
+  if (isDesktop) return;
   const connectionIds = new Set(queryStore.tabs.map(t => t.connectionId).filter(Boolean));
   for (const id of connectionIds) {
     try {
       await connectionStore.ensureConnected(id);
     } catch {}
   }
-  const tab = queryStore.tabs.find(t => t.id === queryStore.activeTabId);
-  if (tab && tab.mode === "data" && tab.tableMeta) {
-    queryStore.executeCurrentTab();
+  for (const tab of queryStore.tabs) {
+    if (tab.mode === "data" && tab.tableMeta && tab.sql) {
+      queryStore.executeTabSql(tab.id, tab.sql).catch(() => {});
+    }
   }
 }
 
