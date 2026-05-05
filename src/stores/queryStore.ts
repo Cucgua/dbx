@@ -6,6 +6,7 @@ import { canCancelQueryExecution } from "@/lib/queryExecutionState";
 import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
 import * as api from "@/lib/api";
+import { isTauriRuntime } from "@/lib/tauriRuntime";
 
 interface SavedTab {
   id: string;
@@ -43,7 +44,8 @@ function loadSavedTabs(): { tabs: QueryTab[]; activeTabId: string | null } {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { tabs: [], activeTabId: null };
     const saved: SavedTab[] = JSON.parse(raw);
-    const tabs: QueryTab[] = saved.map((s) => ({
+    const filtered = isTauriRuntime() ? saved.filter((s) => s.mode === "query") : saved;
+    const tabs: QueryTab[] = filtered.map((s) => ({
       ...s,
       isExecuting: false,
       isCancelling: false,
