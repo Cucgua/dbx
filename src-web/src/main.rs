@@ -61,6 +61,10 @@ async fn main() {
         password_hash,
         sessions: RwLock::new(HashSet::new()),
         sse_channels: RwLock::new(HashMap::new()),
+        login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit {
+            fail_count: 0,
+            locked_until: None,
+        }),
     });
 
     // CORS
@@ -146,12 +150,12 @@ async fn main() {
         .route("/update/check", get(routes::update::check_for_updates))
         // Layout
         .route("/layout/sidebar", post(routes::layout::save_sidebar_layout).get(routes::layout::load_sidebar_layout))
+        .layer(middleware::from_fn_with_state(web_state.clone(), auth::auth_middleware))
         .with_state(web_state.clone());
 
-    // Build app with auth middleware
+    // Build app
     let mut app = Router::new()
         .nest("/api", api)
-        .layer(middleware::from_fn_with_state(web_state.clone(), auth::auth_middleware))
         .layer(cors);
 
     // Static file serving

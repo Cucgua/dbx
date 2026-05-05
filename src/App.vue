@@ -201,6 +201,12 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+function onLoginSuccess() {
+  authenticated.value = true;
+  window.history.replaceState(null, "", "/");
+  initApp();
+}
+
 function initApp() {
   connectionStore.initFromDisk().then(() => {
     reconnectRestoredTabs();
@@ -235,6 +241,9 @@ onMounted(async () => {
       needsAuth.value = data.required;
       authenticated.value = data.authenticated;
     } catch { /* server unreachable */ }
+    if (needsAuth.value && !authenticated.value) {
+      history.replaceState(null, "", "/login");
+    }
     if (!needsAuth.value || authenticated.value) initApp();
     api.checkForUpdates().then((info) => { appVersion.value = info.current_version; }).catch(() => {});
     return;
@@ -252,8 +261,9 @@ onUnmounted(() => { window.removeEventListener("keydown", handleKeydown, true); 
 </script>
 
 <template>
-  <LoginPage v-if="needsAuth && !authenticated" @authenticated="authenticated = true; initApp()" />
-  <TooltipProvider v-show="!needsAuth || authenticated" :delay-duration="300">
+  <LoginPage v-if="needsAuth && !authenticated" @authenticated="onLoginSuccess" />
+  <div v-show="!needsAuth || authenticated">
+  <TooltipProvider :delay-duration="300">
     <div class="h-screen w-screen flex flex-col bg-background text-foreground overflow-hidden">
       <AppToolbar
         :is-dark="isDark" :show-ai-panel="showAiPanel" :show-history="showHistory"
@@ -355,6 +365,7 @@ onUnmounted(() => { window.removeEventListener("keydown", handleKeydown, true); 
       </Transition>
     </div>
   </TooltipProvider>
+  </div>
 </template>
 
 <style scoped>
