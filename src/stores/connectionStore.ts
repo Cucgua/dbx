@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import type { ColumnInfo, ConnectionConfig, SidebarLayout, TreeNode } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
 import {
@@ -24,7 +24,14 @@ const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 
 export const useConnectionStore = defineStore("connection", () => {
   const connections = ref<ConnectionConfig[]>([]);
-  const activeConnectionId = ref<string | null>(null);
+  const isDesktop = isTauriRuntime();
+  const activeConnectionId = ref<string | null>(!isDesktop ? localStorage.getItem("dbx-active-connection") : null);
+
+  watch(activeConnectionId, (id) => {
+    if (isDesktop) return;
+    if (id) localStorage.setItem("dbx-active-connection", id);
+    else localStorage.removeItem("dbx-active-connection");
+  });
   const treeNodes = ref<TreeNode[]>([]);
   const pinnedTreeNodeIds = ref<Set<string>>(loadPinnedTreeNodeIds());
   const connectedIds = ref<Set<string>>(new Set());

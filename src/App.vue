@@ -202,10 +202,25 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 function initApp() {
-  connectionStore.initFromDisk().catch((e: any) => {
+  connectionStore.initFromDisk().then(() => {
+    reconnectRestoredTabs();
+  }).catch((e: any) => {
     toast(t("connection.loadFailed", { message: e?.message || String(e) }), 5000);
   });
   settingsStore.initAiConfig();
+}
+
+async function reconnectRestoredTabs() {
+  const connectionIds = new Set(queryStore.tabs.map(t => t.connectionId).filter(Boolean));
+  for (const id of connectionIds) {
+    try {
+      await connectionStore.ensureConnected(id);
+    } catch {}
+  }
+  const tab = queryStore.tabs.find(t => t.id === queryStore.activeTabId);
+  if (tab && tab.mode === "data" && tab.tableMeta) {
+    queryStore.executeCurrentTab();
+  }
 }
 
 onMounted(async () => {
