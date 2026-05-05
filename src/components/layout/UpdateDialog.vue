@@ -6,6 +6,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import type { UpdateInfo } from "@/lib/api";
+import { isTauriRuntime } from "@/lib/tauriRuntime";
 
 const open = defineModel<boolean>("open", { required: true });
 
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const isDesktop = isTauriRuntime();
 </script>
 
 <template>
@@ -42,17 +44,22 @@ const { t } = useI18n();
         <div v-if="updateInfo?.update_available && updateInfo.release_notes" class="max-h-48 overflow-auto rounded-md border bg-muted/30 p-3 text-xs whitespace-pre-wrap">
           {{ updateInfo.release_notes }}
         </div>
+        <p v-if="!isDesktop && updateInfo?.update_available" class="text-xs text-muted-foreground">
+          Docker 用户请运行 <code class="bg-muted px-1 py-0.5 rounded text-[11px]">docker compose pull && docker compose up -d</code> 更新
+        </p>
       </div>
       <DialogFooter>
         <Button variant="outline" @click="open = false">{{ t('dangerDialog.cancel') }}</Button>
         <template v-if="updateInfo?.update_available">
           <Button variant="outline" @click="emit('open-latest-release')">{{ t('updates.openRelease') }}</Button>
-          <Button v-if="updateReady" @click="emit('restart')">{{ t('updates.restart') }}</Button>
-          <Button v-else-if="isDownloadingUpdate" disabled>
-            <Loader2 class="h-4 w-4 animate-spin" />
-            {{ t('updates.downloading', { progress: downloadProgress }) }}
-          </Button>
-          <Button v-else @click="emit('download-and-install')">{{ t('updates.downloadAndInstall') }}</Button>
+          <template v-if="isDesktop">
+            <Button v-if="updateReady" @click="emit('restart')">{{ t('updates.restart') }}</Button>
+            <Button v-else-if="isDownloadingUpdate" disabled>
+              <Loader2 class="h-4 w-4 animate-spin" />
+              {{ t('updates.downloading', { progress: downloadProgress }) }}
+            </Button>
+            <Button v-else @click="emit('download-and-install')">{{ t('updates.downloadAndInstall') }}</Button>
+          </template>
         </template>
         <Button v-else-if="updateCheckMessage" @click="emit('open-latest-release')">{{ t('updates.openRelease') }}</Button>
       </DialogFooter>
