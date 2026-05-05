@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-pub const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/t8y2/dbx/releases/latest";
+const LATEST_JSON_URL: &str = "https://github.com/t8y2/dbx/releases/latest/download/latest.json";
+const RELEASE_URL_PREFIX: &str = "https://github.com/t8y2/dbx/releases/tag/v";
 
 #[derive(Debug, Deserialize)]
-pub struct GithubRelease {
-    pub tag_name: String,
-    pub name: Option<String>,
-    pub html_url: String,
-    pub body: Option<String>,
+pub struct TauriRelease {
+    pub version: String,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -20,31 +20,31 @@ pub struct UpdateInfo {
     pub release_notes: String,
 }
 
-pub async fn fetch_latest_release() -> Result<GithubRelease, String> {
+pub async fn fetch_latest_release() -> Result<TauriRelease, String> {
     let client = reqwest::Client::new();
     client
-        .get(LATEST_RELEASE_URL)
+        .get(LATEST_JSON_URL)
         .header(reqwest::header::USER_AGENT, "dbx-update-checker")
         .send()
         .await
         .map_err(|e| format!("Failed to check updates: {e}"))?
         .error_for_status()
         .map_err(|e| format!("Failed to check updates: {e}"))?
-        .json::<GithubRelease>()
+        .json::<TauriRelease>()
         .await
         .map_err(|e| format!("Failed to parse update response: {e}"))
 }
 
-pub fn build_update_info(release: GithubRelease, current_version: &str) -> UpdateInfo {
-    let latest_version = normalize_version(&release.tag_name);
+pub fn build_update_info(release: TauriRelease, current_version: &str) -> UpdateInfo {
+    let latest_version = normalize_version(&release.version);
 
     UpdateInfo {
         update_available: is_newer_version(&latest_version, current_version),
         current_version: current_version.to_string(),
+        release_name: format!("DBX v{latest_version}"),
+        release_url: format!("{RELEASE_URL_PREFIX}{latest_version}"),
+        release_notes: release.notes.unwrap_or_default(),
         latest_version,
-        release_name: release.name.unwrap_or_else(|| release.tag_name.clone()),
-        release_url: release.html_url,
-        release_notes: release.body.unwrap_or_default(),
     }
 }
 
