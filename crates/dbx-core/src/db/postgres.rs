@@ -92,13 +92,16 @@ pub async fn connect(url: &str) -> Result<PgPool, String> {
     // Validate SSL certificate paths if present in the URL
     validate_postgres_ssl_paths(url)?;
     
-    PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(300))
-        .connect(url)
-        .await
-        .map_err(|e| format!("PostgreSQL connection failed: {e}"))
+    super::with_connection_timeout("PostgreSQL", async {
+        PgPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(super::connection_timeout())
+            .idle_timeout(Duration::from_secs(300))
+            .connect(url)
+            .await
+            .map_err(|e| format!("PostgreSQL connection failed: {e}"))
+    })
+    .await
 }
 
 /// Validates SSL certificate file paths in PostgreSQL connection URLs.

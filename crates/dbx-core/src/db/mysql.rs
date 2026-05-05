@@ -155,13 +155,16 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
 }
 
 pub async fn connect(url: &str) -> Result<MySqlPool, String> {
-    MySqlPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(300))
-        .connect(url)
-        .await
-        .map_err(|e| format!("MySQL connection failed: {e}"))
+    super::with_connection_timeout("MySQL", async {
+        MySqlPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(super::connection_timeout())
+            .idle_timeout(Duration::from_secs(300))
+            .connect(url)
+            .await
+            .map_err(|e| format!("MySQL connection failed: {e}"))
+    })
+    .await
 }
 
 pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
@@ -172,13 +175,16 @@ pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
         .set_names(false)
         .pipes_as_concat(false)
         .timezone(None);
-    MySqlPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(300))
-        .connect_with(options)
-        .await
-        .map_err(|e| format!("MySQL connection failed: {e}"))
+    super::with_connection_timeout("MySQL", async {
+        MySqlPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(super::connection_timeout())
+            .idle_timeout(Duration::from_secs(300))
+            .connect_with(options)
+            .await
+            .map_err(|e| format!("MySQL connection failed: {e}"))
+    })
+    .await
 }
 
 pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, String> {
