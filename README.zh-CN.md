@@ -29,12 +29,12 @@
   </p>
 
   <p>
-    <img src="docs/screenshot-light.png" width="395" />
-    <img src="docs/screenshot-dark.png" width="395" />
+    <a href="docs/screenshot-light.png"><img src="docs/screenshot-light.png" width="395" /></a>
+    <a href="docs/screenshot-dark.png"><img src="docs/screenshot-dark.png" width="395" /></a>
   </p>
   <p>
-    <img src="docs/screenshot-er.png" width="395" />
-    <img src="docs/screenshot-grid.png" width="395" />
+    <a href="docs/screenshot-er.png"><img src="docs/screenshot-er.png" width="395" /></a>
+    <a href="docs/screenshot-grid.png"><img src="docs/screenshot-grid.png" width="395" /></a>
   </p>
 </div>
 
