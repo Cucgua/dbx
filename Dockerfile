@@ -9,12 +9,12 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 COPY src/ src/
 COPY index.html vite.config.ts tsconfig.json ./
-COPY tailwind.config.* postcss.config.* ./
 COPY public/ public/
 RUN pnpm build
 
-# Stage 2: Cross-compile Rust backend for both platforms (native, no emulation)
+# Stage 2: Cross-compile Rust backend for the requested platform (native, no emulation)
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS backend
+ARG TARGETARCH
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu \
@@ -33,12 +33,14 @@ COPY src-tauri/tauri.conf.json src-tauri/
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo zigbuild --release -p dbx-web \
-      --target x86_64-unknown-linux-gnu \
-      --target aarch64-unknown-linux-gnu && \
-    mkdir -p /out/linux/amd64 /out/linux/arm64 && \
-    cp /app/target/x86_64-unknown-linux-gnu/release/dbx-web /out/linux/amd64/ && \
-    cp /app/target/aarch64-unknown-linux-gnu/release/dbx-web /out/linux/arm64/
+    case "$TARGETARCH" in \
+      amd64) rust_target=x86_64-unknown-linux-gnu ;; \
+      arm64) rust_target=aarch64-unknown-linux-gnu ;; \
+      *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    cargo zigbuild --release -p dbx-web --target "$rust_target" && \
+    mkdir -p "/out/linux/$TARGETARCH" && \
+    cp "/app/target/$rust_target/release/dbx-web" "/out/linux/$TARGETARCH/"
 
 # Stage 3: Final image
 FROM debian:bookworm-slim
