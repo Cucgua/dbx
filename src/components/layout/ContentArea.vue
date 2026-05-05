@@ -219,8 +219,14 @@ const hasNumericData = computed(() => {
             <Table2 class="h-3.5 w-3.5" />
             {{ t("tabs.tableData") }}
           </span>
-          <span class="font-medium truncate">{{ activeTab.tableMeta?.tableName || activeTab.title }}</span>
-          <span class="text-muted-foreground truncate">
+          <span
+            class="inline-flex items-center rounded border border-border bg-muted/50 px-2 py-0.5 font-medium truncate"
+          >
+            {{ activeTab.tableMeta?.tableName || activeTab.title }}
+          </span>
+          <span
+            class="inline-flex items-center rounded border border-border bg-muted/30 px-2 py-0.5 text-muted-foreground truncate"
+          >
             {{ databaseDisplayNameForTab(activeTab.connectionId, activeTab.database) }}
             <template v-if="activeTab.tableMeta?.schema"> &middot; {{ activeTab.tableMeta.schema }}</template>
           </span>
