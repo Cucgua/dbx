@@ -109,6 +109,7 @@ export const deleteHistoryEntry = forward("deleteHistoryEntry");
 
 // Updates
 export const checkForUpdates = forward("checkForUpdates");
+export const getAppVersion = forward("getAppVersion");
 
 // Layout
 export const saveSidebarLayout = forward("saveSidebarLayout");

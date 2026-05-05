@@ -137,6 +137,7 @@ async fn main() {
         .route("/import/progress/{importId}", get(routes::table_import::import_progress))
         .route("/import/cancel", post(routes::table_import::cancel_import))
         // Update
+        .route("/version", get(routes::update::get_version))
         .route("/update/check", get(routes::update::check_for_updates))
         // Layout
         .route("/layout/sidebar", post(routes::layout::save_sidebar_layout).get(routes::layout::load_sidebar_layout))

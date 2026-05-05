@@ -230,6 +230,11 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
   return invoke("check_for_updates");
 }
 
+export async function getAppVersion(): Promise<string> {
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}
+
 // --- Redis ---
 export interface RedisKeyInfo {
   key: string;

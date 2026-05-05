@@ -332,9 +332,9 @@ onMounted(async () => {
     }
     if (!needsAuth.value || authenticated.value) initApp();
     api
-      .checkForUpdates()
-      .then((info) => {
-        appVersion.value = info.current_version;
+      .getAppVersion()
+      .then((v) => {
+        appVersion.value = v;
       })
       .catch(() => {});
     return;
@@ -342,13 +342,10 @@ onMounted(async () => {
   initApp();
   setupFileDrop().catch(() => {});
   checkUpdates({ silent: true });
-  import("@tauri-apps/api/app")
-    .then(({ getVersion }) => {
-      getVersion()
-        .then((v) => {
-          appVersion.value = v;
-        })
-        .catch(() => {});
+  api
+    .getAppVersion()
+    .then((v) => {
+      appVersion.value = v;
     })
     .catch(() => {});
   setupTauriListeners();

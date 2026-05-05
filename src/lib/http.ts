@@ -543,6 +543,11 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
   return get("/api/update/check");
 }
 
+export async function getAppVersion(): Promise<string> {
+  const res: { version: string } = await get("/api/version");
+  return res.version;
+}
+
 // ---------------------------------------------------------------------------
 // Layout
 // ---------------------------------------------------------------------------
