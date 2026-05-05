@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { AlertCircle, Loader2, Search, Square, Table2 } from "lucide-vue-next";
 import { Badge } from "@/components/ui/badge";
@@ -129,7 +130,7 @@ function filterSearchSchemas(schemas: string[]): string[] {
 }
 
 function makeExecutionId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `database-search-${crypto.randomUUID()}`;
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `database-search-${uuid()}`;
   return `database-search-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 

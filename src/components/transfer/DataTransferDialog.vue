@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { Dialog, DialogHeader, DialogTitle, DialogFooter, DialogScrollContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -204,7 +205,7 @@ async function startTransfer() {
   overallCancelled.value = false;
   transferProgress.value.clear();
 
-  transferId.value = crypto.randomUUID();
+  transferId.value = uuid();
 
   // Auto-detect target schema
   const targetConfig = store.getConfig(targetConnectionId.value);

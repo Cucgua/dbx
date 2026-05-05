@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { RefreshCw, Trash2, Plus, Save, ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -130,7 +131,7 @@ function cancelEdit() {
 function createEditNode(keyName: string, value: unknown, readonlyKey: boolean, readonlyValue: boolean): EditNode {
   if (Array.isArray(value)) {
     return {
-      key: crypto.randomUUID(),
+      key: uuid(),
       keyName,
       kind: "array",
       valueText: "",
@@ -142,7 +143,7 @@ function createEditNode(keyName: string, value: unknown, readonlyKey: boolean, r
 
   if (value && typeof value === "object") {
     return {
-      key: crypto.randomUUID(),
+      key: uuid(),
       keyName,
       kind: "object",
       valueText: "",
@@ -155,7 +156,7 @@ function createEditNode(keyName: string, value: unknown, readonlyKey: boolean, r
   }
 
   return {
-    key: crypto.randomUUID(),
+    key: uuid(),
     keyName,
     kind: "value",
     valueText: formatForEdit(value),

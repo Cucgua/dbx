@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { Dialog, DialogHeader, DialogTitle, DialogFooter, DialogScrollContent } from "@/components/ui/dialog";
@@ -165,7 +166,7 @@ async function startImport() {
   running.value = true;
   cancelling.value = false;
   errorMessage.value = "";
-  importId.value = crypto.randomUUID();
+  importId.value = uuid();
   progress.value = {
     importId: importId.value,
     status: "running",

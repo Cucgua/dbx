@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { uuid } from "@/lib/utils";
 import { ref, watch } from "vue";
 import type { DatabaseType, QueryTab } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
@@ -87,7 +88,7 @@ export const useQueryStore = defineStore("query", () => {
       }
     }
 
-    const id = crypto.randomUUID();
+    const id = uuid();
     const tab: QueryTab = {
       id,
       title: title || `Query ${tabs.value.length + 1}`,
@@ -222,7 +223,7 @@ export const useQueryStore = defineStore("query", () => {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || !sql.trim()) return;
 
-    const executionId = crypto.randomUUID();
+    const executionId = uuid();
     tab.isExecuting = true;
     tab.isCancelling = false;
     tab.executionId = executionId;
@@ -270,7 +271,7 @@ export const useQueryStore = defineStore("query", () => {
       return built;
     }
 
-    const executionId = crypto.randomUUID();
+    const executionId = uuid();
     tab.isExplaining = true;
     tab.explainExecutionId = executionId;
     tab.explainError = undefined;

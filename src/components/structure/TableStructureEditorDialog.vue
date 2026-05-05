@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { Dialog, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -167,7 +168,7 @@ async function loadStructure() {
 
 function addColumn() {
   columns.value.push({
-    id: `new:${crypto.randomUUID()}`,
+    id: `new:${uuid()}`,
     name: "",
     dataType: "varchar(255)",
     isNullable: true,
@@ -189,7 +190,7 @@ function toggleDropColumn(column: EditableStructureColumn) {
 
 function addIndex() {
   indexes.value.push({
-    id: `new:${crypto.randomUUID()}`,
+    id: `new:${uuid()}`,
     name: "",
     columns: [],
     isUnique: false,

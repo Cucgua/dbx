@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import {
   ArrowUp,
@@ -276,7 +277,7 @@ async function send() {
   isGenerating.value = true;
   messages.value.push({ role: "assistant", content: "" });
   const assistantIdx = messages.value.length - 1;
-  const sessionId = crypto.randomUUID();
+  const sessionId = uuid();
   currentSessionId.value = sessionId;
   try {
     const context = await buildAiContext(props.tab, props.connection);
@@ -344,7 +345,7 @@ function clearMessages() {
 
 async function persistConversation() {
   if (!messages.value.length || !props.connection) return;
-  if (!conversationId.value) conversationId.value = crypto.randomUUID();
+  if (!conversationId.value) conversationId.value = uuid();
   const first = messages.value.find((m) => m.role === "user");
   await saveAiConversation({
     id: conversationId.value,

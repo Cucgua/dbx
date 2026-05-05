@@ -1,4 +1,5 @@
 import type { AiConfig } from "@/stores/settingsStore";
+import { uuid } from "@/lib/utils";
 import type {
   ColumnInfo,
   ConnectionConfig,
@@ -111,7 +112,7 @@ export async function runAiStream(
 
   const messages: api.AiMessage[] = [...(history || []), { role: "user", content: userPrompt }];
 
-  const sid = sessionId || crypto.randomUUID();
+  const sid = sessionId || uuid();
   const params = actionParams(input.action);
 
   await api.aiStream(

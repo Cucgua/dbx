@@ -1,4 +1,5 @@
 import { useI18n } from "vue-i18n";
+import { uuid } from "@/lib/utils";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useToast } from "@/composables/useToast";
@@ -41,7 +42,7 @@ export function useFileDrop() {
         const dataQuery = getDataFileQuery(path);
         if (dataQuery) {
           const config: ConnectionConfig = {
-            id: crypto.randomUUID(),
+            id: uuid(),
             name: `[Preview] ${name}`,
             db_type: "duckdb",
             driver_profile: "duckdb",
@@ -64,7 +65,7 @@ export function useFileDrop() {
         const dbType = getDbType(path);
         if (!dbType) continue;
         const config: ConnectionConfig = {
-          id: crypto.randomUUID(),
+          id: uuid(),
           name,
           db_type: dbType,
           driver_profile: dbType,

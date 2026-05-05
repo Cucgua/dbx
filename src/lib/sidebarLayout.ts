@@ -1,4 +1,5 @@
 import type { ConnectionConfig, ConnectionGroup, SidebarLayout, SidebarOrderEntry, TreeNode } from "@/types/database";
+import { uuid } from "@/lib/utils";
 
 export function emptyLayout(): SidebarLayout {
   return { groups: [], order: [] };
@@ -234,7 +235,7 @@ function reorderConnection(
 }
 
 export function createGroup(layout: SidebarLayout, name: string): { layout: SidebarLayout; groupId: string } {
-  const groupId = crypto.randomUUID();
+  const groupId = uuid();
   const group: ConnectionGroup = { id: groupId, name, collapsed: false };
   return {
     groupId,

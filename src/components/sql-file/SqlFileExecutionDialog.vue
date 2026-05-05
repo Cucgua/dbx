@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { Dialog, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle } from "@/components/ui/dialog";
@@ -234,7 +235,7 @@ async function selectFile() {
 async function startExecution() {
   if (!canStart.value || !preview.value) return;
 
-  const id = crypto.randomUUID();
+  const id = uuid();
   executionId.value = id;
   running.value = true;
   cancelling.value = false;

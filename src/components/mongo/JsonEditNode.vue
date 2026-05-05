@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { Plus, Trash2 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
@@ -67,7 +68,7 @@ function fieldValueTone(value: string): string {
 
 function createBlankNode(keyName: string, readonlyKey: boolean): EditNode {
   return {
-    key: crypto.randomUUID(),
+    key: uuid(),
     keyName,
     kind: "value",
     valueText: "",

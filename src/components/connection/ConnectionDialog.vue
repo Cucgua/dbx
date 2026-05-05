@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -400,7 +401,7 @@ async function testConnection() {
   isTesting.value = true;
   testResult.value = null;
   try {
-    const config: ConnectionConfig = { ...form.value, id: editingId.value || crypto.randomUUID() };
+    const config: ConnectionConfig = { ...form.value, id: editingId.value || uuid() };
     const msg = await api.testConnection(config);
     if (runId !== testRunId) return;
     testResult.value = { ok: true, message: msg };
@@ -465,7 +466,7 @@ async function save() {
       await store.updateConnection(updated);
       store.stopEditing();
     } else {
-      const config: ConnectionConfig = { ...form.value, id: crypto.randomUUID() };
+      const config: ConnectionConfig = { ...form.value, id: uuid() };
       await store.addConnection(config);
       open.value = false;
       await nextTick();

@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { uuid } from "@/lib/utils";
 import { ref, watch } from "vue";
 import type { ColumnInfo, ConnectionConfig, SidebarLayout, TreeNode } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
@@ -866,7 +867,7 @@ export const useConnectionStore = defineStore("connection", () => {
         (c) => c.name === config.name && c.host === config.host && c.port === config.port,
       );
       if (!duplicate) {
-        config.id = crypto.randomUUID();
+        config.id = uuid();
         const normalized = normalizeConnection(config);
         await addConnection(normalized);
         count++;

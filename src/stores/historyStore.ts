@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { uuid } from "@/lib/utils";
 import { ref } from "vue";
 import * as api from "@/lib/api";
 import type { HistoryEntry } from "@/lib/api";
@@ -19,7 +20,7 @@ export const useHistoryStore = defineStore("history", () => {
   async function add(entry: Omit<HistoryEntry, "id" | "executed_at">) {
     const full: HistoryEntry = {
       ...entry,
-      id: crypto.randomUUID(),
+      id: uuid(),
       executed_at: new Date().toISOString(),
     };
     await api.saveHistory(full);
