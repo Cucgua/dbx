@@ -9,7 +9,9 @@ export function useToast() {
     message.value = msg;
     visible.value = true;
     clearTimeout(timer);
-    timer = window.setTimeout(() => { visible.value = false; }, duration);
+    timer = window.setTimeout(() => {
+      visible.value = false;
+    }, duration);
   }
 
   return { message, visible, toast };

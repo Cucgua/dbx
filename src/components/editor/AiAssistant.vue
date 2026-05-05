@@ -2,19 +2,37 @@
 import { computed, nextTick, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-  ArrowUp, ArrowRightLeft, Bot, Check, ChevronRight, Copy, Database, HelpCircle, History,
-  Loader2, MessageSquarePlus, Replace, Server, Settings, Play, Square, Trash2,
-  Wand2, Wrench, X, Zap, TestTube,
+  ArrowUp,
+  ArrowRightLeft,
+  Bot,
+  Check,
+  ChevronRight,
+  Copy,
+  Database,
+  HelpCircle,
+  History,
+  Loader2,
+  MessageSquarePlus,
+  Replace,
+  Server,
+  Settings,
+  Play,
+  Square,
+  Trash2,
+  Wand2,
+  Wrench,
+  X,
+  Zap,
+  TestTube,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,8 +44,12 @@ import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useQueryStore } from "@/stores/queryStore";
 import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
 import {
-  aiTestConnection, aiCancelStream,
-  saveAiConversation, loadAiConversations, deleteAiConversation, type AiConversation,
+  aiTestConnection,
+  aiCancelStream,
+  saveAiConversation,
+  loadAiConversations,
+  deleteAiConversation,
+  type AiConversation,
 } from "@/lib/api";
 import type { AiMessage } from "@/lib/api";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
@@ -98,7 +120,6 @@ const isWaitingForFirstDelta = computed(() => {
 });
 
 const activePlaceholder = computed(() => t(`ai.placeholders.${activeAction.value}`));
-
 
 const { databaseOptions: allDbOptions, loadDatabaseOptions } = useDatabaseOptions();
 
@@ -256,16 +277,22 @@ async function send() {
       role: m.role,
       content: m.content,
     }));
-    await runAiStream({
-      config: settings.aiConfig,
-      action: activeAction.value,
-      instruction: text,
-      context,
-    }, history, (delta) => {
-      appendAssistantDelta(assistantIdx, delta);
-    }, sessionId, (reasoningDelta) => {
-      appendAssistantReasoning(assistantIdx, reasoningDelta);
-    });
+    await runAiStream(
+      {
+        config: settings.aiConfig,
+        action: activeAction.value,
+        instruction: text,
+        context,
+      },
+      history,
+      (delta) => {
+        appendAssistantDelta(assistantIdx, delta);
+      },
+      sessionId,
+      (reasoningDelta) => {
+        appendAssistantReasoning(assistantIdx, reasoningDelta);
+      },
+    );
   } catch (e: any) {
     messages.value[assistantIdx].content = `Error: ${e.message || e}`;
   } finally {
@@ -298,7 +325,9 @@ const copiedIndex = ref("");
 async function copyCode(code: string, key: string) {
   await navigator.clipboard.writeText(code);
   copiedIndex.value = key;
-  setTimeout(() => { if (copiedIndex.value === key) copiedIndex.value = ""; }, 2000);
+  setTimeout(() => {
+    if (copiedIndex.value === key) copiedIndex.value = "";
+  }, 2000);
 }
 
 function clearMessages() {
@@ -315,7 +344,11 @@ async function persistConversation() {
     title: first ? first.content.slice(0, 50) : "Untitled",
     connectionName: props.connection.name,
     database: props.tab?.database || "",
-    messages: messages.value.map((m) => ({ role: m.role, content: m.content, ...(m.reasoning ? { reasoning: m.reasoning } : {}) })),
+    messages: messages.value.map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+    })),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }).catch(() => {});
@@ -412,7 +445,14 @@ function formatInlineText(text: string): string {
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat" :title="t('ai.newChat')">
         <MessageSquarePlus class="h-3.5 w-3.5" />
       </Button>
-      <Button variant="ghost" size="icon" class="h-6 w-6" :class="{ 'bg-accent': showConversationList }" @click="loadConversationList" :title="t('history.title')">
+      <Button
+        variant="ghost"
+        size="icon"
+        class="h-6 w-6"
+        :class="{ 'bg-accent': showConversationList }"
+        @click="loadConversationList"
+        :title="t('history.title')"
+      >
         <History class="h-3.5 w-3.5" />
       </Button>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="clearMessages" :title="t('ai.clear')">
@@ -428,7 +468,7 @@ function formatInlineText(text: string): string {
 
     <div v-if="showConversationList" class="border-b max-h-48 overflow-auto">
       <div v-if="!conversations.length" class="p-3 text-xs text-muted-foreground text-center">
-        {{ t('history.empty') }}
+        {{ t("history.empty") }}
       </div>
       <div
         v-for="conv in conversations"
@@ -438,19 +478,24 @@ function formatInlineText(text: string): string {
         @click="selectConversation(conv)"
       >
         <span class="flex-1 truncate">{{ conv.title }}</span>
-        <button class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive" @click.stop="deleteConversation(conv.id)">
+        <button
+          class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
+          @click.stop="deleteConversation(conv.id)"
+        >
           <X class="h-3 w-3" />
         </button>
       </div>
     </div>
 
-    <div v-if="messages.length === 0" class="flex-1 min-h-0 flex flex-col items-center justify-center text-center text-muted-foreground">
+    <div
+      v-if="messages.length === 0"
+      class="flex-1 min-h-0 flex flex-col items-center justify-center text-center text-muted-foreground"
+    >
       <Bot class="h-10 w-10 mb-3 opacity-30" />
-      <p class="text-sm">{{ t('ai.welcome') }}</p>
+      <p class="text-sm">{{ t("ai.welcome") }}</p>
     </div>
     <ScrollArea v-else ref="scrollRef" class="min-h-0 flex-1 overflow-hidden">
       <div class="flex flex-col gap-3 p-3">
-
         <template v-for="(msg, i) in messages" :key="i">
           <div v-if="msg.role === 'user'" class="flex justify-end">
             <div class="max-w-[85%] rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground">
@@ -470,16 +515,20 @@ function formatInlineText(text: string): string {
                     :class="{ 'rotate-90': expandedReasoning.has(i) || msg.isThinking }"
                   />
                   <Loader2 v-if="msg.isThinking" class="h-3 w-3 animate-spin" />
-                  <span>{{ t('ai.reasoningProcess') }}</span>
+                  <span>{{ t("ai.reasoningProcess") }}</span>
                 </button>
                 <div
                   class="overflow-hidden transition-all duration-200 ease-in-out"
                   :style="{
-                    maxHeight: (expandedReasoning.has(i) || msg.isThinking) ? '2000px' : '0px',
-                    opacity: (expandedReasoning.has(i) || msg.isThinking) ? '1' : '0',
+                    maxHeight: expandedReasoning.has(i) || msg.isThinking ? '2000px' : '0px',
+                    opacity: expandedReasoning.has(i) || msg.isThinking ? '1' : '0',
                   }"
                 >
-                  <div class="mt-1.5 pl-4 border-l-2 border-muted-foreground/20 text-[11px] text-muted-foreground whitespace-pre-wrap">{{ msg.reasoning }}</div>
+                  <div
+                    class="mt-1.5 pl-4 border-l-2 border-muted-foreground/20 text-[11px] text-muted-foreground whitespace-pre-wrap"
+                  >
+                    {{ msg.reasoning }}
+                  </div>
                 </div>
               </div>
               <template v-for="(seg, j) in parseMessage(msg.content)" :key="j">
@@ -487,24 +536,40 @@ function formatInlineText(text: string): string {
                   <span v-html="formatInlineText(seg.content)" />
                 </div>
                 <div v-else class="my-2 rounded-md overflow-hidden bg-zinc-900 dark:bg-zinc-900">
-                  <div class="flex items-center px-3 py-1.5 text-[10px] text-zinc-400 font-medium border-b border-zinc-700/50">
+                  <div
+                    class="flex items-center px-3 py-1.5 text-[10px] text-zinc-400 font-medium border-b border-zinc-700/50"
+                  >
                     <Database class="h-3 w-3 mr-1.5" />
                     <span>{{ seg.lang }}</span>
                     <span class="flex-1" />
                     <div class="flex items-center gap-1.5">
-                      <button class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200" :title="t('ai.executeSql')" @click="executeSql(seg.content)">
+                      <button
+                        class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+                        :title="t('ai.executeSql')"
+                        @click="executeSql(seg.content)"
+                      >
                         <Play class="h-3.5 w-3.5" />
                       </button>
-                      <button class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200" :title="t('ai.apply')" @click="applySql(seg.content)">
+                      <button
+                        class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+                        :title="t('ai.apply')"
+                        @click="applySql(seg.content)"
+                      >
                         <Replace class="h-3.5 w-3.5" />
                       </button>
-                      <button class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200" :title="copiedIndex === `${i}-${j}` ? t('ai.copied') : t('ai.copySql')" @click="copyCode(seg.content, `${i}-${j}`)">
+                      <button
+                        class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+                        :title="copiedIndex === `${i}-${j}` ? t('ai.copied') : t('ai.copySql')"
+                        @click="copyCode(seg.content, `${i}-${j}`)"
+                      >
                         <Check v-if="copiedIndex === `${i}-${j}`" class="h-3.5 w-3.5 text-green-400" />
                         <Copy v-else class="h-3.5 w-3.5" />
                       </button>
                     </div>
                   </div>
-                  <pre class="whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-100"><code>{{ seg.content }}</code></pre>
+                  <pre
+                    class="whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-100"
+                  ><code>{{ seg.content }}</code></pre>
                 </div>
               </template>
             </div>
@@ -513,7 +578,7 @@ function formatInlineText(text: string): string {
 
         <div v-if="isWaitingForFirstDelta" class="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 class="h-3.5 w-3.5 animate-spin" />
-          <span>{{ t('ai.thinking') }}</span>
+          <span>{{ t("ai.thinking") }}</span>
         </div>
       </div>
     </ScrollArea>
@@ -524,8 +589,12 @@ function formatInlineText(text: string): string {
           <DatabaseIcon v-if="connection" :db-type="connectionIconType(connection)" class="h-3 w-3 shrink-0" />
           <Server v-else class="h-3 w-3 shrink-0" />
           <Select :model-value="connection?.id || ''" @update:model-value="(v: any) => changeConnection(v)">
-            <SelectTrigger class="h-5 w-auto border-0 rounded-none bg-transparent p-0 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3">
-              <SelectValue :placeholder="t('editor.selectConnection')">{{ connection?.name || t('editor.selectConnection') }}</SelectValue>
+            <SelectTrigger
+              class="h-5 w-auto border-0 rounded-none bg-transparent p-0 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3"
+            >
+              <SelectValue :placeholder="t('editor.selectConnection')">{{
+                connection?.name || t("editor.selectConnection")
+              }}</SelectValue>
             </SelectTrigger>
             <SelectContent class="min-w-48">
               <SelectItem v-for="conn in connectionStore.connections" :key="conn.id" :value="conn.id">
@@ -538,13 +607,27 @@ function formatInlineText(text: string): string {
           </Select>
           <template v-if="connection">
             <Database class="h-3 w-3 shrink-0 text-foreground/40" />
-            <Select :model-value="tab?.database || ''" @update:model-value="(v: any) => changeDatabase(v)" @update:open="(open: boolean) => { if (open) loadDatabases() }">
-              <SelectTrigger class="h-5 w-auto border-0 rounded-none bg-transparent p-0 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3">
-                <SelectValue :placeholder="t('editor.selectDatabase')">{{ tab?.database || t('editor.selectDatabase') }}</SelectValue>
+            <Select
+              :model-value="tab?.database || ''"
+              @update:model-value="(v: any) => changeDatabase(v)"
+              @update:open="
+                (open: boolean) => {
+                  if (open) loadDatabases();
+                }
+              "
+            >
+              <SelectTrigger
+                class="h-5 w-auto border-0 rounded-none bg-transparent p-0 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3"
+              >
+                <SelectValue :placeholder="t('editor.selectDatabase')">{{
+                  tab?.database || t("editor.selectDatabase")
+                }}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="db in dbOptions" :key="db" :value="db">{{ db }}</SelectItem>
-                <SelectItem v-if="!dbOptions.length && tab?.database" :value="tab.database">{{ tab.database }}</SelectItem>
+                <SelectItem v-if="!dbOptions.length && tab?.database" :value="tab.database">{{
+                  tab.database
+                }}</SelectItem>
               </SelectContent>
             </Select>
           </template>
@@ -560,14 +643,32 @@ function formatInlineText(text: string): string {
         <div class="flex items-center gap-1.5">
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <button class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground">
-                <component :is="actionButtons.find(b => b.action === activeAction)?.icon" class="h-3 w-3" />
+              <button
+                class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <component :is="actionButtons.find((b) => b.action === activeAction)?.icon" class="h-3 w-3" />
                 <span>{{ t(`ai.actions.${activeAction}`) }}</span>
-                <svg class="h-3 w-3 opacity-50" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                <svg
+                  class="h-3 w-3 opacity-50"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" class="w-max min-w-0">
-              <DropdownMenuItem v-for="btn in actionButtons" :key="btn.action" class="text-xs gap-1.5" @click="selectAction(btn.action)">
+              <DropdownMenuItem
+                v-for="btn in actionButtons"
+                :key="btn.action"
+                class="text-xs gap-1.5"
+                @click="selectAction(btn.action)"
+              >
                 <component :is="btn.icon" class="h-3 w-3" />
                 <span>{{ t(btn.key) }}</span>
               </DropdownMenuItem>
@@ -598,11 +699,11 @@ function formatInlineText(text: string): string {
   <Dialog v-model:open="showSettings">
     <DialogContent class="sm:max-w-[420px]">
       <DialogHeader>
-        <DialogTitle>{{ t('ai.settings') }}</DialogTitle>
+        <DialogTitle>{{ t("ai.settings") }}</DialogTitle>
       </DialogHeader>
       <div class="grid gap-3 py-2">
         <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">{{ t('ai.provider') }}</Label>
+          <Label class="text-right text-xs">{{ t("ai.provider") }}</Label>
           <Select :model-value="tempProvider" @update:model-value="(v: any) => selectProvider(v)">
             <SelectTrigger class="col-span-2 h-8 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -618,7 +719,12 @@ function formatInlineText(text: string): string {
         </div>
         <div class="grid grid-cols-3 items-center gap-3">
           <Label class="text-right text-xs">Endpoint</Label>
-          <Input v-model="tempEndpoint" placeholder="https://api.openai.com/v1" autocomplete="off" class="col-span-2 h-8 text-xs" />
+          <Input
+            v-model="tempEndpoint"
+            placeholder="https://api.openai.com/v1"
+            autocomplete="off"
+            class="col-span-2 h-8 text-xs"
+          />
         </div>
         <div class="grid grid-cols-3 items-center gap-3">
           <Label class="text-right text-xs">Model</Label>
@@ -627,21 +733,49 @@ function formatInlineText(text: string): string {
         <div v-if="tempProvider !== 'claude'" class="grid grid-cols-3 items-center gap-3">
           <Label class="text-right text-xs">API</Label>
           <div class="col-span-2 flex gap-2">
-            <Button size="sm" variant="outline" class="h-8 flex-1 text-xs" :class="{ 'border-blue-300 border-2 ring-2 ring-blue-300/50': tempApiStyle === 'completions' }" @click="tempApiStyle = 'completions'">/chat/completions</Button>
-            <Button size="sm" variant="outline" class="h-8 flex-1 text-xs" :class="{ 'border-blue-300 border-2 ring-2 ring-blue-300/50': tempApiStyle === 'responses' }" @click="tempApiStyle = 'responses'">/responses</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              class="h-8 flex-1 text-xs"
+              :class="{
+                'border-blue-300 border-2 ring-2 ring-blue-300/50': tempApiStyle === 'completions',
+              }"
+              @click="tempApiStyle = 'completions'"
+              >/chat/completions</Button
+            >
+            <Button
+              size="sm"
+              variant="outline"
+              class="h-8 flex-1 text-xs"
+              :class="{
+                'border-blue-300 border-2 ring-2 ring-blue-300/50': tempApiStyle === 'responses',
+              }"
+              @click="tempApiStyle = 'responses'"
+              >/responses</Button
+            >
           </div>
         </div>
       </div>
       <DialogFooter class="flex items-center gap-2">
         <div class="flex-1 flex items-center gap-2">
-          <Button size="sm" variant="outline" :disabled="testingAi || !tempApiKey?.trim() || !tempEndpoint?.trim() || !tempModel?.trim()" @click="testAiConnection">
+          <Button
+            size="sm"
+            variant="outline"
+            :disabled="testingAi || !tempApiKey?.trim() || !tempEndpoint?.trim() || !tempModel?.trim()"
+            @click="testAiConnection"
+          >
             <Loader2 v-if="testingAi" class="h-3 w-3 animate-spin mr-1" />
-            {{ t('connection.test') }}
+            {{ t("connection.test") }}
           </Button>
-          <span v-if="testResult === 'success'" class="text-xs text-green-500">{{ t('connection.testSuccess') }}</span>
-          <span v-else-if="testResult === 'error'" class="text-xs text-destructive truncate max-w-[200px]" :title="testError">{{ testError }}</span>
+          <span v-if="testResult === 'success'" class="text-xs text-green-500">{{ t("connection.testSuccess") }}</span>
+          <span
+            v-else-if="testResult === 'error'"
+            class="text-xs text-destructive truncate max-w-[200px]"
+            :title="testError"
+            >{{ testError }}</span
+          >
         </div>
-        <Button size="sm" @click="saveSettings">{{ t('grid.save') }}</Button>
+        <Button size="sm" @click="saveSettings">{{ t("grid.save") }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>

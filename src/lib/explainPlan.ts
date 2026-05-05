@@ -46,9 +46,7 @@ export function buildExplainSql(databaseType: DatabaseType | undefined, sql: str
 
 export function parseExplainResult(databaseType: "mysql" | "postgres", result: QueryResult): ParsedExplainPlan {
   const raw = parseExplainCell(result.rows[0]?.[0]);
-  const nodes = databaseType === "postgres"
-    ? parsePostgresExplain(raw)
-    : parseMysqlExplain(raw);
+  const nodes = databaseType === "postgres" ? parsePostgresExplain(raw) : parseMysqlExplain(raw);
 
   return { databaseType, raw, nodes };
 }
@@ -108,9 +106,10 @@ function parsePostgresNode(plan: Record<string, unknown> | null, id: string): Ex
   const joinType = stringValue(plan["Join Type"]);
   const sortKey = arrayValue(plan["Sort Key"])?.map(String).join(", ");
 
-  const children = arrayValue(plan.Plans)
-    ?.map((child, childIndex) => parsePostgresNode(objectValue(child), `${id}.${childIndex}`))
-    .filter((node): node is ExplainPlanNode => !!node) ?? [];
+  const children =
+    arrayValue(plan.Plans)
+      ?.map((child, childIndex) => parsePostgresNode(objectValue(child), `${id}.${childIndex}`))
+      .filter((node): node is ExplainPlanNode => !!node) ?? [];
 
   return {
     id,
@@ -185,7 +184,8 @@ function parseMysqlTable(table: Record<string, unknown>, id: string): ExplainPla
   const accessType = stringValue(table.access_type) || "table";
   const costInfo = objectValue(table.cost_info);
   const rows = numberLike(table.rows_examined_per_scan) || numberLike(table.rows_produced_per_join);
-  const cost = stringValue(costInfo?.query_cost) || stringValue(costInfo?.read_cost) || stringValue(costInfo?.eval_cost);
+  const cost =
+    stringValue(costInfo?.query_cost) || stringValue(costInfo?.read_cost) || stringValue(costInfo?.eval_cost);
   const details = [
     stringValue(table.attached_condition) ? `Condition: ${stringValue(table.attached_condition)}` : "",
     arrayValue(table.used_columns)?.length ? `Columns: ${arrayValue(table.used_columns)!.map(String).join(", ")}` : "",
@@ -207,7 +207,7 @@ function parseMysqlTable(table: Record<string, unknown>, id: string): ExplainPla
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }
 

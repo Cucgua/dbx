@@ -75,5 +75,11 @@ export async function decryptConfig(payload: EncryptedPayload, passphrase: strin
 export function isEncryptedConfig(data: unknown): data is EncryptedPayload {
   if (typeof data !== "object" || data === null) return false;
   const obj = data as Record<string, unknown>;
-  return obj.format === "dbx-encrypted" && obj.version === 1 && typeof obj.salt === "string" && typeof obj.iv === "string" && typeof obj.data === "string";
+  return (
+    obj.format === "dbx-encrypted" &&
+    obj.version === 1 &&
+    typeof obj.salt === "string" &&
+    typeof obj.iv === "string" &&
+    typeof obj.data === "string"
+  );
 }

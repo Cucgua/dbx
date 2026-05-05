@@ -61,7 +61,7 @@ const activeSqlFormatDialect = computed<SqlFormatDialect>(() => {
 });
 
 const editorDialect = computed<"mysql" | "postgres">(() =>
-  props.activeConnection?.db_type === "postgres" ? "postgres" : "mysql"
+  props.activeConnection?.db_type === "postgres" ? "postgres" : "mysql",
 );
 </script>
 
@@ -91,7 +91,13 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
         <Pane :size="60" :min-size="20">
           <div class="h-full flex flex-col">
             <div
-              v-if="activeTab.result || activeTab.explainPlan || activeTab.explainError || activeTab.isExecuting || activeTab.isExplaining"
+              v-if="
+                activeTab.result ||
+                activeTab.explainPlan ||
+                activeTab.explainError ||
+                activeTab.isExecuting ||
+                activeTab.isExplaining
+              "
               class="h-8 shrink-0 border-b bg-muted/20 px-2 flex items-center gap-1"
             >
               <Button
@@ -101,7 +107,7 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
                 :disabled="!activeTab.result && !activeTab.isExecuting"
                 @click="emit('update:activeOutputView', 'result')"
               >
-                {{ t('tabs.tableData') }}
+                {{ t("tabs.tableData") }}
               </Button>
               <template v-if="activeOutputView === 'result' && activeTab.results && activeTab.results.length > 1">
                 <span class="mx-1 h-4 w-px bg-border" />
@@ -113,7 +119,7 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
                   class="h-6 px-2 text-xs"
                   @click="queryStore.setActiveResultIndex(activeTab.id, rIdx)"
                 >
-                  {{ t('tabs.resultN', { n: rIdx + 1 }) }}
+                  {{ t("tabs.resultN", { n: rIdx + 1 }) }}
                 </Button>
               </template>
               <Button
@@ -124,7 +130,7 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
                 @click="emit('update:activeOutputView', 'explain')"
               >
                 <GitBranch class="h-3.5 w-3.5" />
-                {{ t('explain.title') }}
+                {{ t("explain.title") }}
               </Button>
             </div>
 
@@ -139,21 +145,40 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
             />
 
             <template v-else>
-              <DataGrid v-if="activeTab.result" :key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`" class="flex-1 min-h-0" :result="activeTab.result" :sql="activeTab.lastExecutedSql || activeTab.sql" :loading="activeTab.isExecuting" />
-              <div v-if="activeTab.result?.columns.includes('Error')" class="flex items-center gap-2 px-3 py-1.5 border-t bg-destructive/5">
+              <DataGrid
+                v-if="activeTab.result"
+                :key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`"
+                class="flex-1 min-h-0"
+                :result="activeTab.result"
+                :sql="activeTab.lastExecutedSql || activeTab.sql"
+                :loading="activeTab.isExecuting"
+              />
+              <div
+                v-if="activeTab.result?.columns.includes('Error')"
+                class="flex items-center gap-2 px-3 py-1.5 border-t bg-destructive/5"
+              >
                 <Bot class="h-3.5 w-3.5 text-destructive" />
-                <button class="text-xs text-destructive hover:underline" @click="emit('fixWithAi', String(activeTab.result?.rows?.[0]?.[0] ?? ''))">
-                  {{ t('ai.fixWithAi') }}
+                <button
+                  class="text-xs text-destructive hover:underline"
+                  @click="emit('fixWithAi', String(activeTab.result?.rows?.[0]?.[0] ?? ''))"
+                >
+                  {{ t("ai.fixWithAi") }}
                 </button>
               </div>
-              <div v-else-if="!activeTab.result && activeTab.isExecuting" class="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
+              <div
+                v-else-if="!activeTab.result && activeTab.isExecuting"
+                class="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm"
+              >
                 <div class="flex items-center">
                   <Loader2 class="h-5 w-5 animate-spin mr-2" />
                   {{ t(queryExecutionLabelKey(activeTab)) }}
                 </div>
               </div>
-              <div v-else-if="!activeTab.result" class="flex-1 min-h-0 flex items-center justify-center text-muted-foreground text-sm">
-                {{ t('editor.pressToExecute') }}
+              <div
+                v-else-if="!activeTab.result"
+                class="flex-1 min-h-0 flex items-center justify-center text-muted-foreground text-sm"
+              >
+                {{ t("editor.pressToExecute") }}
               </div>
             </template>
           </div>
@@ -165,9 +190,11 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
     <template v-else-if="activeTab.mode === 'data'">
       <div class="flex-1 min-h-0 flex flex-col">
         <div class="h-9 shrink-0 border-b bg-background/80 px-3 flex items-center gap-2 text-xs">
-          <span class="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+          <span
+            class="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
+          >
             <Table2 class="h-3.5 w-3.5" />
-            {{ t('tabs.tableData') }}
+            {{ t("tabs.tableData") }}
           </span>
           <span class="font-medium truncate">{{ activeTab.tableMeta?.tableName || activeTab.title }}</span>
           <span class="text-muted-foreground truncate">
@@ -175,7 +202,7 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
             <template v-if="activeTab.tableMeta?.schema"> &middot; {{ activeTab.tableMeta.schema }}</template>
           </span>
           <span v-if="activeTab.tableMeta" class="ml-auto text-muted-foreground">
-            {{ activeTab.tableMeta.columns.length }} {{ t('tree.columns') }}
+            {{ activeTab.tableMeta.columns.length }} {{ t("tree.columns") }}
           </span>
         </div>
         <DataGrid
@@ -192,10 +219,18 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
           :table-meta="activeTab.tableMeta"
           :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
           @reload="emit('reload')"
-          @paginate="(offset: number, limit: number, whereInput?: string) => emit('paginate', offset, limit, whereInput)"
-          @sort="(column: string, direction: 'asc' | 'desc' | null, whereInput?: string) => emit('sort', column, direction, whereInput)"
+          @paginate="
+            (offset: number, limit: number, whereInput?: string) => emit('paginate', offset, limit, whereInput)
+          "
+          @sort="
+            (column: string, direction: 'asc' | 'desc' | null, whereInput?: string) =>
+              emit('sort', column, direction, whereInput)
+          "
         />
-        <div v-else-if="activeTab.isExecuting" class="h-full flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
+        <div
+          v-else-if="activeTab.isExecuting"
+          class="h-full flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm"
+        >
           <div class="flex items-center">
             <Loader2 class="h-5 w-5 animate-spin mr-2" />
             {{ t(queryExecutionLabelKey(activeTab)) }}
@@ -209,7 +244,7 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
           >
             <Loader2 v-if="activeTab.isCancelling" class="h-3.5 w-3.5 animate-spin" />
             <Square v-else class="h-3.5 w-3.5 fill-current" />
-            {{ t('toolbar.stopQuery') }}
+            {{ t("toolbar.stopQuery") }}
           </Button>
         </div>
       </div>
@@ -218,11 +253,7 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
     <!-- Redis mode: key browser -->
     <template v-else-if="activeTab.mode === 'redis'">
       <div class="flex-1 min-h-0">
-        <RedisKeyBrowser
-          :key="activeTab.id"
-          :connection-id="activeTab.connectionId"
-          :db="Number(activeTab.database)"
-        />
+        <RedisKeyBrowser :key="activeTab.id" :connection-id="activeTab.connectionId" :db="Number(activeTab.database)" />
       </div>
     </template>
 

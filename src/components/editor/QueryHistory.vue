@@ -3,9 +3,7 @@ import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { Search, Trash2, Clock, X } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
-import {
-  ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { useHistoryStore } from "@/stores/historyStore";
 import { shouldClearHistory, shouldDeleteHistoryEntry } from "@/lib/historyActions";
 
@@ -22,8 +20,11 @@ const searchText = ref("");
 const filtered = computed(() => {
   if (!searchText.value) return store.entries;
   const q = searchText.value.toLowerCase();
-  return store.entries.filter((e) =>
-    e.sql.toLowerCase().includes(q) || e.connection_name.toLowerCase().includes(q) || e.database.toLowerCase().includes(q)
+  return store.entries.filter(
+    (e) =>
+      e.sql.toLowerCase().includes(q) ||
+      e.connection_name.toLowerCase().includes(q) ||
+      e.database.toLowerCase().includes(q),
   );
 });
 
@@ -65,7 +66,7 @@ onMounted(() => store.load());
   <div class="h-full flex flex-col overflow-hidden border-l">
     <div class="h-9 flex items-center gap-1 px-2 border-b shrink-0 bg-muted/20">
       <Clock class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-      <span class="text-xs font-medium">{{ t('history.title') }}</span>
+      <span class="text-xs font-medium">{{ t("history.title") }}</span>
       <span class="flex-1" />
       <Button v-if="store.entries.length > 0" variant="ghost" size="icon" class="h-5 w-5" @click="confirmClearHistory">
         <Trash2 class="h-3 w-3" />
@@ -102,20 +103,22 @@ onMounted(() => store.load());
             <div class="font-mono text-muted-foreground truncate">{{ truncateSql(entry.sql) }}</div>
             <div class="flex items-center gap-2 mt-0.5">
               <span :class="entry.success ? 'text-green-500' : 'text-red-500'">
-                {{ entry.success ? `${entry.execution_time_ms}ms` : t('history.failed') }}
+                {{ entry.success ? `${entry.execution_time_ms}ms` : t("history.failed") }}
               </span>
             </div>
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent class="w-40">
-          <ContextMenuItem @click="restore(entry.sql)">{{ t('history.restore') }}</ContextMenuItem>
-          <ContextMenuItem @click="copySql(entry.sql)">{{ t('history.copy') }}</ContextMenuItem>
-          <ContextMenuItem class="text-destructive" @click="confirmDeleteEntry(entry.id)">{{ t('history.delete') }}</ContextMenuItem>
+          <ContextMenuItem @click="restore(entry.sql)">{{ t("history.restore") }}</ContextMenuItem>
+          <ContextMenuItem @click="copySql(entry.sql)">{{ t("history.copy") }}</ContextMenuItem>
+          <ContextMenuItem class="text-destructive" @click="confirmDeleteEntry(entry.id)">{{
+            t("history.delete")
+          }}</ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
 
       <div v-if="filtered.length === 0" class="px-3 py-8 text-center text-muted-foreground text-xs">
-        {{ t('history.empty') }}
+        {{ t("history.empty") }}
       </div>
     </div>
   </div>

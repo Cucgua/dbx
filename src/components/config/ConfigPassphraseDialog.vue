@@ -15,7 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:open": [value: boolean];
-  "confirm": [passphrase: string];
+  confirm: [passphrase: string];
 }>();
 
 const { t } = useI18n();
@@ -61,17 +61,17 @@ const displayError = computed(() => error.value || props.externalError || "");
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <Lock class="h-5 w-5" />
-          {{ mode === 'export' ? t('configExport.passphraseTitle') : t('configExport.passphraseImportTitle') }}
+          {{ mode === "export" ? t("configExport.passphraseTitle") : t("configExport.passphraseImportTitle") }}
         </DialogTitle>
       </DialogHeader>
 
       <div class="grid gap-4 py-4">
         <p class="text-sm text-muted-foreground">
-          {{ mode === 'export' ? t('configExport.passphraseExportHint') : t('configExport.passphraseImportHint') }}
+          {{ mode === "export" ? t("configExport.passphraseExportHint") : t("configExport.passphraseImportHint") }}
         </p>
 
         <div class="grid gap-2">
-          <Label>{{ t('configExport.passphrase') }}</Label>
+          <Label>{{ t("configExport.passphrase") }}</Label>
           <Input
             v-model="passphrase"
             type="password"
@@ -81,7 +81,7 @@ const displayError = computed(() => error.value || props.externalError || "");
         </div>
 
         <div v-if="mode === 'export'" class="grid gap-2">
-          <Label>{{ t('configExport.passphraseConfirm') }}</Label>
+          <Label>{{ t("configExport.passphraseConfirm") }}</Label>
           <Input
             v-model="passphraseConfirm"
             type="password"
@@ -95,7 +95,7 @@ const displayError = computed(() => error.value || props.externalError || "");
 
       <DialogFooter>
         <Button @click="confirm">
-          {{ mode === 'export' ? t('configExport.exportEncrypted') : t('configExport.decryptImport') }}
+          {{ mode === "export" ? t("configExport.exportEncrypted") : t("configExport.decryptImport") }}
         </Button>
       </DialogFooter>
     </DialogContent>

@@ -1,4 +1,17 @@
-export type DatabaseType = "mysql" | "postgres" | "sqlite" | "redis" | "duckdb" | "clickhouse" | "sqlserver" | "mongodb" | "oracle" | "elasticsearch" | "doris" | "starrocks" | "redshift";
+export type DatabaseType =
+  | "mysql"
+  | "postgres"
+  | "sqlite"
+  | "redis"
+  | "duckdb"
+  | "clickhouse"
+  | "sqlserver"
+  | "mongodb"
+  | "oracle"
+  | "elasticsearch"
+  | "doris"
+  | "starrocks"
+  | "redshift";
 
 export interface ConnectionConfig {
   id: string;
@@ -80,11 +93,23 @@ export interface QueryResult {
 }
 
 export type TreeNodeType =
-  | "connection" | "connection-group" | "database" | "schema" | "table" | "view"
-  | "group-columns" | "group-indexes" | "group-fkeys" | "group-triggers"
-  | "column" | "index" | "fkey" | "trigger"
+  | "connection"
+  | "connection-group"
+  | "database"
+  | "schema"
+  | "table"
+  | "view"
+  | "group-columns"
+  | "group-indexes"
+  | "group-fkeys"
+  | "group-triggers"
+  | "column"
+  | "index"
+  | "fkey"
+  | "trigger"
   | "redis-db"
-  | "mongo-db" | "mongo-collection";
+  | "mongo-db"
+  | "mongo-collection";
 
 export interface ConnectionGroup {
   id: string;

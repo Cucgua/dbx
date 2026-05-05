@@ -2,9 +2,7 @@
 import { computed, watch, defineAsyncComponent } from "vue";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ConnectionDialog from "@/components/connection/ConnectionDialog.vue";
 import EditorSettingsDialog from "@/components/editor/EditorSettingsDialog.vue";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
@@ -13,7 +11,9 @@ const SchemaDiffDialog = defineAsyncComponent(() => import("@/components/diff/Sc
 const SqlFileExecutionDialog = defineAsyncComponent(() => import("@/components/sql-file/SqlFileExecutionDialog.vue"));
 const SchemaDiagramDialog = defineAsyncComponent(() => import("@/components/diagram/SchemaDiagramDialog.vue"));
 const TableImportDialog = defineAsyncComponent(() => import("@/components/import/TableImportDialog.vue"));
-const TableStructureEditorDialog = defineAsyncComponent(() => import("@/components/structure/TableStructureEditorDialog.vue"));
+const TableStructureEditorDialog = defineAsyncComponent(
+  () => import("@/components/structure/TableStructureEditorDialog.vue"),
+);
 const FieldLineageDialog = defineAsyncComponent(() => import("@/components/lineage/FieldLineageDialog.vue"));
 const ConfigPassphraseDialog = defineAsyncComponent(() => import("@/components/config/ConfigPassphraseDialog.vue"));
 const DatabaseSearchDialog = defineAsyncComponent(() => import("@/components/search/DatabaseSearchDialog.vue"));
@@ -36,8 +36,24 @@ const emit = defineEmits<{
   connectSucceeded: [name: string];
   connectFailed: [message: string];
   structureEditorSaved: [];
-  openLineageTarget: [target: { connectionId: string; database: string; schema?: string; tableName: string; columnName?: string }];
-  openDatabaseSearchTarget: [target: { connectionId: string; database: string; schema?: string; tableName: string; whereInput?: string }];
+  openLineageTarget: [
+    target: {
+      connectionId: string;
+      database: string;
+      schema?: string;
+      tableName: string;
+      columnName?: string;
+    },
+  ];
+  openDatabaseSearchTarget: [
+    target: {
+      connectionId: string;
+      database: string;
+      schema?: string;
+      tableName: string;
+      whereInput?: string;
+    },
+  ];
 }>();
 
 const { t } = useI18n();
@@ -54,9 +70,12 @@ watch(editConfig, (v) => {
   if (v) emit("update:showConnectionDialog", true);
 });
 
-watch(() => props.showConnectionDialog, (v) => {
-  if (!v) connectionStore.stopEditing();
-});
+watch(
+  () => props.showConnectionDialog,
+  (v) => {
+    if (!v) connectionStore.stopEditing();
+  },
+);
 </script>
 
 <template>
@@ -68,10 +87,7 @@ watch(() => props.showConnectionDialog, (v) => {
     @connect-succeeded="emit('connectSucceeded', $event)"
     @connect-failed="emit('connectFailed', $event)"
   />
-  <EditorSettingsDialog
-    :open="showSettingsDialog"
-    @update:open="emit('update:showSettingsDialog', $event)"
-  />
+  <EditorSettingsDialog :open="showSettingsDialog" @update:open="emit('update:showSettingsDialog', $event)" />
   <DangerConfirmDialog
     :open="showDangerDialog"
     :sql="dangerSql"
@@ -135,17 +151,29 @@ watch(() => props.showConnectionDialog, (v) => {
     v-model:open="dialogs.showConfigPassphraseDialog.value"
     :mode="dialogs.configPassphraseMode.value"
     :external-error="dialogs.configPassphraseError.value"
-    @confirm="dialogs.configPassphraseMode.value === 'export' ? dialogs.onExportConfirm($event) : dialogs.onImportConfirm($event)"
+    @confirm="
+      dialogs.configPassphraseMode.value === 'export'
+        ? dialogs.onExportConfirm($event)
+        : dialogs.onImportConfirm($event)
+    "
   />
   <Dialog v-model:open="dialogs.showImportLayoutConfirm.value">
     <DialogContent class="sm:max-w-[400px]">
       <DialogHeader>
-        <DialogTitle>{{ t('configExport.importLayoutTitle') }}</DialogTitle>
+        <DialogTitle>{{ t("configExport.importLayoutTitle") }}</DialogTitle>
       </DialogHeader>
-      <p class="text-sm text-muted-foreground">{{ t('configExport.importLayoutConfirm') }}</p>
+      <p class="text-sm text-muted-foreground">{{ t("configExport.importLayoutConfirm") }}</p>
       <DialogFooter>
-        <Button variant="outline" @click="dialogs.showImportLayoutConfirm.value = false">{{ t('dangerDialog.cancel') }}</Button>
-        <Button @click="dialogs.showImportLayoutConfirm.value = false; dialogs.pendingImportLayout.value && connectionStore.applySidebarLayout(dialogs.pendingImportLayout.value)">{{ t('configExport.importLayoutApply') }}</Button>
+        <Button variant="outline" @click="dialogs.showImportLayoutConfirm.value = false">{{
+          t("dangerDialog.cancel")
+        }}</Button>
+        <Button
+          @click="
+            dialogs.showImportLayoutConfirm.value = false;
+            dialogs.pendingImportLayout.value && connectionStore.applySidebarLayout(dialogs.pendingImportLayout.value);
+          "
+          >{{ t("configExport.importLayoutApply") }}</Button
+        >
       </DialogFooter>
     </DialogContent>
   </Dialog>

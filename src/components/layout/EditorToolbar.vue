@@ -1,15 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { Play, Loader2, Square, Database, Table2, AlignLeft, GitBranch } from "lucide-vue-next";
+import { Play, Loader2, Square, Database, Table2, AlignLeft, GitBranch, Save, FolderOpen } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -29,6 +23,8 @@ const emit = defineEmits<{
   cancel: [];
   explain: [];
   formatSql: [];
+  saveSql: [];
+  openSql: [];
   changeConnection: [connectionId: string];
   changeDatabase: [database: string];
 }>();
@@ -39,7 +35,7 @@ const { databaseOptions, loadingDatabaseOptions, loadDatabaseOptions } = useData
 
 const activeDatabaseOptions = computed(() => {
   const connection = props.activeConnection;
-  return connection ? databaseOptions.value[connection.id] ?? [] : [];
+  return connection ? (databaseOptions.value[connection.id] ?? []) : [];
 });
 
 const activeDatabaseValue = computed(() => props.activeTab.database || "");
@@ -53,7 +49,9 @@ function databaseDisplayName(database: string): string {
 </script>
 
 <template>
-  <div class="h-9 shrink-0 border-b bg-background/80 px-3 flex items-center gap-1 text-xs text-muted-foreground relative z-10">
+  <div
+    class="h-9 shrink-0 border-b bg-background/80 px-3 flex items-center gap-1 text-xs text-muted-foreground relative z-10"
+  >
     <div class="flex items-center gap-0.5">
       <Tooltip>
         <TooltipTrigger as-child>
@@ -61,7 +59,9 @@ function databaseDisplayName(database: string): string {
             :variant="activeTab.isExecuting ? 'destructive' : 'ghost'"
             size="icon"
             class="h-6 w-6"
-            :disabled="activeTab.isCancelling || activeTab.isExplaining || (!activeTab.isExecuting && !executableSql.trim())"
+            :disabled="
+              activeTab.isCancelling || activeTab.isExplaining || (!activeTab.isExecuting && !executableSql.trim())
+            "
             @click="activeTab.isExecuting ? emit('cancel') : emit('execute')"
           >
             <Loader2 v-if="activeTab.isCancelling" class="h-3.5 w-3.5 animate-spin" />
@@ -69,7 +69,9 @@ function databaseDisplayName(database: string): string {
             <Play v-else class="h-3.5 w-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{{ activeTab.isExecuting ? t('toolbar.stopQuery') : t('toolbar.executeShortcut') }}</TooltipContent>
+        <TooltipContent>{{
+          activeTab.isExecuting ? t("toolbar.stopQuery") : t("toolbar.executeShortcut")
+        }}</TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger as-child>
@@ -84,26 +86,59 @@ function databaseDisplayName(database: string): string {
             <GitBranch v-else class="h-3.5 w-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{{ activeTab.isExplaining ? t('toolbar.stopExplain') : t('toolbar.explainPlan') }}</TooltipContent>
+        <TooltipContent>{{
+          activeTab.isExplaining ? t("toolbar.stopExplain") : t("toolbar.explainPlan")
+        }}</TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger as-child>
-          <Button variant="ghost" size="icon" class="h-6 w-6" :disabled="activeTab.isExecuting || activeTab.isExplaining || !activeTab.sql.trim()" @click="emit('formatSql')">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6"
+            :disabled="activeTab.isExecuting || activeTab.isExplaining || !activeTab.sql.trim()"
+            @click="emit('formatSql')"
+          >
             <AlignLeft class="h-3.5 w-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{{ t('toolbar.formatSql') }}</TooltipContent>
+        <TooltipContent>{{ t("toolbar.formatSql") }}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6"
+            :disabled="!activeTab.sql.trim()"
+            @click="emit('saveSql')"
+          >
+            <Save class="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{{ t("toolbar.saveSql") }}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button variant="ghost" size="icon" class="h-6 w-6" @click="emit('openSql')">
+            <FolderOpen class="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{{ t("toolbar.openSql") }}</TooltipContent>
       </Tooltip>
     </div>
     <span class="flex-1 min-w-0" />
     <div class="flex items-center gap-2 shrink-0">
       <div class="flex items-center gap-1">
-        <span v-if="activeConnection?.color" class="h-4 w-1 rounded-full shrink-0" :style="{ backgroundColor: activeConnection.color }" />
-        <Select
-          :model-value="activeConnectionValue"
-          @update:model-value="(v: any) => emit('changeConnection', v)"
-        >
-          <SelectTrigger class="h-6 w-auto max-w-56 border-0 bg-transparent px-1 text-xs font-medium text-foreground shadow-none focus:ring-0">
+        <span
+          v-if="activeConnection?.color"
+          class="h-4 w-1 rounded-full shrink-0"
+          :style="{ backgroundColor: activeConnection.color }"
+        />
+        <Select :model-value="activeConnectionValue" @update:model-value="(v: any) => emit('changeConnection', v)">
+          <SelectTrigger
+            class="h-6 w-auto max-w-56 border-0 bg-transparent px-1 text-xs font-medium text-foreground shadow-none focus:ring-0"
+          >
             <div v-if="activeConnection" class="flex min-w-0 items-center gap-1.5">
               <DatabaseIcon :db-type="connectionIconType(activeConnection)" class="h-3.5 w-3.5 shrink-0" />
               <span class="truncate">{{ connectionDisplayName(activeConnectionValue) }}</span>
@@ -111,11 +146,7 @@ function databaseDisplayName(database: string): string {
             <SelectValue v-else :placeholder="t('editor.selectConnection')" />
           </SelectTrigger>
           <SelectContent position="popper">
-            <SelectItem
-              v-for="connection in connectionStore.connections"
-              :key="connection.id"
-              :value="connection.id"
-            >
+            <SelectItem v-for="connection in connectionStore.connections" :key="connection.id" :value="connection.id">
               <div class="flex min-w-0 items-center gap-2">
                 <DatabaseIcon :db-type="connectionIconType(connection)" class="h-3.5 w-3.5 shrink-0" />
                 <span class="truncate">{{ connection.name }}</span>
@@ -129,19 +160,23 @@ function databaseDisplayName(database: string): string {
         <Select
           :model-value="activeDatabaseValue"
           @update:model-value="(v: any) => emit('changeDatabase', v)"
-          @update:open="(open: boolean) => { if (open && activeConnection) loadDatabaseOptions(activeConnection.id).catch(() => {}) }"
+          @update:open="
+            (open: boolean) => {
+              if (open && activeConnection) loadDatabaseOptions(activeConnection.id).catch(() => {});
+            }
+          "
         >
           <SelectTrigger class="h-6 w-auto max-w-56 border-0 bg-transparent px-1 text-xs shadow-none focus:ring-0">
-            <SelectValue :placeholder="loadingDatabaseOptions[activeConnection?.id || ''] ? t('common.loading') : t('editor.selectDatabase')">
+            <SelectValue
+              :placeholder="
+                loadingDatabaseOptions[activeConnection?.id || ''] ? t('common.loading') : t('editor.selectDatabase')
+              "
+            >
               {{ databaseDisplayName(activeDatabaseValue) }}
             </SelectValue>
           </SelectTrigger>
           <SelectContent position="popper">
-            <SelectItem
-              v-for="database in activeDatabaseOptions"
-              :key="database"
-              :value="database"
-            >
+            <SelectItem v-for="database in activeDatabaseOptions" :key="database" :value="database">
               {{ databaseDisplayName(database) }}
             </SelectItem>
             <SelectItem v-if="!activeDatabaseOptions.length && activeDatabaseValue" :value="activeDatabaseValue">
@@ -153,7 +188,7 @@ function databaseDisplayName(database: string): string {
     </div>
     <div v-if="activeTab.tableMeta" class="flex min-w-0 items-center gap-1 ml-2">
       <Table2 class="h-3.5 w-3.5 shrink-0" />
-      <span class="truncate">{{ activeTab.tableMeta.columns.length }} {{ t('tree.columns') }}</span>
+      <span class="truncate">{{ activeTab.tableMeta.columns.length }} {{ t("tree.columns") }}</span>
     </div>
   </div>
 </template>

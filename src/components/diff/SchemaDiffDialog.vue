@@ -1,23 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import {
-  Dialog, DialogHeader, DialogTitle,
-  DialogFooter, DialogContent,
-} from "@/components/ui/dialog";
+import { Dialog, DialogHeader, DialogTitle, DialogFooter, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnectionStore } from "@/stores/connectionStore";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
-import {
-  diffColumns, diffIndexes, diffTables, generateSyncSql,
-  type TableDiff,
-} from "@/lib/schemaDiff";
+import { diffColumns, diffIndexes, diffTables, generateSyncSql, type TableDiff } from "@/lib/schemaDiff";
 import { useToast } from "@/composables/useToast";
 import { Loader2, Copy, Play, GitCompareArrows } from "lucide-vue-next";
 
@@ -47,14 +39,11 @@ const syncSql = ref("");
 const executing = ref(false);
 
 const sqlConnections = computed(() =>
-  store.connections.filter((c) =>
-    !["redis", "mongodb", "elasticsearch"].includes(c.db_type),
-  ),
+  store.connections.filter((c) => !["redis", "mongodb", "elasticsearch"].includes(c.db_type)),
 );
 
-const canCompare = computed(() =>
-  sourceConnectionId.value && sourceDatabase.value &&
-  targetConnectionId.value && targetDatabase.value,
+const canCompare = computed(
+  () => sourceConnectionId.value && sourceDatabase.value && targetConnectionId.value && targetDatabase.value,
 );
 
 function connectionIconType(connectionId: string) {
@@ -83,7 +72,11 @@ async function loadDatabases(connectionId: string, side: "source" | "target") {
 
 async function resolveSchema(connectionId: string, database: string): Promise<string> {
   const config = store.getConfig(connectionId);
-  const needsSchema = config?.db_type === "postgres" || config?.db_type === "sqlserver" || config?.db_type === "oracle" || config?.db_type === "redshift";
+  const needsSchema =
+    config?.db_type === "postgres" ||
+    config?.db_type === "sqlserver" ||
+    config?.db_type === "oracle" ||
+    config?.db_type === "redshift";
   if (needsSchema) {
     const schemas = await api.listSchemas(connectionId, database);
     return schemas.includes("public") ? "public" : (schemas[0] ?? "");
@@ -232,7 +225,7 @@ watch(open, async (val) => {
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <GitCompareArrows class="w-4 h-4" />
-          {{ t('diff.title') }}
+          {{ t("diff.title") }}
         </DialogTitle>
       </DialogHeader>
 
@@ -240,11 +233,18 @@ watch(open, async (val) => {
         <!-- Source / Target Selection -->
         <div class="grid grid-cols-2 gap-4">
           <div class="space-y-2">
-            <Label class="text-xs font-medium">{{ t('diff.source') }}</Label>
-            <Select :model-value="sourceConnectionId" @update:model-value="(v: any) => sourceConnectionId = String(v)">
+            <Label class="text-xs font-medium">{{ t("diff.source") }}</Label>
+            <Select
+              :model-value="sourceConnectionId"
+              @update:model-value="(v: any) => (sourceConnectionId = String(v))"
+            >
               <SelectTrigger class="h-8 text-xs">
                 <div class="flex items-center gap-2">
-                  <DatabaseIcon v-if="sourceConnectionId" :db-type="connectionIconType(sourceConnectionId)" class="w-3.5 h-3.5" />
+                  <DatabaseIcon
+                    v-if="sourceConnectionId"
+                    :db-type="connectionIconType(sourceConnectionId)"
+                    class="w-3.5 h-3.5"
+                  />
                   <SelectValue :placeholder="t('diff.selectConnection')" />
                 </div>
               </SelectTrigger>
@@ -257,7 +257,11 @@ watch(open, async (val) => {
                 </SelectItem>
               </SelectContent>
             </Select>
-            <Select v-if="sourceDatabases.length" :model-value="sourceDatabase" @update:model-value="(v: any) => sourceDatabase = String(v)">
+            <Select
+              v-if="sourceDatabases.length"
+              :model-value="sourceDatabase"
+              @update:model-value="(v: any) => (sourceDatabase = String(v))"
+            >
               <SelectTrigger class="h-8 text-xs">
                 <SelectValue :placeholder="t('diff.selectDatabase')" />
               </SelectTrigger>
@@ -268,11 +272,18 @@ watch(open, async (val) => {
           </div>
 
           <div class="space-y-2">
-            <Label class="text-xs font-medium">{{ t('diff.target') }}</Label>
-            <Select :model-value="targetConnectionId" @update:model-value="(v: any) => targetConnectionId = String(v)">
+            <Label class="text-xs font-medium">{{ t("diff.target") }}</Label>
+            <Select
+              :model-value="targetConnectionId"
+              @update:model-value="(v: any) => (targetConnectionId = String(v))"
+            >
               <SelectTrigger class="h-8 text-xs">
                 <div class="flex items-center gap-2">
-                  <DatabaseIcon v-if="targetConnectionId" :db-type="connectionIconType(targetConnectionId)" class="w-3.5 h-3.5" />
+                  <DatabaseIcon
+                    v-if="targetConnectionId"
+                    :db-type="connectionIconType(targetConnectionId)"
+                    class="w-3.5 h-3.5"
+                  />
                   <SelectValue :placeholder="t('diff.selectConnection')" />
                 </div>
               </SelectTrigger>
@@ -285,7 +296,11 @@ watch(open, async (val) => {
                 </SelectItem>
               </SelectContent>
             </Select>
-            <Select v-if="targetDatabases.length" :model-value="targetDatabase" @update:model-value="(v: any) => targetDatabase = String(v)">
+            <Select
+              v-if="targetDatabases.length"
+              :model-value="targetDatabase"
+              @update:model-value="(v: any) => (targetDatabase = String(v))"
+            >
               <SelectTrigger class="h-8 text-xs">
                 <SelectValue :placeholder="t('diff.selectDatabase')" />
               </SelectTrigger>
@@ -298,19 +313,19 @@ watch(open, async (val) => {
 
         <Button v-if="step === 'select'" size="sm" :disabled="!canCompare" @click="startCompare">
           <GitCompareArrows class="w-3.5 h-3.5 mr-1" />
-          {{ t('diff.compare') }}
+          {{ t("diff.compare") }}
         </Button>
 
         <!-- Comparing -->
         <div v-if="step === 'comparing'" class="flex items-center justify-center py-8 text-sm text-muted-foreground">
           <Loader2 class="w-4 h-4 animate-spin mr-2" />
-          {{ t('diff.comparing') }}
+          {{ t("diff.comparing") }}
         </div>
 
         <!-- Results -->
         <template v-if="step === 'result'">
           <div v-if="diffs.length === 0" class="py-6 text-center text-sm text-muted-foreground">
-            {{ t('diff.noDifferences') }}
+            {{ t("diff.noDifferences") }}
           </div>
 
           <template v-else>
@@ -320,9 +335,9 @@ watch(open, async (val) => {
                 <table class="w-full text-xs table-fixed">
                   <thead class="bg-muted sticky top-0 z-10">
                     <tr>
-                      <th class="text-left px-3 py-2 font-medium w-1/4">{{ t('diff.table') }}</th>
-                      <th class="text-left px-3 py-2 font-medium w-16">{{ t('diff.status') }}</th>
-                      <th class="text-left px-3 py-2 font-medium">{{ t('diff.details') }}</th>
+                      <th class="text-left px-3 py-2 font-medium w-1/4">{{ t("diff.table") }}</th>
+                      <th class="text-left px-3 py-2 font-medium w-16">{{ t("diff.status") }}</th>
+                      <th class="text-left px-3 py-2 font-medium">{{ t("diff.details") }}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -336,16 +351,19 @@ watch(open, async (val) => {
                       <td class="px-3 py-1.5 text-muted-foreground">
                         <template v-if="d.type === 'modified' && d.columns">
                           <span v-for="(col, ci) in d.columns" :key="ci">
-                            <span :class="{
-                              'text-green-500': col.type === 'added',
-                              'text-red-500': col.type === 'removed',
-                              'text-yellow-500': col.type === 'modified',
-                            }">{{ col.type === 'added' ? '+' : col.type === 'removed' ? '-' : '~' }}{{ col.name }}</span>
+                            <span
+                              :class="{
+                                'text-green-500': col.type === 'added',
+                                'text-red-500': col.type === 'removed',
+                                'text-yellow-500': col.type === 'modified',
+                              }"
+                              >{{ col.type === "added" ? "+" : col.type === "removed" ? "-" : "~" }}{{ col.name }}</span
+                            >
                             <span v-if="ci < d.columns!.length - 1">, </span>
                           </span>
                         </template>
-                        <span v-else-if="d.type === 'added'" class="text-green-500">{{ t('diff.newTable') }}</span>
-                        <span v-else-if="d.type === 'removed'" class="text-red-500">{{ t('diff.dropTable') }}</span>
+                        <span v-else-if="d.type === 'added'" class="text-green-500">{{ t("diff.newTable") }}</span>
+                        <span v-else-if="d.type === 'removed'" class="text-red-500">{{ t("diff.dropTable") }}</span>
                       </td>
                     </tr>
                   </tbody>
@@ -355,7 +373,7 @@ watch(open, async (val) => {
 
             <!-- SQL Preview -->
             <div class="space-y-1">
-              <Label class="text-xs font-medium">{{ t('diff.generatedSql') }}</Label>
+              <Label class="text-xs font-medium">{{ t("diff.generatedSql") }}</Label>
               <textarea
                 v-model="syncSql"
                 class="w-full h-48 rounded-lg border bg-muted/20 p-3 font-mono text-xs resize-none focus:outline-none focus:ring-1 focus:ring-ring"
@@ -367,12 +385,12 @@ watch(open, async (val) => {
 
       <DialogFooter v-if="step === 'result' && diffs.length > 0" class="flex items-center gap-2">
         <Button variant="outline" size="sm" @click="copySql">
-          <Copy class="w-3 h-3 mr-1" /> {{ t('diff.copySql') }}
+          <Copy class="w-3 h-3 mr-1" /> {{ t("diff.copySql") }}
         </Button>
         <Button size="sm" :disabled="!syncSql.trim() || executing" @click="executeSql">
           <Loader2 v-if="executing" class="w-3 h-3 animate-spin mr-1" />
           <Play v-else class="w-3 h-3 mr-1" />
-          {{ t('diff.executeSync') }}
+          {{ t("diff.executeSync") }}
         </Button>
       </DialogFooter>
     </DialogContent>

@@ -12,6 +12,11 @@ export default {
     stopExplain: "停止执行计划",
     formatSql: "格式化 SQL",
     formatSqlFailed: "SQL 格式化失败",
+    saveSql: "保存 SQL 到文件",
+    openSql: "打开 SQL 文件",
+    sqlSaved: "SQL 已保存",
+    sqlOpenFailed: "打开文件失败：{message}",
+    sqlSaveFailed: "保存文件失败：{message}",
   },
   updates: {
     title: "更新",
@@ -176,7 +181,8 @@ export default {
   },
   welcome: {
     title: "数据库工作台",
-    subtitle: "选择左侧连接开始浏览结构，或直接创建查询标签页。DBX 支持多种数据库、查询历史、数据表格编辑和 AI SQL 助手。",
+    subtitle:
+      "选择左侧连接开始浏览结构，或直接创建查询标签页。DBX 支持多种数据库、查询历史、数据表格编辑和 AI SQL 助手。",
     connections: "连接",
     connected: "已连接",
     databaseTypes: "数据库类型",

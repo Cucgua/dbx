@@ -9,11 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useConnectionStore } from "@/stores/connectionStore";
 import * as api from "@/lib/api";
-import {
-  buildDatabaseSearchSql,
-  buildSearchResultWhere,
-  findMatchedSearchColumns,
-} from "@/lib/databaseSearch";
+import { buildDatabaseSearchSql, buildSearchResultWhere, findMatchedSearchColumns } from "@/lib/databaseSearch";
 import type { DatabaseType, TableInfo } from "@/types/database";
 
 const props = defineProps<{
@@ -25,13 +21,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:open": [value: boolean];
-  "open-target": [value: {
-    connectionId: string;
-    database: string;
-    schema?: string;
-    tableName: string;
-    whereInput?: string;
-  }];
+  "open-target": [
+    value: {
+      connectionId: string;
+      database: string;
+      schema?: string;
+      tableName: string;
+      whereInput?: string;
+    },
+  ];
 }>();
 
 const { t } = useI18n();
@@ -56,7 +54,17 @@ type SearchTableTask = {
 };
 
 const SCHEMA_AWARE_TYPES = new Set<DatabaseType>(["postgres", "sqlserver", "oracle", "redshift"]);
-const SYSTEM_SCHEMAS = new Set(["information_schema", "pg_catalog", "sys", "system", "mysql", "performance_schema", "xdb", "outln", "dbsnmp"]);
+const SYSTEM_SCHEMAS = new Set([
+  "information_schema",
+  "pg_catalog",
+  "sys",
+  "system",
+  "mysql",
+  "performance_schema",
+  "xdb",
+  "outln",
+  "dbsnmp",
+]);
 const MAX_TABLES = 200;
 
 const keyword = ref("");
@@ -73,7 +81,9 @@ const limitedTables = ref(false);
 const currentExecutionId = ref("");
 let runId = 0;
 
-const connection = computed(() => props.prefillConnectionId ? connectionStore.getConfig(props.prefillConnectionId) : undefined);
+const connection = computed(() =>
+  props.prefillConnectionId ? connectionStore.getConfig(props.prefillConnectionId) : undefined,
+);
 const scopeLabel = computed(() =>
   [connection.value?.name, props.prefillDatabase, props.prefillSchema].filter(Boolean).join(" / "),
 );
@@ -279,7 +289,7 @@ function openResult(item: SearchResultItem) {
       <DialogHeader class="border-b px-5 py-4">
         <DialogTitle class="flex items-center gap-2">
           <Search class="h-5 w-5" />
-          {{ t('databaseSearch.title') }}
+          {{ t("databaseSearch.title") }}
         </DialogTitle>
         <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>{{ scopeLabel }}</span>
@@ -290,7 +300,7 @@ function openResult(item: SearchResultItem) {
       <div class="space-y-4 px-5 py-4">
         <div class="grid gap-3 md:grid-cols-[1fr_9rem_auto]">
           <div class="space-y-1.5">
-            <Label class="text-xs">{{ t('databaseSearch.keyword') }}</Label>
+            <Label class="text-xs">{{ t("databaseSearch.keyword") }}</Label>
             <Input
               v-model="keyword"
               class="h-9"
@@ -300,40 +310,45 @@ function openResult(item: SearchResultItem) {
             />
           </div>
           <div class="space-y-1.5">
-            <Label class="text-xs">{{ t('databaseSearch.limitPerTable') }}</Label>
+            <Label class="text-xs">{{ t("databaseSearch.limitPerTable") }}</Label>
             <Input v-model.number="perTableLimit" class="h-9" type="number" min="1" max="100" :disabled="running" />
           </div>
           <div class="flex items-end gap-2">
             <Button class="h-9" :disabled="!canSearch" @click="startSearch">
               <Loader2 v-if="running" class="h-4 w-4 animate-spin" />
               <Search v-else class="h-4 w-4" />
-              {{ running ? t('databaseSearch.searching') : t('databaseSearch.search') }}
+              {{ running ? t("databaseSearch.searching") : t("databaseSearch.search") }}
             </Button>
             <Button v-if="running" variant="destructive" class="h-9" @click="stopSearch">
               <Square class="h-4 w-4 fill-current" />
-              {{ t('databaseSearch.stop') }}
+              {{ t("databaseSearch.stop") }}
             </Button>
           </div>
         </div>
 
         <div class="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-          {{ t('databaseSearch.hint') }}
+          {{ t("databaseSearch.hint") }}
         </div>
 
         <div v-if="running || progressTotal" class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <span>{{ loadingTables ? t('databaseSearch.loadingTables') : progressLabel }}</span>
-          <span>{{ t('databaseSearch.resultCount', { count: results.length }) }}</span>
-          <span v-if="limitedTables" class="text-amber-600">{{ t('databaseSearch.limitedTables', { count: 200 }) }}</span>
+          <span>{{ loadingTables ? t("databaseSearch.loadingTables") : progressLabel }}</span>
+          <span>{{ t("databaseSearch.resultCount", { count: results.length }) }}</span>
+          <span v-if="limitedTables" class="text-amber-600">{{
+            t("databaseSearch.limitedTables", { count: 200 })
+          }}</span>
         </div>
 
-        <div v-if="generalError" class="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <div
+          v-if="generalError"
+          class="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+        >
           <AlertCircle class="mt-0.5 h-4 w-4" />
           <span>{{ generalError }}</span>
         </div>
 
         <div class="space-y-2">
           <div class="flex items-center justify-between">
-            <div class="text-sm font-medium">{{ t('databaseSearch.results') }}</div>
+            <div class="text-sm font-medium">{{ t("databaseSearch.results") }}</div>
             <Badge variant="outline">{{ results.length }}</Badge>
           </div>
           <div v-if="results.length" class="max-h-[360px] space-y-2 overflow-auto pr-1">
@@ -346,31 +361,36 @@ function openResult(item: SearchResultItem) {
               <Table2 class="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
               <div class="min-w-0 flex-1">
                 <div class="flex min-w-0 flex-wrap items-center gap-2">
-                  <span class="truncate font-medium">{{ item.schema ? `${item.schema}.${item.tableName}` : item.tableName }}</span>
+                  <span class="truncate font-medium">{{
+                    item.schema ? `${item.schema}.${item.tableName}` : item.tableName
+                  }}</span>
                   <Badge v-for="column in item.matchedColumns" :key="column" variant="secondary">{{ column }}</Badge>
                 </div>
                 <div class="mt-1 truncate text-xs text-muted-foreground">{{ item.preview }}</div>
               </div>
-              <span class="shrink-0 text-xs text-primary">{{ t('databaseSearch.openResult') }}</span>
+              <span class="shrink-0 text-xs text-primary">{{ t("databaseSearch.openResult") }}</span>
             </button>
           </div>
           <div v-else class="rounded-md border border-dashed py-10 text-center text-sm text-muted-foreground">
-            {{ running ? t('databaseSearch.waiting') : t('databaseSearch.noResults') }}
+            {{ running ? t("databaseSearch.waiting") : t("databaseSearch.noResults") }}
           </div>
         </div>
 
         <div v-if="tableErrors.length" class="space-y-2">
-          <div class="text-sm font-medium text-muted-foreground">{{ t('databaseSearch.errors') }}</div>
+          <div class="text-sm font-medium text-muted-foreground">
+            {{ t("databaseSearch.errors") }}
+          </div>
           <div class="max-h-24 space-y-1 overflow-auto rounded-md border bg-muted/20 p-2 text-xs text-muted-foreground">
             <div v-for="error in tableErrors" :key="`${error.tableName}:${error.message}`">
-              <span class="font-medium text-foreground">{{ error.tableName }}</span>: {{ error.message }}
+              <span class="font-medium text-foreground">{{ error.tableName }}</span
+              >: {{ error.message }}
             </div>
           </div>
         </div>
       </div>
 
       <DialogFooter class="border-t px-5 py-3">
-        <Button variant="outline" @click="dialogOpen = false">{{ t('common.close') }}</Button>
+        <Button variant="outline" @click="dialogOpen = false">{{ t("common.close") }}</Button>
       </DialogFooter>
     </DialogScrollContent>
   </Dialog>

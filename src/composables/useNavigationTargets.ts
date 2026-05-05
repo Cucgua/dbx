@@ -36,7 +36,12 @@ async function openTableTarget(target: NavigationTarget) {
       whereInput: target.whereInput,
     });
     queryStore.updateSql(tabId, sql);
-    queryStore.setTableMeta(tabId, { schema: target.schema, tableName: target.tableName, columns, primaryKeys });
+    queryStore.setTableMeta(tabId, {
+      schema: target.schema,
+      tableName: target.tableName,
+      columns,
+      primaryKeys,
+    });
     await queryStore.executeTabSql(tabId, sql);
   } catch (e: any) {
     queryStore.setErrorResult(tabId, e);
@@ -60,13 +65,18 @@ export function useNavigationTargets(dialogs: {
     await openTableTarget(target);
   }
 
-  async function onStructureEditorSaved(reloadData: () => Promise<void>, toast: (msg: string, duration?: number) => void) {
+  async function onStructureEditorSaved(
+    reloadData: () => Promise<void>,
+    toast: (msg: string, duration?: number) => void,
+  ) {
     const activeTab = queryStore.tabs.find((t) => t.id === queryStore.activeTabId);
     if (activeTab?.mode === "data" && activeTab.tableMeta?.tableName === dialogs.structurePrefillTable.value) {
       try {
         const columns = await api.getColumns(
-          activeTab.connectionId, activeTab.database,
-          activeTab.tableMeta.schema || activeTab.database, activeTab.tableMeta.tableName,
+          activeTab.connectionId,
+          activeTab.database,
+          activeTab.tableMeta.schema || activeTab.database,
+          activeTab.tableMeta.tableName,
         );
         queryStore.setTableMeta(activeTab.id, {
           ...activeTab.tableMeta,

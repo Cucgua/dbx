@@ -149,7 +149,7 @@ function createNewGroup() {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" class="w-48">
-            <DropdownMenuLabel class="text-xs">{{ t('sidebar.filterByType') }}</DropdownMenuLabel>
+            <DropdownMenuLabel class="text-xs">{{ t("sidebar.filterByType") }}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               v-for="item in typeStats"
@@ -167,7 +167,7 @@ function createNewGroup() {
             <template v-if="hasTypeFilter">
               <DropdownMenuSeparator />
               <DropdownMenuItem @select.prevent="clearTypeFilter">
-                <span class="text-xs text-muted-foreground">{{ t('sidebar.clearFilter') }}</span>
+                <span class="text-xs text-muted-foreground">{{ t("sidebar.clearFilter") }}</span>
               </DropdownMenuItem>
             </template>
           </DropdownMenuContent>
@@ -184,7 +184,7 @@ function createNewGroup() {
       @rename-started="pendingRenameGroupId = null"
     />
     <div v-if="store.treeNodes.length === 0" class="px-3 py-8 text-center text-muted-foreground text-xs">
-      {{ t('sidebar.noConnections') }}
+      {{ t("sidebar.noConnections") }}
     </div>
   </div>
 </template>

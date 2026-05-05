@@ -18,9 +18,10 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     options: { orderBy?: string; limit?: number; offset?: number; whereInput?: string } = {},
   ): string {
     const config = connectionStore.getConfig(tab.connectionId);
-    const fallbackOrderColumns = config?.db_type === "sqlserver" && !tab.tableMeta?.primaryKeys?.length
-      ? tab.tableMeta?.columns.slice(0, 1).map((column) => column.name)
-      : undefined;
+    const fallbackOrderColumns =
+      config?.db_type === "sqlserver" && !tab.tableMeta?.primaryKeys?.length
+        ? tab.tableMeta?.columns.slice(0, 1).map((column) => column.name)
+        : undefined;
     return buildTableSelectSql({
       databaseType: config?.db_type,
       schema: tab.tableMeta?.schema,

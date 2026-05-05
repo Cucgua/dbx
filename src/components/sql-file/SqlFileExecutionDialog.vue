@@ -2,15 +2,11 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import {
-  Dialog, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useToast } from "@/composables/useToast";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -57,17 +53,20 @@ const terminalStatus = ref<SqlFileStatus | "idle">("idle");
 const terminalError = ref("");
 
 const sqlConnections = computed(() =>
-  store.connections.filter((c) =>
-    !["redis", "mongodb", "elasticsearch"].includes(c.db_type),
-  ),
+  store.connections.filter((c) => !["redis", "mongodb", "elasticsearch"].includes(c.db_type)),
 );
 
-const selectedConnection = computed(() =>
-  sqlConnections.value.find((c) => c.id === connectionId.value),
-);
+const selectedConnection = computed(() => sqlConnections.value.find((c) => c.id === connectionId.value));
 
 const canStart = computed(() =>
-  Boolean(preview.value && selectedConnection.value && database.value.trim() && !running.value && !loadingPreview.value && !loadingDatabases.value),
+  Boolean(
+    preview.value &&
+    selectedConnection.value &&
+    database.value.trim() &&
+    !running.value &&
+    !loadingPreview.value &&
+    !loadingDatabases.value,
+  ),
 );
 
 const statusTone = computed(() => {
@@ -340,14 +339,14 @@ watch(open, (value) => {
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <FileCode class="w-4 h-4" />
-          {{ t('sqlFile.title') }}
+          {{ t("sqlFile.title") }}
         </DialogTitle>
       </DialogHeader>
 
       <div class="grid gap-4 py-3">
         <div class="space-y-3">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            {{ t('sqlFile.file') }}
+            {{ t("sqlFile.file") }}
           </div>
 
           <div class="flex items-center gap-2">
@@ -357,10 +356,16 @@ watch(open, (value) => {
               class="h-8 text-xs font-mono"
               :placeholder="t('sqlFile.selectSqlFile')"
             />
-            <Button variant="outline" size="sm" class="h-8 shrink-0" :disabled="running || selectingFile" @click="selectFile">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-8 shrink-0"
+              :disabled="running || selectingFile"
+              @click="selectFile"
+            >
               <Loader2 v-if="selectingFile || loadingPreview" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
               <FolderOpen v-else class="w-3.5 h-3.5 mr-1.5" />
-              {{ t('sqlFile.browse') }}
+              {{ t("sqlFile.browse") }}
             </Button>
           </div>
 
@@ -372,18 +377,20 @@ watch(open, (value) => {
               </div>
               <span class="text-muted-foreground shrink-0">{{ formatBytes(preview.sizeBytes) }}</span>
             </div>
-            <pre class="max-h-40 overflow-auto p-3 text-xs font-mono whitespace-pre-wrap bg-muted/15">{{ preview.preview }}</pre>
+            <pre class="max-h-40 overflow-auto p-3 text-xs font-mono whitespace-pre-wrap bg-muted/15">{{
+              preview.preview
+            }}</pre>
           </div>
         </div>
 
         <div class="space-y-3">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            {{ t('sqlFile.target') }}
+            {{ t("sqlFile.target") }}
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div class="space-y-1.5">
-              <Label class="text-xs">{{ t('sqlFile.connection') }}</Label>
+              <Label class="text-xs">{{ t("sqlFile.connection") }}</Label>
               <Select v-model="connectionId" :disabled="running">
                 <SelectTrigger class="h-8 text-xs">
                   <div v-if="connectionId" class="flex items-center gap-1.5 min-w-0">
@@ -404,7 +411,7 @@ watch(open, (value) => {
             </div>
 
             <div class="space-y-1.5">
-              <Label class="text-xs">{{ t('sqlFile.database') }}</Label>
+              <Label class="text-xs">{{ t("sqlFile.database") }}</Label>
               <Select v-if="databaseOptions.length" v-model="database" :disabled="running || loadingDatabases">
                 <SelectTrigger class="h-8 text-xs">
                   <SelectValue :placeholder="t('sqlFile.selectDatabase')" />
@@ -431,7 +438,7 @@ watch(open, (value) => {
 
         <div class="space-y-2.5">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            {{ t('sqlFile.options') }}
+            {{ t("sqlFile.options") }}
           </div>
 
           <button
@@ -442,7 +449,7 @@ watch(open, (value) => {
           >
             <CheckSquare v-if="continueOnError" class="w-3.5 h-3.5 text-primary shrink-0" />
             <Square v-else class="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
-            {{ t('sqlFile.continueOnError') }}
+            {{ t("sqlFile.continueOnError") }}
           </button>
         </div>
 
@@ -451,7 +458,7 @@ watch(open, (value) => {
             <div class="flex items-center gap-1.5 min-w-0" :class="statusTone">
               <component :is="statusIcon" class="w-3.5 h-3.5 shrink-0" :class="{ 'animate-spin': running }" />
               <span class="font-medium truncate">
-                {{ cancelling ? t('sqlFile.cancelling') : statusLabel(terminalStatus) }}
+                {{ cancelling ? t("sqlFile.cancelling") : statusLabel(terminalStatus) }}
               </span>
             </div>
             <span v-if="progress" class="text-muted-foreground shrink-0">
@@ -462,38 +469,53 @@ watch(open, (value) => {
           <div class="w-full bg-muted rounded-full h-2 overflow-hidden">
             <div
               class="h-full rounded-full transition-all duration-300"
-              :class="terminalStatus === 'error' ? 'bg-destructive' : terminalStatus === 'cancelled' ? 'bg-yellow-500' : 'bg-primary'"
+              :class="
+                terminalStatus === 'error'
+                  ? 'bg-destructive'
+                  : terminalStatus === 'cancelled'
+                    ? 'bg-yellow-500'
+                    : 'bg-primary'
+              "
               :style="{ width: `${progressPercent}%` }"
             />
           </div>
 
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
             <div class="border rounded-md px-2 py-1.5 min-w-0">
-              <div class="text-muted-foreground truncate">{{ t('sqlFile.statement') }}</div>
+              <div class="text-muted-foreground truncate">{{ t("sqlFile.statement") }}</div>
               <div class="font-medium truncate">{{ progress?.statementIndex ?? 0 }}</div>
             </div>
             <div class="border rounded-md px-2 py-1.5 min-w-0">
-              <div class="text-muted-foreground truncate">{{ t('sqlFile.succeeded') }}</div>
-              <div class="font-medium text-green-600 truncate">{{ progress?.successCount ?? 0 }}</div>
+              <div class="text-muted-foreground truncate">{{ t("sqlFile.succeeded") }}</div>
+              <div class="font-medium text-green-600 truncate">
+                {{ progress?.successCount ?? 0 }}
+              </div>
             </div>
             <div class="border rounded-md px-2 py-1.5 min-w-0">
-              <div class="text-muted-foreground truncate">{{ t('sqlFile.failed') }}</div>
-              <div class="font-medium text-destructive truncate">{{ progress?.failureCount ?? 0 }}</div>
+              <div class="text-muted-foreground truncate">{{ t("sqlFile.failed") }}</div>
+              <div class="font-medium text-destructive truncate">
+                {{ progress?.failureCount ?? 0 }}
+              </div>
             </div>
             <div class="border rounded-md px-2 py-1.5 min-w-0">
-              <div class="text-muted-foreground truncate">{{ t('sqlFile.affectedRows') }}</div>
-              <div class="font-medium truncate">{{ (progress?.affectedRows ?? 0).toLocaleString() }}</div>
+              <div class="text-muted-foreground truncate">{{ t("sqlFile.affectedRows") }}</div>
+              <div class="font-medium truncate">
+                {{ (progress?.affectedRows ?? 0).toLocaleString() }}
+              </div>
             </div>
           </div>
 
           <div v-if="progress?.statementSummary" class="space-y-1">
-            <Label class="text-xs">{{ t('sqlFile.currentStatement') }}</Label>
+            <Label class="text-xs">{{ t("sqlFile.currentStatement") }}</Label>
             <div class="border rounded-md p-2 text-xs font-mono bg-muted/15 max-h-20 overflow-auto whitespace-pre-wrap">
               {{ progress.statementSummary }}
             </div>
           </div>
 
-          <div v-if="progress?.error || terminalError" class="border rounded-md p-2 text-xs text-destructive bg-destructive/5">
+          <div
+            v-if="progress?.error || terminalError"
+            class="border rounded-md p-2 text-xs text-destructive bg-destructive/5"
+          >
             {{ progress?.error || terminalError }}
           </div>
         </div>
@@ -504,16 +526,16 @@ watch(open, (value) => {
           <Button variant="destructive" size="sm" :disabled="cancelling" @click="cancelExecution">
             <Loader2 v-if="cancelling" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
             <X v-else class="w-3.5 h-3.5 mr-1.5" />
-            {{ cancelling ? t('sqlFile.cancelling') : t('sqlFile.cancel') }}
+            {{ cancelling ? t("sqlFile.cancelling") : t("sqlFile.cancel") }}
           </Button>
         </template>
         <template v-else>
           <Button variant="outline" size="sm" @click="open = false">
-            {{ t('common.close') }}
+            {{ t("common.close") }}
           </Button>
           <Button size="sm" :disabled="!canStart" @click="startExecution">
             <Play class="w-3.5 h-3.5 mr-1.5" />
-            {{ t('sqlFile.execute') }}
+            {{ t("sqlFile.execute") }}
           </Button>
         </template>
       </DialogFooter>

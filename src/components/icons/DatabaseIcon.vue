@@ -61,10 +61,20 @@ const letter = computed(() => letterIcons[normalizedType.value]);
     alt=""
     class="database-logo object-contain"
     aria-hidden="true"
-  >
+  />
   <svg v-else-if="letter" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
     <circle cx="12" cy="12" r="12" :fill="letter.color" />
-    <text x="12" y="16.5" text-anchor="middle" fill="white" font-size="14" font-weight="bold" font-family="system-ui, sans-serif">{{ letter.letter }}</text>
+    <text
+      x="12"
+      y="16.5"
+      text-anchor="middle"
+      fill="white"
+      font-size="14"
+      font-weight="bold"
+      font-family="system-ui, sans-serif"
+    >
+      {{ letter.letter }}
+    </text>
   </svg>
   <Database v-else class="text-blue-400" />
 </template>

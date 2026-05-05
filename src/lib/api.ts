@@ -11,9 +11,7 @@ let _backend: Backend | null = null;
 
 async function getBackend(): Promise<Backend> {
   if (_backend) return _backend;
-  _backend = isTauriRuntime(globalThis)
-    ? await import("./tauri")
-    : await import("./http");
+  _backend = isTauriRuntime(globalThis) ? await import("./tauri") : await import("./http");
   return _backend;
 }
 

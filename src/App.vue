@@ -41,10 +41,18 @@ const settingsStore = useSettingsStore();
 const { message: toastMessage, visible: toastVisible, toast } = useToast();
 const { isDark, applyTheme, toggleTheme } = useTheme();
 const {
-  checkingUpdates, updateInfo, updateCheckMessage, showUpdateDialog,
-  isDownloadingUpdate, downloadProgress, updateReady,
-  openUrl, checkUpdates, openLatestRelease,
-  downloadAndInstallUpdate, restartApp,
+  checkingUpdates,
+  updateInfo,
+  updateCheckMessage,
+  showUpdateDialog,
+  isDownloadingUpdate,
+  downloadProgress,
+  updateReady,
+  openUrl,
+  checkUpdates,
+  openLatestRelease,
+  downloadAndInstallUpdate,
+  restartApp,
 } = useAppUpdater();
 const { setupFileDrop } = useFileDrop();
 
@@ -56,10 +64,8 @@ const showConnectionDialog = ref(false);
 const showSettingsDialog = ref(false);
 const showHistory = ref(false);
 const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") !== "false");
-const {
-  sidebarWidth, aiPanelWidth, historyWidth,
-  startSidebarResize, startAiPanelResize, startHistoryResize,
-} = usePanelResize();
+const { sidebarWidth, aiPanelWidth, historyWidth, startSidebarResize, startAiPanelResize, startHistoryResize } =
+  usePanelResize();
 const aiAssistantRef = ref<InstanceType<typeof AiAssistant> | null>(null);
 
 const selectedSql = ref("");
@@ -67,9 +73,7 @@ const cursorPos = ref(0);
 const formatSqlRequestId = ref(0);
 const activeOutputView = ref<"result" | "explain">("result");
 
-const activeTab = computed(() =>
-  queryStore.tabs.find((t) => t.id === queryStore.activeTabId)
-);
+const activeTab = computed(() => queryStore.tabs.find((t) => t.id === queryStore.activeTabId));
 
 const activeConnection = computed(() => {
   const tab = activeTab.value;
@@ -78,16 +82,17 @@ const activeConnection = computed(() => {
 
 const executableSql = computed(() => {
   const tab = activeTab.value;
-  return tab ? resolveExecutableSql(tab.sql, selectedSql.value, {
-    mode: settingsStore.editorSettings.executeMode,
-    cursorPos: cursorPos.value,
-  }) : "";
+  return tab
+    ? resolveExecutableSql(tab.sql, selectedSql.value, {
+        mode: settingsStore.editorSettings.executeMode,
+        cursorPos: cursorPos.value,
+      })
+    : "";
 });
 
-const {
-  dangerSql, showDangerDialog,
-  tryExecute, cancelActiveExecution, tryExplain, onDangerConfirm,
-} = useSqlExecution({ activeTab, activeConnection, executableSql, activeOutputView });
+const { dangerSql, showDangerDialog, tryExecute, cancelActiveExecution, tryExplain, onDangerConfirm } = useSqlExecution(
+  { activeTab, activeConnection, executableSql, activeOutputView },
+);
 
 const dialogs = useDialogSources();
 const { getDatabaseOptions } = useDatabaseOptions();
@@ -99,7 +104,7 @@ const { setupTauriListeners } = useTauriEvents({ openTableTarget });
 const appVersion = ref("");
 const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
 const hasSqlFileConnections = computed(() =>
-  connectionStore.connections.some((c) => !sqlFileUnsupportedTypes.has(c.db_type))
+  connectionStore.connections.some((c) => !sqlFileUnsupportedTypes.has(c.db_type)),
 );
 const connectionStats = computed(() => ({
   total: connectionStore.connections.length,
@@ -108,10 +113,13 @@ const connectionStats = computed(() => ({
 }));
 const recentConnections = computed(() => connectionStore.connections.slice(0, 5));
 
-watch(() => queryStore.activeTabId, () => {
-  selectedSql.value = "";
-  activeOutputView.value = "result";
-});
+watch(
+  () => queryStore.activeTabId,
+  () => {
+    selectedSql.value = "";
+    activeOutputView.value = "result";
+  },
+);
 
 function toggleAiPanel() {
   showAiPanel.value = !showAiPanel.value;
@@ -130,6 +138,69 @@ function formatActiveSql() {
   const tab = activeTab.value;
   if (!tab || tab.mode !== "query" || !tab.sql.trim()) return;
   formatSqlRequestId.value++;
+}
+
+async function saveSqlToFile() {
+  const tab = activeTab.value;
+  if (!tab || !tab.sql.trim()) return;
+  try {
+    if (isTauriRuntime()) {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+      const path = await save({
+        defaultPath: `${tab.title}.sql`,
+        filters: [{ name: "SQL", extensions: ["sql"] }],
+      });
+      if (path) {
+        await writeTextFile(path, tab.sql);
+        toast(t("toolbar.sqlSaved"), 2000);
+      }
+    } else {
+      const blob = new Blob([tab.sql], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${tab.title}.sql`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  } catch (e: any) {
+    toast(t("toolbar.sqlSaveFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function openSqlFile() {
+  const tab = activeTab.value;
+  if (!tab) return;
+  try {
+    if (isTauriRuntime()) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const { readTextFile } = await import("@tauri-apps/plugin-fs");
+      const path = await open({ filters: [{ name: "SQL", extensions: ["sql"] }], multiple: false });
+      if (path) {
+        const content = await readTextFile(path as string);
+        queryStore.updateSql(tab.id, content);
+      }
+    } else {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".sql";
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === "string") {
+            queryStore.updateSql(tab.id, reader.result);
+          }
+        };
+        reader.readAsText(file);
+      };
+      input.click();
+    }
+  } catch (e: any) {
+    toast(t("toolbar.sqlOpenFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 function newQuery() {
@@ -164,9 +235,15 @@ function changeActiveDatabase(database: string) {
   if (tab) queryStore.updateDatabase(tab.id, database);
 }
 
-function toggleLocale() { setLocale(currentLocale() === "zh-CN" ? "en" : "zh-CN"); }
-function openGitHub() { openUrl("https://github.com/t8y2/dbx"); }
-function openMcpGuide() { openUrl("https://github.com/t8y2/dbx/blob/main/docs/mcp-guide.md"); }
+function toggleLocale() {
+  setLocale(currentLocale() === "zh-CN" ? "en" : "zh-CN");
+}
+function openGitHub() {
+  openUrl("https://github.com/t8y2/dbx");
+}
+function openMcpGuide() {
+  openUrl("https://github.com/t8y2/dbx/blob/main/docs/mcp-guide.md");
+}
 
 function ensureQueryTab(): string {
   const tab = activeTab.value;
@@ -193,8 +270,12 @@ function handleKeydown(e: KeyboardEvent) {
     if (queryStore.activeTabId) queryStore.closeTab(queryStore.activeTabId);
     return;
   }
-  if (activeTab.value?.mode === "query" && isExecuteSqlShortcut(e)
-    && e.target instanceof Element && e.target.closest("[data-query-editor-root]")) {
+  if (
+    activeTab.value?.mode === "query" &&
+    isExecuteSqlShortcut(e) &&
+    e.target instanceof Element &&
+    e.target.closest("[data-query-editor-root]")
+  ) {
     e.preventDefault();
     e.stopPropagation();
     tryExecute();
@@ -208,17 +289,20 @@ function onLoginSuccess() {
 }
 
 function initApp() {
-  connectionStore.initFromDisk().then(() => {
-    reconnectRestoredTabs();
-  }).catch((e: any) => {
-    toast(t("connection.loadFailed", { message: e?.message || String(e) }), 5000);
-  });
+  connectionStore
+    .initFromDisk()
+    .then(() => {
+      reconnectRestoredTabs();
+    })
+    .catch((e: any) => {
+      toast(t("connection.loadFailed", { message: e?.message || String(e) }), 5000);
+    });
   settingsStore.initAiConfig();
 }
 
 async function reconnectRestoredTabs() {
   if (isDesktop) return;
-  const connectionIds = new Set(queryStore.tabs.map(t => t.connectionId).filter(Boolean));
+  const connectionIds = new Set(queryStore.tabs.map((t) => t.connectionId).filter(Boolean));
   for (const id of connectionIds) {
     try {
       await connectionStore.ensureConnected(id);
@@ -240,135 +324,220 @@ onMounted(async () => {
       const data = await res.json();
       needsAuth.value = data.required;
       authenticated.value = data.authenticated;
-    } catch { /* server unreachable */ }
+    } catch {
+      /* server unreachable */
+    }
     if (needsAuth.value && !authenticated.value) {
       history.replaceState(null, "", "/login");
     }
     if (!needsAuth.value || authenticated.value) initApp();
-    api.checkForUpdates().then((info) => { appVersion.value = info.current_version; }).catch(() => {});
+    api
+      .checkForUpdates()
+      .then((info) => {
+        appVersion.value = info.current_version;
+      })
+      .catch(() => {});
     return;
   }
   initApp();
   setupFileDrop().catch(() => {});
   checkUpdates({ silent: true });
-  import("@tauri-apps/api/app").then(({ getVersion }) => {
-    getVersion().then((v) => { appVersion.value = v; }).catch(() => {});
-  }).catch(() => {});
+  import("@tauri-apps/api/app")
+    .then(({ getVersion }) => {
+      getVersion()
+        .then((v) => {
+          appVersion.value = v;
+        })
+        .catch(() => {});
+    })
+    .catch(() => {});
   setupTauriListeners();
 });
 
-onUnmounted(() => { window.removeEventListener("keydown", handleKeydown, true); });
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleKeydown, true);
+});
 </script>
 
 <template>
   <LoginPage v-if="needsAuth && !authenticated" @authenticated="onLoginSuccess" />
   <div v-show="!needsAuth || authenticated">
-  <TooltipProvider :delay-duration="300">
-    <div class="h-screen w-screen flex flex-col bg-background text-foreground overflow-hidden">
-      <AppToolbar
-        :is-dark="isDark" :show-ai-panel="showAiPanel" :show-history="showHistory"
-        :checking-updates="checkingUpdates"
-        :has-connections="connectionStore.connections.length > 0"
-        :has-sql-file-connections="hasSqlFileConnections"
-        @new-connection="showConnectionDialog = true" @new-query="newQuery"
-        @toggle-theme="toggleTheme" @toggle-locale="toggleLocale"
-        @toggle-ai="toggleAiPanel" @toggle-history="showHistory = !showHistory"
-        @open-github="openGitHub" @open-settings="showSettingsDialog = true"
-        @check-updates="checkUpdates()"
-        @open-transfer="dialogs.showTransferDialog.value = true"
-        @open-sql-file="dialogs.showSqlFileDialog.value = true"
-      />
-
-      <div class="flex-1 flex min-h-0">
-        <AppSidebar
-          :sidebar-width="sidebarWidth"
-          @import="dialogs.onImportClick" @export="dialogs.onExportClick"
-          @start-resize="startSidebarResize"
+    <TooltipProvider :delay-duration="300">
+      <div class="h-screen w-screen flex flex-col bg-background text-foreground overflow-hidden">
+        <AppToolbar
+          :is-dark="isDark"
+          :show-ai-panel="showAiPanel"
+          :show-history="showHistory"
+          :checking-updates="checkingUpdates"
+          :has-connections="connectionStore.connections.length > 0"
+          :has-sql-file-connections="hasSqlFileConnections"
+          @new-connection="showConnectionDialog = true"
+          @new-query="newQuery"
+          @toggle-theme="toggleTheme"
+          @toggle-locale="toggleLocale"
+          @toggle-ai="toggleAiPanel"
+          @toggle-history="showHistory = !showHistory"
+          @open-github="openGitHub"
+          @open-settings="showSettingsDialog = true"
+          @check-updates="checkUpdates()"
+          @open-transfer="dialogs.showTransferDialog.value = true"
+          @open-sql-file="dialogs.showSqlFileDialog.value = true"
         />
 
-        <div class="flex-1 min-w-0">
-          <div class="h-full flex flex-col min-w-0">
-            <AppTabBar />
-            <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
-              <EditorToolbar
-                v-if="activeTab.mode === 'query' && !isPreviewTab(activeTab)"
-                :active-tab="activeTab" :active-connection="activeConnection" :executable-sql="executableSql"
-                @execute="tryExecute()" @cancel="cancelActiveExecution()" @explain="tryExplain()"
-                @format-sql="formatActiveSql"
-                @change-connection="changeActiveConnection" @change-database="changeActiveDatabase"
-              />
-              <ContentArea
-                :active-tab="activeTab" :active-connection="activeConnection" :executable-sql="executableSql"
-                :active-output-view="activeOutputView" :format-sql-request-id="formatSqlRequestId"
-                :selected-sql="selectedSql" :cursor-pos="cursorPos"
-                @update:active-output-view="activeOutputView = $event"
-                @fix-with-ai="fixWithAi" @execute="tryExecute()" @cancel="cancelActiveExecution()"
-                @explain="tryExplain()"
-                @editor-update="(v: string) => { if (queryStore.activeTabId) queryStore.updateSql(queryStore.activeTabId, v) }"
-                @editor-selection-change="(v: string) => selectedSql = v"
-                @editor-cursor-change="(p: number) => cursorPos = p"
-                @format-error="toast(t('toolbar.formatSqlFailed'))"
-                @reload="onReloadData" @paginate="onPaginate" @sort="onSort" @execute-sql="onExecuteSql"
+        <div class="flex-1 flex min-h-0">
+          <AppSidebar
+            :sidebar-width="sidebarWidth"
+            @import="dialogs.onImportClick"
+            @export="dialogs.onExportClick"
+            @start-resize="startSidebarResize"
+          />
+
+          <div class="flex-1 min-w-0">
+            <div class="h-full flex flex-col min-w-0">
+              <AppTabBar />
+              <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
+                <EditorToolbar
+                  v-if="activeTab.mode === 'query' && !isPreviewTab(activeTab)"
+                  :active-tab="activeTab"
+                  :active-connection="activeConnection"
+                  :executable-sql="executableSql"
+                  @execute="tryExecute()"
+                  @cancel="cancelActiveExecution()"
+                  @explain="tryExplain()"
+                  @format-sql="formatActiveSql"
+                  @save-sql="saveSqlToFile"
+                  @open-sql="openSqlFile"
+                  @change-connection="changeActiveConnection"
+                  @change-database="changeActiveDatabase"
+                />
+                <ContentArea
+                  :active-tab="activeTab"
+                  :active-connection="activeConnection"
+                  :executable-sql="executableSql"
+                  :active-output-view="activeOutputView"
+                  :format-sql-request-id="formatSqlRequestId"
+                  :selected-sql="selectedSql"
+                  :cursor-pos="cursorPos"
+                  @update:active-output-view="activeOutputView = $event"
+                  @fix-with-ai="fixWithAi"
+                  @execute="tryExecute()"
+                  @cancel="cancelActiveExecution()"
+                  @explain="tryExplain()"
+                  @editor-update="
+                    (v: string) => {
+                      if (queryStore.activeTabId) queryStore.updateSql(queryStore.activeTabId, v);
+                    }
+                  "
+                  @editor-selection-change="(v: string) => (selectedSql = v)"
+                  @editor-cursor-change="(p: number) => (cursorPos = p)"
+                  @format-error="toast(t('toolbar.formatSqlFailed'))"
+                  @reload="onReloadData"
+                  @paginate="onPaginate"
+                  @sort="onSort"
+                  @execute-sql="onExecuteSql"
+                />
+              </div>
+              <WelcomeScreen
+                v-else
+                :connection-stats="connectionStats"
+                :recent-connections="recentConnections"
+                :app-version="appVersion"
+                :has-connections="connectionStore.connections.length > 0"
+                @open-connection-query="openConnectionQuery"
+                @new-connection="showConnectionDialog = true"
+                @new-query="newQuery"
+                @show-history="showHistory = true"
+                @import-config="dialogs.onImportClick"
+                @open-github="openGitHub"
+                @open-mcp-guide="openMcpGuide"
               />
             </div>
-            <WelcomeScreen
-              v-else
-              :connection-stats="connectionStats" :recent-connections="recentConnections"
-              :app-version="appVersion" :has-connections="connectionStore.connections.length > 0"
-              @open-connection-query="openConnectionQuery" @new-connection="showConnectionDialog = true"
-              @new-query="newQuery" @show-history="showHistory = true"
-              @import-config="dialogs.onImportClick" @open-github="openGitHub" @open-mcp-guide="openMcpGuide"
+          </div>
+
+          <div
+            v-if="showAiPanel"
+            class="h-full shrink-0 relative bg-background"
+            :style="{ width: aiPanelWidth + 'px' }"
+          >
+            <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startAiPanelResize" />
+            <div class="h-full min-h-0 overflow-hidden">
+              <AiAssistant
+                ref="aiAssistantRef"
+                :tab="activeTab"
+                :connection="activeConnection"
+                @replace-sql="onAiReplaceSql"
+                @execute-sql="onAiExecuteSql"
+                @close="toggleAiPanel"
+              />
+            </div>
+          </div>
+
+          <div
+            v-if="showHistory"
+            class="h-full shrink-0 relative bg-background"
+            :style="{ width: historyWidth + 'px' }"
+          >
+            <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startHistoryResize" />
+            <QueryHistory
+              @restore="
+                (sql: string) => {
+                  if (queryStore.activeTabId) queryStore.updateSql(queryStore.activeTabId, sql);
+                }
+              "
+              @close="showHistory = false"
             />
           </div>
         </div>
 
-        <div v-if="showAiPanel" class="h-full shrink-0 relative bg-background" :style="{ width: aiPanelWidth + 'px' }">
-          <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startAiPanelResize" />
-          <div class="h-full min-h-0 overflow-hidden">
-            <AiAssistant ref="aiAssistantRef" :tab="activeTab" :connection="activeConnection"
-              @replace-sql="onAiReplaceSql"
-              @execute-sql="onAiExecuteSql" @close="toggleAiPanel"
-            />
-          </div>
-        </div>
+        <AppDialogs
+          :show-connection-dialog="showConnectionDialog"
+          :show-settings-dialog="showSettingsDialog"
+          :show-danger-dialog="showDangerDialog"
+          :danger-sql="dangerSql"
+          @update:show-connection-dialog="showConnectionDialog = $event"
+          @update:show-settings-dialog="showSettingsDialog = $event"
+          @update:show-danger-dialog="showDangerDialog = $event"
+          @danger-confirm="onDangerConfirm"
+          @connect-started="(name: string) => toast(t('connection.connecting', { name }), 30000)"
+          @connect-succeeded="(name: string) => toast(t('connection.connectSuccess', { name }), 2000)"
+          @connect-failed="(msg: string) => toast(t('connection.connectFailed', { message: msg }), 5000)"
+          @structure-editor-saved="onStructureEditorSaved(onReloadData, toast)"
+          @open-lineage-target="openLineageTarget"
+          @open-database-search-target="openDatabaseSearchTarget"
+        />
+        <UpdateDialog
+          v-model:open="showUpdateDialog"
+          :update-info="updateInfo"
+          :update-check-message="updateCheckMessage"
+          :is-downloading-update="isDownloadingUpdate"
+          :download-progress="downloadProgress"
+          :update-ready="updateReady"
+          @open-latest-release="openLatestRelease"
+          @download-and-install="downloadAndInstallUpdate"
+          @restart="restartApp"
+        />
 
-        <div v-if="showHistory" class="h-full shrink-0 relative bg-background" :style="{ width: historyWidth + 'px' }">
-          <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startHistoryResize" />
-          <QueryHistory @restore="(sql: string) => { if (queryStore.activeTabId) queryStore.updateSql(queryStore.activeTabId, sql) }" @close="showHistory = false" />
-        </div>
+        <Transition name="toast">
+          <div
+            v-if="toastVisible"
+            class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-foreground text-background text-sm shadow-lg"
+          >
+            {{ toastMessage }}
+          </div>
+        </Transition>
       </div>
-
-      <AppDialogs
-        :show-connection-dialog="showConnectionDialog" :show-settings-dialog="showSettingsDialog"
-        :show-danger-dialog="showDangerDialog" :danger-sql="dangerSql"
-        @update:show-connection-dialog="showConnectionDialog = $event"
-        @update:show-settings-dialog="showSettingsDialog = $event"
-        @update:show-danger-dialog="showDangerDialog = $event"
-        @danger-confirm="onDangerConfirm"
-        @connect-started="(name: string) => toast(t('connection.connecting', { name }), 30000)"
-        @connect-succeeded="(name: string) => toast(t('connection.connectSuccess', { name }), 2000)"
-        @connect-failed="(msg: string) => toast(t('connection.connectFailed', { message: msg }), 5000)"
-        @structure-editor-saved="onStructureEditorSaved(onReloadData, toast)"
-        @open-lineage-target="openLineageTarget"
-        @open-database-search-target="openDatabaseSearchTarget"
-      />
-      <UpdateDialog
-        v-model:open="showUpdateDialog" :update-info="updateInfo" :update-check-message="updateCheckMessage"
-        :is-downloading-update="isDownloadingUpdate" :download-progress="downloadProgress" :update-ready="updateReady"
-        @open-latest-release="openLatestRelease" @download-and-install="downloadAndInstallUpdate" @restart="restartApp"
-      />
-
-      <Transition name="toast">
-        <div v-if="toastVisible" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-foreground text-background text-sm shadow-lg">
-          {{ toastMessage }}
-        </div>
-      </Transition>
-    </div>
-  </TooltipProvider>
+    </TooltipProvider>
   </div>
 </template>
 
 <style scoped>
-.toast-enter-active, .toast-leave-active { transition: all 0.25s ease; }
-.toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 8px); }
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.25s ease;
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
 </style>

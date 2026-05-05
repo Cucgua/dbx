@@ -12,6 +12,11 @@ export default {
     stopExplain: "Stop explain",
     formatSql: "Format SQL",
     formatSqlFailed: "Failed to format SQL",
+    saveSql: "Save SQL to file",
+    openSql: "Open SQL file",
+    sqlSaved: "SQL saved",
+    sqlOpenFailed: "Failed to open file: {message}",
+    sqlSaveFailed: "Failed to save file: {message}",
   },
   updates: {
     title: "Updates",
@@ -20,7 +25,8 @@ export default {
     availableMessage: "DBX {latest} is available. You are using {current}.",
     upToDate: "DBX is up to date ({version}).",
     failed: "Failed to check updates: {error}",
-    rateLimited: "GitHub update checks are temporarily rate limited. You can still open the release page to check manually.",
+    rateLimited:
+      "GitHub update checks are temporarily rate limited. You can still open the release page to check manually.",
     openRelease: "Open Release",
     downloadAndInstall: "Download & Install",
     downloading: "Downloading {progress}%",
@@ -189,7 +195,8 @@ export default {
     tipExecute: "to execute query",
     fileOpened: "Opened {name}",
     mcpTitle: "AI Agent Integration",
-    mcpDescription: "Beyond the built-in AI assistant, you can also use Claude Code, Cursor, and other coding agents to query your databases via MCP.",
+    mcpDescription:
+      "Beyond the built-in AI assistant, you can also use Claude Code, Cursor, and other coding agents to query your databases via MCP.",
     mcpLearnMore: "Learn more",
   },
   common: {
@@ -242,10 +249,13 @@ export default {
       foreignKeyIncoming: "{target} points to the current field through a foreign key. This is a verified dependency.",
       foreignKeyOutgoing: "The current field references {target} through a foreign key. This is a verified dependency.",
       viewLikely: "The view definition mentions both the target table and field, usually indicating query dependency.",
-      viewPossible: "The view definition mentions a same-name field but not the target table, so it needs confirmation.",
-      historyLikely: "A historical SQL statement mentions both the target table and field. Use it as impact-analysis context.",
+      viewPossible:
+        "The view definition mentions a same-name field but not the target table, so it needs confirmation.",
+      historyLikely:
+        "A historical SQL statement mentions both the target table and field. Use it as impact-analysis context.",
       historyPossible: "A historical SQL statement mentions a same-name field. It may be related but needs context.",
-      sameName: "Another table has a same-name field. This may share business meaning but is not a verified database dependency.",
+      sameName:
+        "Another table has a same-name field. This may share business meaning but is not a verified database dependency.",
     },
     cancel: "Cancel",
     refresh: "Analyze Again",
@@ -261,7 +271,7 @@ export default {
     newGroup: "New Group...",
     newGroupDefault: "New Group",
     deleteGroupConfirmTitle: "Delete Group",
-    deleteGroupConfirmMessage: "Delete group \"{name}\"? Connections inside will be moved to the top level.",
+    deleteGroupConfirmMessage: 'Delete group "{name}"? Connections inside will be moved to the top level.',
   },
   databaseSearch: {
     title: "Search Database",
@@ -286,7 +296,8 @@ export default {
   configExport: {
     passphraseTitle: "Encrypt & Export",
     passphraseImportTitle: "Decrypt & Import",
-    passphraseExportHint: "To include connection passwords in the export, set a passphrase for encryption. You will need the same passphrase to import.",
+    passphraseExportHint:
+      "To include connection passwords in the export, set a passphrase for encryption. You will need the same passphrase to import.",
     passphraseImportHint: "This file is encrypted. Enter the passphrase to decrypt and import.",
     passphrase: "Passphrase",
     passphraseConfirm: "Confirm Passphrase",
@@ -330,7 +341,8 @@ export default {
     fixWithAi: "Fix with AI",
     truncated: "Context truncated",
     contextSummary: "{database} · {tables} tables",
-    settingsHint: "The config is stored in the local app data directory. Requests are sent by the Tauri backend instead of directly from the frontend.",
+    settingsHint:
+      "The config is stored in the local app data directory. Requests are sent by the Tauri backend instead of directly from the frontend.",
     actions: {
       generate: "Generate SQL",
       explain: "Explain SQL",
@@ -353,7 +365,7 @@ export default {
     closeConnection: "Close Connection",
     deleteConnection: "Delete Connection",
     confirmDeleteTitle: "Delete Connection",
-    confirmDeleteMessage: "Are you sure you want to delete \"{name}\"? This cannot be undone.",
+    confirmDeleteMessage: 'Are you sure you want to delete "{name}"? This cannot be undone.',
     editConnection: "Edit Connection",
     newQuery: "New Query",
     viewData: "View Data",

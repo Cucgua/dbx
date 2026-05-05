@@ -1,5 +1,13 @@
 import type { AiConfig } from "@/stores/settingsStore";
-import type { ColumnInfo, ConnectionConfig, DatabaseType, ForeignKeyInfo, IndexInfo, QueryResult, QueryTab } from "@/types/database";
+import type {
+  ColumnInfo,
+  ConnectionConfig,
+  DatabaseType,
+  ForeignKeyInfo,
+  IndexInfo,
+  QueryResult,
+  QueryTab,
+} from "@/types/database";
 import * as api from "@/lib/api";
 import { currentLocale } from "@/i18n";
 
@@ -71,10 +79,7 @@ export async function runAiAction(input: AiRequestInput, history?: api.AiMessage
     input.instruction.trim() || "(No extra instruction provided.)",
   ].join("\n");
 
-  const messages: api.AiMessage[] = [
-    ...(history || []),
-    { role: "user", content: userPrompt },
-  ];
+  const messages: api.AiMessage[] = [...(history || []), { role: "user", content: userPrompt }];
 
   const params = actionParams(input.action);
   return api.aiComplete({
@@ -104,33 +109,37 @@ export async function runAiStream(
     input.instruction.trim() || "(No extra instruction provided.)",
   ].join("\n");
 
-  const messages: api.AiMessage[] = [
-    ...(history || []),
-    { role: "user", content: userPrompt },
-  ];
+  const messages: api.AiMessage[] = [...(history || []), { role: "user", content: userPrompt }];
 
   const sid = sessionId || crypto.randomUUID();
   const params = actionParams(input.action);
 
-  await api.aiStream(sid, {
-    config: input.config,
-    systemPrompt,
-    messages,
-    maxTokens: params.maxTokens,
-    temperature: params.temperature,
-  }, (chunk) => {
-    if (!chunk.done) {
-      if (chunk.reasoning_delta) onReasoningDelta?.(chunk.reasoning_delta);
-      if (chunk.delta) onDelta(chunk.delta);
-    }
-  });
+  await api.aiStream(
+    sid,
+    {
+      config: input.config,
+      systemPrompt,
+      messages,
+      maxTokens: params.maxTokens,
+      temperature: params.temperature,
+    },
+    (chunk) => {
+      if (!chunk.done) {
+        if (chunk.reasoning_delta) onReasoningDelta?.(chunk.reasoning_delta);
+        if (chunk.delta) onDelta(chunk.delta);
+      }
+    },
+  );
 }
 
 function actionParams(action: AiAction): { maxTokens: number; temperature: number } {
   switch (action) {
-    case "explain": return { maxTokens: 3200, temperature: 0.2 };
-    case "sampleData": return { maxTokens: 2400, temperature: 0.1 };
-    default: return { maxTokens: 2400, temperature: 0.15 };
+    case "explain":
+      return { maxTokens: 3200, temperature: 0.2 };
+    case "sampleData":
+      return { maxTokens: 2400, temperature: 0.1 };
+    default:
+      return { maxTokens: 2400, temperature: 0.15 };
   }
 }
 
@@ -142,17 +151,13 @@ export function extractSql(text: string): string {
 
 export function buildSystemPrompt(action: AiAction, context: AiContext): string {
   const schema = formatSchema(context);
-  const resultPreview = context.lastResultPreview
-    ? `\nLast result preview:\n${context.lastResultPreview}\n`
-    : "";
+  const resultPreview = context.lastResultPreview ? `\nLast result preview:\n${context.lastResultPreview}\n` : "";
   const lastError = context.lastError ? `\nLast error:\n${context.lastError}\n` : "";
 
   const isZh = currentLocale() === "zh-CN";
 
   const lines: string[] = [
-    isZh
-      ? "你是 DBX 内置的数据库助手。用中文回复。"
-      : "You are DBX's built-in database assistant. Reply in English.",
+    isZh ? "你是 DBX 内置的数据库助手。用中文回复。" : "You are DBX's built-in database assistant. Reply in English.",
     isZh
       ? "精确、保守，根据当前数据库方言生成 SQL。"
       : "Be precise, conservative, and adapt SQL to the active database dialect.",
@@ -162,26 +167,30 @@ export function buildSystemPrompt(action: AiAction, context: AiContext): string 
     isZh
       ? "当用户要求分析或查看某个表时，生成 SELECT 查询获取数据，而不是查询元数据。"
       : "When the user asks to 'analyze' or 'look at' a table, generate a SELECT query to retrieve data, not a metadata query.",
-    isZh
-      ? "不要编造 Schema 中不存在的表或列。"
-      : "Never invent tables or columns that are not in the schema context.",
+    isZh ? "不要编造 Schema 中不存在的表或列。" : "Never invent tables or columns that are not in the schema context.",
     isZh
       ? "对于 DROP、DELETE、TRUNCATE、ALTER 或没有 WHERE 的 UPDATE，简要警告并优先提供安全的 SELECT 预览。"
       : "For destructive statements (DROP, DELETE, TRUNCATE, ALTER, UPDATE without WHERE), warn briefly and prefer a safer SELECT preview.",
   ];
 
   if (action === "optimize") {
-    lines.push(isZh
-      ? "利用 Schema 中的索引信息建议优化。指出哪些查询条件可以命中索引、哪些会导致全表扫描。"
-      : "Use the index information in the schema to suggest optimizations. Point out which conditions hit indexes and which cause full table scans.");
+    lines.push(
+      isZh
+        ? "利用 Schema 中的索引信息建议优化。指出哪些查询条件可以命中索引、哪些会导致全表扫描。"
+        : "Use the index information in the schema to suggest optimizations. Point out which conditions hit indexes and which cause full table scans.",
+    );
   } else if (action === "generate") {
-    lines.push(isZh
-      ? "利用外键关系推断 JOIN 条件。生成操作优先返回 SQL，避免长篇解释。"
-      : "Use foreign key relationships to infer JOIN conditions. Return the SQL first and avoid long explanations.");
+    lines.push(
+      isZh
+        ? "利用外键关系推断 JOIN 条件。生成操作优先返回 SQL，避免长篇解释。"
+        : "Use foreign key relationships to infer JOIN conditions. Return the SQL first and avoid long explanations.",
+    );
   } else if (action === "fix") {
-    lines.push(isZh
-      ? "仔细分析错误信息，定位根因。先返回修正后的 SQL，再简要解释。"
-      : "Carefully analyze the error message to identify the root cause. Return the corrected SQL first, then briefly explain.");
+    lines.push(
+      isZh
+        ? "仔细分析错误信息，定位根因。先返回修正后的 SQL，再简要解释。"
+        : "Carefully analyze the error message to identify the root cause. Return the corrected SQL first, then briefly explain.",
+    );
   }
 
   lines.push(
@@ -206,36 +215,40 @@ export function buildSystemPrompt(action: AiAction, context: AiContext): string 
 function formatSchema(context: AiContext): string {
   if (!context.tables.length) return "(No table schema loaded.)";
 
-  return context.tables.map((table) => {
-    const name = table.schema ? `${table.schema}.${table.name}` : table.name;
-    const lines: string[] = [`${name} (${table.tableType})`];
+  return context.tables
+    .map((table) => {
+      const name = table.schema ? `${table.schema}.${table.name}` : table.name;
+      const lines: string[] = [`${name} (${table.tableType})`];
 
-    for (const column of table.columns) {
-      const flags = [
-        column.is_primary_key ? "PK" : "",
-        column.is_nullable ? "nullable" : "NOT NULL",
-        column.column_default ? `default ${column.column_default}` : "",
-        column.extra || "",
-      ].filter(Boolean).join(", ");
-      lines.push(`  - ${column.name}: ${column.data_type}${flags ? ` (${flags})` : ""}`);
-    }
-
-    if (table.indexes?.length) {
-      for (const idx of table.indexes) {
-        if (idx.is_primary) continue;
-        const unique = idx.is_unique ? "UNIQUE " : "";
-        lines.push(`  Index: ${unique}${idx.name}(${idx.columns.join(", ")})`);
+      for (const column of table.columns) {
+        const flags = [
+          column.is_primary_key ? "PK" : "",
+          column.is_nullable ? "nullable" : "NOT NULL",
+          column.column_default ? `default ${column.column_default}` : "",
+          column.extra || "",
+        ]
+          .filter(Boolean)
+          .join(", ");
+        lines.push(`  - ${column.name}: ${column.data_type}${flags ? ` (${flags})` : ""}`);
       }
-    }
 
-    if (table.foreignKeys?.length) {
-      for (const fk of table.foreignKeys) {
-        lines.push(`  FK: ${fk.column} → ${fk.ref_table}.${fk.ref_column}`);
+      if (table.indexes?.length) {
+        for (const idx of table.indexes) {
+          if (idx.is_primary) continue;
+          const unique = idx.is_unique ? "UNIQUE " : "";
+          lines.push(`  Index: ${unique}${idx.name}(${idx.columns.join(", ")})`);
+        }
       }
-    }
 
-    return lines.join("\n");
-  }).join("\n\n");
+      if (table.foreignKeys?.length) {
+        for (const fk of table.foreignKeys) {
+          lines.push(`  FK: ${fk.column} → ${fk.ref_table}.${fk.ref_column}`);
+        }
+      }
+
+      return lines.join("\n");
+    })
+    .join("\n\n");
 }
 
 export async function buildAiContext(

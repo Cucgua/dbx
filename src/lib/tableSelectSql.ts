@@ -18,7 +18,9 @@ export function quoteTableIdentifier(databaseType: DatabaseType | undefined, nam
   return `"${name.replace(/"/g, '""')}"`;
 }
 
-export function qualifiedTableName(options: Pick<BuildTableSelectSqlOptions, "databaseType" | "schema" | "tableName">): string {
+export function qualifiedTableName(
+  options: Pick<BuildTableSelectSqlOptions, "databaseType" | "schema" | "tableName">,
+): string {
   const { databaseType, schema, tableName } = options;
   if ((databaseType === "postgres" || databaseType === "oracle" || databaseType === "sqlserver") && schema) {
     return `${quoteTableIdentifier(databaseType, schema)}.${quoteTableIdentifier(databaseType, tableName)}`;
@@ -40,8 +42,8 @@ export function buildTableSelectSql(options: BuildTableSelectSqlOptions): string
   const defaultOrderBy = options.primaryKeys?.length
     ? options.primaryKeys.map((pk) => `${quoteTableIdentifier(databaseType, pk)} ASC`).join(", ")
     : options.fallbackOrderColumns?.length
-    ? options.fallbackOrderColumns.map((column) => `${quoteTableIdentifier(databaseType, column)} ASC`).join(", ")
-    : undefined;
+      ? options.fallbackOrderColumns.map((column) => `${quoteTableIdentifier(databaseType, column)} ASC`).join(", ")
+      : undefined;
   const orderBy = options.orderBy ?? defaultOrderBy;
   const order = orderBy ? ` ORDER BY ${orderBy}` : "";
 

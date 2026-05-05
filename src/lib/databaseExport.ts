@@ -92,10 +92,16 @@ export function buildDatabaseSqlExport(options: BuildDatabaseSqlExportOptions): 
     }
 
     lines.push(`-- Data for ${table.displayName}`);
-    lines.push(table.truncated
-      ? `-- Exported rows: ${table.rows.length} (truncated at ${rowLimit})`
-      : `-- Exported rows: ${table.rows.length}`);
-    const inserts = buildInsertStatements({ ...table, quoteIdentifier: options.quoteIdentifier, batchSize: insertBatchSize });
+    lines.push(
+      table.truncated
+        ? `-- Exported rows: ${table.rows.length} (truncated at ${rowLimit})`
+        : `-- Exported rows: ${table.rows.length}`,
+    );
+    const inserts = buildInsertStatements({
+      ...table,
+      quoteIdentifier: options.quoteIdentifier,
+      batchSize: insertBatchSize,
+    });
     if (inserts.length > 0) {
       lines.push(...inserts);
     } else {

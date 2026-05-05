@@ -7,8 +7,6 @@ import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
 import * as api from "@/lib/api";
 
-import { isTauriRuntime } from "@/lib/tauriRuntime";
-
 interface SavedTab {
   id: string;
   title: string;
@@ -22,15 +20,18 @@ interface SavedTab {
 
 const STORAGE_KEY = "dbx-open-tabs";
 const ACTIVE_TAB_KEY = "dbx-active-tab";
-const isDesktop = isTauriRuntime();
 
 function saveTabs(tabs: QueryTab[], activeTabId: string | null) {
-  if (isDesktop) return;
   try {
-    const saved: SavedTab[] = tabs.map(t => ({
-      id: t.id, title: t.title, connectionId: t.connectionId,
-      database: t.database, sql: t.sql, pinned: t.pinned,
-      mode: t.mode, tableMeta: t.tableMeta,
+    const saved: SavedTab[] = tabs.map((t) => ({
+      id: t.id,
+      title: t.title,
+      connectionId: t.connectionId,
+      database: t.database,
+      sql: t.sql,
+      pinned: t.pinned,
+      mode: t.mode,
+      tableMeta: t.tableMeta,
     }));
     localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
     localStorage.setItem(ACTIVE_TAB_KEY, activeTabId || "");
@@ -38,19 +39,21 @@ function saveTabs(tabs: QueryTab[], activeTabId: string | null) {
 }
 
 function loadSavedTabs(): { tabs: QueryTab[]; activeTabId: string | null } {
-  if (isDesktop) return { tabs: [], activeTabId: null };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { tabs: [], activeTabId: null };
     const saved: SavedTab[] = JSON.parse(raw);
-    const tabs: QueryTab[] = saved.map(s => ({
+    const tabs: QueryTab[] = saved.map((s) => ({
       ...s,
       isExecuting: false,
       isCancelling: false,
       isExplaining: false,
     }));
     const activeTabId = localStorage.getItem(ACTIVE_TAB_KEY) || null;
-    return { tabs, activeTabId: tabs.some(t => t.id === activeTabId) ? activeTabId : tabs[0]?.id || null };
+    return {
+      tabs,
+      activeTabId: tabs.some((t) => t.id === activeTabId) ? activeTabId : tabs[0]?.id || null,
+    };
   } catch {
     return { tabs: [], activeTabId: null };
   }
@@ -68,7 +71,12 @@ export const useQueryStore = defineStore("query", () => {
     return tabs.value.find((t) => t.connectionId === connectionId && t.database === database && t.title === title);
   }
 
-  function createTab(connectionId: string, database: string, title?: string, mode: "data" | "query" | "redis" | "mongo" = "query") {
+  function createTab(
+    connectionId: string,
+    database: string,
+    title?: string,
+    mode: "data" | "query" | "redis" | "mongo" = "query",
+  ) {
     if (title) {
       const existing = findTabByTitle(connectionId, database, title);
       if (existing) {
@@ -106,24 +114,16 @@ export const useQueryStore = defineStore("query", () => {
   }
 
   function closeOtherTabs(id: string) {
-    tabs.value
-      .filter((tab) => tab.id !== id && tab.isExecuting)
-      .forEach((tab) => void cancelTabExecution(tab.id));
-    tabs.value
-      .filter((tab) => tab.id !== id && tab.isExplaining)
-      .forEach((tab) => void cancelTabExplain(tab.id));
+    tabs.value.filter((tab) => tab.id !== id && tab.isExecuting).forEach((tab) => void cancelTabExecution(tab.id));
+    tabs.value.filter((tab) => tab.id !== id && tab.isExplaining).forEach((tab) => void cancelTabExplain(tab.id));
     const next = closeOtherTabsState(tabs.value, activeTabId.value, id);
     tabs.value = next.tabs;
     activeTabId.value = next.activeTabId;
   }
 
   function closeAllTabs() {
-    tabs.value
-      .filter((tab) => tab.isExecuting)
-      .forEach((tab) => void cancelTabExecution(tab.id));
-    tabs.value
-      .filter((tab) => tab.isExplaining)
-      .forEach((tab) => void cancelTabExplain(tab.id));
+    tabs.value.filter((tab) => tab.isExecuting).forEach((tab) => void cancelTabExecution(tab.id));
+    tabs.value.filter((tab) => tab.isExplaining).forEach((tab) => void cancelTabExplain(tab.id));
     const next = closeAllTabsState(tabs.value, activeTabId.value);
     tabs.value = next.tabs;
     activeTabId.value = next.activeTabId;
@@ -354,7 +354,9 @@ export const useQueryStore = defineStore("query", () => {
     const inactive = tabs.value.filter((t) => t.id !== activeTabId.value && t.result);
     if (inactive.length > MAX_CACHED_RESULTS) {
       const toEvict = inactive.slice(0, inactive.length - MAX_CACHED_RESULTS);
-      toEvict.forEach((t) => { t.result = undefined; });
+      toEvict.forEach((t) => {
+        t.result = undefined;
+      });
     }
   }
 

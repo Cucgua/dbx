@@ -66,10 +66,7 @@ function normalizeDefault(value: string | null | undefined): string {
 }
 
 function columnDefinition(databaseType: DatabaseType | undefined, column: EditableStructureColumn): string {
-  const parts = [
-    quoteIdent(databaseType, column.name),
-    column.dataType.trim(),
-  ];
+  const parts = [quoteIdent(databaseType, column.name), column.dataType.trim()];
   if (!column.isNullable) parts.push("NOT NULL");
   const defaultValue = normalizeDefault(column.defaultValue);
   if (defaultValue) parts.push(`DEFAULT ${defaultValue}`);
@@ -105,20 +102,21 @@ function buildAddColumnSql(
   column: EditableStructureColumn,
 ): string[] {
   const addKeyword = databaseType === "sqlserver" ? "ADD" : "ADD COLUMN";
-  const statements = [
-    `ALTER TABLE ${table} ${addKeyword} ${columnDefinition(databaseType, column)};`,
-  ];
+  const statements = [`ALTER TABLE ${table} ${addKeyword} ${columnDefinition(databaseType, column)};`];
   if (databaseType === "postgres" && clean(column.comment)) {
-    statements.push(`COMMENT ON COLUMN ${table}.${quoteIdent(databaseType, column.name)} IS ${quoteString(clean(column.comment))};`);
+    statements.push(
+      `COMMENT ON COLUMN ${table}.${quoteIdent(databaseType, column.name)} IS ${quoteString(clean(column.comment))};`,
+    );
   }
   return statements;
 }
 
 function buildMysqlExistingColumnSql(table: string, column: EditableStructureColumn): string[] {
   const originalName = column.original?.name ?? column.name;
-  const operation = column.name === originalName
-    ? `MODIFY COLUMN ${columnDefinition("mysql", column)}`
-    : `CHANGE COLUMN ${quoteIdent("mysql", originalName)} ${columnDefinition("mysql", column)}`;
+  const operation =
+    column.name === originalName
+      ? `MODIFY COLUMN ${columnDefinition("mysql", column)}`
+      : `CHANGE COLUMN ${quoteIdent("mysql", originalName)} ${columnDefinition("mysql", column)}`;
   return [`ALTER TABLE ${table} ${operation};`];
 }
 
@@ -129,10 +127,14 @@ function buildPostgresExistingColumnSql(table: string, column: EditableStructure
   const statements: string[] = [];
   const currentName = column.name;
   if (column.name !== original.name) {
-    statements.push(`ALTER TABLE ${table} RENAME COLUMN ${quoteIdent("postgres", original.name)} TO ${quoteIdent("postgres", column.name)};`);
+    statements.push(
+      `ALTER TABLE ${table} RENAME COLUMN ${quoteIdent("postgres", original.name)} TO ${quoteIdent("postgres", column.name)};`,
+    );
   }
   if (column.dataType.trim() !== original.data_type.trim()) {
-    statements.push(`ALTER TABLE ${table} ALTER COLUMN ${quoteIdent("postgres", currentName)} TYPE ${column.dataType.trim()};`);
+    statements.push(
+      `ALTER TABLE ${table} ALTER COLUMN ${quoteIdent("postgres", currentName)} TYPE ${column.dataType.trim()};`,
+    );
   }
   if (column.isNullable !== original.is_nullable) {
     const action = column.isNullable ? "DROP NOT NULL" : "SET NOT NULL";
@@ -150,23 +152,20 @@ function buildPostgresExistingColumnSql(table: string, column: EditableStructure
   return statements;
 }
 
-function buildSqliteExistingColumnSql(
-  table: string,
-  column: EditableStructureColumn,
-  warnings: string[],
-): string[] {
+function buildSqliteExistingColumnSql(table: string, column: EditableStructureColumn, warnings: string[]): string[] {
   const original = column.original;
   if (!original) return [];
 
   const statements: string[] = [];
-  const unsupportedChange = (
+  const unsupportedChange =
     column.dataType.trim() !== original.data_type.trim() ||
     column.isNullable !== original.is_nullable ||
     normalizeDefault(column.defaultValue) !== originalDefault(column) ||
-    clean(column.comment) !== originalComment(column)
-  );
+    clean(column.comment) !== originalComment(column);
   if (column.name !== original.name) {
-    statements.push(`ALTER TABLE ${table} RENAME COLUMN ${quoteIdent("sqlite", original.name)} TO ${quoteIdent("sqlite", column.name)};`);
+    statements.push(
+      `ALTER TABLE ${table} RENAME COLUMN ${quoteIdent("sqlite", original.name)} TO ${quoteIdent("sqlite", column.name)};`,
+    );
   }
   if (unsupportedChange) {
     warnings.push(`SQLite cannot safely alter existing column "${original.name}" without rebuilding the table.`);
@@ -174,10 +173,7 @@ function buildSqliteExistingColumnSql(
   return statements;
 }
 
-function buildColumnSql(
-  options: BuildTableStructureChangeSqlOptions,
-  warnings: string[],
-): string[] {
+function buildColumnSql(options: BuildTableStructureChangeSqlOptions, warnings: string[]): string[] {
   const databaseType = options.databaseType;
   const table = qualifiedTable(databaseType, options.schema, options.tableName);
   const statements: string[] = [];
@@ -253,11 +249,16 @@ function buildIndexSql(options: BuildTableStructureChangeSqlOptions, warnings: s
     const usingClause = idxType && databaseType === "postgres" ? ` USING ${idxType}` : "";
     const typePrefix = idxType && databaseType === "sqlserver" ? `${idxType} ` : "";
     const incCols = index.includedColumns.map(clean).filter(Boolean);
-    const includeClause = incCols.length > 0 && (databaseType === "postgres" || databaseType === "sqlserver") ? ` INCLUDE (${incCols.map((c) => quoteIdent(databaseType, c)).join(", ")})` : "";
+    const includeClause =
+      incCols.length > 0 && (databaseType === "postgres" || databaseType === "sqlserver")
+        ? ` INCLUDE (${incCols.map((c) => quoteIdent(databaseType, c)).join(", ")})`
+        : "";
     const filter = clean(index.filter);
     const supportsWhere = databaseType === "postgres" || databaseType === "sqlserver" || databaseType === "sqlite";
     const whereClause = filter && supportsWhere ? ` WHERE ${filter}` : "";
-    statements.push(`CREATE ${unique}${typePrefix}INDEX ${quoteIdent(databaseType, name)} ON ${table}${usingClause} (${cols})${includeClause}${whereClause};`);
+    statements.push(
+      `CREATE ${unique}${typePrefix}INDEX ${quoteIdent(databaseType, name)} ON ${table}${usingClause} (${cols})${includeClause}${whereClause};`,
+    );
     const comment = clean(index.comment);
     if (comment && databaseType === "postgres") {
       statements.push(`COMMENT ON INDEX ${quoteIdent(databaseType, name)} IS ${quoteString(comment)};`);
@@ -292,10 +293,7 @@ function validateDraft(options: BuildTableStructureChangeSqlOptions): string[] {
 
 export function buildTableStructureChangeSql(options: BuildTableStructureChangeSqlOptions): TableStructureChangeSql {
   const warnings = validateDraft(options);
-  const statements = [
-    ...buildColumnSql(options, warnings),
-    ...buildIndexSql(options, warnings),
-  ];
+  const statements = [...buildColumnSql(options, warnings), ...buildIndexSql(options, warnings)];
 
   return { statements, warnings };
 }

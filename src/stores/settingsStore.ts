@@ -14,12 +14,31 @@ export interface AiConfig {
 }
 
 const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = {
-  claude: { provider: "claude", endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514", apiStyle: "completions" },
-  openai: { provider: "openai", endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o", apiStyle: "completions" },
+  claude: {
+    provider: "claude",
+    endpoint: "https://api.anthropic.com/v1/messages",
+    model: "claude-sonnet-4-20250514",
+    apiStyle: "completions",
+  },
+  openai: {
+    provider: "openai",
+    endpoint: "https://api.openai.com/v1/chat/completions",
+    model: "gpt-4o",
+    apiStyle: "completions",
+  },
   custom: { provider: "custom", endpoint: "", model: "", apiStyle: "completions" },
 };
 
-export type EditorTheme = "one-dark" | "vscode-dark" | "vscode-light" | "nord" | "okaidia" | "material" | "duotone-light" | "duotone-dark" | "xcode";
+export type EditorTheme =
+  | "one-dark"
+  | "vscode-dark"
+  | "vscode-light"
+  | "nord"
+  | "okaidia"
+  | "material"
+  | "duotone-light"
+  | "duotone-dark"
+  | "xcode";
 
 export interface EditorSettings {
   fontFamily: string;
@@ -73,7 +92,9 @@ function loadEditorSettings(): EditorSettings {
         executeMode: parsed.executeMode ?? DEFAULT_EDITOR_SETTINGS.executeMode,
       };
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Migrate old font-size key if new settings don't exist
   try {
@@ -90,7 +111,9 @@ function loadEditorSettings(): EditorSettings {
         return migrated;
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   return { ...DEFAULT_EDITOR_SETTINGS };
 }
@@ -138,7 +161,12 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   return {
-    aiConfig, isAiConfigLoaded, initAiConfig, updateAiConfig, isConfigured,
-    editorSettings, updateEditorSettings,
+    aiConfig,
+    isAiConfigLoaded,
+    initAiConfig,
+    updateAiConfig,
+    isConfigured,
+    editorSettings,
+    updateEditorSettings,
   };
 });
