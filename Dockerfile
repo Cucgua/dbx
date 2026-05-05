@@ -7,6 +7,7 @@ RUN pnpm install --frozen-lockfile
 COPY src/ src/
 COPY index.html vite.config.ts tsconfig.json ./
 COPY tailwind.config.* postcss.config.* ./
+COPY public/ public/
 RUN pnpm build
 
 # Stage 2: Build Rust backend
