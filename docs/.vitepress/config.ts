@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: 'DBX',
-  description: 'Open-source, lightweight, cross-platform database management tool',
+  description: '25+ databases in 15 MB. Desktop & Docker self-hosting, with built-in AI assistant.',
   base: '/dbx/',
   head: [
     ['link', { rel: 'icon', href: '/dbx/logo.png' }],
@@ -150,7 +150,7 @@ export default defineConfig({
       { icon: 'npm', link: 'https://www.npmjs.com/package/@dbx-app/mcp-server' },
     ],
     footer: {
-      message: 'Released under the MIT License.',
+      message: 'Released under the AGPL-3.0 License.',
       copyright: 'Copyright © 2024-present DBX Contributors',
     },
     search: {
