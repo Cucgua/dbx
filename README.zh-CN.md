@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/logo.png" width="80" />
   <h1>DBX</h1>
-  <p>开源、轻量、跨平台的数据库管理工具。</p>
+  <p>15 MB 驾驭 25+ 种数据库。桌面端 & Docker 自托管，内置 AI 助手。</p>
   <p>
     <a href="https://github.com/t8y2/dbx/releases"><img src="https://img.shields.io/github/v/release/t8y2/dbx?label=version" /></a>
     <a href="https://github.com/t8y2/dbx/releases"><img src="https://img.shields.io/github/downloads/t8y2/dbx/total" /></a>
@@ -20,34 +20,70 @@
     <img src="https://img.shields.io/badge/ClickHouse-FFCC01?logo=clickhouse&logoColor=black" />
     <img src="https://img.shields.io/badge/SQL%20Server-CC2927?logo=microsoftsqlserver&logoColor=white" />
     <img src="https://img.shields.io/badge/Oracle-F80000?logo=oracle&logoColor=white" />
+    <img src="https://img.shields.io/badge/Elasticsearch-005571?logo=elasticsearch&logoColor=white" />
     <img src="https://img.shields.io/badge/MariaDB-003545?logo=mariadb&logoColor=white" />
     <img src="https://img.shields.io/badge/TiDB-DC150B?logo=tidb&logoColor=white" />
   </p>
   <p>
     <a href="README.md">English</a> | 简体中文
   </p>
+
+  <p>
+    <img src="docs/screenshot-light.png" width="395" />
+    <img src="docs/screenshot-dark.png" width="395" />
+  </p>
+  <p>
+    <img src="docs/screenshot-er.png" width="395" />
+    <img src="docs/screenshot-grid.png" width="395" />
+  </p>
 </div>
 
 ## 功能特性
 
-- **多数据库** — MySQL、PostgreSQL、SQLite、Redis、MongoDB、DuckDB、ClickHouse、SQL Server、Oracle、MariaDB、TiDB、OceanBase、openGauss、GaussDB、KingBase、Vastbase、GoldenDB
+### 17+ 种数据库，一个工具搞定
+
+MySQL、PostgreSQL、SQLite、Redis、MongoDB、DuckDB、ClickHouse、SQL Server、Oracle、Elasticsearch、MariaDB、TiDB、OceanBase、openGauss、GaussDB、KingBase、Vastbase、GoldenDB — 全部在一个约 15 MB 的应用中连接。不内嵌 Chromium。
+
+### 查询编辑器
+
+CodeMirror 6 语法高亮、智能自动补全（表名和字段）、`Cmd+Enter` 执行、选中 SQL 执行、SQL 格式化，9 种编辑器主题。查询历史持久化存储，支持搜索和恢复。
+
+### AI SQL 助手
+
+用自然语言描述你的需求，直接生成 SQL。还能解释、优化、修复错误。支持 Claude、OpenAI 或任何 OpenAI 兼容端点。
+
+### 数据表格
+
+虚拟滚动，轻松应对百万行数据。行内编辑、排序、全文搜索、分页、列宽调整、行号、斑马纹。支持导出为 CSV、JSON、Markdown。
+
+### Schema 工具
+
 - **结构浏览** — 数据库、Schema、表、字段、索引、外键、触发器，支持侧边栏搜索和置顶
-- **查询编辑器** — CodeMirror 6 语法高亮、SQL 自动补全（表名和字段）、Cmd+Enter 执行、选中 SQL 执行、SQL 格式化
-- **AI SQL 助手** — 自然语言生成 SQL、解释、优化、修复错误（Claude / OpenAI）
-- **数据表格** — 虚拟滚动、行内编辑、排序、搜索、分页、列宽调整、行号、斑马纹
-- **数据导出** — CSV、JSON、Markdown
-- **文件预览** — 拖入 Parquet、CSV、JSON 文件即时预览数据（基于 DuckDB）
-- **Redis 浏览器** — 模式匹配搜索，支持全部数据类型（String、Hash、List、Set、ZSet、Stream）
-- **MongoDB 浏览器** — 文档增删改查、分页浏览，支持 URL 直连（Atlas、副本集）
-- **查询历史** — 持久化存储，支持搜索、恢复、一键复制
-- **安全防护** — 执行 DROP / DELETE / TRUNCATE / ALTER 时弹出确认对话框
-- **自动重连** — 连接断开后透明重试
-- **SSH 隧道** — 支持密钥和密码两种认证方式
-- **连接颜色** — 为连接设置颜色标记，快速区分环境
-- **自动更新** — 内置版本检查，新版本自动提醒
-- **深色模式** — 原生标题栏主题同步
-- **多语言** — English & 简体中文
-- **极致轻量** — 安装包约 15 MB（不内嵌 Chromium）
+- **ER 关系图** — 可视化表间关联
+- **Schema 对比** — 跨连接对比表结构差异
+- **执行计划** — 可视化查询执行计划
+- **字段血缘** — 字段级血缘分析
+
+### 数据操作
+
+- **数据导入** — CSV、Excel
+- **数据迁移** — 在数据库之间迁移数据
+- **数据库导出** — 完整数据库导出
+- **SQL 文件执行** — 直接执行 `.sql` 文件
+- **文件预览** — 拖入 Parquet、CSV、JSON 即时预览（基于 DuckDB）
+
+### 专项浏览器
+
+- **Redis** — 模式匹配搜索，全数据类型支持（String、Hash、List、Set、ZSet、Stream）
+- **MongoDB** — 文档增删改查、分页浏览，支持 Atlas 和副本集 URL 直连
+
+### 安全与连接
+
+SSH 隧道（密钥和密码认证）· 断线自动重连 · 危险操作确认对话框 · 加密导出/导入连接配置 · 连接颜色标记
+
+### 精致 UI
+
+深色模式原生标题栏同步 · 9 种编辑器主题 · English & 简体中文 · 内置自动更新
 
 ## AI 编程助手集成 (MCP)
 
@@ -71,19 +107,9 @@ npx @dbx-app/mcp-server
 
 详见 [MCP Server 说明](mcp/README.md)。
 
-## 截图
-
-<div align="center">
-  <img src="docs/screenshot.png" width="800" />
-  <p>
-    <img src="docs/screenshot-connections.jpg" width="395" />
-    <img src="docs/screenshot-ai.jpg" width="395" />
-  </p>
-</div>
-
 ## 安装
 
-从 [Releases](https://github.com/t8y2/dbx/releases) 页面下载最新版本。
+从 [Releases](https://github.com/t8y2/dbx/releases/latest) 页面下载最新版本。
 
 **Homebrew (macOS)：**
 
@@ -98,15 +124,33 @@ scoop bucket add dbx https://github.com/t8y2/scoop-bucket
 scoop install dbx
 ```
 
-### macOS 说明
+macOS 版本已通过 Apple 签名和公证，可直接安装使用。
 
-DBX 未使用 Apple 开发者证书签名，首次打开时 macOS 会阻止运行。解决方法：
+## 自托管 (Docker)
+
+DBX 提供 Web 版本，可通过 Docker 部署。
 
 ```bash
-xattr -cr /Applications/DBX.app
+docker run -d --name dbx -p 4224:4224 -v dbx-data:/app/data t8y2/dbx
 ```
 
-或者：**系统设置 → 隐私与安全性 → 仍要打开**。
+或使用 Docker Compose：
+
+```yaml
+services:
+  dbx:
+    image: t8y2/dbx
+    ports:
+      - "4224:4224"
+    volumes:
+      - dbx-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  dbx-data:
+```
+
+浏览器访问 `http://localhost:4224`。支持 amd64 / arm64 双架构镜像。
 
 ## 快速开始
 
@@ -121,6 +165,13 @@ xattr -cr /Applications/DBX.app
 ```bash
 pnpm install
 pnpm tauri dev
+```
+
+Web 版本：
+
+```bash
+pnpm dev:web       # 前端
+pnpm dev:backend   # 后端
 ```
 
 ### 构建
@@ -154,7 +205,7 @@ pnpm tauri build
 ## 贡献者
 
 <a href="https://github.com/t8y2/dbx/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=t8y2/dbx&v=2" />
+  <img src="https://contrib.rocks/image?repo=t8y2/dbx&v=3" />
 </a>
 
 ## Star History
@@ -169,4 +220,4 @@ pnpm tauri build
 
 ## 开源协议
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE)

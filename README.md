@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/logo.png" width="80" />
   <h1>DBX</h1>
-  <p>Open-source, lightweight, cross-platform database management tool.</p>
+  <p>25+ databases in 15 MB. Desktop & Docker self-hosting, with built-in AI assistant.</p>
   <p>
     <a href="https://github.com/t8y2/dbx/releases"><img src="https://img.shields.io/github/v/release/t8y2/dbx?label=version" /></a>
     <a href="https://github.com/t8y2/dbx/releases"><img src="https://img.shields.io/github/downloads/t8y2/dbx/total" /></a>
@@ -20,34 +20,70 @@
     <img src="https://img.shields.io/badge/ClickHouse-FFCC01?logo=clickhouse&logoColor=black" />
     <img src="https://img.shields.io/badge/SQL%20Server-CC2927?logo=microsoftsqlserver&logoColor=white" />
     <img src="https://img.shields.io/badge/Oracle-F80000?logo=oracle&logoColor=white" />
+    <img src="https://img.shields.io/badge/Elasticsearch-005571?logo=elasticsearch&logoColor=white" />
     <img src="https://img.shields.io/badge/MariaDB-003545?logo=mariadb&logoColor=white" />
     <img src="https://img.shields.io/badge/TiDB-DC150B?logo=tidb&logoColor=white" />
   </p>
   <p>
     English | <a href="README.zh-CN.md">简体中文</a>
   </p>
+
+  <p>
+    <img src="docs/screenshot-light.png" width="395" />
+    <img src="docs/screenshot-dark.png" width="395" />
+  </p>
+  <p>
+    <img src="docs/screenshot-er.png" width="395" />
+    <img src="docs/screenshot-grid.png" width="395" />
+  </p>
 </div>
 
 ## Features
 
-- **Multi-database** — MySQL, PostgreSQL, SQLite, Redis, MongoDB, DuckDB, ClickHouse, SQL Server, Oracle, MariaDB, TiDB, OceanBase, openGauss, GaussDB, KingBase, Vastbase, GoldenDB
-- **Schema browser** — Databases, schemas, tables, columns, indexes, foreign keys, triggers, with sidebar search & pin
-- **Query editor** — CodeMirror 6 with syntax highlighting, SQL autocomplete (tables & columns), Cmd+Enter execution, selected SQL execution, SQL formatting
-- **AI SQL assistant** — Natural language to SQL, explain, optimize, fix errors (Claude / OpenAI)
-- **Data grid** — Virtual-scrolled table with inline editing, sorting, search, pagination, column resize, row numbers, zebra stripes
-- **Export** — CSV, JSON, Markdown
-- **File preview** — Drag & drop Parquet, CSV, JSON files to preview data instantly (powered by DuckDB)
-- **Redis browser** — Key pattern search, value viewer for all data types (String, Hash, List, Set, ZSet, Stream)
-- **MongoDB browser** — Document CRUD with pagination, direct URL connection (Atlas, replica sets)
-- **Query history** — Persistent history with search, restore, one-click copy
-- **Safety** — Confirmation dialog for DROP / DELETE / TRUNCATE / ALTER
-- **Auto-reconnect** — Transparent retry on connection loss
-- **SSH tunnel** — Key and password authentication
-- **Connection colors** — Color-coded connections for visual identification
-- **Auto-update** — Built-in update checker with release notifications
-- **Dark mode** — Native title bar theme sync
-- **i18n** — English & 简体中文
-- **Tiny** — ~15 MB installer (no bundled Chromium)
+### 17+ Databases, One Tool
+
+MySQL, PostgreSQL, SQLite, Redis, MongoDB, DuckDB, ClickHouse, SQL Server, Oracle, Elasticsearch, MariaDB, TiDB, OceanBase, openGauss, GaussDB, KingBase, Vastbase, GoldenDB — connect to all of them from a single ~15 MB app. No bundled Chromium.
+
+### Query Editor
+
+CodeMirror 6 with SQL syntax highlighting, smart autocomplete (tables & columns), `Cmd+Enter` execution, selected SQL execution, SQL formatting, and 9 editor themes. Persistent query history with search and restore.
+
+### AI SQL Assistant
+
+Describe what you want in plain language — get SQL back. Also explains, optimizes, and fixes errors. Works with Claude, OpenAI, or any OpenAI-compatible endpoint.
+
+### Data Grid
+
+Virtual-scrolled table that handles millions of rows. Inline editing, sorting, full-text search, pagination, column resize, row numbers, zebra stripes. Export to CSV, JSON, Markdown.
+
+### Schema Tools
+
+- **Schema browser** — databases, schemas, tables, columns, indexes, foreign keys, triggers, with sidebar search & pin
+- **ER diagram** — visualize table relationships
+- **Schema diff** — compare structures across connections
+- **Explain plan** — visual query execution plan
+- **Field lineage** — column-level lineage analysis
+
+### Data Operations
+
+- **Table import** — CSV, Excel
+- **Data transfer** — migrate between databases
+- **Database export** — full database dump
+- **SQL file execution** — run `.sql` files directly
+- **File preview** — drag & drop Parquet, CSV, JSON to preview instantly (powered by DuckDB)
+
+### Specialized Browsers
+
+- **Redis** — key pattern search, all data types (String, Hash, List, Set, ZSet, Stream)
+- **MongoDB** — document CRUD with pagination, Atlas & replica set URL connection
+
+### Safety & Connectivity
+
+SSH tunnel (key & password) · auto-reconnect on connection loss · confirmation dialogs for destructive operations · encrypted config export/import · color-coded connections
+
+### Polished UI
+
+Dark mode with native title bar sync · 9 editor themes · English & 简体中文 · built-in auto-update
 
 ## AI Agent Integration (MCP)
 
@@ -71,19 +107,9 @@ Works with Claude Code, Cursor, Windsurf, and any MCP-compatible agent. Supports
 
 See the [MCP server README](mcp/README.md) for details.
 
-## Screenshot
-
-<div align="center">
-  <img src="docs/screenshot.png" width="800" />
-  <p>
-    <img src="docs/screenshot-connections.jpg" width="395" />
-    <img src="docs/screenshot-ai.jpg" width="395" />
-  </p>
-</div>
-
 ## Install
 
-Download the latest release from the [Releases](https://github.com/t8y2/dbx/releases) page.
+Download the latest release from the [Releases](https://github.com/t8y2/dbx/releases/latest) page.
 
 **Homebrew (macOS):**
 
@@ -98,15 +124,33 @@ scoop bucket add dbx https://github.com/t8y2/scoop-bucket
 scoop install dbx
 ```
 
-### macOS Note
+macOS builds are Apple code-signed and notarized.
 
-DBX is not signed with an Apple Developer certificate. On first launch, macOS will block the app. To fix this:
+## Self-Hosted (Docker)
+
+DBX provides a web version that can be deployed via Docker.
 
 ```bash
-xattr -cr /Applications/DBX.app
+docker run -d --name dbx -p 4224:4224 -v dbx-data:/app/data t8y2/dbx
 ```
 
-Or: **System Settings → Privacy & Security → Open Anyway**.
+Or with Docker Compose:
+
+```yaml
+services:
+  dbx:
+    image: t8y2/dbx
+    ports:
+      - "4224:4224"
+    volumes:
+      - dbx-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  dbx-data:
+```
+
+Open `http://localhost:4224` in your browser. Multi-arch images (amd64 / arm64) are available.
 
 ## Getting Started
 
@@ -121,6 +165,13 @@ Or: **System Settings → Privacy & Security → Open Anyway**.
 ```bash
 pnpm install
 pnpm tauri dev
+```
+
+Web version:
+
+```bash
+pnpm dev:web       # frontend
+pnpm dev:backend   # backend
 ```
 
 ### Build
@@ -152,7 +203,7 @@ The installer will be in `src-tauri/target/release/bundle/`.
 ## Contributors
 
 <a href="https://github.com/t8y2/dbx/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=t8y2/dbx&v=2" />
+  <img src="https://contrib.rocks/image?repo=t8y2/dbx&v=3" />
 </a>
 
 ## Star History
@@ -167,4 +218,4 @@ The installer will be in `src-tauri/target/release/bundle/`.
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE)
