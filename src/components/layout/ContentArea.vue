@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent } from "vue";
 import { useI18n } from "vue-i18n";
-import { Loader2, Square, Bot, Table2, GitBranch } from "lucide-vue-next";
+import { Loader2, Square, Bot, Table2, GitBranch, BarChart3 } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import DataGrid from "@/components/grid/DataGrid.vue";
 import RedisKeyBrowser from "@/components/redis/RedisKeyBrowser.vue";
 import MongoDocBrowser from "@/components/mongo/MongoDocBrowser.vue";
 const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
+const QueryChart = defineAsyncComponent(() => import("@/components/chart/QueryChart.vue"));
 import { useQueryStore } from "@/stores/queryStore";
 import { canCancelQueryExecution, queryExecutionLabelKey } from "@/lib/queryExecutionState";
 import { databaseDisplayNameForTab } from "@/lib/tabPresentation";
@@ -20,14 +21,14 @@ const props = defineProps<{
   activeTab: QueryTab;
   activeConnection?: ConnectionConfig;
   executableSql: string;
-  activeOutputView: "result" | "explain";
+  activeOutputView: "result" | "explain" | "chart";
   formatSqlRequestId: number;
   selectedSql: string;
   cursorPos: number;
 }>();
 
 const emit = defineEmits<{
-  "update:activeOutputView": [value: "result" | "explain"];
+  "update:activeOutputView": [value: "result" | "explain" | "chart"];
   fixWithAi: [errorMessage: string];
   execute: [sqlOverride?: string];
   cancel: [];
@@ -63,6 +64,12 @@ const activeSqlFormatDialect = computed<SqlFormatDialect>(() => {
 const editorDialect = computed<"mysql" | "postgres">(() =>
   props.activeConnection?.db_type === "postgres" ? "postgres" : "mysql",
 );
+
+const hasNumericData = computed(() => {
+  const r = props.activeTab.result;
+  if (!r || r.rows.length === 0) return false;
+  return r.columns.some((_, idx) => r.rows.some((row) => typeof row[idx] === "number"));
+});
 </script>
 
 <template>
@@ -132,6 +139,16 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
                 <GitBranch class="h-3.5 w-3.5" />
                 {{ t("explain.title") }}
               </Button>
+              <Button
+                size="sm"
+                :variant="activeOutputView === 'chart' ? 'secondary' : 'ghost'"
+                class="h-6 px-2 text-xs gap-1"
+                :disabled="!hasNumericData"
+                @click="emit('update:activeOutputView', 'chart')"
+              >
+                <BarChart3 class="h-3.5 w-3.5" />
+                {{ t("chart.title") }}
+              </Button>
             </div>
 
             <ExplainPlanViewer
@@ -142,6 +159,12 @@ const editorDialect = computed<"mysql" | "postgres">(() =>
               :loading="activeTab.isExplaining"
               :source-sql="activeTab.lastExplainedSql"
               :explain-sql="activeTab.explainSql"
+            />
+
+            <QueryChart
+              v-else-if="activeOutputView === 'chart' && activeTab.result"
+              class="flex-1 min-h-0"
+              :result="activeTab.result"
             />
 
             <template v-else>

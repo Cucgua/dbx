@@ -120,6 +120,14 @@ export default {
     scrollLeft: "向左滚动标签页",
     scrollRight: "向右滚动标签页",
   },
+  chart: {
+    title: "图表",
+    type: "类型",
+    line: "折线图",
+    bar: "柱状图",
+    pie: "饼图",
+    noNumericData: "没有可用于图表的数值数据",
+  },
   grid: {
     rows: "{count} 行",
     totalRows: "共 {count} 行",

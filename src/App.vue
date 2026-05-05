@@ -71,7 +71,7 @@ const aiAssistantRef = ref<InstanceType<typeof AiAssistant> | null>(null);
 const selectedSql = ref("");
 const cursorPos = ref(0);
 const formatSqlRequestId = ref(0);
-const activeOutputView = ref<"result" | "explain">("result");
+const activeOutputView = ref<"result" | "explain" | "chart">("result");
 
 const activeTab = computed(() => queryStore.tabs.find((t) => t.id === queryStore.activeTabId));
 

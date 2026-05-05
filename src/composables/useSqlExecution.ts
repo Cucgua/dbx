@@ -23,7 +23,7 @@ export function useSqlExecution(deps: {
   activeTab: ComputedRef<QueryTab | undefined>;
   activeConnection: ComputedRef<ConnectionConfig | undefined>;
   executableSql: ComputedRef<string>;
-  activeOutputView: Ref<"result" | "explain">;
+  activeOutputView: Ref<"result" | "explain" | "chart">;
 }) {
   const { t } = useI18n();
   const queryStore = useQueryStore();

@@ -121,6 +121,14 @@ export default {
     scrollLeft: "Scroll tabs left",
     scrollRight: "Scroll tabs right",
   },
+  chart: {
+    title: "Chart",
+    type: "Type",
+    line: "Line",
+    bar: "Bar",
+    pie: "Pie",
+    noNumericData: "No numeric data available for charting",
+  },
   grid: {
     rows: "{count} rows",
     totalRows: "Total {count} rows",
