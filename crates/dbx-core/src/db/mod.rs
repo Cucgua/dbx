@@ -8,12 +8,15 @@ pub mod redis_driver;
 pub mod sqlite;
 pub mod sqlserver;
 pub mod ssh_tunnel;
+pub mod file_validator;
+pub mod duckdb_driver;
 
 use std::future::Future;
 use std::time::Duration;
 
 // Re-export types so that `db::QueryResult` etc. work within dbx-core
 pub use crate::types::*;
+pub use file_validator::validate_file_path;
 
 pub const CONNECTION_TIMEOUT_SECS: u64 = 5;
 pub const TCP_PROBE_TIMEOUT_SECS: u64 = 3;
