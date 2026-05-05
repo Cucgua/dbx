@@ -132,6 +132,66 @@ function formatActiveSql() {
   formatSqlRequestId.value++;
 }
 
+async function saveSqlToFile() {
+  const tab = activeTab.value;
+  if (!tab || !tab.sql.trim()) return;
+  try {
+    if (isTauriRuntime()) {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+      const path = await save({ defaultPath: `${tab.title}.sql`, filters: [{ name: "SQL", extensions: ["sql"] }] });
+      if (path) {
+        await writeTextFile(path, tab.sql);
+        toast(t("toolbar.sqlSaved"), 2000);
+      }
+    } else {
+      const blob = new Blob([tab.sql], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${tab.title}.sql`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  } catch (e: any) {
+    toast(t("toolbar.sqlSaveFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function openSqlFile() {
+  const tab = activeTab.value;
+  if (!tab) return;
+  try {
+    if (isTauriRuntime()) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const { readTextFile } = await import("@tauri-apps/plugin-fs");
+      const path = await open({ filters: [{ name: "SQL", extensions: ["sql"] }], multiple: false });
+      if (path) {
+        const content = await readTextFile(path as string);
+        queryStore.updateSql(tab.id, content);
+      }
+    } else {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".sql";
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === "string") {
+            queryStore.updateSql(tab.id, reader.result);
+          }
+        };
+        reader.readAsText(file);
+      };
+      input.click();
+    }
+  } catch (e: any) {
+    toast(t("toolbar.sqlOpenFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
 function newQuery() {
   const connId = connectionStore.activeConnectionId || connectionStore.connections[0]?.id;
   if (!connId) return;
@@ -295,6 +355,7 @@ onUnmounted(() => { window.removeEventListener("keydown", handleKeydown, true); 
                 :active-tab="activeTab" :active-connection="activeConnection" :executable-sql="executableSql"
                 @execute="tryExecute()" @cancel="cancelActiveExecution()" @explain="tryExplain()"
                 @format-sql="formatActiveSql"
+                @save-sql="saveSqlToFile" @open-sql="openSqlFile"
                 @change-connection="changeActiveConnection" @change-database="changeActiveDatabase"
               />
               <ContentArea

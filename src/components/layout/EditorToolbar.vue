@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { Play, Loader2, Square, Database, Table2, AlignLeft, GitBranch } from "lucide-vue-next";
+import { Play, Loader2, Square, Database, Table2, AlignLeft, GitBranch, Save, FolderOpen } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -29,6 +29,8 @@ const emit = defineEmits<{
   cancel: [];
   explain: [];
   formatSql: [];
+  saveSql: [];
+  openSql: [];
   changeConnection: [connectionId: string];
   changeDatabase: [database: string];
 }>();
@@ -93,6 +95,22 @@ function databaseDisplayName(database: string): string {
           </Button>
         </TooltipTrigger>
         <TooltipContent>{{ t('toolbar.formatSql') }}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button variant="ghost" size="icon" class="h-6 w-6" :disabled="!activeTab.sql.trim()" @click="emit('saveSql')">
+            <Save class="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{{ t('toolbar.saveSql') }}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button variant="ghost" size="icon" class="h-6 w-6" @click="emit('openSql')">
+            <FolderOpen class="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{{ t('toolbar.openSql') }}</TooltipContent>
       </Tooltip>
     </div>
     <span class="flex-1 min-w-0" />

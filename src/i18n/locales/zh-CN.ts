@@ -12,6 +12,11 @@ export default {
     stopExplain: "停止执行计划",
     formatSql: "格式化 SQL",
     formatSqlFailed: "SQL 格式化失败",
+    saveSql: "保存 SQL 到文件",
+    openSql: "打开 SQL 文件",
+    sqlSaved: "SQL 已保存",
+    sqlOpenFailed: "打开文件失败：{message}",
+    sqlSaveFailed: "保存文件失败：{message}",
   },
   updates: {
     title: "更新",

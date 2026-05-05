@@ -7,8 +7,6 @@ import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
 import * as api from "@/lib/api";
 
-import { isTauriRuntime } from "@/lib/tauriRuntime";
-
 interface SavedTab {
   id: string;
   title: string;
@@ -22,10 +20,8 @@ interface SavedTab {
 
 const STORAGE_KEY = "dbx-open-tabs";
 const ACTIVE_TAB_KEY = "dbx-active-tab";
-const isDesktop = isTauriRuntime();
 
 function saveTabs(tabs: QueryTab[], activeTabId: string | null) {
-  if (isDesktop) return;
   try {
     const saved: SavedTab[] = tabs.map(t => ({
       id: t.id, title: t.title, connectionId: t.connectionId,
@@ -38,7 +34,6 @@ function saveTabs(tabs: QueryTab[], activeTabId: string | null) {
 }
 
 function loadSavedTabs(): { tabs: QueryTab[]; activeTabId: string | null } {
-  if (isDesktop) return { tabs: [], activeTabId: null };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { tabs: [], activeTabId: null };

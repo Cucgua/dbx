@@ -12,6 +12,11 @@ export default {
     stopExplain: "Stop explain",
     formatSql: "Format SQL",
     formatSqlFailed: "Failed to format SQL",
+    saveSql: "Save SQL to file",
+    openSql: "Open SQL file",
+    sqlSaved: "SQL saved",
+    sqlOpenFailed: "Failed to open file: {message}",
+    sqlSaveFailed: "Failed to save file: {message}",
   },
   updates: {
     title: "Updates",
