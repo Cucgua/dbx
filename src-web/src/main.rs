@@ -8,12 +8,14 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use argon2::password_hash::rand_core::OsRng;
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHasher};
 use axum::middleware;
 use axum::routing::{delete, get, post};
 use axum::Router;
 use dbx_core::connection::AppState;
 use dbx_core::storage::Storage;
-use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -46,9 +48,8 @@ async fn main() {
 
     // Password hash
     let password_hash = std::env::var("DBX_PASSWORD").ok().map(|pw| {
-        let mut hasher = Sha256::new();
-        hasher.update(pw.as_bytes());
-        hex::encode(hasher.finalize())
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default().hash_password(pw.as_bytes(), &salt).expect("Failed to hash password").to_string()
     });
 
     let web_state = Arc::new(WebState {

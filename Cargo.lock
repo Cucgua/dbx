@@ -1623,16 +1623,15 @@ dependencies = [
 name = "dbx-web"
 version = "0.4.0"
 dependencies = [
+ "argon2",
  "async-stream",
  "axum",
  "dbx-core",
  "futures",
- "hex",
  "log",
  "rustls 0.23.40",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tokio",
  "tokio-util",
  "tower-http",
