@@ -23,17 +23,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy dependency manifests only and create dummy sources to pre-compile dependencies.
+# This layer is cached by GHA as long as Cargo.toml/Cargo.lock don't change.
 COPY Cargo.toml Cargo.lock ./
-COPY crates/ crates/
-COPY src-web/ src-web/
-RUN mkdir -p src-tauri/src && echo 'fn main() {}' > src-tauri/src/main.rs && echo 'pub fn run() {}' > src-tauri/src/lib.rs
+COPY crates/dbx-core/Cargo.toml crates/dbx-core/
+COPY src-web/Cargo.toml src-web/
 COPY src-tauri/Cargo.toml src-tauri/
+RUN mkdir -p crates/dbx-core/src && echo '' > crates/dbx-core/src/lib.rs \
+    && mkdir -p src-web/src && echo 'fn main() {}' > src-web/src/main.rs \
+    && mkdir -p src-tauri/src && echo 'fn main() {}' > src-tauri/src/main.rs && echo 'pub fn run() {}' > src-tauri/src/lib.rs
+
 COPY src-tauri/build.rs src-tauri/
 COPY src-tauri/tauri.conf.json src-tauri/
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-$TARGETARCH \
-    --mount=type=cache,target=/app/target,id=cargo-target-$TARGETARCH \
-    case "$TARGETARCH" in \
+RUN case "$TARGETARCH" in \
+      amd64) rust_target=x86_64-unknown-linux-gnu ;; \
+      arm64) rust_target=aarch64-unknown-linux-gnu ;; \
+      *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    cargo zigbuild --release -p dbx-web --target "$rust_target" || true
+
+# Copy real sources and rebuild (only application code recompiles)
+COPY crates/ crates/
+COPY src-web/ src-web/
+
+RUN case "$TARGETARCH" in \
       amd64) rust_target=x86_64-unknown-linux-gnu ;; \
       arm64) rust_target=aarch64-unknown-linux-gnu ;; \
       *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
