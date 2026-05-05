@@ -1,10 +1,32 @@
-use mongodb::{bson::{doc, Document, Bson}, Client};
+use mongodb::{
+    bson::{doc, Bson, Document},
+    Client,
+};
 use serde::{Deserialize, Serialize};
+
+use super::{connection_timeout, with_connection_timeout, CONNECTION_TIMEOUT_SECS};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MongoDocumentResult {
     pub documents: Vec<serde_json::Value>,
     pub total: u64,
+}
+
+pub async fn connect(url: &str) -> Result<Client, String> {
+    with_connection_timeout("MongoDB", async {
+        Client::with_uri_str(url)
+            .await
+            .map_err(|e| format!("MongoDB connection failed: {e}"))
+    })
+    .await
+}
+
+pub async fn test_connection(client: &Client) -> Result<(), String> {
+    tokio::time::timeout(connection_timeout(), client.list_database_names())
+        .await
+        .map_err(|_| format!("MongoDB connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map(|_| ())
+        .map_err(|e| format!("MongoDB connection failed: {e}"))
 }
 
 pub async fn list_databases(client: &Client) -> Result<Vec<String>, String> {
@@ -31,7 +53,10 @@ pub async fn find_documents(
 ) -> Result<MongoDocumentResult, String> {
     let col = client.database(database).collection::<Document>(collection);
 
-    let total = col.count_documents(doc! {}).await.map_err(|e| e.to_string())?;
+    let total = col
+        .count_documents(doc! {})
+        .await
+        .map_err(|e| e.to_string())?;
 
     let mut cursor = col
         .find(doc! {})
@@ -56,8 +81,7 @@ pub async fn insert_document(
     collection: &str,
     doc_json: &str,
 ) -> Result<String, String> {
-    let doc: Document = serde_json::from_str(doc_json)
-        .map_err(|e| format!("Invalid JSON: {e}"))?;
+    let doc: Document = serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
     let col = client.database(database).collection::<Document>(collection);
     let result = col.insert_one(doc).await.map_err(|e| e.to_string())?;
     Ok(format!("{}", result.inserted_id))
@@ -72,8 +96,8 @@ pub async fn update_document(
 ) -> Result<u64, String> {
     let oid = mongodb::bson::oid::ObjectId::parse_str(id)
         .map_err(|e| format!("Invalid ObjectId: {e}"))?;
-    let new_doc: Document = serde_json::from_str(doc_json)
-        .map_err(|e| format!("Invalid JSON: {e}"))?;
+    let new_doc: Document =
+        serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
     let col = client.database(database).collection::<Document>(collection);
     let result = col
         .replace_one(doc! { "_id": oid }, new_doc)

@@ -4,7 +4,10 @@ use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
 
-use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
+use super::{connection_timeout, with_connection_timeout};
+use crate::types::{
+    ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo,
+};
 
 fn quote_value(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
@@ -12,13 +15,19 @@ fn quote_value(s: &str) -> String {
 
 fn get_str(row: &MySqlRow, idx: usize) -> String {
     row.try_get::<String, _>(idx)
-        .or_else(|_| row.try_get::<Vec<u8>, _>(idx).map(|b| String::from_utf8_lossy(&b).to_string()))
+        .or_else(|_| {
+            row.try_get::<Vec<u8>, _>(idx)
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+        })
         .unwrap_or_default()
 }
 
 fn get_str_by_name(row: &MySqlRow, name: &str) -> String {
     row.try_get::<String, _>(name)
-        .or_else(|_| row.try_get::<Vec<u8>, _>(name).map(|b| String::from_utf8_lossy(&b).to_string()))
+        .or_else(|_| {
+            row.try_get::<Vec<u8>, _>(name)
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+        })
         .unwrap_or_default()
 }
 
@@ -43,7 +52,8 @@ fn numeric_metadata_i64_to_i32(value: Option<i64>) -> Option<i32> {
 }
 
 fn numeric_metadata_str_to_i32(value: Option<String>) -> Option<i32> {
-    value.and_then(|v| v.parse::<i64>().ok())
+    value
+        .and_then(|v| v.parse::<i64>().ok())
         .and_then(|v| i32::try_from(v).ok())
 }
 
@@ -57,7 +67,9 @@ fn get_opt_i32(row: &MySqlRow, name: &str) -> Option<i32> {
         .flatten()
         .or_else(|| numeric_metadata_i64_to_i32(row.try_get::<Option<i64>, _>(name).ok().flatten()))
         .or_else(|| numeric_metadata_u64_to_i32(row.try_get::<Option<u64>, _>(name).ok().flatten()))
-        .or_else(|| numeric_metadata_str_to_i32(row.try_get::<Option<String>, _>(name).ok().flatten()))
+        .or_else(|| {
+            numeric_metadata_str_to_i32(row.try_get::<Option<String>, _>(name).ok().flatten())
+        })
         .or_else(|| {
             row.try_get::<Option<Vec<u8>>, _>(name)
                 .ok()
@@ -95,7 +107,8 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
             return v;
         }
         if let Ok(v) = row.try_get::<String, _>(idx) {
-            return serde_json::from_str::<serde_json::Value>(&v).unwrap_or(serde_json::Value::String(v));
+            return serde_json::from_str::<serde_json::Value>(&v)
+                .unwrap_or(serde_json::Value::String(v));
         }
         return serde_json::Value::Null;
     }
@@ -138,13 +151,21 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
 
     row.try_get::<String, _>(idx)
         .map(serde_json::Value::String)
-        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| serde_json::Value::Number(v.into())))
-        .or_else(|_| row.try_get::<u64, _>(idx).map(|v| serde_json::Value::Number(v.into())))
-        .or_else(|_| row.try_get::<f64, _>(idx).map(|v| {
-            serde_json::Number::from_f64(v)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
-        }))
+        .or_else(|_| {
+            row.try_get::<i64, _>(idx)
+                .map(|v| serde_json::Value::Number(v.into()))
+        })
+        .or_else(|_| {
+            row.try_get::<u64, _>(idx)
+                .map(|v| serde_json::Value::Number(v.into()))
+        })
+        .or_else(|_| {
+            row.try_get::<f64, _>(idx).map(|v| {
+                serde_json::Number::from_f64(v)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            })
+        })
         .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
         .or_else(|_| {
             row.try_get::<Vec<u8>, _>(idx)
@@ -155,39 +176,52 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
 }
 
 pub async fn connect(url: &str) -> Result<MySqlPool, String> {
-    MySqlPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(300))
-        .connect(url)
-        .await
-        .map_err(|e| format!("MySQL connection failed: {e}"))
+    with_connection_timeout("MySQL", async {
+        MySqlPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(connection_timeout())
+            .idle_timeout(Duration::from_secs(300))
+            .connect(url)
+            .await
+            .map_err(|e| format!("MySQL connection failed: {e}"))
+    })
+    .await
 }
 
 pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
-    let options: sqlx::mysql::MySqlConnectOptions = url.parse()
+    let options: sqlx::mysql::MySqlConnectOptions = url
+        .parse()
         .map_err(|e: sqlx::Error| format!("Invalid MySQL URL: {e}"))?;
     let options = options
         .no_engine_substitution(false)
         .set_names(false)
         .pipes_as_concat(false)
         .timezone(None);
-    MySqlPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(300))
-        .connect_with(options)
-        .await
-        .map_err(|e| format!("MySQL connection failed: {e}"))
+    with_connection_timeout("MySQL", async {
+        MySqlPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(connection_timeout())
+            .idle_timeout(Duration::from_secs(300))
+            .connect_with(options)
+            .await
+            .map_err(|e| format!("MySQL connection failed: {e}"))
+    })
+    .await
 }
 
 pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, String> {
-    let rows: Vec<MySqlRow> = sqlx::raw_sql("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows: Vec<MySqlRow> =
+        sqlx::raw_sql("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
-    Ok(rows.iter().map(|row| DatabaseInfo { name: get_str(row, 0) }).collect())
+    Ok(rows
+        .iter()
+        .map(|row| DatabaseInfo {
+            name: get_str(row, 0),
+        })
+        .collect())
 }
 
 pub async fn list_tables(pool: &MySqlPool, database: &str) -> Result<Vec<TableInfo>, String> {
@@ -255,7 +289,11 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
     let start = Instant::now();
     let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT") || trimmed.starts_with("SHOW") || trimmed.starts_with("DESCRIBE") || trimmed.starts_with("EXPLAIN") {
+    if trimmed.starts_with("SELECT")
+        || trimmed.starts_with("SHOW")
+        || trimmed.starts_with("DESCRIBE")
+        || trimmed.starts_with("EXPLAIN")
+    {
         if bare {
             let rows: Vec<MySqlRow> = sqlx::raw_sql(sql)
                 .fetch_all(pool)
@@ -263,8 +301,16 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
                 .map_err(|e| e.to_string())?;
 
             let (columns, column_types) = if let Some(first) = rows.first() {
-                let cols: Vec<String> = first.columns().iter().map(|c| c.name().to_string()).collect();
-                let types: Vec<String> = first.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+                let cols: Vec<String> = first
+                    .columns()
+                    .iter()
+                    .map(|c| c.name().to_string())
+                    .collect();
+                let types: Vec<String> = first
+                    .columns()
+                    .iter()
+                    .map(|c| c.type_info().name().to_string())
+                    .collect();
                 (cols, types)
             } else {
                 (vec![], vec![])
@@ -274,7 +320,13 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
                 .iter()
                 .map(|row| {
                     (0..row.len())
-                        .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                        .map(|i| {
+                            mysql_value_to_json(
+                                row,
+                                i,
+                                column_types.get(i).map(String::as_str).unwrap_or(""),
+                            )
+                        })
                         .collect()
                 })
                 .collect();
@@ -288,8 +340,16 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
             })
         } else {
             let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
-            let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
-            let column_types: Vec<String> = desc.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+            let columns: Vec<String> = desc
+                .columns()
+                .iter()
+                .map(|c| c.name().to_string())
+                .collect();
+            let column_types: Vec<String> = desc
+                .columns()
+                .iter()
+                .map(|c| c.type_info().name().to_string())
+                .collect();
 
             let rows: Vec<MySqlRow> = sqlx::query(sql)
                 .fetch_all(pool)
@@ -300,7 +360,13 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
                 .iter()
                 .map(|row| {
                     (0..row.len())
-                        .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                        .map(|i| {
+                            mysql_value_to_json(
+                                row,
+                                i,
+                                column_types.get(i).map(String::as_str).unwrap_or(""),
+                            )
+                        })
                         .collect()
                 })
                 .collect();
@@ -329,7 +395,11 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
     }
 }
 
-pub async fn list_indexes(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
+pub async fn list_indexes(
+    pool: &MySqlPool,
+    database: &str,
+    table: &str,
+) -> Result<Vec<IndexInfo>, String> {
     let sql = format!(
         "SELECT INDEX_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS columns, \
          MIN(NON_UNIQUE) = 0 AS is_unique, INDEX_NAME = 'PRIMARY' AS is_primary, \
@@ -352,7 +422,11 @@ pub async fn list_indexes(pool: &MySqlPool, database: &str, table: &str) -> Resu
             let cols_str = get_str_by_name(row, "columns");
             IndexInfo {
                 name: get_str_by_name(row, "INDEX_NAME"),
-                columns: cols_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
+                columns: cols_str
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect(),
                 is_unique: row.get::<bool, _>("is_unique"),
                 is_primary: row.get::<bool, _>("is_primary"),
                 filter: None,
@@ -364,7 +438,11 @@ pub async fn list_indexes(pool: &MySqlPool, database: &str, table: &str) -> Resu
         .collect())
 }
 
-pub async fn list_foreign_keys(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
+pub async fn list_foreign_keys(
+    pool: &MySqlPool,
+    database: &str,
+    table: &str,
+) -> Result<Vec<ForeignKeyInfo>, String> {
     let sql = format!(
         "SELECT kcu.CONSTRAINT_NAME, kcu.COLUMN_NAME, \
          kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME \
@@ -391,7 +469,11 @@ pub async fn list_foreign_keys(pool: &MySqlPool, database: &str, table: &str) ->
         .collect())
 }
 
-pub async fn list_triggers(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
+pub async fn list_triggers(
+    pool: &MySqlPool,
+    database: &str,
+    table: &str,
+) -> Result<Vec<TriggerInfo>, String> {
     let sql = format!(
         "SELECT TRIGGER_NAME, EVENT_MANIPULATION, ACTION_TIMING \
          FROM information_schema.TRIGGERS \

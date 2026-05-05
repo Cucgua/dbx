@@ -2,8 +2,8 @@ use std::sync::Arc;
 use tauri::State;
 
 pub use dbx_core::connection::{
-    connection_url_for_endpoint, expand_tilde, redacted_connection_url_for_endpoint, AppState,
-    PoolKind,
+    connection_url_for_endpoint, expand_tilde, probe_connection_endpoint,
+    redacted_connection_url_for_endpoint, AppState, PoolKind,
 };
 use dbx_core::db;
 use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
@@ -50,6 +50,7 @@ pub async fn test_connection(
         config.id.as_str()
     };
     let (host, port) = state.connection_host_port(connection_id, &config).await?;
+    let probe_result = probe_connection_endpoint(&config, &host, port).await;
     let url = connection_url_for_endpoint(&config, &host, port);
     let target = redacted_connection_url_for_endpoint(&config, &host, port);
     log::info!(
@@ -57,102 +58,109 @@ pub async fn test_connection(
         config.db_type,
         target
     );
-    let result = match config.db_type {
-        DatabaseType::Mysql if config.needs_bare_mysql() => {
-            match db::mysql::connect_bare(&url).await {
+    let result = match probe_result {
+        Err(e) => Err(e),
+        Ok(()) => match config.db_type {
+            DatabaseType::Mysql if config.needs_bare_mysql() => {
+                match db::mysql::connect_bare(&url).await {
+                    Ok(pool) => {
+                        pool.close().await;
+                        Ok("Connection successful".to_string())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            DatabaseType::Mysql => match db::mysql::connect(&url).await {
                 Ok(pool) => {
                     pool.close().await;
                     Ok("Connection successful".to_string())
                 }
                 Err(e) => Err(e),
-            }
-        },
-        DatabaseType::Mysql => {
-            match db::mysql::connect(&url).await {
-                Ok(pool) => {
-                    pool.close().await;
-                    Ok("Connection successful".to_string())
+            },
+            DatabaseType::Doris | DatabaseType::StarRocks => {
+                match db::mysql::connect_bare(&url).await {
+                    Ok(pool) => {
+                        pool.close().await;
+                        Ok("Connection successful".to_string())
+                    }
+                    Err(e) => Err(e),
                 }
-                Err(e) => Err(e),
             }
-        },
-        DatabaseType::Doris | DatabaseType::StarRocks => {
-            match db::mysql::connect_bare(&url).await {
-                Ok(pool) => {
-                    pool.close().await;
-                    Ok("Connection successful".to_string())
+            DatabaseType::Postgres | DatabaseType::Redshift => {
+                match db::postgres::connect(&url).await {
+                    Ok(pool) => {
+                        pool.close().await;
+                        Ok("Connection successful".to_string())
+                    }
+                    Err(e) => Err(e),
                 }
-                Err(e) => Err(e),
             }
-        },
-        DatabaseType::Postgres | DatabaseType::Redshift => match db::postgres::connect(&url).await {
-            Ok(pool) => {
-                pool.close().await;
-                Ok("Connection successful".to_string())
+            DatabaseType::Sqlite => {
+                match db::sqlite::connect_path(&expand_tilde(&config.host)).await {
+                    Ok(pool) => {
+                        pool.close().await;
+                        Ok("Connection successful".to_string())
+                    }
+                    Err(e) => Err(e),
+                }
             }
-            Err(e) => Err(e),
-        },
-        DatabaseType::Sqlite => match db::sqlite::connect_path(&expand_tilde(&config.host)).await {
-            Ok(pool) => {
-                pool.close().await;
-                Ok("Connection successful".to_string())
-            }
-            Err(e) => Err(e),
-        },
-        DatabaseType::Redis => {
-            db::redis_driver::connect(&url)
+            DatabaseType::Redis => db::redis_driver::connect(&url)
                 .await
-                .map(|_| "Connection successful".to_string())
-        }
-        DatabaseType::DuckDb => {
-            duckdb::Connection::open(&expand_tilde(&config.host))
-                .map(|_| "Connection successful".to_string())
-                .map_err(|e| e.to_string())
-        }
-        DatabaseType::MongoDb => match mongodb::Client::with_uri_str(&url).await {
-            Ok(client) => client
-                .list_database_names()
-                .await
+                .map(|_| "Connection successful".to_string()),
+            DatabaseType::DuckDb => duckdb::Connection::open(&expand_tilde(&config.host))
                 .map(|_| "Connection successful".to_string())
                 .map_err(|e| e.to_string()),
-            Err(e) => Err(e.to_string()),
+            DatabaseType::MongoDb => match db::mongo_driver::connect(&url).await {
+                Ok(client) => db::mongo_driver::test_connection(&client)
+                    .await
+                    .map(|_| "Connection successful".to_string()),
+                Err(e) => Err(e.to_string()),
+            },
+            DatabaseType::ClickHouse => {
+                let username = if config.username.is_empty() {
+                    None
+                } else {
+                    Some(config.username.clone())
+                };
+                let password = if config.password.is_empty() {
+                    None
+                } else {
+                    Some(config.password.clone())
+                };
+                let client = db::clickhouse_driver::ChClient::new(&url, username, password);
+                db::clickhouse_driver::test_connection(&client)
+                    .await
+                    .map(|_| "Connection successful".to_string())
+            }
+            DatabaseType::SqlServer => db::sqlserver::connect(
+                &host,
+                port,
+                &config.username,
+                &config.password,
+                config.database.as_deref(),
+            )
+            .await
+            .map(|_| "Connection successful".to_string()),
+            DatabaseType::Oracle => db::oracle_driver::connect(
+                &host,
+                port,
+                config.database.as_deref().unwrap_or("ORCL"),
+                &config.username,
+                &config.password,
+            )
+            .await
+            .map(|_| "Connection successful".to_string()),
+            DatabaseType::Elasticsearch => {
+                let client = db::elasticsearch_driver::EsClient::new(
+                    &url,
+                    Some(&config.username),
+                    Some(&config.password),
+                );
+                db::elasticsearch_driver::test_connection(&client)
+                    .await
+                    .map(|_| "Connection successful".to_string())
+            }
         },
-        DatabaseType::ClickHouse => {
-            let username = if config.username.is_empty() { None } else { Some(config.username.clone()) };
-            let password = if config.password.is_empty() { None } else { Some(config.password.clone()) };
-            let client = db::clickhouse_driver::ChClient::new(&url, username, password);
-            db::clickhouse_driver::test_connection(&client)
-                .await
-                .map(|_| "Connection successful".to_string())
-        }
-        DatabaseType::SqlServer => db::sqlserver::connect(
-            &host,
-            port,
-            &config.username,
-            &config.password,
-            config.database.as_deref(),
-        )
-        .await
-        .map(|_| "Connection successful".to_string()),
-        DatabaseType::Oracle => db::oracle_driver::connect(
-            &host,
-            port,
-            config.database.as_deref().unwrap_or("ORCL"),
-            &config.username,
-            &config.password,
-        )
-        .await
-        .map(|_| "Connection successful".to_string()),
-        DatabaseType::Elasticsearch => {
-            let client = db::elasticsearch_driver::EsClient::new(
-                &url,
-                Some(&config.username),
-                Some(&config.password),
-            );
-            db::elasticsearch_driver::test_connection(&client)
-                .await
-                .map(|_| "Connection successful".to_string())
-        }
     };
 
     if config.ssh_enabled && !config.ssh_host.is_empty() {
@@ -170,29 +178,48 @@ pub async fn connect_db(
     let id = config.id.clone();
 
     let (host, port) = state.connection_host_port(&id, &config).await?;
+    probe_connection_endpoint(&config, &host, port).await?;
     let url = connection_url_for_endpoint(&config, &host, port);
 
     let pool = match config.db_type {
-        DatabaseType::Mysql if config.needs_bare_mysql() => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
+        DatabaseType::Mysql if config.needs_bare_mysql() => {
+            PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true)
+        }
         DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, false),
-        DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
-        DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
-        DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&config.host)).await?),
+        DatabaseType::Doris | DatabaseType::StarRocks => {
+            PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true)
+        }
+        DatabaseType::Postgres | DatabaseType::Redshift => {
+            PoolKind::Postgres(db::postgres::connect(&url).await?)
+        }
+        DatabaseType::Sqlite => {
+            PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&config.host)).await?)
+        }
         DatabaseType::Redis => {
             let con = db::redis_driver::connect(&url).await?;
             PoolKind::Redis(tokio::sync::Mutex::new(con))
         }
         DatabaseType::DuckDb => {
-            let con = duckdb::Connection::open(&expand_tilde(&config.host)).map_err(|e| e.to_string())?;
+            let con =
+                duckdb::Connection::open(&expand_tilde(&config.host)).map_err(|e| e.to_string())?;
             PoolKind::DuckDb(std::sync::Arc::new(std::sync::Mutex::new(con)))
         }
         DatabaseType::MongoDb => {
-            let client = mongodb::Client::with_uri_str(&url).await.map_err(|e| e.to_string())?;
+            let client = db::mongo_driver::connect(&url).await?;
+            db::mongo_driver::test_connection(&client).await?;
             PoolKind::MongoDb(client)
         }
         DatabaseType::ClickHouse => {
-            let username = if config.username.is_empty() { None } else { Some(config.username.clone()) };
-            let password = if config.password.is_empty() { None } else { Some(config.password.clone()) };
+            let username = if config.username.is_empty() {
+                None
+            } else {
+                Some(config.username.clone())
+            };
+            let password = if config.password.is_empty() {
+                None
+            } else {
+                Some(config.password.clone())
+            };
             let client = db::clickhouse_driver::ChClient::new(&url, username, password);
             db::clickhouse_driver::test_connection(&client).await?;
             PoolKind::ClickHouse(client)
@@ -201,7 +228,8 @@ pub async fn connect_db(
             let client = db::sqlserver::connect(
                 &host,
                 port,
-                &config.username, &config.password,
+                &config.username,
+                &config.password,
                 config.database.as_deref(),
             )
             .await?;
@@ -252,13 +280,13 @@ pub async fn disconnect_db(
                 PoolKind::Mysql(p, _) => p.close().await,
                 PoolKind::Postgres(p) => p.close().await,
                 PoolKind::Sqlite(p) => p.close().await,
-                PoolKind::Redis(_) => {},
-                PoolKind::DuckDb(_) => {},
-                PoolKind::MongoDb(_) => {},
-                PoolKind::ClickHouse(_) => {},
-                PoolKind::SqlServer(_) => {},
-                PoolKind::Oracle(_) => {},
-                PoolKind::Elasticsearch(_) => {},
+                PoolKind::Redis(_) => {}
+                PoolKind::DuckDb(_) => {}
+                PoolKind::MongoDb(_) => {}
+                PoolKind::ClickHouse(_) => {}
+                PoolKind::SqlServer(_) => {}
+                PoolKind::Oracle(_) => {}
+                PoolKind::Elasticsearch(_) => {}
             }
         }
     }

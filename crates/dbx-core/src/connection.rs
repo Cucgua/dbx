@@ -59,7 +59,10 @@ impl AppState {
             configs.get(connection_id).map(|c| c.db_type.clone())
         };
 
-        let is_embedded = matches!(db_type, Some(DatabaseType::Sqlite) | Some(DatabaseType::DuckDb));
+        let is_embedded = matches!(
+            db_type,
+            Some(DatabaseType::Sqlite) | Some(DatabaseType::DuckDb)
+        );
         if is_embedded {
             return Ok(connection_id.to_string());
         }
@@ -95,28 +98,47 @@ impl AppState {
         }
 
         let (host, port) = self.connection_host_port(connection_id, &db_config).await?;
+        probe_connection_endpoint(&db_config, &host, port).await?;
         let url = connection_url_for_endpoint(&db_config, &host, port);
         let pool = match db_config.db_type {
-            DatabaseType::Mysql if db_config.needs_bare_mysql() => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
+            DatabaseType::Mysql if db_config.needs_bare_mysql() => {
+                PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true)
+            }
             DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, false),
-            DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
-            DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
-            DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?),
+            DatabaseType::Doris | DatabaseType::StarRocks => {
+                PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true)
+            }
+            DatabaseType::Postgres | DatabaseType::Redshift => {
+                PoolKind::Postgres(db::postgres::connect(&url).await?)
+            }
+            DatabaseType::Sqlite => {
+                PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?)
+            }
             DatabaseType::Redis => {
                 let con = db::redis_driver::connect(&url).await?;
                 PoolKind::Redis(tokio::sync::Mutex::new(con))
             }
             DatabaseType::DuckDb => {
-                let con = duckdb::Connection::open(&expand_tilde(&db_config.host)).map_err(|e| e.to_string())?;
+                let con = duckdb::Connection::open(&expand_tilde(&db_config.host))
+                    .map_err(|e| e.to_string())?;
                 PoolKind::DuckDb(Arc::new(std::sync::Mutex::new(con)))
             }
             DatabaseType::MongoDb => {
-                let client = mongodb::Client::with_uri_str(&url).await.map_err(|e| e.to_string())?;
+                let client = db::mongo_driver::connect(&url).await?;
+                db::mongo_driver::test_connection(&client).await?;
                 PoolKind::MongoDb(client)
             }
             DatabaseType::ClickHouse => {
-                let username = if db_config.username.is_empty() { None } else { Some(db_config.username.clone()) };
-                let password = if db_config.password.is_empty() { None } else { Some(db_config.password.clone()) };
+                let username = if db_config.username.is_empty() {
+                    None
+                } else {
+                    Some(db_config.username.clone())
+                };
+                let password = if db_config.password.is_empty() {
+                    None
+                } else {
+                    Some(db_config.password.clone())
+                };
                 let client = db::clickhouse_driver::ChClient::new(&url, username, password);
                 db::clickhouse_driver::test_connection(&client).await?;
                 PoolKind::ClickHouse(client)
@@ -137,7 +159,8 @@ impl AppState {
                     &host,
                     port,
                     db_config.database.as_deref().unwrap_or("ORCL"),
-                    &db_config.username, &db_config.password,
+                    &db_config.username,
+                    &db_config.password,
                 )
                 .await?;
                 PoolKind::Oracle(Arc::new(tokio::sync::Mutex::new(client)))
@@ -196,8 +219,11 @@ impl AppState {
     ) -> Result<String, String> {
         let is_single_conn = {
             let configs = self.configs.lock().await;
-            configs.get(connection_id)
-                .map(|c| c.db_type == DatabaseType::Oracle || c.db_type == DatabaseType::Elasticsearch)
+            configs
+                .get(connection_id)
+                .map(|c| {
+                    c.db_type == DatabaseType::Oracle || c.db_type == DatabaseType::Elasticsearch
+                })
                 .unwrap_or(false)
         };
         let pool_key = if is_single_conn {
@@ -230,5 +256,24 @@ pub fn redacted_connection_url_for_endpoint(
         config.redacted_connection_url()
     } else {
         config.redacted_connection_url_with_host(host, port)
+    }
+}
+
+pub async fn probe_connection_endpoint(
+    config: &ConnectionConfig,
+    host: &str,
+    port: u16,
+) -> Result<(), String> {
+    match config.db_type {
+        DatabaseType::Sqlite | DatabaseType::DuckDb => Ok(()),
+        DatabaseType::MongoDb
+            if config
+                .connection_string
+                .as_deref()
+                .is_some_and(|value| !value.is_empty()) =>
+        {
+            Ok(())
+        }
+        _ => db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port).await,
     }
 }

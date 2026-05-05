@@ -1,15 +1,28 @@
 use oracle_rs::{Config, Connection};
 use std::time::Instant;
 
-use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
+use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
+use crate::types::{
+    ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo,
+};
 
 pub type OracleClient = Connection;
 
-pub async fn connect(host: &str, port: u16, service: &str, user: &str, pass: &str) -> Result<OracleClient, String> {
+pub async fn connect(
+    host: &str,
+    port: u16,
+    service: &str,
+    user: &str,
+    pass: &str,
+) -> Result<OracleClient, String> {
     let config = Config::new(host, port, service, user, pass);
-    Connection::connect_with_config(config)
-        .await
-        .map_err(|e| format!("Oracle connection failed: {e}"))
+    tokio::time::timeout(
+        connection_timeout(),
+        Connection::connect_with_config(config),
+    )
+    .await
+    .map_err(|_| format!("Oracle connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+    .map_err(|e| format!("Oracle connection failed: {e}"))
 }
 
 fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
@@ -27,23 +40,29 @@ fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
 }
 
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
-    let result = conn.query(
-        "SELECT username FROM all_users ORDER BY username",
-        &[],
-    ).await.map_err(|e| e.to_string())?;
-    Ok(result.rows.iter().map(|row| {
-        DatabaseInfo { name: row.get_string(0).unwrap_or("").to_string() }
-    }).collect())
+    let result = conn
+        .query("SELECT username FROM all_users ORDER BY username", &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| DatabaseInfo {
+            name: row.get_string(0).unwrap_or("").to_string(),
+        })
+        .collect())
 }
 
 pub async fn list_schemas(conn: &OracleClient) -> Result<Vec<String>, String> {
-    let result = conn.query(
-        "SELECT username FROM all_users ORDER BY username",
-        &[],
-    ).await.map_err(|e| e.to_string())?;
-    Ok(result.rows.iter().map(|row| {
-        row.get_string(0).unwrap_or("").to_string()
-    }).collect())
+    let result = conn
+        .query("SELECT username FROM all_users ORDER BY username", &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| row.get_string(0).unwrap_or("").to_string())
+        .collect())
 }
 
 pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableInfo>, String> {
@@ -55,15 +74,21 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
         s = schema.replace('\'', "''")
     );
     let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
-    Ok(result.rows.iter().map(|row| {
-        TableInfo {
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| TableInfo {
             name: row.get_string(0).unwrap_or("").to_string(),
             table_type: row.get_string(1).unwrap_or("TABLE").to_string(),
-        }
-    }).collect())
+        })
+        .collect())
 }
 
-pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+pub async fn get_columns(
+    conn: &OracleClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ColumnInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
 
@@ -75,7 +100,9 @@ pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Resu
         ),
         &[],
     ).await.map_err(|e| e.to_string())?;
-    let pk_names: std::collections::HashSet<String> = pk_result.rows.iter()
+    let pk_names: std::collections::HashSet<String> = pk_result
+        .rows
+        .iter()
         .filter_map(|row| row.get_string(0).map(|s| s.to_string()))
         .collect();
 
@@ -89,47 +116,56 @@ pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Resu
         &[],
     ).await.map_err(|e| e.to_string())?;
 
-    Ok(col_result.rows.iter().map(|row| {
-        let name = row.get_string(0).unwrap_or("").to_string();
-        let base = row.get_string(1).unwrap_or("").to_string();
-        let data_len = row.get_i64(5).map(|v| v as i32);
-        let char_len = row.get_i64(6).map(|v| v as i32);
-        let num_prec = row.get_i64(3).map(|v| v as i32);
-        let num_scale = row.get_i64(4).map(|v| v as i32);
-        let data_type = match base.to_uppercase().as_str() {
-            "VARCHAR2" | "NVARCHAR2" | "CHAR" | "NCHAR" => {
-                let len = char_len.or(data_len);
-                match len {
-                    Some(n) => format!("{base}({n})"),
-                    None => base,
+    Ok(col_result
+        .rows
+        .iter()
+        .map(|row| {
+            let name = row.get_string(0).unwrap_or("").to_string();
+            let base = row.get_string(1).unwrap_or("").to_string();
+            let data_len = row.get_i64(5).map(|v| v as i32);
+            let char_len = row.get_i64(6).map(|v| v as i32);
+            let num_prec = row.get_i64(3).map(|v| v as i32);
+            let num_scale = row.get_i64(4).map(|v| v as i32);
+            let data_type = match base.to_uppercase().as_str() {
+                "VARCHAR2" | "NVARCHAR2" | "CHAR" | "NCHAR" => {
+                    let len = char_len.or(data_len);
+                    match len {
+                        Some(n) => format!("{base}({n})"),
+                        None => base,
+                    }
                 }
+                "NUMBER" => match (num_prec, num_scale) {
+                    (Some(p), Some(s)) if s > 0 => format!("NUMBER({p},{s})"),
+                    (Some(p), _) if p > 0 => format!("NUMBER({p})"),
+                    _ => "NUMBER".to_string(),
+                },
+                "RAW" => match data_len {
+                    Some(n) => format!("RAW({n})"),
+                    None => "RAW".to_string(),
+                },
+                _ => base,
+            };
+            ColumnInfo {
+                is_primary_key: pk_names.contains(&name),
+                name,
+                data_type,
+                is_nullable: row.get_string(2).unwrap_or("N") == "Y",
+                column_default: None,
+                extra: None,
+                comment: None,
+                numeric_precision: num_prec,
+                numeric_scale: num_scale,
+                character_maximum_length: char_len,
             }
-            "NUMBER" => match (num_prec, num_scale) {
-                (Some(p), Some(s)) if s > 0 => format!("NUMBER({p},{s})"),
-                (Some(p), _) if p > 0 => format!("NUMBER({p})"),
-                _ => "NUMBER".to_string(),
-            },
-            "RAW" => match data_len {
-                Some(n) => format!("RAW({n})"),
-                None => "RAW".to_string(),
-            },
-            _ => base,
-        };
-        ColumnInfo {
-            is_primary_key: pk_names.contains(&name),
-            name,
-            data_type,
-            is_nullable: row.get_string(2).unwrap_or("N") == "Y",
-            column_default: None,
-            extra: None, comment: None,
-            numeric_precision: num_prec,
-            numeric_scale: num_scale,
-            character_maximum_length: char_len,
-        }
-    }).collect())
+        })
+        .collect())
 }
 
-pub async fn list_indexes(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
+pub async fn list_indexes(
+    conn: &OracleClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<IndexInfo>, String> {
     let sql = format!(
         "SELECT i.INDEX_NAME, \
          LISTAGG(ic.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY ic.COLUMN_POSITION) AS columns, \
@@ -146,22 +182,34 @@ pub async fn list_indexes(conn: &OracleClient, schema: &str, table: &str) -> Res
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
     let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
-    Ok(result.rows.iter().map(|row| {
-        let cols_str = row.get_string(1).unwrap_or("");
-        IndexInfo {
-            name: row.get_string(0).unwrap_or("").to_string(),
-            columns: cols_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
-            is_unique: row.get_string(2).unwrap_or("") == "UNIQUE",
-            is_primary: row.get_i64(3).unwrap_or(0) == 1,
-            filter: None,
-            index_type: row.get_string(4).map(|s| s.to_string()),
-            included_columns: None,
-            comment: None,
-        }
-    }).collect())
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| {
+            let cols_str = row.get_string(1).unwrap_or("");
+            IndexInfo {
+                name: row.get_string(0).unwrap_or("").to_string(),
+                columns: cols_str
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect(),
+                is_unique: row.get_string(2).unwrap_or("") == "UNIQUE",
+                is_primary: row.get_i64(3).unwrap_or(0) == 1,
+                filter: None,
+                index_type: row.get_string(4).map(|s| s.to_string()),
+                included_columns: None,
+                comment: None,
+            }
+        })
+        .collect())
 }
 
-pub async fn list_foreign_keys(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
+pub async fn list_foreign_keys(
+    conn: &OracleClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ForeignKeyInfo>, String> {
     let sql = format!(
         "SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME, rc.TABLE_NAME, rcc.COLUMN_NAME \
          FROM ALL_CONSTRAINTS c \
@@ -173,32 +221,41 @@ pub async fn list_foreign_keys(conn: &OracleClient, schema: &str, table: &str) -
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
     let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
-    Ok(result.rows.iter().map(|row| {
-        ForeignKeyInfo {
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| ForeignKeyInfo {
             name: row.get_string(0).unwrap_or("").to_string(),
             column: row.get_string(1).unwrap_or("").to_string(),
             ref_table: row.get_string(2).unwrap_or("").to_string(),
             ref_column: row.get_string(3).unwrap_or("").to_string(),
-        }
-    }).collect())
+        })
+        .collect())
 }
 
-pub async fn list_triggers(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
+pub async fn list_triggers(
+    conn: &OracleClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<TriggerInfo>, String> {
     let sql = format!(
         "SELECT TRIGGER_NAME, TRIGGERING_EVENT, TRIGGER_TYPE \
          FROM ALL_TRIGGERS \
          WHERE OWNER = '{s}' AND TABLE_NAME = '{t}' \
          ORDER BY TRIGGER_NAME",
-        s = schema.replace('\'', "''"), t = table.replace('\'', "''")
+        s = schema.replace('\'', "''"),
+        t = table.replace('\'', "''")
     );
     let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
-    Ok(result.rows.iter().map(|row| {
-        TriggerInfo {
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| TriggerInfo {
             name: row.get_string(0).unwrap_or("").to_string(),
             event: row.get_string(1).unwrap_or("").to_string(),
             timing: row.get_string(2).unwrap_or("").to_string(),
-        }
-    }).collect())
+        })
+        .collect())
 }
 
 pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult, String> {
@@ -214,13 +271,19 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
     {
         let result = conn.query(sql, &[]).await.map_err(|e| e.to_string())?;
         let columns: Vec<String> = result.columns.iter().map(|c| c.name.clone()).collect();
-        let rows: Vec<Vec<serde_json::Value>> = result.rows.iter().map(|row| {
-            (0..columns.len()).map(|i| {
-                row.get(i)
-                    .map(|v| value_to_json(v))
-                    .unwrap_or(serde_json::Value::Null)
-            }).collect()
-        }).collect();
+        let rows: Vec<Vec<serde_json::Value>> = result
+            .rows
+            .iter()
+            .map(|row| {
+                (0..columns.len())
+                    .map(|i| {
+                        row.get(i)
+                            .map(|v| value_to_json(v))
+                            .unwrap_or(serde_json::Value::Null)
+                    })
+                    .collect()
+            })
+            .collect();
 
         Ok(QueryResult {
             columns,

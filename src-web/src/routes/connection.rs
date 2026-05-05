@@ -41,10 +41,22 @@ pub async fn test_connection(
         .insert(temp_id.clone(), config.clone());
 
     // Try to connect
-    let result = app.get_or_create_pool(&temp_id, config.database.as_deref()).await;
+    let result = app
+        .get_or_create_pool(&temp_id, config.database.as_deref())
+        .await;
 
-    // Clean up
-    app.connections.lock().await.remove(&temp_id);
+    // Clean up any pool keys created for the temporary connection, including
+    // database-scoped keys like "__test_uuid:database".
+    let mut connections = app.connections.lock().await;
+    let temp_keys: Vec<String> = connections
+        .keys()
+        .filter(|key| key.starts_with(&temp_id))
+        .cloned()
+        .collect();
+    for key in temp_keys {
+        connections.remove(&key);
+    }
+    drop(connections);
     app.configs.lock().await.remove(&temp_id);
 
     match result {

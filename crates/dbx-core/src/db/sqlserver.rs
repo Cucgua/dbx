@@ -1,21 +1,37 @@
 use rust_decimal::Decimal;
+use std::time::Instant;
 use tiberius::{AuthMethod, Client, Config};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
-use std::time::Instant;
 
-use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
+use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
+use crate::types::{
+    ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo,
+};
 
 pub type SqlServerClient = Client<Compat<TcpStream>>;
 
-pub async fn connect(host: &str, port: u16, user: &str, pass: &str, database: Option<&str>) -> Result<SqlServerClient, String> {
+pub async fn connect(
+    host: &str,
+    port: u16,
+    user: &str,
+    pass: &str,
+    database: Option<&str>,
+) -> Result<SqlServerClient, String> {
     match try_connect(host, port, user, pass, database, true).await {
         Ok(client) => Ok(client),
         Err(_) => try_connect(host, port, user, pass, database, false).await,
     }
 }
 
-async fn try_connect(host: &str, port: u16, user: &str, pass: &str, database: Option<&str>, use_encryption: bool) -> Result<SqlServerClient, String> {
+async fn try_connect(
+    host: &str,
+    port: u16,
+    user: &str,
+    pass: &str,
+    database: Option<&str>,
+    use_encryption: bool,
+) -> Result<SqlServerClient, String> {
     let mut config = Config::new();
     config.host(host);
     config.port(port);
@@ -28,72 +44,107 @@ async fn try_connect(host: &str, port: u16, user: &str, pass: &str, database: Op
         config.encryption(tiberius::EncryptionLevel::NotSupported);
     }
 
-    let tcp = TcpStream::connect(config.get_addr())
+    let tcp = tokio::time::timeout(connection_timeout(), TcpStream::connect(config.get_addr()))
         .await
+        .map_err(|_| format!("SQL Server connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
         .map_err(|e| format!("SQL Server connection failed: {e}"))?;
-    Client::connect(config, tcp.compat_write())
-        .await
-        .map_err(|e| format!("SQL Server connection failed: {e}"))
+    tokio::time::timeout(
+        connection_timeout(),
+        Client::connect(config, tcp.compat_write()),
+    )
+    .await
+    .map_err(|_| format!("SQL Server handshake timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+    .map_err(|e| format!("SQL Server connection failed: {e}"))
 }
 
 fn row_to_json(row: &tiberius::Row) -> Vec<serde_json::Value> {
-    (0..row.len()).map(|i| {
-        if let Some(v) = row.try_get::<&str, _>(i).ok().flatten() {
-            serde_json::Value::String(v.to_string())
-        } else if let Some(v) = row.try_get::<Decimal, _>(i).ok().flatten() {
-            serde_json::Value::String(v.to_string())
-        } else if let Some(v) = row.try_get::<i32, _>(i).ok().flatten() {
-            serde_json::Value::Number(v.into())
-        } else if let Some(v) = row.try_get::<i64, _>(i).ok().flatten() {
-            serde_json::Value::Number(v.into())
-        } else if let Some(v) = row.try_get::<f64, _>(i).ok().flatten() {
-            serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
-        } else if let Some(v) = row.try_get::<bool, _>(i).ok().flatten() {
-            serde_json::Value::Bool(v)
-        } else {
-            serde_json::Value::Null
-        }
-    }).collect()
+    (0..row.len())
+        .map(|i| {
+            if let Some(v) = row.try_get::<&str, _>(i).ok().flatten() {
+                serde_json::Value::String(v.to_string())
+            } else if let Some(v) = row.try_get::<Decimal, _>(i).ok().flatten() {
+                serde_json::Value::String(v.to_string())
+            } else if let Some(v) = row.try_get::<i32, _>(i).ok().flatten() {
+                serde_json::Value::Number(v.into())
+            } else if let Some(v) = row.try_get::<i64, _>(i).ok().flatten() {
+                serde_json::Value::Number(v.into())
+            } else if let Some(v) = row.try_get::<f64, _>(i).ok().flatten() {
+                serde_json::Number::from_f64(v)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            } else if let Some(v) = row.try_get::<bool, _>(i).ok().flatten() {
+                serde_json::Value::Bool(v)
+            } else {
+                serde_json::Value::Null
+            }
+        })
+        .collect()
 }
 
 pub async fn list_databases(client: &mut SqlServerClient) -> Result<Vec<DatabaseInfo>, String> {
-    let stream = client.query("SELECT name FROM sys.databases ORDER BY name", &[])
-        .await.map_err(|e| e.to_string())?;
-    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-    Ok(rows.iter().map(|row| {
-        DatabaseInfo { name: row.get::<&str, _>(0).unwrap_or("").to_string() }
-    }).collect())
+    let stream = client
+        .query("SELECT name FROM sys.databases ORDER BY name", &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| DatabaseInfo {
+            name: row.get::<&str, _>(0).unwrap_or("").to_string(),
+        })
+        .collect())
 }
 
 pub async fn list_schemas(client: &mut SqlServerClient) -> Result<Vec<String>, String> {
-    let stream = client.query(
-        "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA \
+    let stream = client
+        .query(
+            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA \
          WHERE SCHEMA_NAME NOT IN ('guest','INFORMATION_SCHEMA','sys') \
          ORDER BY SCHEMA_NAME",
-        &[],
-    ).await.map_err(|e| e.to_string())?;
-    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-    Ok(rows.iter().map(|row| {
-        row.get::<&str, _>(0).unwrap_or("").to_string()
-    }).collect())
+            &[],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| row.get::<&str, _>(0).unwrap_or("").to_string())
+        .collect())
 }
 
-pub async fn list_tables(client: &mut SqlServerClient, schema: &str) -> Result<Vec<TableInfo>, String> {
+pub async fn list_tables(
+    client: &mut SqlServerClient,
+    schema: &str,
+) -> Result<Vec<TableInfo>, String> {
     let sql = format!(
         "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{}' ORDER BY TABLE_NAME",
         schema.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-    Ok(rows.iter().map(|row| {
-        TableInfo {
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| TableInfo {
             name: row.get::<&str, _>(0).unwrap_or("").to_string(),
             table_type: row.get::<&str, _>(1).unwrap_or("BASE TABLE").to_string(),
-        }
-    }).collect())
+        })
+        .collect())
 }
 
-pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+pub async fn get_columns(
+    client: &mut SqlServerClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ColumnInfo>, String> {
     let sql = format!(
         "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, c.COLUMN_DEFAULT, \
          CASE WHEN kcu.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS IS_PK, \
@@ -107,58 +158,69 @@ pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-    Ok(rows.iter().map(|row| {
-        let base = row.get::<&str, _>(1).unwrap_or("").to_string();
-        let max_len = row.get::<i32, _>(7);
-        let dt_prec = row.get::<i32, _>(8);
-        let num_prec = row.get::<i32, _>(5);
-        let num_scale = row.get::<i32, _>(6);
-        let data_type = match base.to_lowercase().as_str() {
-            "varchar" => match max_len {
-                Some(-1) => "varchar(max)".to_string(),
-                Some(n) => format!("varchar({n})"),
-                None => "varchar".to_string(),
-            },
-            "nvarchar" => match max_len {
-                Some(-1) => "nvarchar(max)".to_string(),
-                Some(n) => format!("nvarchar({n})"),
-                None => "nvarchar".to_string(),
-            },
-            "varbinary" => match max_len {
-                Some(-1) => "varbinary(max)".to_string(),
-                Some(n) if n > 0 => format!("varbinary({n})"),
-                _ => "varbinary".to_string(),
-            },
-            "char" | "nchar" | "binary" => match max_len {
-                Some(n) if n > 0 => format!("{base}({n})"),
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let base = row.get::<&str, _>(1).unwrap_or("").to_string();
+            let max_len = row.get::<i32, _>(7);
+            let dt_prec = row.get::<i32, _>(8);
+            let num_prec = row.get::<i32, _>(5);
+            let num_scale = row.get::<i32, _>(6);
+            let data_type = match base.to_lowercase().as_str() {
+                "varchar" => match max_len {
+                    Some(-1) => "varchar(max)".to_string(),
+                    Some(n) => format!("varchar({n})"),
+                    None => "varchar".to_string(),
+                },
+                "nvarchar" => match max_len {
+                    Some(-1) => "nvarchar(max)".to_string(),
+                    Some(n) => format!("nvarchar({n})"),
+                    None => "nvarchar".to_string(),
+                },
+                "varbinary" => match max_len {
+                    Some(-1) => "varbinary(max)".to_string(),
+                    Some(n) if n > 0 => format!("varbinary({n})"),
+                    _ => "varbinary".to_string(),
+                },
+                "char" | "nchar" | "binary" => match max_len {
+                    Some(n) if n > 0 => format!("{base}({n})"),
+                    _ => base,
+                },
+                "decimal" | "numeric" => match (num_prec, num_scale) {
+                    (Some(p), Some(s)) => format!("{base}({p},{s})"),
+                    _ => base,
+                },
+                "datetime2" | "datetimeoffset" | "time" => match dt_prec {
+                    Some(p) => format!("{base}({p})"),
+                    _ => base,
+                },
                 _ => base,
+            };
+            ColumnInfo {
+                name: row.get::<&str, _>(0).unwrap_or("").to_string(),
+                data_type,
+                is_nullable: row.get::<&str, _>(2).unwrap_or("NO") == "YES",
+                column_default: row.get::<&str, _>(3).map(|s| s.to_string()),
+                is_primary_key: row.get::<i32, _>(4).unwrap_or(0) == 1,
+                extra: None,
+                comment: None,
+                numeric_precision: num_prec,
+                numeric_scale: num_scale,
+                character_maximum_length: max_len,
             }
-            "decimal" | "numeric" => match (num_prec, num_scale) {
-                (Some(p), Some(s)) => format!("{base}({p},{s})"),
-                _ => base,
-            },
-            "datetime2" | "datetimeoffset" | "time" => match dt_prec {
-                Some(p) => format!("{base}({p})"),
-                _ => base,
-            },
-            _ => base,
-        };
-        ColumnInfo {
-            name: row.get::<&str, _>(0).unwrap_or("").to_string(),
-            data_type,
-            is_nullable: row.get::<&str, _>(2).unwrap_or("NO") == "YES",
-            column_default: row.get::<&str, _>(3).map(|s| s.to_string()),
-            is_primary_key: row.get::<i32, _>(4).unwrap_or(0) == 1,
-            extra: None, comment: None,
-            numeric_precision: num_prec,
-            numeric_scale: num_scale,
-            character_maximum_length: max_len,
-        }
-    }).collect())
+        })
+        .collect())
 }
 
-pub async fn list_indexes(client: &mut SqlServerClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
+pub async fn list_indexes(
+    client: &mut SqlServerClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<IndexInfo>, String> {
     let sql = format!(
         "SELECT i.name, \
          STRING_AGG(CASE WHEN ic.is_included_column = 0 THEN c.name END, ',') WITHIN GROUP (ORDER BY ic.key_ordinal) AS columns, \
@@ -174,24 +236,42 @@ pub async fn list_indexes(client: &mut SqlServerClient, schema: &str, table: &st
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-    Ok(rows.iter().map(|row| {
-        let cols_str = row.get::<&str, _>(1).unwrap_or("");
-        let inc_str = row.get::<&str, _>(5).unwrap_or("");
-        IndexInfo {
-            name: row.get::<&str, _>(0).unwrap_or("").to_string(),
-            columns: cols_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
-            is_unique: row.get::<bool, _>(2).unwrap_or(false),
-            is_primary: row.get::<bool, _>(3).unwrap_or(false),
-            filter: row.get::<&str, _>(6).map(|s| s.to_string()),
-            index_type: row.get::<&str, _>(4).map(|s| s.to_string()),
-            included_columns: if inc_str.is_empty() { None } else { Some(inc_str.split(',').map(|s| s.to_string()).collect()) },
-            comment: None,
-        }
-    }).collect())
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let cols_str = row.get::<&str, _>(1).unwrap_or("");
+            let inc_str = row.get::<&str, _>(5).unwrap_or("");
+            IndexInfo {
+                name: row.get::<&str, _>(0).unwrap_or("").to_string(),
+                columns: cols_str
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect(),
+                is_unique: row.get::<bool, _>(2).unwrap_or(false),
+                is_primary: row.get::<bool, _>(3).unwrap_or(false),
+                filter: row.get::<&str, _>(6).map(|s| s.to_string()),
+                index_type: row.get::<&str, _>(4).map(|s| s.to_string()),
+                included_columns: if inc_str.is_empty() {
+                    None
+                } else {
+                    Some(inc_str.split(',').map(|s| s.to_string()).collect())
+                },
+                comment: None,
+            }
+        })
+        .collect())
 }
 
-pub async fn list_foreign_keys(client: &mut SqlServerClient, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
+pub async fn list_foreign_keys(
+    client: &mut SqlServerClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ForeignKeyInfo>, String> {
     let sql = format!(
         "SELECT fk.name, c.name, rt.name, rc.name \
          FROM sys.foreign_keys fk \
@@ -204,18 +284,26 @@ pub async fn list_foreign_keys(client: &mut SqlServerClient, schema: &str, table
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-    Ok(rows.iter().map(|row| {
-        ForeignKeyInfo {
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| ForeignKeyInfo {
             name: row.get::<&str, _>(0).unwrap_or("").to_string(),
             column: row.get::<&str, _>(1).unwrap_or("").to_string(),
             ref_table: row.get::<&str, _>(2).unwrap_or("").to_string(),
             ref_column: row.get::<&str, _>(3).unwrap_or("").to_string(),
-        }
-    }).collect())
+        })
+        .collect())
 }
 
-pub async fn list_triggers(client: &mut SqlServerClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
+pub async fn list_triggers(
+    client: &mut SqlServerClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<TriggerInfo>, String> {
     let sql = format!(
         "SELECT t.name, te.type_desc, CASE WHEN t.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END \
          FROM sys.triggers t \
@@ -225,14 +313,18 @@ pub async fn list_triggers(client: &mut SqlServerClient, schema: &str, table: &s
         s = schema.replace('\'', "''"), t = table.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-    Ok(rows.iter().map(|row| {
-        TriggerInfo {
+    let rows = stream
+        .into_first_result()
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| TriggerInfo {
             name: row.get::<&str, _>(0).unwrap_or("").to_string(),
             event: row.get::<&str, _>(1).unwrap_or("").to_string(),
             timing: row.get::<&str, _>(2).unwrap_or("AFTER").to_string(),
-        }
-    }).collect())
+        })
+        .collect())
 }
 
 pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<QueryResult, String> {
@@ -245,12 +337,23 @@ pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<Qu
         || trimmed.starts_with("TABLE")
     {
         let mut stream = client.query(sql, &[]).await.map_err(|e| e.to_string())?;
-        let columns_meta = stream.columns().await.map_err(|e| e.to_string())?
-            .map(|cols| cols.iter().map(|c| c.name().to_string()).collect::<Vec<_>>())
+        let columns_meta = stream
+            .columns()
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|cols| {
+                cols.iter()
+                    .map(|c| c.name().to_string())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
 
-        let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-        let result_rows: Vec<Vec<serde_json::Value>> = rows.iter().map(|row| row_to_json(row)).collect();
+        let rows = stream
+            .into_first_result()
+            .await
+            .map_err(|e| e.to_string())?;
+        let result_rows: Vec<Vec<serde_json::Value>> =
+            rows.iter().map(|row| row_to_json(row)).collect();
 
         Ok(QueryResult {
             columns: columns_meta,

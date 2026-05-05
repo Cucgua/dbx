@@ -1,6 +1,7 @@
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 
+use super::{connection_timeout, with_connection_timeout};
 use crate::db::mongo_driver::MongoDocumentResult;
 
 pub struct EsClient {
@@ -15,8 +16,12 @@ impl EsClient {
             (Some(u), Some(p)) if !u.is_empty() => Some((u.to_string(), p.to_string())),
             _ => None,
         };
+        let http = HttpClient::builder()
+            .connect_timeout(connection_timeout())
+            .build()
+            .unwrap_or_else(|_| HttpClient::new());
         Self {
-            http: HttpClient::new(),
+            http,
             base_url: url.trim_end_matches('/').to_string(),
             auth,
         }
@@ -62,10 +67,14 @@ impl Clone for EsClient {
 }
 
 pub async fn test_connection(client: &EsClient) -> Result<(), String> {
-    let resp = client.get("/")
-        .send()
-        .await
-        .map_err(|e| format!("Elasticsearch connection failed: {e}"))?;
+    let resp = with_connection_timeout("Elasticsearch", async {
+        client
+            .get("/")
+            .send()
+            .await
+            .map_err(|e| format!("Elasticsearch connection failed: {e}"))
+    })
+    .await?;
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
         return Err(format!("Elasticsearch error: {body}"));
@@ -79,7 +88,8 @@ struct CatIndex {
 }
 
 pub async fn list_indices(client: &EsClient) -> Result<Vec<String>, String> {
-    let resp = client.get("/_cat/indices?format=json&h=index")
+    let resp = client
+        .get("/_cat/indices?format=json&h=index")
         .send()
         .await
         .map_err(|e| format!("Elasticsearch request failed: {e}"))?;
@@ -87,7 +97,10 @@ pub async fn list_indices(client: &EsClient) -> Result<Vec<String>, String> {
         let body = resp.text().await.unwrap_or_default();
         return Err(format!("Elasticsearch error: {body}"));
     }
-    let indices: Vec<CatIndex> = resp.json().await.map_err(|e| format!("Elasticsearch parse error: {e}"))?;
+    let indices: Vec<CatIndex> = resp
+        .json()
+        .await
+        .map_err(|e| format!("Elasticsearch parse error: {e}"))?;
     let mut names: Vec<String> = indices
         .into_iter()
         .filter(|i| !i.index.starts_with('.'))
@@ -134,7 +147,8 @@ pub async fn find_documents(
     });
 
     let path = format!("/{}/_search", index);
-    let resp = client.post(&path)
+    let resp = client
+        .post(&path)
         .json(&body)
         .send()
         .await
@@ -145,17 +159,24 @@ pub async fn find_documents(
         return Err(format!("Elasticsearch error: {body}"));
     }
 
-    let result: SearchResponse = resp.json().await
+    let result: SearchResponse = resp
+        .json()
+        .await
         .map_err(|e| format!("Elasticsearch parse error: {e}"))?;
 
-    let documents: Vec<serde_json::Value> = result.hits.hits.into_iter().map(|hit| {
-        let mut doc = match hit.source {
-            serde_json::Value::Object(map) => map,
-            _ => serde_json::Map::new(),
-        };
-        doc.insert("_id".to_string(), serde_json::Value::String(hit.id));
-        serde_json::Value::Object(doc)
-    }).collect();
+    let documents: Vec<serde_json::Value> = result
+        .hits
+        .hits
+        .into_iter()
+        .map(|hit| {
+            let mut doc = match hit.source {
+                serde_json::Value::Object(map) => map,
+                _ => serde_json::Map::new(),
+            };
+            doc.insert("_id".to_string(), serde_json::Value::String(hit.id));
+            serde_json::Value::Object(doc)
+        })
+        .collect();
 
     Ok(MongoDocumentResult {
         documents,
@@ -168,11 +189,12 @@ pub async fn insert_document(
     index: &str,
     doc_json: &str,
 ) -> Result<String, String> {
-    let doc: serde_json::Value = serde_json::from_str(doc_json)
-        .map_err(|e| format!("Invalid JSON: {e}"))?;
+    let doc: serde_json::Value =
+        serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
 
     let path = format!("/{}/_doc?refresh=true", index);
-    let resp = client.post(&path)
+    let resp = client
+        .post(&path)
         .json(&doc)
         .send()
         .await
@@ -183,7 +205,9 @@ pub async fn insert_document(
         return Err(format!("Elasticsearch error: {body}"));
     }
 
-    let result: serde_json::Value = resp.json().await
+    let result: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| format!("Elasticsearch parse error: {e}"))?;
     Ok(result["_id"].as_str().unwrap_or("").to_string())
 }
@@ -194,11 +218,12 @@ pub async fn update_document(
     id: &str,
     doc_json: &str,
 ) -> Result<u64, String> {
-    let doc: serde_json::Value = serde_json::from_str(doc_json)
-        .map_err(|e| format!("Invalid JSON: {e}"))?;
+    let doc: serde_json::Value =
+        serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
 
     let path = format!("/{}/_doc/{}?refresh=true", index, id);
-    let resp = client.put(&path)
+    let resp = client
+        .put(&path)
         .json(&doc)
         .send()
         .await
@@ -212,13 +237,10 @@ pub async fn update_document(
     Ok(1)
 }
 
-pub async fn delete_document(
-    client: &EsClient,
-    index: &str,
-    id: &str,
-) -> Result<u64, String> {
+pub async fn delete_document(client: &EsClient, index: &str, id: &str) -> Result<u64, String> {
     let path = format!("/{}/_doc/{}?refresh=true", index, id);
-    let resp = client.delete(&path)
+    let resp = client
+        .delete(&path)
         .send()
         .await
         .map_err(|e| format!("Elasticsearch request failed: {e}"))?;

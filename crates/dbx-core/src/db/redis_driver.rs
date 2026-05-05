@@ -1,6 +1,8 @@
 use redis::{AsyncCommands, FromRedisValue, Value as RedisRawValue};
 use serde::{Deserialize, Serialize};
 
+use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
+
 const STREAM_ENTRY_LIMIT: usize = 100;
 const DEFAULT_REDIS_DATABASES: u32 = 16;
 
@@ -28,17 +30,20 @@ pub struct RedisValue {
 pub async fn connect(url: &str) -> Result<redis::aio::MultiplexedConnection, String> {
     let client = redis::Client::open(url).map_err(|e| format!("Redis connection failed: {e}"))?;
     let mut con = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        connection_timeout(),
         client.get_multiplexed_async_connection(),
     )
     .await
-    .map_err(|_| "Redis connection timed out (10s)".to_string())?
+    .map_err(|_| format!("Redis connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
     .map_err(|e| format!("Redis connection failed: {e}"))?;
 
-    redis::cmd("PING")
-        .query_async::<String>(&mut con)
-        .await
-        .map_err(|e| format!("Redis authentication failed or command rejected: {e}"))?;
+    tokio::time::timeout(
+        connection_timeout(),
+        redis::cmd("PING").query_async::<String>(&mut con),
+    )
+    .await
+    .map_err(|_| format!("Redis ping timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+    .map_err(|e| format!("Redis authentication failed or command rejected: {e}"))?;
 
     Ok(con)
 }

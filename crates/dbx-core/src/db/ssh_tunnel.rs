@@ -9,6 +9,8 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
+use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
+
 struct SshClient;
 
 impl client::Handler for SshClient {
@@ -35,16 +37,25 @@ async fn connect_and_authenticate(
         ..Default::default()
     });
 
-    let mut session = client::connect(config, (ssh_host, ssh_port), SshClient {})
-        .await
-        .map_err(|e| format!("SSH connection failed: {e}"))?;
+    let mut session = tokio::time::timeout(
+        connection_timeout(),
+        client::connect(config, (ssh_host, ssh_port), SshClient {}),
+    )
+    .await
+    .map_err(|_| format!("SSH connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+    .map_err(|e| format!("SSH connection failed: {e}"))?;
 
     if !ssh_key_path.is_empty() {
-        let passphrase = if ssh_key_passphrase.is_empty() { None } else { Some(ssh_key_passphrase) };
+        let passphrase = if ssh_key_passphrase.is_empty() {
+            None
+        } else {
+            Some(ssh_key_passphrase)
+        };
         let key_pair = load_secret_key(ssh_key_path, passphrase)
             .map_err(|e| format!("Failed to load SSH key: {e}"))?;
-        let auth_res = session
-            .authenticate_publickey(
+        let auth_res = tokio::time::timeout(
+            connection_timeout(),
+            session.authenticate_publickey(
                 ssh_user,
                 PrivateKeyWithHashAlg::new(
                     Arc::new(key_pair),
@@ -55,17 +66,22 @@ async fn connect_and_authenticate(
                         .flatten()
                         .flatten(),
                 ),
-            )
-            .await
-            .map_err(|e| format!("SSH key auth failed: {e}"))?;
+            ),
+        )
+        .await
+        .map_err(|_| format!("SSH key auth timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map_err(|e| format!("SSH key auth failed: {e}"))?;
         if !auth_res.success() {
             return Err("SSH public key authentication failed".to_string());
         }
     } else if !ssh_password.is_empty() {
-        let auth_res = session
-            .authenticate_password(ssh_user, ssh_password)
-            .await
-            .map_err(|e| format!("SSH password auth failed: {e}"))?;
+        let auth_res = tokio::time::timeout(
+            connection_timeout(),
+            session.authenticate_password(ssh_user, ssh_password),
+        )
+        .await
+        .map_err(|_| format!("SSH password auth timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map_err(|e| format!("SSH password auth failed: {e}"))?;
         if !auth_res.success() {
             return Err("SSH password authentication failed".to_string());
         }
@@ -167,11 +183,21 @@ impl TunnelManager {
     ) -> Result<u16, String> {
         let local_port = portpicker::pick_unused_port().ok_or("No available port")?;
 
-        let session =
-            connect_and_authenticate(ssh_host, ssh_port, ssh_user, ssh_password, ssh_key_path, ssh_key_passphrase)
-                .await?;
+        let session = connect_and_authenticate(
+            ssh_host,
+            ssh_port,
+            ssh_user,
+            ssh_password,
+            ssh_key_path,
+            ssh_key_passphrase,
+        )
+        .await?;
 
-        let bind_addr = if expose_to_lan { "0.0.0.0" } else { "127.0.0.1" };
+        let bind_addr = if expose_to_lan {
+            "0.0.0.0"
+        } else {
+            "127.0.0.1"
+        };
         let listener = TcpListener::bind((bind_addr, local_port))
             .await
             .map_err(|e| format!("Failed to bind local port: {e}"))?;
