@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use super::{connection_timeout, CONNECTION_TIMEOUT_SECS, file_validator::validate_file_path};
+use super::{connection_timeout, file_validator::validate_file_path, CONNECTION_TIMEOUT_SECS};
 
 struct SshClient;
 
@@ -43,7 +43,7 @@ async fn connect_and_authenticate(
     if !ssh_key_path.is_empty() {
         // Validate SSH key file path
         validate_file_path(ssh_key_path, |_| false)?;
-        
+
         let passphrase = if ssh_key_passphrase.is_empty() { None } else { Some(ssh_key_passphrase) };
         let key_pair = load_secret_key(ssh_key_path, passphrase).map_err(|e| format!("Failed to load SSH key: {e}"))?;
         let auth_res = tokio::time::timeout(

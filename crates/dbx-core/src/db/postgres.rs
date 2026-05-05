@@ -1,12 +1,12 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use percent_encoding::percent_decode_str;
 use rust_decimal::Decimal;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
-use percent_encoding::percent_decode_str;
 
-use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 use super::file_validator::validate_file_path;
+use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 fn pg_temporal_to_json_value(row: &PgRow, idx: usize) -> Option<serde_json::Value> {
     if let Ok(v) = row.try_get::<DateTime<Utc>, _>(idx) {
@@ -42,10 +42,7 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
     }
 
     if upper == "BOOL" {
-        return row
-            .try_get::<bool, _>(idx)
-            .map(serde_json::Value::Bool)
-            .unwrap_or(serde_json::Value::Null);
+        return row.try_get::<bool, _>(idx).map(serde_json::Value::Bool).unwrap_or(serde_json::Value::Null);
     }
 
     if upper.contains("TIMESTAMP")
@@ -68,19 +65,11 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
 
     row.try_get::<String, _>(idx)
         .map(serde_json::Value::String)
-        .or_else(|_| {
-            row.try_get::<i64, _>(idx)
-                .map(|v| serde_json::Value::Number(v.into()))
-        })
-        .or_else(|_| {
-            row.try_get::<i32, _>(idx)
-                .map(|v| serde_json::Value::Number(v.into()))
-        })
+        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<i32, _>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| {
             row.try_get::<f64, _>(idx).map(|v| {
-                serde_json::Number::from_f64(v)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null)
+                serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
             })
         })
         .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
@@ -91,7 +80,7 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
 pub async fn connect(url: &str) -> Result<PgPool, String> {
     // Validate SSL certificate paths if present in the URL
     validate_postgres_ssl_paths(url)?;
-    
+
     super::with_connection_timeout("PostgreSQL", async {
         PgPoolOptions::new()
             .max_connections(5)
@@ -105,7 +94,7 @@ pub async fn connect(url: &str) -> Result<PgPool, String> {
 }
 
 /// Validates SSL certificate file paths in PostgreSQL connection URLs.
-/// 
+///
 /// PostgreSQL connection strings can include SSL parameters like:
 /// - sslcert=/path/to/cert.pem
 /// - sslkey=/path/to/key.pem
@@ -114,7 +103,7 @@ fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
     // Extract query parameters from URL
     if let Some(query_start) = url.find('?') {
         let query_string = &url[query_start + 1..];
-        
+
         for param in query_string.split('&') {
             if let Some((key, value)) = param.split_once('=') {
                 match key {
@@ -123,7 +112,7 @@ fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
                         let decoded = percent_decode_str(value)
                             .decode_utf8()
                             .map_err(|_| format!("Invalid URL encoding in {key}"))?;
-                        
+
                         // Validate the file path (skip network paths)
                         validate_file_path(&decoded, |_| false)?;
                     }
@@ -132,23 +121,17 @@ fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
             }
         }
     }
-    
+
     Ok(())
 }
 
 pub async fn list_databases(pool: &PgPool) -> Result<Vec<DatabaseInfo>, String> {
-    let rows: Vec<PgRow> =
-        sqlx::query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+    let rows: Vec<PgRow> = sqlx::query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
-    Ok(rows
-        .iter()
-        .map(|row| DatabaseInfo {
-            name: row.get::<String, _>("datname"),
-        })
-        .collect())
+    Ok(rows.iter().map(|row| DatabaseInfo { name: row.get::<String, _>("datname") }).collect())
 }
 
 pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, String> {
@@ -182,17 +165,10 @@ pub async fn list_schemas(pool: &PgPool) -> Result<Vec<String>, String> {
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(rows
-        .iter()
-        .map(|row| row.get::<String, _>("schema_name"))
-        .collect())
+    Ok(rows.iter().map(|row| row.get::<String, _>("schema_name")).collect())
 }
 
-pub async fn get_columns(
-    pool: &PgPool,
-    schema: &str,
-    table: &str,
-) -> Result<Vec<ColumnInfo>, String> {
+pub async fn get_columns(pool: &PgPool, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let rows: Vec<PgRow> = sqlx::query(
         "SELECT a.attname AS column_name, \
          format_type(a.atttypid, a.atttypmod) AS full_type, \
@@ -254,11 +230,7 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
         || trimmed.starts_with("WITH")
         || trimmed.starts_with("TABLE")
     {
-        let rows: Vec<PgRow> = sqlx::query(sql)
-            .persistent(false)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let rows: Vec<PgRow> = sqlx::query(sql).persistent(false).fetch_all(pool).await.map_err(|e| e.to_string())?;
 
         let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(first) = rows.first() {
             let cols = first.columns();
@@ -278,13 +250,7 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
             .iter()
             .map(|row| {
                 (0..row.len())
-                    .map(|i| {
-                        pg_value_to_json(
-                            row,
-                            i,
-                            column_types.get(i).map(String::as_str).unwrap_or(""),
-                        )
-                    })
+                    .map(|i| pg_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
                     .collect()
             })
             .collect();
@@ -297,10 +263,7 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
             truncated: false,
         })
     } else {
-        let result = sqlx::query(sql)
-            .execute(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let result = sqlx::query(sql).execute(pool).await.map_err(|e| e.to_string())?;
 
         Ok(QueryResult {
             columns: vec![],
