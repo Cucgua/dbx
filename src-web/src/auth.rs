@@ -56,11 +56,15 @@ pub async fn login(
         .into_response())
 }
 
-pub async fn check(State(state): State<Arc<WebState>>) -> Json<AuthCheckResponse> {
-    Json(AuthCheckResponse {
-        authenticated: state.password_hash.is_none(),
-        required: state.password_hash.is_some(),
-    })
+pub async fn check(State(state): State<Arc<WebState>>, req: Request<axum::body::Body>) -> Json<AuthCheckResponse> {
+    if state.password_hash.is_none() {
+        return Json(AuthCheckResponse { authenticated: true, required: false });
+    }
+    let authenticated = match extract_session_token(&req) {
+        Some(token) => state.sessions.read().await.contains(&token),
+        None => false,
+    };
+    Json(AuthCheckResponse { authenticated, required: true })
 }
 
 pub async fn logout(State(state): State<Arc<WebState>>, req: Request<axum::body::Body>) -> Response {
