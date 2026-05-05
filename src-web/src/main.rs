@@ -21,7 +21,12 @@ use state::WebState;
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "dbx_web=info,tower_http=info".parse().unwrap()),
+        )
+        .init();
 
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
@@ -156,6 +161,7 @@ async fn main() {
     // Build app
     let mut app = Router::new()
         .nest("/api", api)
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors);
 
     // Static file serving
@@ -174,9 +180,9 @@ async fn main() {
         .unwrap_or(4224);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    log::info!("DBX Web server starting on http://{}", addr);
+    tracing::info!("DBX Web server starting on http://{}", addr);
     if std::env::var("DBX_PASSWORD").is_ok() {
-        log::info!("Password protection is enabled");
+        tracing::info!("Password protection is enabled");
     }
 
     let listener = tokio::net::TcpListener::bind(addr)
