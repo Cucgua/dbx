@@ -121,7 +121,8 @@ impl ConnectionConfig {
                 if let Some(cs) = self.connection_string.as_deref().filter(|s| !s.is_empty()) {
                     return cs.to_string();
                 }
-                format!("mongodb://{host}:{port}{db_part}")
+                let suffix = if params.is_empty() { String::new() } else { format!("?{params}") };
+                format!("mongodb://{host}:{port}{db_part}{suffix}")
             }
             DatabaseType::Oracle => format!("oracle://{host}:{port}{db_part}"),
             DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
@@ -172,10 +173,11 @@ impl ConnectionConfig {
                 if let Some(cs) = self.connection_string.as_deref().filter(|s| !s.is_empty()) {
                     return cs.to_string();
                 }
+                let suffix = if params.is_empty() { String::new() } else { format!("?{params}") };
                 if self.username.is_empty() {
-                    format!("mongodb://{host}:{port}{db_part}")
+                    format!("mongodb://{host}:{port}{db_part}{suffix}")
                 } else {
-                    format!("mongodb://{username}:{password}@{host}:{port}{db_part}")
+                    format!("mongodb://{username}:{password}@{host}:{port}{db_part}{suffix}")
                 }
             }
             DatabaseType::Oracle => {
@@ -233,8 +235,32 @@ impl ConnectionConfig {
                 }
             }
             DatabaseType::Postgres | DatabaseType::Redshift => value.trim_start_matches('?').to_string(),
+            DatabaseType::MongoDb => self.normalized_mongodb_url_params(value),
             _ => value.trim_start_matches('?').to_string(),
         }
+    }
+
+    fn normalized_mongodb_url_params(&self, value: &str) -> String {
+        let mut params: Vec<String> = value
+            .trim_start_matches('?')
+            .split('&')
+            .filter(|param| !param.trim().is_empty())
+            .map(str::to_string)
+            .collect();
+
+        push_query_param_if_missing(&mut params, "directConnection", "directConnection=true".to_string());
+
+        if !self.username.is_empty() {
+            let auth_source = self.database.as_deref().filter(|db| !db.is_empty()).unwrap_or("admin");
+            push_query_param_if_missing(
+                &mut params,
+                "authSource",
+                format!("authSource={}", encode_url_part(auth_source)),
+            );
+            push_query_param_if_missing(&mut params, "authMechanism", "authMechanism=SCRAM-SHA-1".to_string());
+        }
+
+        params.join("&")
     }
 }
 
@@ -247,6 +273,15 @@ fn bracket_ipv6(host: &str) -> String {
         format!("[{host}]")
     } else {
         host.to_string()
+    }
+}
+
+fn push_query_param_if_missing(params: &mut Vec<String>, key: &str, value: String) {
+    if !params
+        .iter()
+        .any(|param| param.split_once('=').map(|(name, _)| name).unwrap_or(param.as_str()).eq_ignore_ascii_case(key))
+    {
+        params.push(value);
     }
 }
 
@@ -279,6 +314,13 @@ mod tests {
             ssl: false,
             connection_string: None,
         }
+    }
+
+    fn mongodb_config(username: &str, password: &str, database: Option<&str>) -> ConnectionConfig {
+        let mut config = mysql_config(username, password, database);
+        config.db_type = DatabaseType::MongoDb;
+        config.port = 17000;
+        config
     }
 
     #[test]
@@ -322,6 +364,27 @@ mod tests {
     }
 
     #[test]
+    fn mongodb_form_url_adds_legacy_direct_connection_params() {
+        let config = mongodb_config("root", "secret", Some("admin"));
+
+        assert_eq!(
+            config.connection_url(),
+            "mongodb://root:secret@10.1.2.3:17000/admin?directConnection=true&authSource=admin&authMechanism=SCRAM-SHA-1"
+        );
+    }
+
+    #[test]
+    fn mongodb_form_url_respects_custom_auth_params() {
+        let mut config = mongodb_config("root", "secret", Some("app"));
+        config.url_params = Some("authSource=admin&authMechanism=SCRAM-SHA-256&retryWrites=false".to_string());
+
+        assert_eq!(
+            config.connection_url(),
+            "mongodb://root:secret@10.1.2.3:17000/app?authSource=admin&authMechanism=SCRAM-SHA-256&retryWrites=false&directConnection=true"
+        );
+    }
+
+    #[test]
     fn redacted_mysql_url_omits_credentials() {
         let config = mysql_config("user@tenant#cluster", "p@ss:word#1", Some("db/name"));
 
@@ -356,5 +419,19 @@ mod tests {
         assert_eq!(url, "rediss://10.1.2.3:2883/");
         assert!(!url.contains("default"));
         assert!(!url.contains("redis-secret"));
+    }
+
+    #[test]
+    fn redacted_mongodb_url_keeps_compatibility_params_without_credentials() {
+        let config = mongodb_config("root", "secret", Some("admin"));
+
+        let url = config.redacted_connection_url();
+
+        assert_eq!(
+            url,
+            "mongodb://10.1.2.3:17000/admin?directConnection=true&authSource=admin&authMechanism=SCRAM-SHA-1"
+        );
+        assert!(!url.contains("root"));
+        assert!(!url.contains("secret"));
     }
 }
