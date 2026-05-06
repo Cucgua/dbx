@@ -1663,9 +1663,6 @@ function escapeAndHighlightKeywords(s: string): string {
         <Button v-if="hasPendingChanges" variant="ghost" size="sm" class="h-5 text-xs" @click="discardChanges">
           {{ t("grid.discard") }}
         </Button>
-        <Button variant="ghost" size="sm" class="h-5 text-xs" @click="toggleDdl">
-          <Code2 class="w-3 h-3 mr-1" /> DDL
-        </Button>
       </template>
 
       <span class="ml-auto flex items-center gap-1">

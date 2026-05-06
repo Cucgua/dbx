@@ -6,13 +6,13 @@ use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryRes
 
 use super::CONNECTION_TIMEOUT_SECS;
 
-pub struct DmClient {
+pub struct GaussdbClient {
     conn: odbc_api::Connection<'static>,
 }
 
-unsafe impl Send for DmClient {}
+unsafe impl Send for GaussdbClient {}
 
-impl DmClient {
+impl GaussdbClient {
     pub fn query_rows(&self, sql: &str) -> Result<Vec<Vec<String>>, String> {
         match self.conn.execute(sql, (), None).map_err(|e| e.to_string())? {
             Some(cursor) => read_cursor(cursor),
@@ -44,9 +44,9 @@ fn read_cursor(cursor: impl Cursor) -> Result<Vec<Vec<String>>, String> {
     Ok(rows)
 }
 
-pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &str) -> Result<DmClient, String> {
+pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &str) -> Result<GaussdbClient, String> {
     let conn_str = format!(
-        "Driver={{DM8 ODBC DRIVER}};Server={host};TCP_PORT={port};DATABASE={db};UID={user};PWD={pass}",
+        "Driver={{GaussDBA}};Servername={host};Port={port};Database={db};UID={user};PWD={pass}",
         host = host,
         port = port,
         db = database,
@@ -62,103 +62,106 @@ pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &s
                     let msg = e.to_string();
                     if msg.contains("Data source name not found") || msg.contains("Can't open lib") {
                         format!(
-                            "DM8 ODBC driver not found. Please install the DM8 ODBC driver \
+                            "GaussDB ODBC driver not found. Please install the GaussDB ODBC driver \
                              and register it in odbcinst.ini (Linux/macOS) or the ODBC Data Source Administrator (Windows). \
                              Original error: {msg}"
                         )
                     } else {
-                        format!("DM connection failed: {msg}")
+                        format!("GaussDB connection failed: {msg}")
                     }
                 })
-                .map(|conn| DmClient { conn })
+                .map(|conn| GaussdbClient { conn })
         }),
     )
     .await
-    .map_err(|_| format!("DM connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
-    .map_err(|e| format!("DM connection task failed: {e}"))?;
+    .map_err(|_| format!("GaussDB connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+    .map_err(|e| format!("GaussDB connection task failed: {e}"))?;
 
     result
 }
 
-pub fn list_databases(client: &DmClient) -> Result<Vec<DatabaseInfo>, String> {
-    let rows = client.query_single_column("SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME")?;
+pub fn list_databases(client: &GaussdbClient) -> Result<Vec<DatabaseInfo>, String> {
+    let rows =
+        client.query_single_column("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")?;
     Ok(rows.into_iter().map(|name| DatabaseInfo { name }).collect())
 }
 
-pub fn list_schemas(client: &DmClient) -> Result<Vec<String>, String> {
-    client.query_single_column("SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME")
+pub fn list_schemas(client: &GaussdbClient) -> Result<Vec<String>, String> {
+    client.query_single_column(
+        "SELECT DISTINCT nspname FROM pg_catalog.pg_namespace n \
+         WHERE nspname NOT LIKE 'pg_%' \
+         AND nspname NOT IN ('information_schema', 'cstore', 'snapshot', 'db4ai', 'dbe_perf', \
+           'dbe_pldebugger', 'dbe_pldeveloper', 'pkg_service', 'pkg_util', 'sqladvisor', 'blockchain') \
+         AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c WHERE c.relnamespace = n.oid AND c.relkind IN ('r', 'v', 'm')) \
+         ORDER BY nspname",
+    )
 }
 
-pub fn list_tables(client: &DmClient, schema: &str) -> Result<Vec<TableInfo>, String> {
+pub fn list_tables(client: &GaussdbClient, schema: &str) -> Result<Vec<TableInfo>, String> {
     let s = schema.replace('\'', "''");
     let sql = format!(
-        "SELECT TABLE_NAME, 'TABLE' AS TABLE_TYPE FROM ALL_TABLES WHERE OWNER = '{s}' \
-         UNION ALL \
-         SELECT VIEW_NAME, 'VIEW' FROM ALL_VIEWS WHERE OWNER = '{s}' \
-         ORDER BY 1"
+        "SELECT c.relname, CASE c.relkind WHEN 'r' THEN 'TABLE' WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'VIEW' ELSE 'TABLE' END \
+         FROM pg_catalog.pg_class c \
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = '{s}' AND c.relkind IN ('r', 'v', 'm') \
+         ORDER BY c.relname"
     );
     let rows = client.query_rows(&sql)?;
     Ok(rows
         .into_iter()
-        .map(|r| TableInfo {
-            name: r.first().cloned().unwrap_or_default(),
-            table_type: r.get(1).cloned().unwrap_or_else(|| "TABLE".to_string()),
+        .map(|r| {
+            let raw_type = r.get(1).cloned().unwrap_or_default();
+            TableInfo {
+                name: r.first().cloned().unwrap_or_default(),
+                table_type: if raw_type.contains("VIEW") { "VIEW".to_string() } else { "TABLE".to_string() },
+            }
         })
         .collect())
 }
 
-pub fn get_columns(client: &DmClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+pub fn get_columns(client: &GaussdbClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
 
     let pk_rows = client.query_single_column(&format!(
-        "SELECT cols.COLUMN_NAME FROM ALL_CONS_COLUMNS cols \
-         JOIN ALL_CONSTRAINTS cons ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME AND cols.OWNER = cons.OWNER \
-         WHERE cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = '{s}' AND cons.TABLE_NAME = '{t}'"
+        "SELECT a.attname FROM pg_catalog.pg_index i \
+         JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
+         WHERE i.indrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = '{t}' \
+           AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = '{s}')) \
+         AND i.indisprimary"
     ))?;
     let pk_names: std::collections::HashSet<String> = pk_rows.into_iter().collect();
 
     let col_rows = client.query_rows(&format!(
-        "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_PRECISION, DATA_SCALE, DATA_LENGTH, CHAR_LENGTH \
-         FROM ALL_TAB_COLUMNS \
-         WHERE OWNER = '{s}' AND TABLE_NAME = '{t}' \
-         ORDER BY COLUMN_ID"
+        "SELECT a.attname, format_type(a.atttypid, a.atttypmod), \
+         CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END, \
+         pg_catalog.pg_get_expr(d.adbin, d.adrelid), \
+         CASE WHEN t.typname IN ('numeric', 'float4', 'float8') THEN COALESCE(((a.atttypmod - 4) >> 16) & 65535, -1) ELSE NULL END, \
+         CASE WHEN t.typname = 'numeric' THEN COALESCE((a.atttypmod - 4) & 65535, -1) ELSE NULL END, \
+         CASE WHEN a.atttypmod > 0 AND t.typname IN ('varchar', 'bpchar') THEN a.atttypmod - 4 ELSE NULL END \
+         FROM pg_catalog.pg_attribute a \
+         JOIN pg_catalog.pg_type t ON t.oid = a.atttypid \
+         LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+         WHERE a.attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = '{t}' \
+           AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = '{s}')) \
+         AND a.attnum > 0 AND NOT a.attisdropped \
+         ORDER BY a.attnum"
     ))?;
 
     Ok(col_rows
         .into_iter()
         .map(|r| {
             let name = r.first().cloned().unwrap_or_default();
-            let base = r.get(1).cloned().unwrap_or_default();
-            let num_prec = r.get(3).and_then(|v| v.parse::<i32>().ok());
-            let num_scale = r.get(4).and_then(|v| v.parse::<i32>().ok());
-            let data_len = r.get(5).and_then(|v| v.parse::<i32>().ok());
+            let data_type = r.get(1).cloned().unwrap_or_default();
+            let num_prec = r.get(4).and_then(|v| v.parse::<i32>().ok());
+            let num_scale = r.get(5).and_then(|v| v.parse::<i32>().ok());
             let char_len = r.get(6).and_then(|v| v.parse::<i32>().ok());
-            let data_type = match base.to_uppercase().as_str() {
-                "VARCHAR2" | "NVARCHAR2" | "VARCHAR" | "CHAR" | "NCHAR" => {
-                    let len = char_len.or(data_len);
-                    match len {
-                        Some(n) => format!("{base}({n})"),
-                        None => base,
-                    }
-                }
-                "NUMBER" | "NUMERIC" | "DECIMAL" => match (num_prec, num_scale) {
-                    (Some(p), Some(s)) if s > 0 => format!("{base}({p},{s})"),
-                    (Some(p), _) if p > 0 => format!("{base}({p})"),
-                    _ => base,
-                },
-                "RAW" => match data_len {
-                    Some(n) => format!("RAW({n})"),
-                    None => "RAW".to_string(),
-                },
-                _ => base,
-            };
             ColumnInfo {
                 is_primary_key: pk_names.contains(&name),
                 name,
                 data_type,
-                is_nullable: r.get(2).map(|v| v == "Y").unwrap_or(false),
-                column_default: None,
+                is_nullable: r.get(2).map(|v| v == "YES").unwrap_or(false),
+                column_default: r.get(3).filter(|v| !v.is_empty()).cloned(),
                 extra: None,
                 comment: None,
                 numeric_precision: num_prec,
@@ -169,35 +172,32 @@ pub fn get_columns(client: &DmClient, schema: &str, table: &str) -> Result<Vec<C
         .collect())
 }
 
-pub fn list_indexes(client: &DmClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
+pub fn list_indexes(client: &GaussdbClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
     let sql = format!(
-        "SELECT i.INDEX_NAME, \
-         LISTAGG(ic.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY ic.COLUMN_POSITION) AS COLUMNS, \
-         i.UNIQUENESS, \
-         CASE WHEN c.CONSTRAINT_TYPE = 'P' THEN 1 ELSE 0 END AS IS_PK, \
-         i.INDEX_TYPE \
-         FROM ALL_INDEXES i \
-         JOIN ALL_IND_COLUMNS ic ON i.INDEX_NAME = ic.INDEX_NAME AND i.OWNER = ic.INDEX_OWNER AND i.TABLE_OWNER = ic.TABLE_OWNER \
-         LEFT JOIN ALL_CONSTRAINTS c ON i.INDEX_NAME = c.INDEX_NAME AND i.TABLE_OWNER = c.OWNER \
-           AND c.CONSTRAINT_TYPE = 'P' \
-         WHERE i.TABLE_OWNER = '{s}' AND i.TABLE_NAME = '{t}' \
-         GROUP BY i.INDEX_NAME, i.UNIQUENESS, c.CONSTRAINT_TYPE, i.INDEX_TYPE \
-         ORDER BY i.INDEX_NAME"
+        "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = '{s}' AND tablename = '{t}' ORDER BY indexname"
     );
     let rows = client.query_rows(&sql)?;
     Ok(rows
         .into_iter()
         .map(|r| {
-            let cols_str = r.get(1).cloned().unwrap_or_default();
+            let name = r.first().cloned().unwrap_or_default();
+            let def = r.get(1).cloned().unwrap_or_default();
+            let is_unique = def.to_uppercase().contains("UNIQUE");
+            let is_primary = def.to_uppercase().contains("PRIMARY");
+            let columns = def
+                .rsplit_once('(')
+                .and_then(|(_, rest)| rest.strip_suffix(')'))
+                .map(|cols| cols.split(',').map(|c| c.trim().trim_matches('"').to_string()).collect())
+                .unwrap_or_default();
             IndexInfo {
-                name: r.first().cloned().unwrap_or_default(),
-                columns: cols_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
-                is_unique: r.get(2).map(|v| v == "UNIQUE").unwrap_or(false),
-                is_primary: r.get(3).map(|v| v == "1").unwrap_or(false),
+                name,
+                columns,
+                is_unique,
+                is_primary,
                 filter: None,
-                index_type: r.get(4).cloned(),
+                index_type: None,
                 included_columns: None,
                 comment: None,
             }
@@ -205,17 +205,19 @@ pub fn list_indexes(client: &DmClient, schema: &str, table: &str) -> Result<Vec<
         .collect())
 }
 
-pub fn list_foreign_keys(client: &DmClient, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
+pub fn list_foreign_keys(client: &GaussdbClient, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
     let sql = format!(
-        "SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME, rc.TABLE_NAME, rcc.COLUMN_NAME \
-         FROM ALL_CONSTRAINTS c \
-         JOIN ALL_CONS_COLUMNS cc ON c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME AND c.OWNER = cc.OWNER \
-         JOIN ALL_CONSTRAINTS rc ON c.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND c.R_OWNER = rc.OWNER \
-         JOIN ALL_CONS_COLUMNS rcc ON rc.CONSTRAINT_NAME = rcc.CONSTRAINT_NAME AND rc.OWNER = rcc.OWNER \
-         WHERE c.CONSTRAINT_TYPE = 'R' AND c.OWNER = '{s}' AND c.TABLE_NAME = '{t}' \
-         ORDER BY c.CONSTRAINT_NAME"
+        "SELECT con.conname, a.attname, cl2.relname, a2.attname \
+         FROM pg_catalog.pg_constraint con \
+         JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid \
+         JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace \
+         JOIN pg_catalog.pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey) \
+         JOIN pg_catalog.pg_class cl2 ON cl2.oid = con.confrelid \
+         JOIN pg_catalog.pg_attribute a2 ON a2.attrelid = con.confrelid AND a2.attnum = ANY(con.confkey) \
+         WHERE con.contype = 'f' AND n.nspname = '{s}' AND cl.relname = '{t}' \
+         ORDER BY con.conname"
     );
     let rows = client.query_rows(&sql)?;
     Ok(rows
@@ -229,14 +231,23 @@ pub fn list_foreign_keys(client: &DmClient, schema: &str, table: &str) -> Result
         .collect())
 }
 
-pub fn list_triggers(client: &DmClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
+pub fn list_triggers(client: &GaussdbClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
     let sql = format!(
-        "SELECT TRIGGER_NAME, TRIGGERING_EVENT, TRIGGER_TYPE \
-         FROM ALL_TRIGGERS \
-         WHERE OWNER = '{s}' AND TABLE_NAME = '{t}' \
-         ORDER BY TRIGGER_NAME"
+        "SELECT t.tgname, em.event, CASE WHEN t.tgtype & 2 = 2 THEN 'BEFORE' ELSE 'AFTER' END \
+         FROM pg_catalog.pg_trigger t \
+         JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+         CROSS JOIN LATERAL ( \
+           SELECT CASE \
+             WHEN t.tgtype & 4 = 4 THEN 'INSERT' \
+             WHEN t.tgtype & 8 = 8 THEN 'DELETE' \
+             WHEN t.tgtype & 16 = 16 THEN 'UPDATE' \
+             ELSE 'UNKNOWN' END AS event \
+         ) em \
+         WHERE NOT t.tgisinternal AND n.nspname = '{s}' AND c.relname = '{t}' \
+         ORDER BY t.tgname"
     );
     let rows = client.query_rows(&sql)?;
     Ok(rows
@@ -249,7 +260,7 @@ pub fn list_triggers(client: &DmClient, schema: &str, table: &str) -> Result<Vec
         .collect())
 }
 
-pub fn execute_query_sync(client: &DmClient, sql: &str) -> Result<QueryResult, String> {
+pub fn execute_query_sync(client: &GaussdbClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
     let trimmed = sql.to_uppercase();

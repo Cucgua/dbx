@@ -121,6 +121,15 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
             )
             .await
             .map(|_| "Connection successful".to_string()),
+            DatabaseType::Gaussdb => db::gaussdb_driver::connect(
+                &host,
+                port,
+                config.database.as_deref().unwrap_or(""),
+                &config.username,
+                &config.password,
+            )
+            .await
+            .map(|_| "Connection successful".to_string()),
         },
     };
 
@@ -199,6 +208,17 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
             .await?;
             PoolKind::Dameng(std::sync::Arc::new(std::sync::Mutex::new(client)))
         }
+        DatabaseType::Gaussdb => {
+            let client = db::gaussdb_driver::connect(
+                &host,
+                port,
+                config.database.as_deref().unwrap_or(""),
+                &config.username,
+                &config.password,
+            )
+            .await?;
+            PoolKind::Gaussdb(std::sync::Arc::new(std::sync::Mutex::new(client)))
+        }
     };
 
     state.connections.lock().await.insert(id.clone(), pool);
@@ -226,6 +246,7 @@ pub async fn disconnect_db(state: State<'_, Arc<AppState>>, connection_id: Strin
                 PoolKind::Oracle(_) => {}
                 PoolKind::Elasticsearch(_) => {}
                 PoolKind::Dameng(_) => {}
+                PoolKind::Gaussdb(_) => {}
             }
         }
     }

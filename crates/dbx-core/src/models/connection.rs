@@ -71,6 +71,7 @@ pub enum DatabaseType {
     StarRocks,
     Redshift,
     Dameng,
+    Gaussdb,
 }
 
 impl ConnectionConfig {
@@ -130,6 +131,7 @@ impl ConnectionConfig {
             DatabaseType::Oracle => format!("oracle://{host}:{port}{db_part}"),
             DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
             DatabaseType::Dameng => format!("dm://{host}:{port}{db_part}"),
+            DatabaseType::Gaussdb => format!("gaussdb://{host}:{port}{db_part}"),
         }
     }
 
@@ -190,6 +192,9 @@ impl ConnectionConfig {
             DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
             DatabaseType::Dameng => {
                 format!("dm://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Gaussdb => {
+                format!("gaussdb://{}:{}@{host}:{port}{db_part}", username, password)
             }
         }
     }

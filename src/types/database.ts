@@ -12,7 +12,8 @@ export type DatabaseType =
   | "doris"
   | "starrocks"
   | "redshift"
-  | "dameng";
+  | "dameng"
+  | "gaussdb";
 
 export interface ConnectionConfig {
   id: string;

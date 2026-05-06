@@ -26,7 +26,8 @@ export function qualifiedTableName(
     (databaseType === "postgres" ||
       databaseType === "oracle" ||
       databaseType === "sqlserver" ||
-      databaseType === "dameng") &&
+      databaseType === "dameng" ||
+      databaseType === "gaussdb") &&
     schema
   ) {
     return `${quoteTableIdentifier(databaseType, schema)}.${quoteTableIdentifier(databaseType, tableName)}`;

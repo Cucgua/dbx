@@ -29,6 +29,7 @@ pub enum PoolKind {
     Oracle(Arc<tokio::sync::Mutex<db::oracle_driver::OracleClient>>),
     Elasticsearch(db::elasticsearch_driver::EsClient),
     Dameng(Arc<std::sync::Mutex<db::dm_driver::DmClient>>),
+    Gaussdb(Arc<std::sync::Mutex<db::gaussdb_driver::GaussdbClient>>),
 }
 
 pub struct AppState {
@@ -61,7 +62,8 @@ impl AppState {
             return Ok(connection_id.to_string());
         }
 
-        let is_single_conn = matches!(db_type, Some(DatabaseType::Oracle) | Some(DatabaseType::Dameng));
+        let is_single_conn =
+            matches!(db_type, Some(DatabaseType::Oracle) | Some(DatabaseType::Dameng) | Some(DatabaseType::Gaussdb));
         let pool_key = if is_single_conn {
             connection_id.to_string()
         } else {
@@ -96,7 +98,10 @@ impl AppState {
 
         let mut db_config = config.clone();
         if let Some(db) = database {
-            if db_config.db_type != DatabaseType::Oracle && db_config.db_type != DatabaseType::Dameng {
+            if db_config.db_type != DatabaseType::Oracle
+                && db_config.db_type != DatabaseType::Dameng
+                && db_config.db_type != DatabaseType::Gaussdb
+            {
                 db_config.database = Some(db.to_string());
             }
         }
@@ -174,6 +179,17 @@ impl AppState {
                 .await?;
                 PoolKind::Dameng(Arc::new(std::sync::Mutex::new(client)))
             }
+            DatabaseType::Gaussdb => {
+                let client = db::gaussdb_driver::connect(
+                    &host,
+                    port,
+                    db_config.database.as_deref().unwrap_or(""),
+                    &db_config.username,
+                    &db_config.password,
+                )
+                .await?;
+                PoolKind::Gaussdb(Arc::new(std::sync::Mutex::new(client)))
+            }
         };
 
         self.connections.lock().await.insert(pool_key.clone(), pool);
@@ -221,6 +237,7 @@ impl AppState {
                     c.db_type == DatabaseType::Oracle
                         || c.db_type == DatabaseType::Elasticsearch
                         || c.db_type == DatabaseType::Dameng
+                        || c.db_type == DatabaseType::Gaussdb
                 })
                 .unwrap_or(false)
         };

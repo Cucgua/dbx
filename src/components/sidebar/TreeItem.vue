@@ -87,7 +87,16 @@ const emit = defineEmits<{
 }>();
 
 const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
-const diagramSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift", "dameng"]);
+const diagramSupportedTypes = new Set([
+  "mysql",
+  "postgres",
+  "sqlite",
+  "sqlserver",
+  "oracle",
+  "redshift",
+  "dameng",
+  "gaussdb",
+]);
 const databaseSearchSupportedTypes = new Set([
   "mysql",
   "postgres",
@@ -98,6 +107,7 @@ const databaseSearchSupportedTypes = new Set([
   "duckdb",
   "clickhouse",
   "dameng",
+  "gaussdb",
 ]);
 const tableImportSupportedTypes = new Set([
   "mysql",
@@ -111,6 +121,7 @@ const tableImportSupportedTypes = new Set([
   "starrocks",
   "redshift",
   "dameng",
+  "gaussdb",
 ]);
 const tableStructureSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver"]);
 const fieldLineageSupportedTypes = new Set([
@@ -121,6 +132,7 @@ const fieldLineageSupportedTypes = new Set([
   "oracle",
   "redshift",
   "dameng",
+  "gaussdb",
 ]);
 const isExportingDatabase = ref(false);
 
@@ -133,7 +145,13 @@ function quoteIdent(name: string): string {
 }
 
 function isSchemaAwareDbType(dbType?: DatabaseType): boolean {
-  return dbType === "postgres" || dbType === "oracle" || dbType === "sqlserver" || dbType === "dameng";
+  return (
+    dbType === "postgres" ||
+    dbType === "oracle" ||
+    dbType === "sqlserver" ||
+    dbType === "dameng" ||
+    dbType === "gaussdb"
+  );
 }
 
 function qualifiedTableName(tableName: string, schema?: string): string {
@@ -242,7 +260,7 @@ async function toggle() {
       queryStore.updateSql(tab, node.label);
     } else if (node.type === "database" && node.connectionId && node.database) {
       const config = connectionStore.getConfig(node.connectionId);
-      if (config?.db_type === "postgres" || config?.db_type === "sqlserver") {
+      if (config?.db_type === "postgres" || config?.db_type === "sqlserver" || config?.db_type === "gaussdb") {
         await connectionStore.loadSchemas(node.connectionId, node.database);
       } else {
         await connectionStore.loadTables(node.connectionId, node.database);
@@ -472,7 +490,7 @@ async function confirmDuplicateStructure() {
     let sql: string;
     if (dbType === "mysql") {
       sql = `CREATE TABLE ${target} LIKE ${source};`;
-    } else if (dbType === "postgres" || dbType === "redshift") {
+    } else if (dbType === "postgres" || dbType === "redshift" || dbType === "gaussdb") {
       sql = `CREATE TABLE ${target} (LIKE ${source} INCLUDING ALL);`;
     } else if (dbType === "sqlserver") {
       sql = `SELECT TOP 0 * INTO ${target} FROM ${source};`;

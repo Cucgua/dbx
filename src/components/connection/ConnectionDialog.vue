@@ -138,7 +138,7 @@ const driverProfiles: Record<
     icon: "opengauss",
     urlParams: "sslmode=disable",
   },
-  gaussdb: { type: "postgres", port: 5432, user: "gaussdb", label: "GaussDB", icon: "gaussdb" },
+  gaussdb: { type: "gaussdb", port: 5432, user: "gaussdb", label: "GaussDB", icon: "gaussdb" },
   kingbase: { type: "postgres", port: 54321, user: "system", label: "KingBase", icon: "kingbase" },
   vastbase: { type: "postgres", port: 5432, user: "vastbase", label: "Vastbase", icon: "vastbase" },
   doris: { type: "mysql", port: 9030, user: "root", label: "Doris", icon: "doris", urlParams: "" },
@@ -323,9 +323,7 @@ const dbOptions = [
   { value: "elasticsearch", label: "Elasticsearch" },
   { value: "mariadb", label: "MariaDB" },
   { value: "dm", label: "DM (Dameng)" },
-];
-
-const mysqlCompat = [
+  { value: "gaussdb", label: "GaussDB" },
   { value: "tidb", label: "TiDB" },
   { value: "oceanbase", label: "OceanBase" },
   { value: "goldendb", label: "GoldenDB" },
@@ -333,24 +331,16 @@ const mysqlCompat = [
   { value: "selectdb", label: "SelectDB" },
   { value: "starrocks", label: "StarRocks" },
   { value: "tdengine", label: "TDengine" },
-  { value: "custom_mysql", label: "Custom" },
-];
-
-const pgCompat = [
   { value: "opengauss", label: "openGauss" },
-  { value: "gaussdb", label: "GaussDB" },
   { value: "kingbase", label: "KingBase" },
   { value: "vastbase", label: "Vastbase" },
   { value: "redshift", label: "Redshift" },
   { value: "cockroachdb", label: "CockroachDB" },
-  { value: "custom_postgres", label: "Custom" },
+  { value: "custom_mysql", label: "Custom (MySQL)" },
+  { value: "custom_postgres", label: "Custom (PostgreSQL)" },
 ];
 
-const dbCategories = computed<DbCategory[]>(() => [
-  { key: "mainstream", title: t("connection.mainstream"), options: dbOptions },
-  { key: "mysql", title: `MySQL ${t("connection.compatible")}`, options: mysqlCompat },
-  { key: "postgres", title: `PostgreSQL ${t("connection.compatible")}`, options: pgCompat },
-]);
+const dbCategories = computed<DbCategory[]>(() => [{ key: "all", title: "", options: dbOptions }]);
 
 const filteredDbCategories = computed<DbCategory[]>(() => {
   const keyword = dbSearchQuery.value.trim().toLowerCase();
@@ -850,6 +840,20 @@ async function browseDbFilePath() {
                         class="underline text-primary hover:text-primary/80"
                       >
                         {{ t("connection.dmDownload") }}
+                      </a>
+                    </p>
+                  </div>
+
+                  <div v-if="selectedType === 'gaussdb'" class="grid grid-cols-4 items-center gap-4">
+                    <span />
+                    <p class="col-span-3 text-xs text-muted-foreground">
+                      {{ t("connection.gaussdbOdbcHint") }}
+                      <a
+                        href="https://support.huaweicloud.com/mgtg-dws/dws_01_0032.html"
+                        target="_blank"
+                        class="underline text-primary hover:text-primary/80"
+                      >
+                        {{ t("connection.gaussdbDownload") }}
                       </a>
                     </p>
                   </div>

@@ -14,7 +14,13 @@ export function useSchemaOptions() {
 
   function isSchemaAware(connectionId: string): boolean {
     const dbType = connectionStore.getConfig(connectionId)?.db_type;
-    return dbType === "postgres" || dbType === "sqlserver" || dbType === "oracle" || dbType === "dameng";
+    return (
+      dbType === "postgres" ||
+      dbType === "sqlserver" ||
+      dbType === "oracle" ||
+      dbType === "dameng" ||
+      dbType === "gaussdb"
+    );
   }
 
   async function loadSchemaOptions(connectionId: string, database: string) {

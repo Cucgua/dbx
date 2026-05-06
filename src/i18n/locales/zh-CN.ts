@@ -112,6 +112,8 @@ export default {
     sshExposeLan: "允许局域网访问隧道",
     dmCompatHint: "需要在系统上安装达梦 DM8 ODBC 驱动程序。",
     dmDownload: "前往达梦官网下载",
+    gaussdbOdbcHint: "需要在系统上安装 GaussDB ODBC 驱动程序。",
+    gaussdbDownload: "前往华为云下载",
     mongoLegacyHint:
       "连接旧版 MongoDB 时，可在此填写 authSource=admin&authMechanism=SCRAM-SHA-1；直连单节点时可按需追加 directConnection=true。",
     compatible: "兼容",

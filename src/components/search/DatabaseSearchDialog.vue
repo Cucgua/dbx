@@ -54,7 +54,7 @@ type SearchTableTask = {
   table: TableInfo;
 };
 
-const SCHEMA_AWARE_TYPES = new Set<DatabaseType>(["postgres", "sqlserver", "oracle", "redshift", "dameng"]);
+const SCHEMA_AWARE_TYPES = new Set<DatabaseType>(["postgres", "sqlserver", "oracle", "redshift", "dameng", "gaussdb"]);
 const SYSTEM_SCHEMAS = new Set([
   "information_schema",
   "pg_catalog",

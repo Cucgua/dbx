@@ -228,6 +228,20 @@ pub async fn do_execute(
             .await
             .map(truncate_result)
         }
+        PoolKind::Gaussdb(client) => {
+            let client = client.clone();
+            let sql = sql.to_string();
+            drop(connections);
+            wait_for_query(cancel_token, async move {
+                let task = tokio::task::spawn_blocking(move || {
+                    let client = client.lock().map_err(|e| e.to_string())?;
+                    db::gaussdb_driver::execute_query_sync(&client, &sql)
+                });
+                task.await.map_err(|e| e.to_string())?
+            })
+            .await
+            .map(truncate_result)
+        }
     }
 }
 

@@ -77,7 +77,8 @@ async function resolveSchema(connectionId: string, database: string): Promise<st
     config?.db_type === "sqlserver" ||
     config?.db_type === "oracle" ||
     config?.db_type === "redshift" ||
-    config?.db_type === "dameng";
+    config?.db_type === "dameng" ||
+    config?.db_type === "gaussdb";
   if (needsSchema) {
     const schemas = await api.listSchemas(connectionId, database);
     return schemas.includes("public") ? "public" : (schemas[0] ?? "");

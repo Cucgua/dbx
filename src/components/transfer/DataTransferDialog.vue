@@ -34,6 +34,7 @@ const SQL_TYPES: DatabaseType[] = [
   "clickhouse",
   "duckdb",
   "dameng",
+  "gaussdb",
 ];
 
 const sqlConnections = computed(() => store.connections.filter((c) => SQL_TYPES.includes(c.db_type)));
@@ -134,7 +135,8 @@ async function loadTables() {
       config?.db_type === "postgres" ||
       config?.db_type === "sqlserver" ||
       config?.db_type === "oracle" ||
-      config?.db_type === "dameng";
+      config?.db_type === "dameng" ||
+      config?.db_type === "gaussdb";
     if (needsSchema) {
       const schemas = await api.listSchemas(sourceConnectionId.value, sourceDatabase.value);
       sourceSchema.value = schemas.includes("public") ? "public" : (schemas[0] ?? "");
@@ -225,7 +227,8 @@ async function startTransfer() {
     targetConfig?.db_type === "postgres" ||
     targetConfig?.db_type === "sqlserver" ||
     targetConfig?.db_type === "oracle" ||
-    targetConfig?.db_type === "dameng";
+    targetConfig?.db_type === "dameng" ||
+    targetConfig?.db_type === "gaussdb";
   if (targetNeedsSchema && !targetSchema.value) {
     try {
       const schemas = await api.listSchemas(targetConnectionId.value, targetDatabase.value);
