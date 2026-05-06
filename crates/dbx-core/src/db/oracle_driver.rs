@@ -117,9 +117,7 @@ async fn connect_oci(
     let task = tokio::task::spawn_blocking(move || {
         init_oci_client(app_settings.as_ref())?;
         let conn = if sysdba {
-            oracle_oci::Connector::new(user, pass, connect_string)
-                .privilege(oracle_oci::Privilege::Sysdba)
-                .connect()
+            oracle_oci::Connector::new(user, pass, connect_string).privilege(oracle_oci::Privilege::Sysdba).connect()
         } else {
             oracle_oci::Connection::connect(user, pass, connect_string)
         }
@@ -160,11 +158,7 @@ fn init_oci_client(app_settings: Option<&AppSettings>) -> Result<(), String> {
 
 fn normalize_oci_dir(value: &str) -> String {
     let path = Path::new(value);
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("oci.dll"))
-    {
+    if path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case("oci.dll")) {
         return path.parent().map(|parent| parent.to_string_lossy().to_string()).unwrap_or_else(|| value.to_string());
     }
     value.to_string()
@@ -242,10 +236,7 @@ fn value_to_json_oci(val: &oracle_oci::SqlValue<'_>) -> serde_json::Value {
 }
 
 fn oci_string(row: &oracle_oci::Row, index: usize) -> String {
-    row.sql_values()
-        .get(index)
-        .and_then(|value| value.get::<Option<String>>().ok().flatten())
-        .unwrap_or_default()
+    row.sql_values().get(index).and_then(|value| value.get::<Option<String>>().ok().flatten()).unwrap_or_default()
 }
 
 fn oci_i64(row: &oracle_oci::Row, index: usize) -> Option<i64> {
@@ -312,16 +303,18 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
                 })
                 .collect())
         }
-        OracleClient::Oci(conn) => run_oci(conn, move |conn| {
-            let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
-            let mut tables = Vec::new();
-            for row in rows {
-                let row = row.map_err(|e| e.to_string())?;
-                tables.push(TableInfo { name: oci_string(&row, 0), table_type: oci_string(&row, 1) });
-            }
-            Ok(tables)
-        })
-        .await,
+        OracleClient::Oci(conn) => {
+            run_oci(conn, move |conn| {
+                let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
+                let mut tables = Vec::new();
+                for row in rows {
+                    let row = row.map_err(|e| e.to_string())?;
+                    tables.push(TableInfo { name: oci_string(&row, 0), table_type: oci_string(&row, 1) });
+                }
+                Ok(tables)
+            })
+            .await
+        }
     }
 }
 
@@ -347,11 +340,7 @@ pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Resu
     }
 }
 
-async fn get_columns_thin(
-    conn: &ThinConnection,
-    pk_sql: &str,
-    col_sql: &str,
-) -> Result<Vec<ColumnInfo>, String> {
+async fn get_columns_thin(conn: &ThinConnection, pk_sql: &str, col_sql: &str) -> Result<Vec<ColumnInfo>, String> {
     let pk_result = conn.query(pk_sql, &[]).await.map_err(|e| {
         log::error!("[oracle] get_columns pk query failed: {e}");
         e.to_string()
@@ -386,11 +375,7 @@ async fn get_columns_thin(
         .collect())
 }
 
-fn get_columns_oci(
-    conn: &oracle_oci::Connection,
-    pk_sql: &str,
-    col_sql: &str,
-) -> Result<Vec<ColumnInfo>, String> {
+fn get_columns_oci(conn: &oracle_oci::Connection, pk_sql: &str, col_sql: &str) -> Result<Vec<ColumnInfo>, String> {
     let pk_names: std::collections::HashSet<String> = oci_query_strings(conn, pk_sql)?.into_iter().collect();
     let rows = conn.query(col_sql, &[]).map_err(|e| e.to_string())?;
     let mut columns = Vec::new();
@@ -460,15 +445,17 @@ pub async fn list_indexes(conn: &OracleClient, schema: &str, table: &str) -> Res
             let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
             Ok(result.rows.iter().map(index_from_thin_row).collect())
         }
-        OracleClient::Oci(conn) => run_oci(conn, move |conn| {
-            let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
-            let mut indexes = Vec::new();
-            for row in rows {
-                indexes.push(index_from_oci_row(&row.map_err(|e| e.to_string())?));
-            }
-            Ok(indexes)
-        })
-        .await,
+        OracleClient::Oci(conn) => {
+            run_oci(conn, move |conn| {
+                let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
+                let mut indexes = Vec::new();
+                for row in rows {
+                    indexes.push(index_from_oci_row(&row.map_err(|e| e.to_string())?));
+                }
+                Ok(indexes)
+            })
+            .await
+        }
     }
 }
 
@@ -517,15 +504,17 @@ pub async fn list_foreign_keys(conn: &OracleClient, schema: &str, table: &str) -
             let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
             Ok(result.rows.iter().map(foreign_key_from_thin_row).collect())
         }
-        OracleClient::Oci(conn) => run_oci(conn, move |conn| {
-            let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
-            let mut fkeys = Vec::new();
-            for row in rows {
-                fkeys.push(foreign_key_from_oci_row(&row.map_err(|e| e.to_string())?));
-            }
-            Ok(fkeys)
-        })
-        .await,
+        OracleClient::Oci(conn) => {
+            run_oci(conn, move |conn| {
+                let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
+                let mut fkeys = Vec::new();
+                for row in rows {
+                    fkeys.push(foreign_key_from_oci_row(&row.map_err(|e| e.to_string())?));
+                }
+                Ok(fkeys)
+            })
+            .await
+        }
     }
 }
 
@@ -561,15 +550,17 @@ pub async fn list_triggers(conn: &OracleClient, schema: &str, table: &str) -> Re
             let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
             Ok(result.rows.iter().map(trigger_from_thin_row).collect())
         }
-        OracleClient::Oci(conn) => run_oci(conn, move |conn| {
-            let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
-            let mut triggers = Vec::new();
-            for row in rows {
-                triggers.push(trigger_from_oci_row(&row.map_err(|e| e.to_string())?));
-            }
-            Ok(triggers)
-        })
-        .await,
+        OracleClient::Oci(conn) => {
+            run_oci(conn, move |conn| {
+                let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
+                let mut triggers = Vec::new();
+                for row in rows {
+                    triggers.push(trigger_from_oci_row(&row.map_err(|e| e.to_string())?));
+                }
+                Ok(triggers)
+            })
+            .await
+        }
     }
 }
 

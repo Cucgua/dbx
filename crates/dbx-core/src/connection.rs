@@ -103,11 +103,7 @@ impl AppState {
         let (host, port) = self.connection_host_port(connection_id, &db_config).await?;
         probe_connection_endpoint(&db_config, &host, port).await?;
         let url = connection_url_for_endpoint(&db_config, &host, port);
-        let app_settings = if db_config.is_oracle_oci() {
-            Some(self.storage.load_app_settings().await?)
-        } else {
-            None
-        };
+        let app_settings = if db_config.is_oracle_oci() { Some(self.storage.load_app_settings().await?) } else { None };
         let pool = match db_config.db_type {
             DatabaseType::Mysql if db_config.needs_bare_mysql() => {
                 PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true)
@@ -235,11 +231,8 @@ pub fn redacted_connection_url_for_endpoint(config: &ConnectionConfig, host: &st
 }
 
 pub async fn probe_connection_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> Result<(), String> {
-    let has_oracle_oci_connect_string = config.is_oracle_oci()
-        && config
-            .connection_string
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
+    let has_oracle_oci_connect_string =
+        config.is_oracle_oci() && config.connection_string.as_deref().is_some_and(|value| !value.trim().is_empty());
 
     match config.db_type {
         DatabaseType::Sqlite | DatabaseType::DuckDb => Ok(()),

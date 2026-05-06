@@ -98,11 +98,8 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                     .map(|_| "Connection successful".to_string())
             }
             DatabaseType::Oracle => {
-                let app_settings = if config.is_oracle_oci() {
-                    Some(state.storage.load_app_settings().await?)
-                } else {
-                    None
-                };
+                let app_settings =
+                    if config.is_oracle_oci() { Some(state.storage.load_app_settings().await?) } else { None };
                 db::oracle_driver::connect_config(&config, &host, port, app_settings.as_ref())
                     .await
                     .map(|_| "Connection successful".to_string())
@@ -163,11 +160,8 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
             PoolKind::SqlServer(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
         }
         DatabaseType::Oracle => {
-            let app_settings = if config.is_oracle_oci() {
-                Some(state.storage.load_app_settings().await?)
-            } else {
-                None
-            };
+            let app_settings =
+                if config.is_oracle_oci() { Some(state.storage.load_app_settings().await?) } else { None };
             let client = db::oracle_driver::connect_config(&config, &host, port, app_settings.as_ref()).await?;
             PoolKind::Oracle(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
         }
