@@ -55,8 +55,17 @@ function clearTypeFilter() {
   selectedTypes.value = [];
 }
 
+function fuzzyMatch(text: string, query: string): boolean {
+  let j = 0;
+  for (let i = 0; i < text.length && j < query.length; i++) {
+    if (text[i] === query[j]) j++;
+  }
+  return j === query.length;
+}
+
 function matchesQuery(node: TreeNode, q: string): boolean {
-  if (node.label.toLowerCase().includes(q)) return true;
+  const label = node.label.toLowerCase();
+  if (label.includes(q) || fuzzyMatch(label, q)) return true;
   return node.children?.some((child) => matchesQuery(child, q)) ?? false;
 }
 
