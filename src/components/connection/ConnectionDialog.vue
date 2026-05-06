@@ -131,12 +131,11 @@ const driverProfiles: Record<
   oceanbase: { type: "mysql", port: 2881, user: "root", label: "OceanBase", icon: "oceanbase" },
   goldendb: { type: "mysql", port: 3306, user: "root", label: "GoldenDB", icon: "goldendb" },
   opengauss: {
-    type: "postgres",
+    type: "gaussdb",
     port: 5432,
     user: "gaussdb",
     label: "openGauss",
     icon: "opengauss",
-    urlParams: "sslmode=disable",
   },
   gaussdb: { type: "gaussdb", port: 5432, user: "gaussdb", label: "GaussDB", icon: "gaussdb" },
   kingbase: { type: "postgres", port: 54321, user: "system", label: "KingBase", icon: "kingbase" },
