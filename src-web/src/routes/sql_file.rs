@@ -138,7 +138,7 @@ pub async fn execute_sql_file(
                 let _ = tx.send(json);
             }
 
-            match query::execute_sql_statement(&app, &req.connection_id, &req.database, stmt, None).await {
+            match query::execute_sql_statement(&app, &req.connection_id, &req.database, stmt, None, None).await {
                 Ok(result) => {
                     success_count += 1;
                     total_affected += result.affected_rows;

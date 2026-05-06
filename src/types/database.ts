@@ -147,6 +147,7 @@ export interface QueryTab {
   title: string;
   connectionId: string;
   database: string;
+  schema?: string;
   sql: string;
   lastExecutedSql?: string;
   pinned?: boolean;

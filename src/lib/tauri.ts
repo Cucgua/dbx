@@ -138,30 +138,42 @@ export async function executeQuery(
   connectionId: string,
   database: string,
   sql: string,
+  schema?: string,
   executionId?: string,
 ): Promise<QueryResult> {
-  return invoke("execute_query", { connectionId, database, sql, executionId });
+  return invoke("execute_query", { connectionId, database, sql, schema, executionId });
 }
 
 export async function executeMulti(
   connectionId: string,
   database: string,
   sql: string,
+  schema?: string,
   executionId?: string,
 ): Promise<QueryResult[]> {
-  return invoke("execute_multi", { connectionId, database, sql, executionId });
+  return invoke("execute_multi", { connectionId, database, sql, schema, executionId });
 }
 
 export async function cancelQuery(executionId: string): Promise<boolean> {
   return invoke("cancel_query", { executionId });
 }
 
-export async function executeBatch(connectionId: string, database: string, statements: string[]): Promise<QueryResult> {
-  return invoke("execute_batch", { connectionId, database, statements });
+export async function executeBatch(
+  connectionId: string,
+  database: string,
+  statements: string[],
+  schema?: string,
+): Promise<QueryResult> {
+  return invoke("execute_batch", { connectionId, database, statements, schema });
 }
 
-export async function executeScript(connectionId: string, database: string, sql: string): Promise<QueryResult> {
-  return invoke("execute_script", { connectionId, database, sql });
+export async function executeScript(
+  connectionId: string,
+  database: string,
+  sql: string,
+  schema?: string,
+): Promise<QueryResult> {
+  return invoke("execute_script", { connectionId, database, sql, schema });
 }
 
 export async function listIndexes(

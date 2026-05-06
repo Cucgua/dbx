@@ -148,10 +148,17 @@ export const useQueryStore = defineStore("query", () => {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || tab.database === database) return;
     tab.database = database;
+    tab.schema = undefined;
     tab.result = undefined;
     tab.lastExecutedSql = undefined;
     clearExplain(tab);
     tab.tableMeta = undefined;
+  }
+
+  function updateSchema(id: string, schema: string | undefined) {
+    const tab = tabs.value.find((t) => t.id === id);
+    if (!tab || tab.schema === schema) return;
+    tab.schema = schema;
   }
 
   function updateConnection(id: string, connectionId: string, database = "") {
@@ -159,6 +166,7 @@ export const useQueryStore = defineStore("query", () => {
     if (!tab || tab.connectionId === connectionId) return;
     tab.connectionId = connectionId;
     tab.database = database;
+    tab.schema = undefined;
     tab.result = undefined;
     tab.lastExecutedSql = undefined;
     clearExplain(tab);
@@ -229,7 +237,7 @@ export const useQueryStore = defineStore("query", () => {
     tab.executionId = executionId;
     tab.lastExecutedSql = sql;
     try {
-      const results = await api.executeMulti(tab.connectionId, tab.database, sql, executionId);
+      const results = await api.executeMulti(tab.connectionId, tab.database, sql, tab.schema, executionId);
       const current = tabs.value.find((t) => t.id === id);
       if (current?.executionId === executionId) {
         if (results.length > 1) {
@@ -278,7 +286,7 @@ export const useQueryStore = defineStore("query", () => {
     tab.explainSql = built.sql;
     tab.lastExplainedSql = sql;
     try {
-      const result = await api.executeQuery(tab.connectionId, tab.database, built.sql, executionId);
+      const result = await api.executeQuery(tab.connectionId, tab.database, built.sql, tab.schema, executionId);
       const current = tabs.value.find((t) => t.id === id);
       if (current?.explainExecutionId === executionId) {
         current.explainPlan = parseExplainResult(databaseType as "mysql" | "postgres", result);
@@ -373,6 +381,7 @@ export const useQueryStore = defineStore("query", () => {
     updateSql,
     togglePinnedTab,
     updateDatabase,
+    updateSchema,
     updateConnection,
     setTableMeta,
     setExecuting,

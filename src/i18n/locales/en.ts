@@ -128,6 +128,7 @@ export default {
     noDatabase: "No database selected",
     selectConnection: "Select connection",
     selectDatabase: "Select database",
+    selectSchema: "Select schema",
   },
   tabs: {
     sql: "SQL",

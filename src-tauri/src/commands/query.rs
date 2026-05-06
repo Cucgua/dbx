@@ -14,13 +14,15 @@ pub async fn execute_query(
     connection_id: String,
     database: String,
     sql: String,
+    schema: Option<String>,
     execution_id: Option<String>,
 ) -> Result<db::QueryResult, String> {
     let registered_query =
         execution_id.as_ref().filter(|id| !id.trim().is_empty()).map(|id| state.running_queries.register(id.clone()));
     let cancel_token = registered_query.as_ref().map(|query| query.token());
 
-    dbx_core::query::execute_sql_statement(&state, &connection_id, &database, &sql, cancel_token).await
+    dbx_core::query::execute_sql_statement(&state, &connection_id, &database, &sql, schema.as_deref(), cancel_token)
+        .await
 }
 
 #[tauri::command]
@@ -29,13 +31,14 @@ pub async fn execute_multi(
     connection_id: String,
     database: String,
     sql: String,
+    schema: Option<String>,
     execution_id: Option<String>,
 ) -> Result<Vec<db::QueryResult>, String> {
     let registered_query =
         execution_id.as_ref().filter(|id| !id.trim().is_empty()).map(|id| state.running_queries.register(id.clone()));
     let cancel_token = registered_query.as_ref().map(|query| query.token());
 
-    dbx_core::query::execute_multi_core(&state, &connection_id, &database, &sql, cancel_token).await
+    dbx_core::query::execute_multi_core(&state, &connection_id, &database, &sql, schema.as_deref(), cancel_token).await
 }
 
 #[tauri::command]
@@ -49,8 +52,9 @@ pub async fn execute_batch(
     connection_id: String,
     database: String,
     statements: Vec<String>,
+    schema: Option<String>,
 ) -> Result<db::QueryResult, String> {
-    dbx_core::query::execute_statements(&state, &connection_id, &database, &statements).await
+    dbx_core::query::execute_statements(&state, &connection_id, &database, &statements, schema.as_deref()).await
 }
 
 #[tauri::command]
@@ -59,6 +63,14 @@ pub async fn execute_script(
     connection_id: String,
     database: String,
     sql: String,
+    schema: Option<String>,
 ) -> Result<db::QueryResult, String> {
-    dbx_core::query::execute_statements(&state, &connection_id, &database, &split_sql_statements(&sql)).await
+    dbx_core::query::execute_statements(
+        &state,
+        &connection_id,
+        &database,
+        &split_sql_statements(&sql),
+        schema.as_deref(),
+    )
+    .await
 }

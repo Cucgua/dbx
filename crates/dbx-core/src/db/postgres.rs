@@ -300,6 +300,66 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
     }
 }
 
+pub async fn execute_query_with_schema(pool: &PgPool, schema: &str, sql: &str) -> Result<QueryResult, String> {
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    let set_path = format!("SET search_path TO \"{}\", public", schema);
+    sqlx::query(&set_path).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+
+    let start = Instant::now();
+    let trimmed = sql.trim().to_uppercase();
+
+    if trimmed.starts_with("SELECT")
+        || trimmed.starts_with("SHOW")
+        || trimmed.starts_with("EXPLAIN")
+        || trimmed.starts_with("WITH")
+        || trimmed.starts_with("TABLE")
+    {
+        let rows: Vec<PgRow> =
+            sqlx::query(sql).persistent(false).fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+
+        let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(first) = rows.first() {
+            let cols = first.columns();
+            (
+                cols.iter().map(|c| c.name().to_string()).collect(),
+                cols.iter().map(|c| c.type_info().name().to_string()).collect(),
+            )
+        } else {
+            let desc = (&mut *conn).describe(sql).await.map_err(|e| e.to_string())?;
+            (
+                desc.columns().iter().map(|c| c.name().to_string()).collect(),
+                desc.columns().iter().map(|c| c.type_info().name().to_string()).collect(),
+            )
+        };
+
+        let result_rows: Vec<Vec<serde_json::Value>> = rows
+            .iter()
+            .map(|row| {
+                (0..row.len())
+                    .map(|i| pg_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                    .collect()
+            })
+            .collect();
+
+        Ok(QueryResult {
+            columns,
+            rows: result_rows,
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        })
+    } else {
+        let result = sqlx::query(sql).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+
+        Ok(QueryResult {
+            columns: vec![],
+            rows: vec![],
+            affected_rows: result.rows_affected(),
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        })
+    }
+}
+
 pub async fn list_indexes(pool: &PgPool, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
     let rows: Vec<PgRow> = sqlx::query(
         "SELECT i.relname AS index_name, \

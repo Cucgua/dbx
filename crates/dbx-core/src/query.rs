@@ -134,6 +134,7 @@ pub async fn do_execute(
     state: &AppState,
     pool_key: &str,
     sql: &str,
+    schema: Option<&str>,
     cancel_token: Option<CancellationToken>,
 ) -> Result<db::QueryResult, String> {
     let connections = state.connections.lock().await;
@@ -161,8 +162,15 @@ pub async fn do_execute(
         }
         PoolKind::Postgres(p) => {
             let p = p.clone();
+            let schema = schema.map(|s| s.to_string());
             drop(connections);
-            wait_for_query(cancel_token, db::postgres::execute_query(&p, sql)).await.map(truncate_result)
+            if let Some(schema) = schema {
+                wait_for_query(cancel_token, db::postgres::execute_query_with_schema(&p, &schema, sql))
+                    .await
+                    .map(truncate_result)
+            } else {
+                wait_for_query(cancel_token, db::postgres::execute_query(&p, sql)).await.map(truncate_result)
+            }
         }
         PoolKind::Sqlite(p) => {
             let p = p.clone();
@@ -214,6 +222,7 @@ pub async fn execute_sql_statement(
     connection_id: &str,
     database: &str,
     sql: &str,
+    schema: Option<&str>,
     cancel_token: Option<CancellationToken>,
 ) -> Result<db::QueryResult, String> {
     let pool_key = if database.is_empty() {
@@ -226,13 +235,13 @@ pub async fn execute_sql_statement(
         return Err(canceled_error());
     }
 
-    let result = do_execute(state, &pool_key, sql, cancel_token.clone()).await;
+    let result = do_execute(state, &pool_key, sql, schema, cancel_token.clone()).await;
 
     match &result {
         Err(e) if is_connection_error(e) && !is_canceled(&cancel_token) => {
             let db_opt = if database.is_empty() { None } else { Some(database) };
             let new_key = state.reconnect_pool(connection_id, db_opt).await?;
-            do_execute(state, &new_key, sql, cancel_token).await
+            do_execute(state, &new_key, sql, schema, cancel_token).await
         }
         _ => result,
     }
@@ -243,12 +252,13 @@ pub async fn execute_multi_core(
     connection_id: &str,
     database: &str,
     sql: &str,
+    schema: Option<&str>,
     cancel_token: Option<CancellationToken>,
 ) -> Result<Vec<db::QueryResult>, String> {
     let statements = split_sql_statements(sql);
     if statements.len() <= 1 {
         let single_sql = statements.into_iter().next().unwrap_or_default();
-        let result = execute_sql_statement(state, connection_id, database, &single_sql, cancel_token).await?;
+        let result = execute_sql_statement(state, connection_id, database, &single_sql, schema, cancel_token).await?;
         return Ok(vec![result]);
     }
 
@@ -264,7 +274,7 @@ pub async fn execute_multi_core(
             });
             break;
         }
-        match execute_sql_statement(state, connection_id, database, stmt, cancel_token.clone()).await {
+        match execute_sql_statement(state, connection_id, database, stmt, schema, cancel_token.clone()).await {
             Ok(r) => results.push(r),
             Err(e) => {
                 results.push(db::QueryResult {
@@ -286,6 +296,7 @@ pub async fn execute_statements(
     connection_id: &str,
     database: &str,
     statements: &[String],
+    schema: Option<&str>,
 ) -> Result<db::QueryResult, String> {
     let pool_key = if database.is_empty() {
         connection_id.to_string()
@@ -297,7 +308,7 @@ pub async fn execute_statements(
     let start = std::time::Instant::now();
 
     for (i, sql) in statements.iter().enumerate() {
-        match do_execute(state, &pool_key, sql, None).await {
+        match do_execute(state, &pool_key, sql, schema, None).await {
             Ok(result) => {
                 total_affected += result.affected_rows;
             }

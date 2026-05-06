@@ -13,6 +13,7 @@ pub struct ExecuteQueryRequest {
     pub connection_id: String,
     pub database: String,
     pub sql: String,
+    pub schema: Option<String>,
     pub execution_id: Option<String>,
 }
 
@@ -28,6 +29,7 @@ pub struct ExecuteBatchRequest {
     pub connection_id: String,
     pub database: String,
     pub statements: Vec<String>,
+    pub schema: Option<String>,
 }
 
 pub async fn execute_query(
@@ -44,6 +46,7 @@ pub async fn execute_query(
         &req.connection_id,
         &req.database,
         &req.sql,
+        req.schema.as_deref(),
         Some(cancel_token),
     )
     .await
@@ -67,6 +70,7 @@ pub async fn execute_multi(
         &req.connection_id,
         &req.database,
         &req.sql,
+        req.schema.as_deref(),
         Some(cancel_token),
     )
     .await
@@ -80,9 +84,15 @@ pub async fn execute_batch(
     State(state): State<Arc<WebState>>,
     Json(req): Json<ExecuteBatchRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let result = dbx_core::query::execute_statements(&state.app, &req.connection_id, &req.database, &req.statements)
-        .await
-        .map_err(AppError)?;
+    let result = dbx_core::query::execute_statements(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &req.statements,
+        req.schema.as_deref(),
+    )
+    .await
+    .map_err(AppError)?;
 
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
@@ -100,9 +110,15 @@ pub async fn execute_script(
     Json(req): Json<ExecuteQueryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let statements = dbx_core::sql::split_sql_statements(&req.sql);
-    let result = dbx_core::query::execute_statements(&state.app, &req.connection_id, &req.database, &statements)
-        .await
-        .map_err(AppError)?;
+    let result = dbx_core::query::execute_statements(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &statements,
+        req.schema.as_deref(),
+    )
+    .await
+    .map_err(AppError)?;
 
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }

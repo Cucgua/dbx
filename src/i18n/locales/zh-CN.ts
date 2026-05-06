@@ -127,6 +127,7 @@ export default {
     noDatabase: "未选择数据库",
     selectConnection: "选择连接",
     selectDatabase: "选择数据库",
+    selectSchema: "选择模式",
   },
   tabs: {
     sql: "SQL",

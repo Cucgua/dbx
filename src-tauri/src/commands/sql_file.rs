@@ -262,6 +262,7 @@ async fn execute_statement_with_progress(
         &request.connection_id,
         &request.database,
         statement,
+        None,
         Some(token.clone()),
     )
     .await

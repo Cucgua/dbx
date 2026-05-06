@@ -248,6 +248,11 @@ function changeActiveDatabase(database: string) {
   if (tab) queryStore.updateDatabase(tab.id, database);
 }
 
+function changeActiveSchema(schema: string | undefined) {
+  const tab = activeTab.value;
+  if (tab) queryStore.updateSchema(tab.id, schema);
+}
+
 function toggleLocale() {
   setLocale(currentLocale() === "zh-CN" ? "en" : "zh-CN");
 }
@@ -426,6 +431,7 @@ onUnmounted(() => {
                   @open-sql="openSqlFile"
                   @change-connection="changeActiveConnection"
                   @change-database="changeActiveDatabase"
+                  @change-schema="changeActiveSchema"
                 />
                 <ContentArea
                   :active-tab="activeTab"

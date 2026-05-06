@@ -1,13 +1,25 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { Play, Loader2, Square, Database, Table2, AlignLeft, GitBranch, Save, FolderOpen } from "lucide-vue-next";
+import {
+  Play,
+  Loader2,
+  Square,
+  Database,
+  Table2,
+  AlignLeft,
+  GitBranch,
+  Save,
+  FolderOpen,
+  Layers,
+} from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
+import { useSchemaOptions } from "@/composables/useSchemaOptions";
 import { connectionIconType } from "@/lib/connectionPresentation";
 import { connectionDisplayName } from "@/lib/tabPresentation";
 import type { QueryTab, ConnectionConfig } from "@/types/database";
@@ -27,11 +39,13 @@ const emit = defineEmits<{
   openSql: [];
   changeConnection: [connectionId: string];
   changeDatabase: [database: string];
+  changeSchema: [schema: string | undefined];
 }>();
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const { databaseOptions, loadingDatabaseOptions, loadDatabaseOptions } = useDatabaseOptions();
+const { loadSchemaOptions, getSchemaOptionsForDb, isLoadingSchemas, isSchemaAware } = useSchemaOptions();
 
 const activeDatabaseOptions = computed(() => {
   const connection = props.activeConnection;
@@ -40,6 +54,18 @@ const activeDatabaseOptions = computed(() => {
 
 const activeDatabaseValue = computed(() => props.activeTab.database || "");
 const activeConnectionValue = computed(() => props.activeConnection?.id || "");
+const activeSchemaValue = computed(() => props.activeTab.schema || "");
+
+const showSchemaSelector = computed(() => {
+  const connection = props.activeConnection;
+  return connection && isSchemaAware(connection.id) && props.activeTab.database;
+});
+
+const activeSchemaOptions = computed(() => {
+  const connection = props.activeConnection;
+  if (!connection) return [];
+  return getSchemaOptionsForDb(connection.id, props.activeTab.database);
+});
 
 function databaseDisplayName(database: string): string {
   const connection = props.activeConnection;
@@ -181,6 +207,35 @@ function databaseDisplayName(database: string): string {
             </SelectItem>
             <SelectItem v-if="!activeDatabaseOptions.length && activeDatabaseValue" :value="activeDatabaseValue">
               {{ databaseDisplayName(activeDatabaseValue) }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div v-if="showSchemaSelector" class="flex items-center gap-1">
+        <Layers class="h-3.5 w-3.5 shrink-0" />
+        <Select
+          :model-value="activeSchemaValue"
+          @update:model-value="(v: any) => emit('changeSchema', v || undefined)"
+          @update:open="
+            (open: boolean) => {
+              if (open && activeConnection) loadSchemaOptions(activeConnection.id, activeTab.database).catch(() => {});
+            }
+          "
+        >
+          <SelectTrigger class="h-6 w-auto max-w-56 border-0 bg-transparent px-1 text-xs shadow-none focus:ring-0">
+            <SelectValue
+              :placeholder="
+                activeConnection && isLoadingSchemas(activeConnection.id, activeTab.database)
+                  ? t('common.loading')
+                  : t('editor.selectSchema')
+              "
+            >
+              {{ activeSchemaValue || t("editor.selectSchema") }}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectItem v-for="schema in activeSchemaOptions" :key="schema" :value="schema">
+              {{ schema }}
             </SelectItem>
           </SelectContent>
         </Select>
