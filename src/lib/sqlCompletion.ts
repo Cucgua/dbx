@@ -10,6 +10,8 @@ const SQL_KEYWORDS = [
   "ON",
   "GROUP BY",
   "ORDER BY",
+  "ASC",
+  "DESC",
   "HAVING",
   "LIMIT",
   "OFFSET",
