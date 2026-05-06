@@ -401,7 +401,7 @@ async function testConnection() {
   isTesting.value = true;
   testResult.value = null;
   try {
-    const config: ConnectionConfig = { ...form.value, id: editingId.value || uuid() };
+    const config = connectionConfigForSubmit(editingId.value || uuid());
     const msg = await api.testConnection(config);
     if (runId !== testRunId) return;
     testResult.value = { ok: true, message: msg };
@@ -413,6 +413,14 @@ async function testConnection() {
       isTesting.value = false;
     }
   }
+}
+
+function connectionConfigForSubmit(id: string): ConnectionConfig {
+  const config: ConnectionConfig = { ...form.value, id };
+  if (config.db_type === "mongodb" && !mongoUseUrl.value) {
+    config.connection_string = undefined;
+  }
+  return config;
 }
 
 function resetTestState() {
@@ -462,11 +470,11 @@ async function save() {
   resetTestState();
   try {
     if (editingId.value) {
-      const updated: ConnectionConfig = { ...form.value, id: editingId.value };
+      const updated = connectionConfigForSubmit(editingId.value);
       await store.updateConnection(updated);
       store.stopEditing();
     } else {
-      const config: ConnectionConfig = { ...form.value, id: uuid() };
+      const config = connectionConfigForSubmit(uuid());
       await store.addConnection(config);
       open.value = false;
       await nextTick();
@@ -756,6 +764,20 @@ async function browseSshKeyPath() {
                         class="col-span-3"
                         :placeholder="t('connection.databasePlaceholder')"
                       />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.urlParams") }}</Label>
+                      <Input
+                        v-model="form.url_params"
+                        class="col-span-3"
+                        placeholder="authSource=admin&authMechanism=SCRAM-SHA-1"
+                      />
+                    </div>
+                    <div class="grid grid-cols-4 items-start gap-4">
+                      <span />
+                      <p class="col-span-3 text-xs text-muted-foreground">
+                        {{ t("connection.mongoLegacyHint") }}
+                      </p>
                     </div>
                   </template>
                 </template>

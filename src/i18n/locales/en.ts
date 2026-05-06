@@ -112,6 +112,8 @@ export default {
     sshKeyPathBrowse: "Browse",
     sshExposeLan: "Expose tunnel to LAN",
     dmCompatHint: "Requires DM PG compatibility mode (set COMPATIBLE_MODE=7 in dm.ini and restart)",
+    mongoLegacyHint:
+      "For older MongoDB servers, enter authSource=admin&authMechanism=SCRAM-SHA-1 here; add directConnection=true only when needed for direct standalone connections.",
     compatible: "Compatible",
     mainstream: "Popular",
     color: "Color",
