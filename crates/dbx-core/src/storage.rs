@@ -5,6 +5,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use crate::ai::{AiChatMessage, AiConfig, AiConversation};
 use crate::history::HistoryEntry;
+use crate::models::app_settings::AppSettings;
 use crate::models::connection::ConnectionConfig;
 
 pub struct Storage {
@@ -191,8 +192,19 @@ impl Storage {
 // ---------------------------------------------------------------------------
 
 impl Storage {
-    pub async fn save_password_hash(&self, hash: &str) -> Result<(), String> {
-        let json = serde_json::json!({ "password_hash": hash }).to_string();
+    async fn load_app_settings_value(&self) -> Result<serde_json::Value, String> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT settings_json FROM app_settings WHERE id = 1")
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        match row {
+            Some((json,)) => serde_json::from_str(&json).map_err(|e| e.to_string()),
+            None => Ok(serde_json::json!({})),
+        }
+    }
+
+    async fn save_app_settings_value(&self, value: &serde_json::Value) -> Result<(), String> {
+        let json = serde_json::to_string(value).map_err(|e| e.to_string())?;
         sqlx::query("INSERT OR REPLACE INTO app_settings (id, settings_json) VALUES (1, ?)")
             .bind(&json)
             .execute(&self.db)
@@ -201,17 +213,50 @@ impl Storage {
         Ok(())
     }
 
+    pub async fn save_app_settings(&self, settings: &AppSettings) -> Result<(), String> {
+        let mut value = self.load_app_settings_value().await?;
+        if !value.is_object() {
+            value = serde_json::json!({});
+        }
+        let Some(map) = value.as_object_mut() else {
+            return Err("Invalid app settings format".to_string());
+        };
+
+        set_optional_string(map, "oracleClientLibDir", settings.oracle_client_lib_dir());
+        set_optional_string(map, "oracleClientConfigDir", settings.oracle_client_config_dir());
+        self.save_app_settings_value(&value).await
+    }
+
+    pub async fn load_app_settings(&self) -> Result<AppSettings, String> {
+        let value = self.load_app_settings_value().await?;
+        serde_json::from_value(value).map_err(|e| e.to_string())
+    }
+
+    pub async fn save_password_hash(&self, hash: &str) -> Result<(), String> {
+        let mut value = self.load_app_settings_value().await?;
+        if !value.is_object() {
+            value = serde_json::json!({});
+        }
+        let Some(map) = value.as_object_mut() else {
+            return Err("Invalid app settings format".to_string());
+        };
+        map.insert("password_hash".to_string(), serde_json::Value::String(hash.to_string()));
+        self.save_app_settings_value(&value).await
+    }
+
     pub async fn load_password_hash(&self) -> Result<Option<String>, String> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT settings_json FROM app_settings WHERE id = 1")
-            .fetch_optional(&self.db)
-            .await
-            .map_err(|e| e.to_string())?;
-        match row {
-            Some((json,)) => {
-                let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-                Ok(v.get("password_hash").and_then(|v| v.as_str()).map(|s| s.to_string()))
-            }
-            None => Ok(None),
+        let value = self.load_app_settings_value().await?;
+        Ok(value.get("password_hash").and_then(|v| v.as_str()).map(|s| s.to_string()))
+    }
+}
+
+fn set_optional_string(map: &mut serde_json::Map<String, serde_json::Value>, key: &str, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+        }
+        None => {
+            map.remove(key);
         }
     }
 }

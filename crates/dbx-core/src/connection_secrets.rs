@@ -286,6 +286,8 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssl: false,
+            sysdba: false,
+            oracle_connect_method: Default::default(),
             connection_string: None,
         }
     }

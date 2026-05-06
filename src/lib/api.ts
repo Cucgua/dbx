@@ -65,6 +65,10 @@ export const saveAiConversation = forward("saveAiConversation");
 export const loadAiConversations = forward("loadAiConversations");
 export const deleteAiConversation = forward("deleteAiConversation");
 
+// App Settings
+export const saveAppSettings = forward("saveAppSettings");
+export const loadAppSettings = forward("loadAppSettings");
+
 // SQL File Execution
 export const previewSqlFile = forward("previewSqlFile");
 export const executeSqlFile = forward("executeSqlFile");

@@ -318,6 +318,7 @@ function initApp() {
       toast(t("connection.loadFailed", { message: e?.message || String(e) }), 5000);
     });
   settingsStore.initAiConfig();
+  settingsStore.initAppSettings();
 }
 
 async function reconnectRestoredTabs() {

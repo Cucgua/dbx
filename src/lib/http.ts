@@ -9,7 +9,7 @@ import type {
   QueryResult,
   SidebarLayout,
 } from "@/types/database";
-import type { AiConfig } from "@/stores/settingsStore";
+import type { AiConfig, AppSettings } from "@/stores/settingsStore";
 import type {
   AiCompletionRequest,
   AiStreamChunk,
@@ -64,6 +64,15 @@ function qs(params: Record<string, string | number | undefined>): string {
   return sp.toString();
 }
 
+const APP_SETTINGS_STORAGE_KEY = "dbx-app-settings";
+
+function defaultAppSettings(): AppSettings {
+  return {
+    oracleClientLibDir: "",
+    oracleClientConfigDir: "",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Connection
 // ---------------------------------------------------------------------------
@@ -86,6 +95,20 @@ export async function saveConnections(configs: ConnectionConfig[]): Promise<void
 
 export async function loadConnections(): Promise<ConnectionConfig[]> {
   return get("/api/connection/list");
+}
+
+export async function saveAppSettings(settings: AppSettings): Promise<void> {
+  localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+}
+
+export async function loadAppSettings(): Promise<AppSettings> {
+  try {
+    const raw = localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+    if (!raw) return defaultAppSettings();
+    return { ...defaultAppSettings(), ...JSON.parse(raw) };
+  } catch {
+    return defaultAppSettings();
+  }
 }
 
 // ---------------------------------------------------------------------------

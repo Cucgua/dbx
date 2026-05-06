@@ -2,7 +2,7 @@
 import { ref, watch, shallowRef, computed } from "vue";
 import type { EditorView as EditorViewType } from "@codemirror/view";
 import { useI18n } from "vue-i18n";
-import { Settings } from "lucide-vue-next";
+import { FolderOpen, Settings } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useSettingsStore, EDITOR_THEMES, FONT_FAMILIES, DEFAULT_EDITOR_SETTINGS } from "@/stores/settingsStore";
+import {
+  useSettingsStore,
+  EDITOR_THEMES,
+  FONT_FAMILIES,
+  DEFAULT_EDITOR_SETTINGS,
+  DEFAULT_APP_SETTINGS,
+} from "@/stores/settingsStore";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 
@@ -30,21 +36,27 @@ const editFontFamily = ref(settingsStore.editorSettings.fontFamily);
 const editFontSize = ref(settingsStore.editorSettings.fontSize);
 const editTheme = ref(settingsStore.editorSettings.theme);
 const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
+const editOracleClientLibDir = ref(settingsStore.appSettings.oracleClientLibDir);
+const editOracleClientConfigDir = ref(settingsStore.appSettings.oracleClientConfigDir);
 
 // Sync from store when dialog opens
 watch(
   () => props.open,
-  (open) => {
+  async (open) => {
     if (open) {
+      await settingsStore.initAppSettings();
+      if (!props.open) return;
       editFontFamily.value = settingsStore.editorSettings.fontFamily;
       editFontSize.value = settingsStore.editorSettings.fontSize;
       editTheme.value = settingsStore.editorSettings.theme;
       editExecuteMode.value = settingsStore.editorSettings.executeMode;
+      editOracleClientLibDir.value = settingsStore.appSettings.oracleClientLibDir;
+      editOracleClientConfigDir.value = settingsStore.appSettings.oracleClientConfigDir;
     }
   },
 );
 
-function hasChanges(): boolean {
+function hasEditorChanges(): boolean {
   return (
     editFontFamily.value !== settingsStore.editorSettings.fontFamily ||
     editFontSize.value !== settingsStore.editorSettings.fontSize ||
@@ -53,7 +65,14 @@ function hasChanges(): boolean {
   );
 }
 
-function applySettings() {
+function hasSystemChanges(): boolean {
+  return (
+    editOracleClientLibDir.value !== settingsStore.appSettings.oracleClientLibDir ||
+    editOracleClientConfigDir.value !== settingsStore.appSettings.oracleClientConfigDir
+  );
+}
+
+function applyEditorSettings() {
   settingsStore.updateEditorSettings({
     fontFamily: editFontFamily.value,
     fontSize: editFontSize.value,
@@ -63,11 +82,24 @@ function applySettings() {
   emit("update:open", false);
 }
 
-function resetDefaults() {
+function applySystemSettings() {
+  settingsStore.updateAppSettings({
+    oracleClientLibDir: editOracleClientLibDir.value.trim(),
+    oracleClientConfigDir: editOracleClientConfigDir.value.trim(),
+  });
+  emit("update:open", false);
+}
+
+function resetEditorDefaults() {
   editFontFamily.value = DEFAULT_EDITOR_SETTINGS.fontFamily;
   editFontSize.value = DEFAULT_EDITOR_SETTINGS.fontSize;
   editTheme.value = DEFAULT_EDITOR_SETTINGS.theme;
   editExecuteMode.value = DEFAULT_EDITOR_SETTINGS.executeMode;
+}
+
+function resetSystemDefaults() {
+  editOracleClientLibDir.value = DEFAULT_APP_SETTINGS.oracleClientLibDir;
+  editOracleClientConfigDir.value = DEFAULT_APP_SETTINGS.oracleClientConfigDir;
 }
 
 function onExecuteModeChange(v: any) {
@@ -84,6 +116,7 @@ function onThemeChange(v: any) {
 
 const activeSettingsTab = ref("editor");
 const isWeb = !isTauriRuntime();
+const isDesktop = !isWeb;
 
 watch(
   () => props.open,
@@ -103,6 +136,23 @@ const confirmNewPassword = ref("");
 const passwordMessage = ref("");
 const passwordError = ref(false);
 const changingPassword = ref(false);
+
+async function browseOracleClientLibDir() {
+  const selected = await browseDirectory();
+  if (selected) editOracleClientLibDir.value = selected;
+}
+
+async function browseOracleClientConfigDir() {
+  const selected = await browseDirectory();
+  if (selected) editOracleClientConfigDir.value = selected;
+}
+
+async function browseDirectory(): Promise<string | null> {
+  if (!isTauriRuntime()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ directory: true, multiple: false });
+  return typeof selected === "string" ? selected : null;
+}
 
 async function changePassword() {
   if (newPassword.value !== confirmNewPassword.value) {
@@ -246,6 +296,7 @@ watch(
       <Tabs v-model="activeSettingsTab">
         <TabsList class="w-full">
           <TabsTrigger value="editor" class="flex-1">{{ t("settings.editorTab") }}</TabsTrigger>
+          <TabsTrigger v-if="isDesktop" value="system" class="flex-1">{{ t("settings.systemTab") }}</TabsTrigger>
           <TabsTrigger v-if="isWeb" value="security" class="flex-1">{{ t("settings.securityTab") }}</TabsTrigger>
         </TabsList>
 
@@ -355,14 +406,70 @@ watch(
           </div>
 
           <DialogFooter class="gap-2 sm:gap-0">
-            <Button variant="outline" @click="resetDefaults">
+            <Button variant="outline" @click="resetEditorDefaults">
               {{ t("settings.resetDefaults") }}
             </Button>
             <div class="flex-1" />
             <Button variant="outline" @click="emit('update:open', false)">
               {{ t("common.close") }}
             </Button>
-            <Button :disabled="!hasChanges()" @click="applySettings">
+            <Button :disabled="!hasEditorChanges()" @click="applyEditorSettings">
+              {{ t("settings.apply") }}
+            </Button>
+          </DialogFooter>
+        </TabsContent>
+
+        <TabsContent v-if="isDesktop" value="system" class="space-y-5 py-2">
+          <div class="space-y-3">
+            <div>
+              <Label class="text-base">{{ t("settings.oracleOciTitle") }}</Label>
+              <p class="mt-1 text-sm text-muted-foreground">{{ t("settings.oracleOciDescription") }}</p>
+            </div>
+
+            <div class="space-y-2">
+              <Label>{{ t("settings.oracleClientLibDir") }}</Label>
+              <div class="flex gap-2">
+                <Input
+                  v-model="editOracleClientLibDir"
+                  class="h-9"
+                  placeholder="C:\\oracle\\instantclient_19_28"
+                />
+                <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseOracleClientLibDir">
+                  <FolderOpen class="h-4 w-4" />
+                </Button>
+              </div>
+              <p class="text-xs text-muted-foreground">{{ t("settings.oracleClientLibDirHint") }}</p>
+            </div>
+
+            <div class="space-y-2">
+              <Label>{{ t("settings.oracleClientConfigDir") }}</Label>
+              <div class="flex gap-2">
+                <Input
+                  v-model="editOracleClientConfigDir"
+                  class="h-9"
+                  placeholder="C:\\oracle\\network\\admin"
+                />
+                <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseOracleClientConfigDir">
+                  <FolderOpen class="h-4 w-4" />
+                </Button>
+              </div>
+              <p class="text-xs text-muted-foreground">{{ t("settings.oracleClientConfigDirHint") }}</p>
+            </div>
+
+            <p class="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              {{ t("settings.oracleOciRestartHint") }}
+            </p>
+          </div>
+
+          <DialogFooter class="gap-2 sm:gap-0">
+            <Button variant="outline" @click="resetSystemDefaults">
+              {{ t("settings.resetDefaults") }}
+            </Button>
+            <div class="flex-1" />
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+            <Button :disabled="!hasSystemChanges()" @click="applySystemSettings">
               {{ t("settings.apply") }}
             </Button>
           </DialogFooter>

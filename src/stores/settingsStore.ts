@@ -47,6 +47,11 @@ export interface EditorSettings {
   executeMode: "all" | "current";
 }
 
+export interface AppSettings {
+  oracleClientLibDir: string;
+  oracleClientConfigDir: string;
+}
+
 export const EDITOR_THEMES: { value: EditorTheme; label: string; dark: boolean }[] = [
   { value: "one-dark", label: "One Dark", dark: true },
   { value: "vscode-dark", label: "VS Dark+", dark: true },
@@ -74,6 +79,11 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   fontSize: 13,
   theme: "one-dark",
   executeMode: "all",
+};
+
+export const DEFAULT_APP_SETTINGS: AppSettings = {
+  oracleClientLibDir: "",
+  oracleClientConfigDir: "",
 };
 
 export const STORAGE_KEY = "dbx-editor-settings";
@@ -125,8 +135,10 @@ function saveEditorSettings(settings: EditorSettings) {
 export const useSettingsStore = defineStore("settings", () => {
   const aiConfig = ref<AiConfig>({ ...defaultConfigs.claude, apiKey: "", apiStyle: "completions" });
   const isAiConfigLoaded = ref(false);
+  const isAppSettingsLoaded = ref(false);
 
   const editorSettings = ref<EditorSettings>(loadEditorSettings());
+  const appSettings = ref<AppSettings>({ ...DEFAULT_APP_SETTINGS });
 
   async function initAiConfig() {
     if (isAiConfigLoaded.value) return;
@@ -151,6 +163,21 @@ export const useSettingsStore = defineStore("settings", () => {
     api.saveAiConfig(aiConfig.value).catch(() => {});
   }
 
+  async function initAppSettings() {
+    if (isAppSettingsLoaded.value) return;
+    const saved = await api.loadAppSettings().catch(() => null);
+    appSettings.value = {
+      oracleClientLibDir: saved?.oracleClientLibDir || DEFAULT_APP_SETTINGS.oracleClientLibDir,
+      oracleClientConfigDir: saved?.oracleClientConfigDir || DEFAULT_APP_SETTINGS.oracleClientConfigDir,
+    };
+    isAppSettingsLoaded.value = true;
+  }
+
+  function updateAppSettings(config: Partial<AppSettings>) {
+    Object.assign(appSettings.value, config);
+    api.saveAppSettings(appSettings.value).catch(() => {});
+  }
+
   function isConfigured(): boolean {
     return !!aiConfig.value.apiKey && !!aiConfig.value.endpoint;
   }
@@ -163,10 +190,14 @@ export const useSettingsStore = defineStore("settings", () => {
   return {
     aiConfig,
     isAiConfigLoaded,
+    isAppSettingsLoaded,
     initAiConfig,
+    initAppSettings,
     updateAiConfig,
+    updateAppSettings,
     isConfigured,
     editorSettings,
+    appSettings,
     updateEditorSettings,
   };
 });

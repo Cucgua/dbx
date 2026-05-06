@@ -10,7 +10,7 @@ import type {
   TriggerInfo,
   QueryResult,
 } from "@/types/database";
-import type { AiConfig } from "@/stores/settingsStore";
+import type { AiConfig, AppSettings } from "@/stores/settingsStore";
 
 export interface AiMessage {
   role: "user" | "assistant" | "system";
@@ -69,6 +69,14 @@ export async function aiCancelStream(sessionId: string): Promise<boolean> {
 
 export async function loadAiConfig(): Promise<AiConfig | null> {
   return invoke("load_ai_config");
+}
+
+export async function saveAppSettings(settings: AppSettings): Promise<void> {
+  return invoke("save_app_settings", { settings });
+}
+
+export async function loadAppSettings(): Promise<AppSettings> {
+  return invoke("load_app_settings");
 }
 
 // --- AI Conversations ---

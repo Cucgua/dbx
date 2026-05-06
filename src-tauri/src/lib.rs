@@ -64,6 +64,8 @@ pub fn run() {
             commands::connection::load_connections,
             commands::connection::save_sidebar_layout,
             commands::connection::load_sidebar_layout,
+            commands::settings::save_app_settings,
+            commands::settings::load_app_settings,
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::list_schemas,

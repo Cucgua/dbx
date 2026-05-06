@@ -673,6 +673,7 @@ export default {
   settings: {
     title: "Settings",
     editorTab: "Editor",
+    systemTab: "System",
     securityTab: "Security",
     fontFamily: "Font Family",
     selectFont: "Select font...",
@@ -685,5 +686,13 @@ export default {
     executeModeAll: "Execute all SQL",
     executeModeCurrent: "Execute statement at cursor",
     preview: "Live Preview",
+    oracleOciTitle: "Oracle OCI",
+    oracleOciDescription: "Configure the local Oracle Client used by Oracle OCI (11g) connections.",
+    oracleClientLibDir: "OCI Library Directory",
+    oracleClientLibDirHint: "Folder containing oci.dll, for example C:\\oracle\\instantclient_19_28.",
+    oracleClientConfigDir: "Oracle Network Config Directory",
+    oracleClientConfigDirHint: "Optional folder containing tnsnames.ora. This is equivalent to TNS_ADMIN.",
+    oracleOciRestartHint:
+      "The OCI library is initialized once per app process. If OCI has already initialized successfully, restart DBX after changing these paths.",
   },
 };

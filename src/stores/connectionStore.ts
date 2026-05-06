@@ -124,6 +124,7 @@ export const useConnectionStore = defineStore("connection", () => {
       sqlserver: "SQL Server",
       mongodb: "MongoDB",
       oracle: "Oracle",
+      oracle_oci: "Oracle OCI (11g)",
       elasticsearch: "Elasticsearch",
       doris: "Doris",
       starrocks: "StarRocks",
@@ -134,6 +135,7 @@ export const useConnectionStore = defineStore("connection", () => {
       driver_profile: config.driver_profile || config.db_type,
       driver_label: config.driver_label || labelMap[config.driver_profile || config.db_type] || config.db_type,
       url_params: config.url_params || "",
+      oracle_connect_method: config.oracle_connect_method || "service_name",
     };
   }
 

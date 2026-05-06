@@ -40,6 +40,8 @@ pub struct ConnectionConfig {
     #[serde(default)]
     pub sysdba: bool,
     #[serde(default)]
+    pub oracle_connect_method: OracleConnectMethod,
+    #[serde(default)]
     pub connection_string: Option<String>,
 }
 
@@ -72,7 +74,26 @@ pub enum DatabaseType {
     Redshift,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OracleConnectMethod {
+    ServiceName,
+    Sid,
+    ConnectString,
+}
+
+impl Default for OracleConnectMethod {
+    fn default() -> Self {
+        OracleConnectMethod::ServiceName
+    }
+}
+
 impl ConnectionConfig {
+    pub fn is_oracle_oci(&self) -> bool {
+        self.db_type == DatabaseType::Oracle
+            && self.driver_profile.as_deref().is_some_and(|profile| profile.eq_ignore_ascii_case("oracle_oci"))
+    }
+
     pub fn needs_bare_mysql(&self) -> bool {
         matches!(self.db_type, DatabaseType::Doris | DatabaseType::StarRocks)
             || self
@@ -284,6 +305,7 @@ mod tests {
             ssh_expose_lan: false,
             ssl: false,
             sysdba: false,
+            oracle_connect_method: Default::default(),
             connection_string: None,
         }
     }
@@ -293,6 +315,15 @@ mod tests {
         config.db_type = DatabaseType::MongoDb;
         config.port = 17000;
         config
+    }
+
+    #[test]
+    fn detects_oracle_oci_driver_profile() {
+        let mut config = mysql_config("system", "secret", Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+        config.driver_profile = Some("oracle_oci".to_string());
+
+        assert!(config.is_oracle_oci());
     }
 
     #[test]

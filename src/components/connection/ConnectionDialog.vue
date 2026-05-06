@@ -64,6 +64,8 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   ssh_key_passphrase: "",
   ssh_expose_lan: false,
   ssl: false,
+  sysdba: false,
+  oracle_connect_method: "service_name",
   connection_string: undefined,
 });
 
@@ -71,6 +73,7 @@ const form = ref(defaultForm());
 const selectedType = ref("mysql");
 const customDriverName = ref("");
 const mongoUseUrl = ref(false);
+const oracleUseConnectString = ref(false);
 const dialogStep = ref<DialogStep>("select");
 const dbPickerView = ref<DbPickerView>("icon");
 const dbSearchQuery = ref("");
@@ -119,6 +122,7 @@ const driverProfiles: Record<
   },
   sqlserver: { type: "sqlserver", port: 1433, user: "sa", label: "SQL Server", icon: "sqlserver" },
   oracle: { type: "oracle", port: 1521, user: "system", label: "Oracle", icon: "oracle" },
+  oracle_oci: { type: "oracle", port: 1521, user: "system", label: "Oracle OCI (11g)", icon: "oracle" },
   elasticsearch: {
     type: "elasticsearch",
     port: 9200,
@@ -217,6 +221,11 @@ function applyProfile(val: string, preserveConnectionFields = false) {
     if (profile.type === "sqlite" || profile.type === "duckdb") {
       form.value.host = "";
     }
+    if (profile.type === "oracle") {
+      form.value.oracle_connect_method = "service_name";
+      form.value.connection_string = undefined;
+      oracleUseConnectString.value = false;
+    }
   }
 }
 
@@ -247,10 +256,13 @@ watch(
         ssh_key_passphrase: config.ssh_key_passphrase || "",
         ssh_expose_lan: config.ssh_expose_lan || false,
         ssl: config.ssl || false,
+        sysdba: config.sysdba || false,
+        oracle_connect_method: config.oracle_connect_method || "service_name",
         connection_string: config.connection_string,
       };
       selectedType.value = profile;
-      mongoUseUrl.value = !!config.connection_string;
+      mongoUseUrl.value = config.db_type === "mongodb" && !!config.connection_string;
+      oracleUseConnectString.value = profile === "oracle_oci" && !!config.connection_string;
       customDriverName.value = isCustomCompatibleProfile() ? config.driver_label || "" : "";
       dialogStep.value = "config";
       configTab.value = "connection";
@@ -259,6 +271,8 @@ watch(
       form.value = defaultForm();
       selectedType.value = "mysql";
       customDriverName.value = "";
+      mongoUseUrl.value = false;
+      oracleUseConnectString.value = false;
       dialogStep.value = "select";
       configTab.value = "connection";
     }
@@ -290,6 +304,7 @@ const iconTypeMap: Record<string, string> = {
   clickhouse: "clickhouse",
   sqlserver: "sqlserver",
   oracle: "oracle",
+  oracle_oci: "oracle",
   elasticsearch: "elasticsearch",
   mariadb: "mariadb",
   tidb: "tidb",
@@ -320,6 +335,7 @@ const dbOptions = [
   { value: "clickhouse", label: "ClickHouse" },
   { value: "sqlserver", label: "SQL Server" },
   { value: "oracle", label: "Oracle" },
+  { value: "oracle_oci", label: "Oracle OCI (11g)" },
   { value: "elasticsearch", label: "Elasticsearch" },
   { value: "mariadb", label: "MariaDB" },
 ];
@@ -374,6 +390,14 @@ const filteredDbCategories = computed<DbCategory[]>(() => {
 const hasDbPickerResults = computed(() => filteredDbCategories.value.some((category) => category.options.length > 0));
 const selectedDbIcon = computed(() => iconTypeMap[selectedType.value] || selectedProfile().icon || selectedType.value);
 const canUseSsh = computed(() => form.value.db_type !== "sqlite");
+const isOracle = computed(() => form.value.db_type === "oracle");
+const isOracleOci = computed(() => selectedType.value === "oracle_oci");
+const canSubmit = computed(() => {
+  if (!form.value.name) return false;
+  if (mongoUseUrl.value && form.value.db_type === "mongodb") return !!form.value.connection_string;
+  if (oracleUseConnectString.value && isOracleOci.value) return !!form.value.connection_string;
+  return !!form.value.host;
+});
 const testResultMessage = computed(() => {
   if (!testResult.value) return "";
   return testResult.value.ok ? t("connection.testSuccess") : testResult.value.message;
@@ -404,7 +428,7 @@ async function testConnection() {
   isTesting.value = true;
   testResult.value = null;
   try {
-    const config = connectionConfigForSubmit(editingId.value || uuid());
+    const config = buildSubmitConfig(editingId.value || uuid());
     const msg = await api.testConnection(config);
     if (runId !== testRunId) return;
     testResult.value = { ok: true, message: msg };
@@ -416,14 +440,6 @@ async function testConnection() {
       isTesting.value = false;
     }
   }
-}
-
-function connectionConfigForSubmit(id: string): ConnectionConfig {
-  const config: ConnectionConfig = { ...form.value, id };
-  if (config.db_type === "mongodb" && !mongoUseUrl.value) {
-    config.connection_string = undefined;
-  }
-  return config;
 }
 
 function resetTestState() {
@@ -444,6 +460,7 @@ function resetForm() {
   selectedType.value = "mysql";
   customDriverName.value = "";
   mongoUseUrl.value = false;
+  oracleUseConnectString.value = false;
   dialogStep.value = "select";
   dbPickerView.value = "icon";
   dbSearchQuery.value = "";
@@ -473,11 +490,11 @@ async function save() {
   resetTestState();
   try {
     if (editingId.value) {
-      const updated = connectionConfigForSubmit(editingId.value);
+      const updated = buildSubmitConfig(editingId.value);
       await store.updateConnection(updated);
       store.stopEditing();
     } else {
-      const config = connectionConfigForSubmit(uuid());
+      const config = buildSubmitConfig(uuid());
       await store.addConnection(config);
       open.value = false;
       await nextTick();
@@ -498,6 +515,23 @@ async function save() {
   } finally {
     isSaving.value = false;
   }
+}
+
+function buildSubmitConfig(id: string): ConnectionConfig {
+  const config: ConnectionConfig = { ...form.value, id };
+  if (config.db_type === "mongodb") {
+    if (!mongoUseUrl.value) config.connection_string = undefined;
+  } else if (!(isOracleOci.value && oracleUseConnectString.value)) {
+    config.connection_string = undefined;
+  }
+  if (config.db_type === "oracle") {
+    config.sysdba = !!config.sysdba;
+    config.oracle_connect_method =
+      oracleUseConnectString.value && isOracleOci.value
+        ? "connect_string"
+        : config.oracle_connect_method || "service_name";
+  }
+  return config;
 }
 
 const dialogTitle = ref("");
@@ -815,10 +849,40 @@ async function browseDbFilePath() {
 
                 <!-- MySQL / PostgreSQL: host, port, user, password, database -->
                 <template v-else>
+                  <div v-if="isOracleOci" class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right text-xs">{{ t("connection.mode") }}</Label>
+                    <div class="col-span-3 flex gap-2">
+                      <Button
+                        size="sm"
+                        :variant="oracleUseConnectString ? 'outline' : 'default'"
+                        @click="oracleUseConnectString = false"
+                      >
+                        {{ t("connection.modeForm") }}
+                      </Button>
+                      <Button
+                        size="sm"
+                        :variant="oracleUseConnectString ? 'default' : 'outline'"
+                        @click="oracleUseConnectString = true"
+                      >
+                        Connect String
+                      </Button>
+                    </div>
+                  </div>
+
                   <div class="grid grid-cols-4 items-center gap-4">
-                    <Label class="text-right">{{ t("connection.host") }}</Label>
-                    <Input v-model="form.host" class="col-span-2" />
-                    <Input v-model.number="form.port" type="number" class="col-span-1" />
+                    <Label class="text-right">
+                      {{ isOracleOci && oracleUseConnectString ? "Connect String" : t("connection.host") }}
+                    </Label>
+                    <template v-if="!(isOracleOci && oracleUseConnectString)">
+                      <Input v-model="form.host" class="col-span-2" />
+                      <Input v-model.number="form.port" type="number" class="col-span-1" />
+                    </template>
+                    <textarea
+                      v-else
+                      v-model="form.connection_string"
+                      class="col-span-3 flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      placeholder="host:1521/ORCL, host:1521:ORCL, or TNS_ALIAS"
+                    />
                   </div>
 
                   <div class="grid grid-cols-4 items-center gap-4">
@@ -832,12 +896,38 @@ async function browseDbFilePath() {
                   </div>
 
                   <div class="grid grid-cols-4 items-center gap-4">
-                    <Label class="text-right">{{ t("connection.database") }}</Label>
+                    <Label class="text-right">
+                      {{ isOracle ? "Service / SID" : t("connection.database") }}
+                    </Label>
                     <Input
+                      v-if="!(isOracleOci && oracleUseConnectString)"
                       v-model="form.database"
                       class="col-span-3"
-                      :placeholder="t('connection.databasePlaceholder')"
+                      :placeholder="isOracle ? 'ORCL' : t('connection.databasePlaceholder')"
                     />
+                    <p v-else class="col-span-3 text-xs text-muted-foreground">
+                      Oracle Client must be available in the app process environment.
+                    </p>
+                  </div>
+
+                  <div v-if="isOracle && !(isOracleOci && oracleUseConnectString)" class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right text-xs">Identifier</Label>
+                    <div class="col-span-3 flex gap-2">
+                      <Button
+                        size="sm"
+                        :variant="form.oracle_connect_method === 'sid' ? 'outline' : 'default'"
+                        @click="form.oracle_connect_method = 'service_name'"
+                      >
+                        Service Name
+                      </Button>
+                      <Button
+                        size="sm"
+                        :variant="form.oracle_connect_method === 'sid' ? 'default' : 'outline'"
+                        @click="form.oracle_connect_method = 'sid'"
+                      >
+                        SID
+                      </Button>
+                    </div>
                   </div>
 
                   <div v-if="selectedType === 'dm'" class="grid grid-cols-4 items-center gap-4">
@@ -995,11 +1085,7 @@ async function browseDbFilePath() {
           <Button variant="outline" class="shrink-0" :disabled="isTesting || isSaving" @click="testConnection">
             {{ isTesting ? t("connection.testing") : t("connection.test") }}
           </Button>
-          <Button
-            class="shrink-0"
-            @click="save"
-            :disabled="isSaving || !form.name || (!form.host && !(mongoUseUrl && form.connection_string))"
-          >
+          <Button class="shrink-0" @click="save" :disabled="isSaving || !canSubmit">
             {{ isSaving ? t("common.loading") : editingId ? t("connection.save") : t("connection.saveAndConnect") }}
           </Button>
         </DialogFooter>

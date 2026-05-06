@@ -103,6 +103,11 @@ impl AppState {
         let (host, port) = self.connection_host_port(connection_id, &db_config).await?;
         probe_connection_endpoint(&db_config, &host, port).await?;
         let url = connection_url_for_endpoint(&db_config, &host, port);
+        let app_settings = if db_config.is_oracle_oci() {
+            Some(self.storage.load_app_settings().await?)
+        } else {
+            None
+        };
         let pool = match db_config.db_type {
             DatabaseType::Mysql if db_config.needs_bare_mysql() => {
                 PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true)
@@ -145,15 +150,7 @@ impl AppState {
                 PoolKind::SqlServer(Arc::new(tokio::sync::Mutex::new(client)))
             }
             DatabaseType::Oracle => {
-                let client = db::oracle_driver::connect(
-                    &host,
-                    port,
-                    db_config.database.as_deref().unwrap_or("ORCL"),
-                    &db_config.username,
-                    &db_config.password,
-                    db_config.sysdba,
-                )
-                .await?;
+                let client = db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()).await?;
                 PoolKind::Oracle(Arc::new(tokio::sync::Mutex::new(client)))
             }
             DatabaseType::Elasticsearch => {
@@ -238,9 +235,16 @@ pub fn redacted_connection_url_for_endpoint(config: &ConnectionConfig, host: &st
 }
 
 pub async fn probe_connection_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> Result<(), String> {
+    let has_oracle_oci_connect_string = config.is_oracle_oci()
+        && config
+            .connection_string
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+
     match config.db_type {
         DatabaseType::Sqlite | DatabaseType::DuckDb => Ok(()),
         DatabaseType::MongoDb if config.connection_string.as_deref().is_some_and(|value| !value.is_empty()) => Ok(()),
+        DatabaseType::Oracle if has_oracle_oci_connect_string => Ok(()),
         _ => db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port).await,
     }
 }

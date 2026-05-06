@@ -664,6 +664,7 @@ export default {
   settings: {
     title: "设置",
     editorTab: "编辑器",
+    systemTab: "系统",
     securityTab: "安全",
     fontFamily: "字体",
     selectFont: "选择字体...",
@@ -676,5 +677,13 @@ export default {
     executeModeAll: "执行全部 SQL",
     executeModeCurrent: "执行光标所在语句",
     preview: "实时预览",
+    oracleOciTitle: "Oracle OCI",
+    oracleOciDescription: "配置 Oracle OCI (11g) 连接使用的本机 Oracle Client。",
+    oracleClientLibDir: "OCI 库目录",
+    oracleClientLibDirHint: "包含 oci.dll 的目录，例如 C:\\oracle\\instantclient_19_28。",
+    oracleClientConfigDir: "Oracle 网络配置目录",
+    oracleClientConfigDirHint: "可选，包含 tnsnames.ora 的目录，等价于 TNS_ADMIN。",
+    oracleOciRestartHint:
+      "OCI 库在每个应用进程中只初始化一次。如果 OCI 已经成功初始化过，修改路径后需要重启 DBX。",
   },
 };

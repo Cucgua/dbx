@@ -97,16 +97,16 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                     .await
                     .map(|_| "Connection successful".to_string())
             }
-            DatabaseType::Oracle => db::oracle_driver::connect(
-                &host,
-                port,
-                config.database.as_deref().unwrap_or("ORCL"),
-                &config.username,
-                &config.password,
-                config.sysdba,
-            )
-            .await
-            .map(|_| "Connection successful".to_string()),
+            DatabaseType::Oracle => {
+                let app_settings = if config.is_oracle_oci() {
+                    Some(state.storage.load_app_settings().await?)
+                } else {
+                    None
+                };
+                db::oracle_driver::connect_config(&config, &host, port, app_settings.as_ref())
+                    .await
+                    .map(|_| "Connection successful".to_string())
+            }
             DatabaseType::Elasticsearch => {
                 let client =
                     db::elasticsearch_driver::EsClient::new(&url, Some(&config.username), Some(&config.password));
@@ -163,15 +163,12 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
             PoolKind::SqlServer(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
         }
         DatabaseType::Oracle => {
-            let client = db::oracle_driver::connect(
-                &host,
-                port,
-                config.database.as_deref().unwrap_or("ORCL"),
-                &config.username,
-                &config.password,
-                config.sysdba,
-            )
-            .await?;
+            let app_settings = if config.is_oracle_oci() {
+                Some(state.storage.load_app_settings().await?)
+            } else {
+                None
+            };
+            let client = db::oracle_driver::connect_config(&config, &host, port, app_settings.as_ref()).await?;
             PoolKind::Oracle(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
         }
         DatabaseType::Elasticsearch => {

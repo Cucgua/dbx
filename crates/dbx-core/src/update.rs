@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-const LATEST_JSON_URL: &str = "https://github.com/t8y2/dbx/releases/latest/download/latest.json";
-const RELEASE_URL_PREFIX: &str = "https://github.com/t8y2/dbx/releases/tag/v";
+const LATEST_JSON_URL: &str = "https://github.com/Cucgua/dbx/releases/latest/download/latest.json";
+const RELEASE_URL_PREFIX: &str = "https://github.com/Cucgua/dbx/releases/tag/v";
 
 #[derive(Debug, Deserialize)]
 pub struct TauriRelease {

@@ -36,6 +36,7 @@ export interface ConnectionConfig {
   ssh_expose_lan?: boolean;
   ssl?: boolean;
   sysdba?: boolean;
+  oracle_connect_method?: "service_name" | "sid" | "connect_string";
   connection_string?: string;
 }
 

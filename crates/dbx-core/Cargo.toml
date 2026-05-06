@@ -23,6 +23,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 futures = "0.3"
 mongodb = "3.2.5"
 oracle-rs = { git = "https://github.com/t8y2/oracle-rs", branch = "main" }
+oracle = "0.6.3"
 russh = "0.60"
 portpicker = "0.1.1"
 csv = "1"

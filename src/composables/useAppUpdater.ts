@@ -15,7 +15,7 @@ export function useAppUpdater() {
   const isDownloadingUpdate = ref(false);
   const downloadProgress = ref(0);
   const updateReady = ref(false);
-  const latestReleaseUrl = "https://github.com/t8y2/dbx/releases/latest";
+  const latestReleaseUrl = "https://github.com/Cucgua/dbx/releases/latest";
 
   function openUrl(url: string) {
     if (isTauriRuntime()) {
