@@ -215,6 +215,7 @@ export default {
     transpose: "转置查看",
     rowsPerPageShort: " 行/页",
     columnDetails: "列详情",
+    queryError: "查询出错",
   },
   welcome: {
     title: "数据库工作台",

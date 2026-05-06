@@ -216,6 +216,7 @@ export default {
     transpose: "Transpose Row",
     rowsPerPageShort: " rows",
     columnDetails: "Column Details",
+    queryError: "Query Error",
   },
   welcome: {
     title: "Database Workspace",

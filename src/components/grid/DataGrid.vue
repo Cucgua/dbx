@@ -27,6 +27,7 @@ import {
   WrapText,
   Info,
   Rows3,
+  TriangleAlert,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -514,6 +515,10 @@ const emptyTitle = computed(() => (hasActiveFilter.value ? t("grid.noFilteredRow
 const emptyDescription = computed(() =>
   hasActiveFilter.value ? t("grid.noFilteredRowsDescription") : t("grid.noRowsDescription"),
 );
+const isErrorResult = computed(
+  () => props.result.columns.length === 1 && props.result.columns[0] === "Error" && props.result.rows.length > 0,
+);
+const errorMessage = computed(() => (isErrorResult.value ? String(props.result.rows[0]?.[0] ?? "") : ""));
 const selectedRange = computed<CellSelectionRange | null>(() => {
   if (!selectionAnchor.value || !selectionFocus.value) return null;
   return normalizeSelectionRange(selectionAnchor.value, selectionFocus.value);
@@ -1340,7 +1345,18 @@ function escapeAndHighlightKeywords(s: string): string {
               </div>
 
               <div
-                v-if="!hasVisibleRows"
+                v-if="isErrorResult"
+                class="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-destructive"
+              >
+                <TriangleAlert class="h-8 w-8 text-destructive/50" aria-hidden="true" />
+                <div class="space-y-1">
+                  <div class="text-sm font-medium">{{ t("grid.queryError") }}</div>
+                  <div class="text-xs max-w-lg break-all text-destructive/80">{{ errorMessage }}</div>
+                </div>
+              </div>
+
+              <div
+                v-else-if="!hasVisibleRows"
                 class="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground"
               >
                 <component
