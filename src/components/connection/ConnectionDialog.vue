@@ -910,7 +910,10 @@ async function browseDbFilePath() {
                     </p>
                   </div>
 
-                  <div v-if="isOracle && !(isOracleOci && oracleUseConnectString)" class="grid grid-cols-4 items-center gap-4">
+                  <div
+                    v-if="isOracle && !(isOracleOci && oracleUseConnectString)"
+                    class="grid grid-cols-4 items-center gap-4"
+                  >
                     <Label class="text-right text-xs">Identifier</Label>
                     <div class="col-span-3 flex gap-2">
                       <Button

@@ -683,7 +683,6 @@ export default {
     oracleClientLibDirHint: "包含 oci.dll 的目录，例如 C:\\oracle\\instantclient_19_28。",
     oracleClientConfigDir: "Oracle 网络配置目录",
     oracleClientConfigDirHint: "可选，包含 tnsnames.ora 的目录，等价于 TNS_ADMIN。",
-    oracleOciRestartHint:
-      "OCI 库在每个应用进程中只初始化一次。如果 OCI 已经成功初始化过，修改路径后需要重启 DBX。",
+    oracleOciRestartHint: "OCI 库在每个应用进程中只初始化一次。如果 OCI 已经成功初始化过，修改路径后需要重启 DBX。",
   },
 };

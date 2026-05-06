@@ -429,11 +429,7 @@ watch(
             <div class="space-y-2">
               <Label>{{ t("settings.oracleClientLibDir") }}</Label>
               <div class="flex gap-2">
-                <Input
-                  v-model="editOracleClientLibDir"
-                  class="h-9"
-                  placeholder="C:\\oracle\\instantclient_19_28"
-                />
+                <Input v-model="editOracleClientLibDir" class="h-9" placeholder="C:\\oracle\\instantclient_19_28" />
                 <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseOracleClientLibDir">
                   <FolderOpen class="h-4 w-4" />
                 </Button>
@@ -444,11 +440,7 @@ watch(
             <div class="space-y-2">
               <Label>{{ t("settings.oracleClientConfigDir") }}</Label>
               <div class="flex gap-2">
-                <Input
-                  v-model="editOracleClientConfigDir"
-                  class="h-9"
-                  placeholder="C:\\oracle\\network\\admin"
-                />
+                <Input v-model="editOracleClientConfigDir" class="h-9" placeholder="C:\\oracle\\network\\admin" />
                 <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseOracleClientConfigDir">
                   <FolderOpen class="h-4 w-4" />
                 </Button>
