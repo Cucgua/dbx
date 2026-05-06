@@ -20,6 +20,7 @@ import {
 import type { SqlCompletionColumn, SqlCompletionTable } from "@/lib/sqlCompletion";
 import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
+import { isSchemaAware } from "@/lib/databaseCapabilities";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 
@@ -653,14 +654,7 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   function isSchemaAwareDatabase(connectionId: string): boolean {
-    const dbType = getConfig(connectionId)?.db_type;
-    return (
-      dbType === "postgres" ||
-      dbType === "sqlserver" ||
-      dbType === "oracle" ||
-      dbType === "dameng" ||
-      dbType === "gaussdb"
-    );
+    return isSchemaAware(getConfig(connectionId)?.db_type);
   }
 
   async function listCompletionTables(connectionId: string, database: string): Promise<SqlCompletionTable[]> {

@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useConnectionStore } from "@/stores/connectionStore";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
-import type { DatabaseType } from "@/types/database";
+import { DIAGRAM_SQL_TYPES, SCHEMA_AWARE_TYPES } from "@/lib/databaseCapabilities";
 import {
   buildDiagramRelationships,
   filterDiagramTables,
@@ -49,17 +49,6 @@ const props = defineProps<{
   focusTableName?: string;
 }>();
 
-const SQL_TYPES: DatabaseType[] = [
-  "mysql",
-  "postgres",
-  "sqlite",
-  "sqlserver",
-  "oracle",
-  "redshift",
-  "dameng",
-  "gaussdb",
-];
-const SCHEMA_AWARE_TYPES: DatabaseType[] = ["postgres", "sqlserver", "oracle", "redshift", "dameng", "gaussdb"];
 const CARD_WIDTH = 270;
 const COLUMN_ROW_HEIGHT = 24;
 const CARD_HEADER_HEIGHT = 44;
@@ -96,12 +85,14 @@ const dragging = ref<{
   originY: number;
 } | null>(null);
 
-const sqlConnections = computed(() => store.connections.filter((connection) => SQL_TYPES.includes(connection.db_type)));
+const sqlConnections = computed(() =>
+  store.connections.filter((connection) => DIAGRAM_SQL_TYPES.has(connection.db_type)),
+);
 
 const selectedConnection = computed(() => (connectionId.value ? store.getConfig(connectionId.value) : undefined));
 
 const isSchemaAware = computed(
-  () => !!selectedConnection.value && SCHEMA_AWARE_TYPES.includes(selectedConnection.value.db_type),
+  () => !!selectedConnection.value && SCHEMA_AWARE_TYPES.has(selectedConnection.value.db_type),
 );
 
 const allRelationships = computed(() => buildDiagramRelationships(tables.value));

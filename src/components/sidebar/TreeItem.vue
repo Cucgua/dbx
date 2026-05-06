@@ -61,6 +61,18 @@ import {
   type ExportedTableSql,
 } from "@/lib/databaseExport";
 import { qualifiedTableName as buildQualifiedTableName, quoteTableIdentifier } from "@/lib/tableSelectSql";
+import {
+  SQL_FILE_UNSUPPORTED_TYPES,
+  DIAGRAM_SUPPORTED_TYPES,
+  DATABASE_SEARCH_SUPPORTED_TYPES,
+  TABLE_IMPORT_SUPPORTED_TYPES,
+  TABLE_STRUCTURE_SUPPORTED_TYPES,
+  FIELD_LINEAGE_SUPPORTED_TYPES,
+  TREE_SCHEMA_TYPES,
+  PG_LIKE_STRUCTURE_TYPES,
+  isSchemaAware,
+  usesFetchFirst,
+} from "@/lib/databaseCapabilities";
 import { treeNodeRowAction } from "@/lib/treeNodeClick";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
@@ -86,54 +98,6 @@ const emit = defineEmits<{
   "rename-started": [];
 }>();
 
-const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
-const diagramSupportedTypes = new Set([
-  "mysql",
-  "postgres",
-  "sqlite",
-  "sqlserver",
-  "oracle",
-  "redshift",
-  "dameng",
-  "gaussdb",
-]);
-const databaseSearchSupportedTypes = new Set([
-  "mysql",
-  "postgres",
-  "sqlite",
-  "sqlserver",
-  "oracle",
-  "redshift",
-  "duckdb",
-  "clickhouse",
-  "dameng",
-  "gaussdb",
-]);
-const tableImportSupportedTypes = new Set([
-  "mysql",
-  "postgres",
-  "sqlite",
-  "duckdb",
-  "clickhouse",
-  "sqlserver",
-  "oracle",
-  "doris",
-  "starrocks",
-  "redshift",
-  "dameng",
-  "gaussdb",
-]);
-const tableStructureSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver"]);
-const fieldLineageSupportedTypes = new Set([
-  "mysql",
-  "postgres",
-  "sqlite",
-  "sqlserver",
-  "oracle",
-  "redshift",
-  "dameng",
-  "gaussdb",
-]);
 const isExportingDatabase = ref(false);
 
 function currentDatabaseType(): DatabaseType | undefined {
@@ -142,16 +106,6 @@ function currentDatabaseType(): DatabaseType | undefined {
 
 function quoteIdent(name: string): string {
   return quoteTableIdentifier(currentDatabaseType(), name);
-}
-
-function isSchemaAwareDbType(dbType?: DatabaseType): boolean {
-  return (
-    dbType === "postgres" ||
-    dbType === "oracle" ||
-    dbType === "sqlserver" ||
-    dbType === "dameng" ||
-    dbType === "gaussdb"
-  );
 }
 
 function qualifiedTableName(tableName: string, schema?: string): string {
@@ -260,7 +214,7 @@ async function toggle() {
       queryStore.updateSql(tab, node.label);
     } else if (node.type === "database" && node.connectionId && node.database) {
       const config = connectionStore.getConfig(node.connectionId);
-      if (config?.db_type === "postgres" || config?.db_type === "sqlserver" || config?.db_type === "gaussdb") {
+      if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
         await connectionStore.loadSchemas(node.connectionId, node.database);
       } else {
         await connectionStore.loadTables(node.connectionId, node.database);
@@ -305,11 +259,7 @@ async function openData() {
     if (!config) throw new Error("Connection config not found");
 
     const qualifiedName =
-      (config.db_type === "postgres" ||
-        config.db_type === "oracle" ||
-        config.db_type === "sqlserver" ||
-        config.db_type === "dameng") &&
-      node.schema
+      isSchemaAware(config.db_type) && node.schema
         ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
         : quoteIdent(node.label);
 
@@ -318,7 +268,7 @@ async function openData() {
     const pks = columns.filter((c) => c.is_primary_key).map((c) => c.name);
     const order = pks.length ? ` ORDER BY ${pks.map((pk) => `${quoteIdent(pk)} ASC`).join(", ")}` : "";
     let sql: string;
-    if (config.db_type === "oracle" || config.db_type === "dameng") {
+    if (usesFetchFirst(config.db_type)) {
       sql = `SELECT * FROM ${qualifiedName}${order} FETCH FIRST 100 ROWS ONLY`;
     } else if (config.db_type === "sqlserver") {
       sql = `SELECT TOP 100 * FROM ${qualifiedName}${order}`;
@@ -400,7 +350,7 @@ const canCreateTable = computed(() => {
     (props.node.type === "database" || props.node.type === "schema") &&
     !!props.node.database &&
     !!config &&
-    tableStructureSupportedTypes.has(config.db_type)
+    TABLE_STRUCTURE_SUPPORTED_TYPES.has(config.db_type)
   );
 });
 
@@ -490,11 +440,11 @@ async function confirmDuplicateStructure() {
     let sql: string;
     if (dbType === "mysql") {
       sql = `CREATE TABLE ${target} LIKE ${source};`;
-    } else if (dbType === "postgres" || dbType === "redshift" || dbType === "gaussdb") {
+    } else if (dbType && PG_LIKE_STRUCTURE_TYPES.has(dbType)) {
       sql = `CREATE TABLE ${target} (LIKE ${source} INCLUDING ALL);`;
     } else if (dbType === "sqlserver") {
       sql = `SELECT TOP 0 * INTO ${target} FROM ${source};`;
-    } else if (dbType === "oracle" || dbType === "dameng") {
+    } else if (usesFetchFirst(dbType)) {
       sql = `CREATE TABLE ${target} AS SELECT * FROM ${source} WHERE 1=0`;
     } else {
       sql = `CREATE TABLE ${target} AS SELECT * FROM ${source} WHERE 0;`;
@@ -536,7 +486,7 @@ async function collectDatabaseExportTables(): Promise<Array<{ schema?: string; n
     }));
   }
 
-  if (isSchemaAwareDbType(config?.db_type)) {
+  if (isSchemaAware(config?.db_type)) {
     const schemas = await api.listSchemas(node.connectionId, node.database);
     const groups = await Promise.all(
       schemas.map(async (schema) => {
@@ -685,11 +635,7 @@ async function exportData(format: "csv" | "json" | "sql") {
   try {
     await connectionStore.ensureConnected(node.connectionId);
     const qualifiedName =
-      (config.db_type === "postgres" ||
-        config.db_type === "oracle" ||
-        config.db_type === "sqlserver" ||
-        config.db_type === "dameng") &&
-      node.schema
+      isSchemaAware(config.db_type) && node.schema
         ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
         : quoteIdent(node.label);
     const result = await api.executeQuery(node.connectionId, node.database, `SELECT * FROM ${qualifiedName}`);
@@ -836,26 +782,29 @@ const canExpand = !leafTypes.has(props.node.type);
 const canPin = computed(() => pinnableTypes.has(props.node.type));
 const canOpenSqlFileExecution = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!config && !sqlFileUnsupportedTypes.has(config.db_type);
+  return !!config && !SQL_FILE_UNSUPPORTED_TYPES.has(config.db_type);
 });
 const canOpenDiagram = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!props.node.database && !!config && diagramSupportedTypes.has(config.db_type);
+  return !!props.node.database && !!config && DIAGRAM_SUPPORTED_TYPES.has(config.db_type);
 });
 const canOpenDatabaseSearch = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!props.node.database && !!config && databaseSearchSupportedTypes.has(config.db_type);
+  return !!props.node.database && !!config && DATABASE_SEARCH_SUPPORTED_TYPES.has(config.db_type);
 });
 const canOpenTableImport = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
-    props.node.type === "table" && !!props.node.database && !!config && tableImportSupportedTypes.has(config.db_type)
+    props.node.type === "table" && !!props.node.database && !!config && TABLE_IMPORT_SUPPORTED_TYPES.has(config.db_type)
   );
 });
 const canOpenStructureEditor = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
-    props.node.type === "table" && !!props.node.database && !!config && tableStructureSupportedTypes.has(config.db_type)
+    props.node.type === "table" &&
+    !!props.node.database &&
+    !!config &&
+    TABLE_STRUCTURE_SUPPORTED_TYPES.has(config.db_type)
   );
 });
 const canOpenFieldLineage = computed(() => {
@@ -865,7 +814,7 @@ const canOpenFieldLineage = computed(() => {
     !!props.node.database &&
     !!props.node.tableName &&
     !!config &&
-    fieldLineageSupportedTypes.has(config.db_type)
+    FIELD_LINEAGE_SUPPORTED_TYPES.has(config.db_type)
   );
 });
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));

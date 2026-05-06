@@ -12,6 +12,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import * as api from "@/lib/api";
 import { buildDatabaseSearchSql, buildSearchResultWhere, findMatchedSearchColumns } from "@/lib/databaseSearch";
 import type { DatabaseType, TableInfo } from "@/types/database";
+import { SCHEMA_AWARE_TYPES } from "@/lib/databaseCapabilities";
 
 const props = defineProps<{
   open: boolean;
@@ -54,7 +55,6 @@ type SearchTableTask = {
   table: TableInfo;
 };
 
-const SCHEMA_AWARE_TYPES = new Set<DatabaseType>(["postgres", "sqlserver", "oracle", "redshift", "dameng", "gaussdb"]);
 const SYSTEM_SCHEMAS = new Set([
   "information_schema",
   "pg_catalog",

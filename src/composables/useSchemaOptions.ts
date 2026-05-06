@@ -1,5 +1,6 @@
 import { ref } from "vue";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { isSchemaAware as isSchemaAwareType } from "@/lib/databaseCapabilities";
 import * as api from "@/lib/api";
 
 export function useSchemaOptions() {
@@ -13,14 +14,7 @@ export function useSchemaOptions() {
   }
 
   function isSchemaAware(connectionId: string): boolean {
-    const dbType = connectionStore.getConfig(connectionId)?.db_type;
-    return (
-      dbType === "postgres" ||
-      dbType === "sqlserver" ||
-      dbType === "oracle" ||
-      dbType === "dameng" ||
-      dbType === "gaussdb"
-    );
+    return isSchemaAwareType(connectionStore.getConfig(connectionId)?.db_type);
   }
 
   async function loadSchemaOptions(connectionId: string, database: string) {

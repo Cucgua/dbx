@@ -1,5 +1,6 @@
 import type { ColumnInfo, DatabaseType } from "../types/database.ts";
 import { qualifiedTableName, quoteTableIdentifier } from "./tableSelectSql.ts";
+import { usesFetchFirst } from "@/lib/databaseCapabilities";
 
 export interface DatabaseSearchSqlOptions {
   databaseType?: DatabaseType;
@@ -133,7 +134,7 @@ export function buildDatabaseSearchSql(options: DatabaseSearchSqlOptions): Datab
     };
   }
 
-  if (options.databaseType === "oracle") {
+  if (usesFetchFirst(options.databaseType)) {
     return {
       sql: `SELECT * FROM ${table} WHERE (${where}) FETCH FIRST ${limit} ROWS ONLY`,
       searchableColumns,

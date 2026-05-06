@@ -33,6 +33,7 @@ import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isCloseTabShortcut, isExecuteSqlShortcut } from "@/lib/keyboardShortcuts";
 import { isPreviewTab } from "@/lib/tabPresentation";
+import { SQL_FILE_UNSUPPORTED_TYPES } from "@/lib/databaseCapabilities";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
@@ -103,9 +104,8 @@ const { onExecuteSql, onReloadData, onPaginate, onSort } = useDataGridActions(ac
 const { setupTauriListeners } = useTauriEvents({ openTableTarget });
 
 const appVersion = ref("");
-const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
 const hasSqlFileConnections = computed(() =>
-  connectionStore.connections.some((c) => !sqlFileUnsupportedTypes.has(c.db_type)),
+  connectionStore.connections.some((c) => !SQL_FILE_UNSUPPORTED_TYPES.has(c.db_type)),
 );
 const connectionStats = computed(() => ({
   total: connectionStore.connections.length,
