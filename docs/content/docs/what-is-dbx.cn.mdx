@@ -1,0 +1,46 @@
+---
+title: 什么是 DBX？
+description: DBX 是一款开源、轻量、跨平台的数据库管理工具，基于 Tauri 2 和 Rust 构建。
+---
+
+DBX 是一款开源、轻量、跨平台的数据库管理工具，基于 [Tauri 2](https://tauri.app/) 和 Rust 构建。
+
+## 为什么选择 DBX？
+
+- **轻量** — 安装包约 15 MB，不内嵌 Chromium
+- **多数据库** — 一个工具管理 MySQL、PostgreSQL、SQLite、Redis、MongoDB 等 25+ 种数据库
+- **AI 驱动** — 内置 AI 助手 + MCP Server 对接外部 AI 编程助手
+- **安全** — 密码存储在系统钥匙串，支持 SSH 隧道，加密配置导出
+- **跨平台** — macOS、Windows、Linux
+- **Docker 自托管** — 支持通过 Docker 部署，适合团队共享和服务器环境
+
+## 核心功能
+
+- SQL 查询编辑器（语法高亮、智能补全、查询历史）
+- 数据表格（虚拟滚动、行内编辑、导出）
+- 结构浏览（树形视图、搜索、右键菜单）
+- Schema 图 / ER 图
+- 执行计划可视化
+- 表结构编辑器（可视化 DDL）
+- Schema 对比与同步
+- 数据迁移（跨引擎传输）
+- 数据导入（CSV、TSV、JSON、Excel）
+- 数据库导出（DDL + 数据）
+- 字段血缘分析
+- 配置导出/导入（加密传输）
+- AI 助手（自然语言转 SQL、优化、修复）
+- MCP Server（对接 Claude Code、Cursor 等）
+
+## 技术栈
+
+| 层级 | 技术 |
+|---|---|
+| 框架 | [Tauri 2](https://tauri.app/) |
+| 前端 | [Vue 3](https://vuejs.org/) + TypeScript |
+| UI | [shadcn-vue](https://www.shadcn-vue.com/) + Tailwind CSS |
+| 编辑器 | [CodeMirror 6](https://codemirror.net/) |
+| 后端 | Rust + sqlx / tiberius / redis-rs / mongodb |
+
+## 开源协议
+
+[AGPL-3.0](https://github.com/t8y2/dbx/blob/main/LICENSE)

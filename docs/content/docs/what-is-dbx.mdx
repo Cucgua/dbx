@@ -1,0 +1,50 @@
+---
+title: What is DBX?
+description: An open-source, lightweight, cross-platform database management tool built with Tauri 2 and Rust.
+---
+
+# What is DBX?
+
+DBX is an open-source, lightweight, cross-platform database management tool built with [Tauri 2](https://tauri.app/) and Rust.
+
+<div style={{textAlign: "center"}}>
+  <img src="/screenshot.png" alt="DBX Screenshot" style={{maxWidth: "100%", borderRadius: "8px", margin: "16px 0"}} />
+</div>
+
+## Why DBX?
+
+- **Lightweight** — ~15 MB installer, no bundled Chromium
+- **Multi-database** — One tool for MySQL, PostgreSQL, SQLite, Redis, MongoDB, and 20+ more
+- **AI-powered** — Built-in AI assistant + MCP server for external AI agents
+- **Secure** — Passwords in system keyring, SSH tunnels, encrypted config export
+- **Cross-platform** — macOS, Windows, Linux, Docker (self-hosted)
+
+## Key Features
+
+- **Query Editor** — Syntax highlighting, autocomplete, query history
+- **Data Grid** — Virtual scrolling, inline editing, data export
+- **Schema Browser** — Tree view, search, pin, column comments
+- **Schema Diagram** — Visual ER diagram of your database schema
+- **Schema Diff** — Compare and sync schemas between databases
+- **Explain Plan** — Visualize query execution plans
+- **Data Transfer** — Move data between different database engines
+- **Table Import** — Import CSV, TSV, JSON, Excel files into tables
+- **Database Export** — Export database structure and data as SQL
+- **Field Lineage** — Trace column relationships across tables and views
+- **Config Export** — Encrypted export/import of connection configurations
+- **AI Assistant** — Natural language to SQL, query explanation, optimization
+- **MCP Server** — Let AI agents query your databases directly
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Framework | [Tauri 2](https://tauri.app/) |
+| Frontend | [Vue 3](https://vuejs.org/) + TypeScript |
+| UI | [shadcn-vue](https://www.shadcn-vue.com/) + Tailwind CSS |
+| Editor | [CodeMirror 6](https://codemirror.net/) |
+| Backend | Rust + sqlx / tiberius / redis-rs / mongodb |
+
+## License
+
+[AGPL-3.0](https://github.com/t8y2/dbx/blob/main/LICENSE)

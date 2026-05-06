@@ -1,0 +1,27 @@
+{
+  "title": "DBX 文档",
+  "pages": [
+    "---介绍---",
+    "what-is-dbx",
+    "getting-started",
+    "databases",
+    "---核心功能---",
+    "query-editor",
+    "data-grid",
+    "schema-browser",
+    "---高级功能---",
+    "schema-diff",
+    "data-transfer",
+    "table-structure",
+    "field-lineage",
+    "table-import",
+    "sql-file",
+    "database-export",
+    "---AI 与自动化---",
+    "ai-assistant",
+    "mcp",
+    "---设置---",
+    "config-export",
+    "ssh-tunnel"
+  ]
+}
