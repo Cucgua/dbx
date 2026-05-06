@@ -21,6 +21,8 @@ DBX supports 25+ database engines through native Rust drivers.
 | SQL Server | tiberius | TDS |
 | Oracle | oracle-rs | OCI |
 | Elasticsearch | HTTP client | REST |
+| DM (Dameng) | odbc-api | ODBC |
+| GaussDB | odbc-api | ODBC |
 
 ## MySQL Compatible
 
@@ -43,13 +45,83 @@ These databases use PostgreSQL protocol and work with the PostgreSQL driver:
 
 | Database | Default Port | Notes |
 |---|---|---|
-| openGauss | 5432 | |
-| GaussDB | 5432 | |
+| openGauss | 5432 | Use GaussDB (ODBC) if SHA256 auth fails |
 | KingBase | 54321 | |
 | Vastbase | 5432 | |
 | Redshift | 5439 | |
 | CockroachDB | 26257 | |
-| DM (Dameng) | 5236 | Requires PG compatibility mode |
 
-> **DM (Dameng) Note:**
-> DM database requires PG compatibility mode to be enabled. Set `COMPATIBLE_MODE=7` in `dm.ini` and restart the service.
+## ODBC Databases
+
+DM (Dameng) and GaussDB connect through ODBC, which requires an ODBC driver installed on your system.
+
+### DM (Dameng)
+
+DM8 connects via the DM ODBC driver. Default port: **5236**, default user: **SYSDBA**.
+
+**Linux setup:**
+
+```bash
+# Install unixODBC
+sudo apt install unixodbc
+
+# Install DM8 (includes ODBC driver)
+# Download from https://eco.dameng.com/download/
+
+# Register the driver in /etc/odbcinst.ini
+sudo tee -a /etc/odbcinst.ini << 'EOF'
+[DM8 ODBC DRIVER]
+Description = DM8 ODBC Driver
+Driver = /opt/dmdbms/bin/libdodbc.so
+EOF
+```
+
+**Windows setup:**
+
+The DM8 installer automatically registers the ODBC driver. No manual configuration needed.
+
+**macOS setup:**
+
+DM does not provide a native macOS ODBC driver. For development/testing, DM is best accessed from Linux.
+
+### GaussDB / openGauss
+
+GaussDB connects via ODBC to bypass its custom SHA256 SASL authentication (which standard PostgreSQL drivers don't support). Default port: **5432**, default user: **gaussdb**.
+
+> **Tip:** If your openGauss instance uses MD5 authentication, you can connect directly using the PostgreSQL (openGauss) driver without ODBC.
+
+**Linux setup:**
+
+```bash
+# Install unixODBC
+sudo apt install unixodbc
+
+# Download GaussDB ODBC driver from Huawei Cloud
+# https://support.huaweicloud.com/mgtg-dws/dws_01_0032.html
+
+# Register the driver in /etc/odbcinst.ini
+sudo tee -a /etc/odbcinst.ini << 'EOF'
+[GaussDBA]
+Description = GaussDB ODBC Driver
+Driver = /usr/lib/odbc/lib/psqlodbcw.so
+EOF
+```
+
+**macOS setup (using psqlODBC as a workaround):**
+
+```bash
+# Install unixODBC and psqlODBC
+brew install unixodbc psqlodbc
+
+# Register as GaussDBA in odbcinst.ini
+DRIVER_PATH=$(find /opt/homebrew/Cellar/psqlodbc -name "psqlodbcw.so" | head -1)
+sudo tee -a /opt/homebrew/etc/odbcinst.ini << EOF
+[GaussDBA]
+Description = GaussDB ODBC Driver (via psqlODBC)
+Driver = $DRIVER_PATH
+EOF
+```
+
+**Windows setup:**
+
+Download and install the GaussDB ODBC driver from [Huawei Cloud](https://support.huaweicloud.com/mgtg-dws/dws_01_0032.html). The installer registers the driver automatically.
