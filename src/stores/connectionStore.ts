@@ -128,6 +128,7 @@ export const useConnectionStore = defineStore("connection", () => {
       doris: "Doris",
       starrocks: "StarRocks",
       redshift: "Redshift",
+      dameng: "DM (Dameng)",
     };
     return {
       ...config,
@@ -652,7 +653,7 @@ export const useConnectionStore = defineStore("connection", () => {
 
   function isSchemaAwareDatabase(connectionId: string): boolean {
     const dbType = getConfig(connectionId)?.db_type;
-    return dbType === "postgres" || dbType === "sqlserver" || dbType === "oracle";
+    return dbType === "postgres" || dbType === "sqlserver" || dbType === "oracle" || dbType === "dameng";
   }
 
   async function listCompletionTables(connectionId: string, database: string): Promise<SqlCompletionTable[]> {

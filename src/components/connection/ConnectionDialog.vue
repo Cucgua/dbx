@@ -166,7 +166,7 @@ const driverProfiles: Record<
     label: "CockroachDB",
     icon: "cockroachdb",
   },
-  dm: { type: "postgres", port: 5236, user: "SYSDBA", label: "DM (Dameng)", icon: "dm" },
+  dm: { type: "dameng", port: 5236, user: "SYSDBA", label: "DM (Dameng)", icon: "dm" },
   tdengine: { type: "mysql", port: 6030, user: "root", label: "TDengine", icon: "tdengine" },
   custom_mysql: {
     type: "mysql",
@@ -322,6 +322,7 @@ const dbOptions = [
   { value: "oracle", label: "Oracle" },
   { value: "elasticsearch", label: "Elasticsearch" },
   { value: "mariadb", label: "MariaDB" },
+  { value: "dm", label: "DM (Dameng)" },
 ];
 
 const mysqlCompat = [
@@ -340,7 +341,6 @@ const pgCompat = [
   { value: "gaussdb", label: "GaussDB" },
   { value: "kingbase", label: "KingBase" },
   { value: "vastbase", label: "Vastbase" },
-  { value: "dm", label: "DM (Dameng)" },
   { value: "redshift", label: "Redshift" },
   { value: "cockroachdb", label: "CockroachDB" },
   { value: "custom_postgres", label: "Custom" },
@@ -844,6 +844,13 @@ async function browseDbFilePath() {
                     <span />
                     <p class="col-span-3 text-xs text-muted-foreground">
                       {{ t("connection.dmCompatHint") }}
+                      <a
+                        href="https://eco.dameng.com/download/"
+                        target="_blank"
+                        class="underline text-primary hover:text-primary/80"
+                      >
+                        {{ t("connection.dmDownload") }}
+                      </a>
                     </p>
                   </div>
 

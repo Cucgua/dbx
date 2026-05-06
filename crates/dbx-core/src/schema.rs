@@ -100,6 +100,16 @@ pub fn extract_oracle(
     }
 }
 
+pub fn extract_dameng(
+    connections: &HashMap<String, PoolKind>,
+    key: &str,
+) -> Option<Arc<std::sync::Mutex<db::dm_driver::DmClient>>> {
+    match connections.get(key)? {
+        PoolKind::Dameng(client) => Some(client.clone()),
+        _ => None,
+    }
+}
+
 pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<db::DatabaseInfo>, String> {
     {
         let connections = state.connections.lock().await;
@@ -116,6 +126,11 @@ pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Resul
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_databases(&*client).await;
+        }
+        if let Some(client) = extract_dameng(&connections, connection_id) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_databases(&client);
         }
     }
 
@@ -145,6 +160,11 @@ pub async fn list_schemas_core(state: &AppState, connection_id: &str, database: 
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_schemas(&*client).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_schemas(&client);
         }
     }
 
@@ -185,6 +205,11 @@ pub async fn list_tables_core(
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_tables(&*client, schema).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_tables(&client, schema);
         }
     }
 
@@ -229,6 +254,11 @@ pub async fn get_columns_core(
             let client = client.lock().await;
             return db::oracle_driver::get_columns(&*client, schema, table).await;
         }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::get_columns(&client, schema, table);
+        }
     }
 
     let connections = state.connections.lock().await;
@@ -262,6 +292,11 @@ pub async fn list_indexes_core(
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_indexes(&*client, schema, table).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_indexes(&client, schema, table);
         }
     }
 
@@ -297,6 +332,11 @@ pub async fn list_foreign_keys_core(
             let client = client.lock().await;
             return db::oracle_driver::list_foreign_keys(&*client, schema, table).await;
         }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_foreign_keys(&client, schema, table);
+        }
     }
 
     let connections = state.connections.lock().await;
@@ -330,6 +370,11 @@ pub async fn list_triggers_core(
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_triggers(&*client, schema, table).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_triggers(&client, schema, table);
         }
     }
 
@@ -390,6 +435,11 @@ pub async fn get_table_ddl_core(
             drop(connections);
             let client = client.lock().await;
             return build_oracle_ddl(&*client, schema, table).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return build_dameng_ddl(&client, schema, table);
         }
     }
 
@@ -556,6 +606,53 @@ pub async fn build_oracle_ddl(
     let columns = db::oracle_driver::get_columns(client, schema, table).await?;
     let indexes = db::oracle_driver::list_indexes(client, schema, table).await?;
     let fkeys = db::oracle_driver::list_foreign_keys(client, schema, table).await?;
+
+    let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
+    let col_lines: Vec<String> = columns
+        .iter()
+        .map(|c| {
+            let mut line = format!("  \"{}\" {}", c.name, c.data_type);
+            if !c.is_nullable {
+                line.push_str(" NOT NULL");
+            }
+            if let Some(ref def) = c.column_default {
+                line.push_str(&format!(" DEFAULT {def}"));
+            }
+            line
+        })
+        .collect();
+    ddl.push_str(&col_lines.join(",\n"));
+
+    let pks: Vec<&str> = columns.iter().filter(|c| c.is_primary_key).map(|c| c.name.as_str()).collect();
+    if !pks.is_empty() {
+        ddl.push_str(&format!(
+            ",\n  PRIMARY KEY ({})",
+            pks.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    for fk in &fkeys {
+        ddl.push_str(&format!(
+            ",\n  CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\"(\"{}\")",
+            fk.name, fk.column, fk.ref_table, fk.ref_column
+        ));
+    }
+    ddl.push_str("\n);\n");
+
+    for idx in &indexes {
+        if idx.is_primary {
+            continue;
+        }
+        let unique = if idx.is_unique { "UNIQUE " } else { "" };
+        let cols = idx.columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        ddl.push_str(&format!("\nCREATE {unique}INDEX \"{}\" ON \"{schema}\".\"{table}\" ({cols});", idx.name));
+    }
+    Ok(ddl)
+}
+
+pub fn build_dameng_ddl(client: &db::dm_driver::DmClient, schema: &str, table: &str) -> Result<String, String> {
+    let columns = db::dm_driver::get_columns(client, schema, table)?;
+    let indexes = db::dm_driver::list_indexes(client, schema, table)?;
+    let fkeys = db::dm_driver::list_foreign_keys(client, schema, table)?;
 
     let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
     let col_lines: Vec<String> = columns

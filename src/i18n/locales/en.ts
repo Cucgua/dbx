@@ -111,7 +111,8 @@ export default {
     sshKeyPassphrasePlaceholder: "Leave empty if key is not encrypted",
     sshKeyPathBrowse: "Browse",
     sshExposeLan: "Expose tunnel to LAN",
-    dmCompatHint: "Requires DM PG compatibility mode (set COMPATIBLE_MODE=7 in dm.ini and restart)",
+    dmCompatHint: "Requires DM8 ODBC driver installed on your system.",
+    dmDownload: "Download from Dameng",
     mongoLegacyHint:
       "For older MongoDB servers, enter authSource=admin&authMechanism=SCRAM-SHA-1 here; add directConnection=true only when needed for direct standalone connections.",
     compatible: "Compatible",

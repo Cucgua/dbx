@@ -1,4 +1,5 @@
 pub mod clickhouse_driver;
+pub mod dm_driver;
 pub mod duckdb_driver;
 pub mod elasticsearch_driver;
 pub mod file_validator;

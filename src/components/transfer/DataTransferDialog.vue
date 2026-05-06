@@ -25,7 +25,16 @@ const props = defineProps<{
 
 const store = useConnectionStore();
 
-const SQL_TYPES: DatabaseType[] = ["mysql", "postgres", "sqlite", "sqlserver", "oracle", "clickhouse", "duckdb"];
+const SQL_TYPES: DatabaseType[] = [
+  "mysql",
+  "postgres",
+  "sqlite",
+  "sqlserver",
+  "oracle",
+  "clickhouse",
+  "duckdb",
+  "dameng",
+];
 
 const sqlConnections = computed(() => store.connections.filter((c) => SQL_TYPES.includes(c.db_type)));
 
@@ -122,7 +131,10 @@ async function loadTables() {
   try {
     const config = store.getConfig(sourceConnectionId.value);
     const needsSchema =
-      config?.db_type === "postgres" || config?.db_type === "sqlserver" || config?.db_type === "oracle";
+      config?.db_type === "postgres" ||
+      config?.db_type === "sqlserver" ||
+      config?.db_type === "oracle" ||
+      config?.db_type === "dameng";
     if (needsSchema) {
       const schemas = await api.listSchemas(sourceConnectionId.value, sourceDatabase.value);
       sourceSchema.value = schemas.includes("public") ? "public" : (schemas[0] ?? "");
@@ -210,7 +222,10 @@ async function startTransfer() {
   // Auto-detect target schema
   const targetConfig = store.getConfig(targetConnectionId.value);
   const targetNeedsSchema =
-    targetConfig?.db_type === "postgres" || targetConfig?.db_type === "sqlserver" || targetConfig?.db_type === "oracle";
+    targetConfig?.db_type === "postgres" ||
+    targetConfig?.db_type === "sqlserver" ||
+    targetConfig?.db_type === "oracle" ||
+    targetConfig?.db_type === "dameng";
   if (targetNeedsSchema && !targetSchema.value) {
     try {
       const schemas = await api.listSchemas(targetConnectionId.value, targetDatabase.value);

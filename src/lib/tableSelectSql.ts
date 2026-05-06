@@ -22,7 +22,13 @@ export function qualifiedTableName(
   options: Pick<BuildTableSelectSqlOptions, "databaseType" | "schema" | "tableName">,
 ): string {
   const { databaseType, schema, tableName } = options;
-  if ((databaseType === "postgres" || databaseType === "oracle" || databaseType === "sqlserver") && schema) {
+  if (
+    (databaseType === "postgres" ||
+      databaseType === "oracle" ||
+      databaseType === "sqlserver" ||
+      databaseType === "dameng") &&
+    schema
+  ) {
     return `${quoteTableIdentifier(databaseType, schema)}.${quoteTableIdentifier(databaseType, tableName)}`;
   }
   return quoteTableIdentifier(databaseType, tableName);
@@ -47,7 +53,7 @@ export function buildTableSelectSql(options: BuildTableSelectSqlOptions): string
   const orderBy = options.orderBy ?? defaultOrderBy;
   const order = orderBy ? ` ORDER BY ${orderBy}` : "";
 
-  if (databaseType === "oracle") {
+  if (databaseType === "oracle" || databaseType === "dameng") {
     const offset = options.offset ? ` OFFSET ${options.offset} ROWS` : "";
     return `SELECT * FROM ${table}${where}${order}${offset} FETCH FIRST ${limit} ROWS ONLY`;
   }

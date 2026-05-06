@@ -49,8 +49,8 @@ const props = defineProps<{
   focusTableName?: string;
 }>();
 
-const SQL_TYPES: DatabaseType[] = ["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"];
-const SCHEMA_AWARE_TYPES: DatabaseType[] = ["postgres", "sqlserver", "oracle", "redshift"];
+const SQL_TYPES: DatabaseType[] = ["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift", "dameng"];
+const SCHEMA_AWARE_TYPES: DatabaseType[] = ["postgres", "sqlserver", "oracle", "redshift", "dameng"];
 const CARD_WIDTH = 270;
 const COLUMN_ROW_HEIGHT = 24;
 const CARD_HEADER_HEIGHT = 44;

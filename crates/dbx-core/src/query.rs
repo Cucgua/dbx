@@ -214,6 +214,20 @@ pub async fn do_execute(
         PoolKind::Elasticsearch(_) => Err("Use document browser for Elasticsearch".to_string()),
         PoolKind::Redis(_) => Err("Use Redis-specific commands".to_string()),
         PoolKind::MongoDb(_) => Err("Use MongoDB-specific commands".to_string()),
+        PoolKind::Dameng(client) => {
+            let client = client.clone();
+            let sql = sql.to_string();
+            drop(connections);
+            wait_for_query(cancel_token, async move {
+                let task = tokio::task::spawn_blocking(move || {
+                    let client = client.lock().map_err(|e| e.to_string())?;
+                    db::dm_driver::execute_query_sync(&client, &sql)
+                });
+                task.await.map_err(|e| e.to_string())?
+            })
+            .await
+            .map(truncate_result)
+        }
     }
 }
 

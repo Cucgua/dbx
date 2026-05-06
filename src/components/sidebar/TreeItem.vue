@@ -87,7 +87,7 @@ const emit = defineEmits<{
 }>();
 
 const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
-const diagramSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
+const diagramSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift", "dameng"]);
 const databaseSearchSupportedTypes = new Set([
   "mysql",
   "postgres",
@@ -97,6 +97,7 @@ const databaseSearchSupportedTypes = new Set([
   "redshift",
   "duckdb",
   "clickhouse",
+  "dameng",
 ]);
 const tableImportSupportedTypes = new Set([
   "mysql",
@@ -109,9 +110,18 @@ const tableImportSupportedTypes = new Set([
   "doris",
   "starrocks",
   "redshift",
+  "dameng",
 ]);
 const tableStructureSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver"]);
-const fieldLineageSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
+const fieldLineageSupportedTypes = new Set([
+  "mysql",
+  "postgres",
+  "sqlite",
+  "sqlserver",
+  "oracle",
+  "redshift",
+  "dameng",
+]);
 const isExportingDatabase = ref(false);
 
 function currentDatabaseType(): DatabaseType | undefined {
@@ -123,7 +133,7 @@ function quoteIdent(name: string): string {
 }
 
 function isSchemaAwareDbType(dbType?: DatabaseType): boolean {
-  return dbType === "postgres" || dbType === "oracle" || dbType === "sqlserver";
+  return dbType === "postgres" || dbType === "oracle" || dbType === "sqlserver" || dbType === "dameng";
 }
 
 function qualifiedTableName(tableName: string, schema?: string): string {
@@ -277,7 +287,11 @@ async function openData() {
     if (!config) throw new Error("Connection config not found");
 
     const qualifiedName =
-      (config.db_type === "postgres" || config.db_type === "oracle" || config.db_type === "sqlserver") && node.schema
+      (config.db_type === "postgres" ||
+        config.db_type === "oracle" ||
+        config.db_type === "sqlserver" ||
+        config.db_type === "dameng") &&
+      node.schema
         ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
         : quoteIdent(node.label);
 
@@ -286,7 +300,7 @@ async function openData() {
     const pks = columns.filter((c) => c.is_primary_key).map((c) => c.name);
     const order = pks.length ? ` ORDER BY ${pks.map((pk) => `${quoteIdent(pk)} ASC`).join(", ")}` : "";
     let sql: string;
-    if (config.db_type === "oracle") {
+    if (config.db_type === "oracle" || config.db_type === "dameng") {
       sql = `SELECT * FROM ${qualifiedName}${order} FETCH FIRST 100 ROWS ONLY`;
     } else if (config.db_type === "sqlserver") {
       sql = `SELECT TOP 100 * FROM ${qualifiedName}${order}`;
@@ -462,7 +476,7 @@ async function confirmDuplicateStructure() {
       sql = `CREATE TABLE ${target} (LIKE ${source} INCLUDING ALL);`;
     } else if (dbType === "sqlserver") {
       sql = `SELECT TOP 0 * INTO ${target} FROM ${source};`;
-    } else if (dbType === "oracle") {
+    } else if (dbType === "oracle" || dbType === "dameng") {
       sql = `CREATE TABLE ${target} AS SELECT * FROM ${source} WHERE 1=0`;
     } else {
       sql = `CREATE TABLE ${target} AS SELECT * FROM ${source} WHERE 0;`;
@@ -653,7 +667,11 @@ async function exportData(format: "csv" | "json" | "sql") {
   try {
     await connectionStore.ensureConnected(node.connectionId);
     const qualifiedName =
-      (config.db_type === "postgres" || config.db_type === "oracle" || config.db_type === "sqlserver") && node.schema
+      (config.db_type === "postgres" ||
+        config.db_type === "oracle" ||
+        config.db_type === "sqlserver" ||
+        config.db_type === "dameng") &&
+      node.schema
         ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
         : quoteIdent(node.label);
     const result = await api.executeQuery(node.connectionId, node.database, `SELECT * FROM ${qualifiedName}`);

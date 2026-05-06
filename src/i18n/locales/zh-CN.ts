@@ -110,7 +110,8 @@ export default {
     sshKeyPassphrasePlaceholder: "密钥未加密则留空",
     sshKeyPathBrowse: "浏览",
     sshExposeLan: "允许局域网访问隧道",
-    dmCompatHint: "需要开启达梦 PG 兼容模式（dm.ini 中设置 COMPATIBLE_MODE=7 并重启服务）",
+    dmCompatHint: "需要在系统上安装达梦 DM8 ODBC 驱动程序。",
+    dmDownload: "前往达梦官网下载",
     mongoLegacyHint:
       "连接旧版 MongoDB 时，可在此填写 authSource=admin&authMechanism=SCRAM-SHA-1；直连单节点时可按需追加 directConnection=true。",
     compatible: "兼容",

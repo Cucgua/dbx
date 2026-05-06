@@ -70,6 +70,7 @@ pub enum DatabaseType {
     #[serde(rename = "starrocks")]
     StarRocks,
     Redshift,
+    Dameng,
 }
 
 impl ConnectionConfig {
@@ -128,6 +129,7 @@ impl ConnectionConfig {
             }
             DatabaseType::Oracle => format!("oracle://{host}:{port}{db_part}"),
             DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
+            DatabaseType::Dameng => format!("dm://{host}:{port}{db_part}"),
         }
     }
 
@@ -186,6 +188,9 @@ impl ConnectionConfig {
                 format!("oracle://{}:{}@{host}:{port}{db_part}", username, password)
             }
             DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
+            DatabaseType::Dameng => {
+                format!("dm://{}:{}@{host}:{port}{db_part}", username, password)
+            }
         }
     }
 

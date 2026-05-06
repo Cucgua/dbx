@@ -11,7 +11,8 @@ export type DatabaseType =
   | "elasticsearch"
   | "doris"
   | "starrocks"
-  | "redshift";
+  | "redshift"
+  | "dameng";
 
 export interface ConnectionConfig {
   id: string;
