@@ -1553,7 +1553,7 @@ dependencies = [
  "futures",
  "log",
  "mongodb",
- "oracle-rs",
+ "oracle-rs 0.1.7",
  "percent-encoding",
  "portpicker",
  "redis",
@@ -1590,7 +1590,7 @@ dependencies = [
  "futures",
  "log",
  "mongodb",
- "oracle-rs",
+ "oracle-rs 0.1.6",
  "percent-encoding",
  "portpicker",
  "redis",
@@ -4509,6 +4509,38 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
+name = "oracle-rs"
+version = "0.1.6"
+source = "git+https://github.com/t8y2/oracle-rs?branch=main#97d99d43e3d1323f7d544db8e0fdaaa0ba95cd24"
+dependencies = [
+ "aes 0.8.4",
+ "async-trait",
+ "bytes",
+ "cbc 0.1.2",
+ "chrono",
+ "hex",
+ "hmac 0.12.1",
+ "hostname",
+ "indexmap 2.14.0",
+ "md-5",
+ "pbkdf2 0.12.2",
+ "pkcs8 0.10.2",
+ "rand 0.8.6",
+ "rustls 0.23.40",
+ "rustls-pemfile 2.2.0",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "sha1 0.10.6",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tracing",
+ "webpki-roots 0.26.11",
+]
 
 [[package]]
 name = "oracle-rs"

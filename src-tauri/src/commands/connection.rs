@@ -103,6 +103,7 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                 config.database.as_deref().unwrap_or("ORCL"),
                 &config.username,
                 &config.password,
+                config.sysdba,
             )
             .await
             .map(|_| "Connection successful".to_string()),
@@ -168,6 +169,7 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
                 config.database.as_deref().unwrap_or("ORCL"),
                 &config.username,
                 &config.password,
+                config.sysdba,
             )
             .await?;
             PoolKind::Oracle(std::sync::Arc::new(tokio::sync::Mutex::new(client)))

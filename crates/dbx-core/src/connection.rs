@@ -138,6 +138,7 @@ impl AppState {
                     db_config.database.as_deref().unwrap_or("ORCL"),
                     &db_config.username,
                     &db_config.password,
+                    db_config.sysdba,
                 )
                 .await?;
                 PoolKind::Oracle(Arc::new(tokio::sync::Mutex::new(client)))

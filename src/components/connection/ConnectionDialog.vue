@@ -794,6 +794,14 @@ async function browseSshKeyPath() {
                     </p>
                   </div>
 
+                  <div v-if="form.db_type === 'oracle'" class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right text-xs">SYSDBA</Label>
+                    <label class="col-span-3 flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" v-model="form.sysdba" class="mr-0" />
+                      <span class="text-xs text-muted-foreground">as SYSDBA</span>
+                    </label>
+                  </div>
+
                   <div
                     v-if="form.db_type === 'mysql' || form.db_type === 'postgres'"
                     class="grid grid-cols-4 items-center gap-4"

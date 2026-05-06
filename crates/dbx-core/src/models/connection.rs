@@ -38,6 +38,8 @@ pub struct ConnectionConfig {
     #[serde(default)]
     pub ssl: bool,
     #[serde(default)]
+    pub sysdba: bool,
+    #[serde(default)]
     pub connection_string: Option<String>,
 }
 
@@ -277,6 +279,7 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssl: false,
+            sysdba: false,
             connection_string: None,
         }
     }

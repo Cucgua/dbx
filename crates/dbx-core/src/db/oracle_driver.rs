@@ -6,8 +6,16 @@ use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryRes
 
 pub type OracleClient = Connection;
 
-pub async fn connect(host: &str, port: u16, service: &str, user: &str, pass: &str) -> Result<OracleClient, String> {
-    let config = Config::new(host, port, service, user, pass);
+pub async fn connect(
+    host: &str,
+    port: u16,
+    service: &str,
+    user: &str,
+    pass: &str,
+    sysdba: bool,
+) -> Result<OracleClient, String> {
+    let mut config = Config::new(host, port, service, user, pass);
+    config.sysdba = sysdba;
     tokio::time::timeout(connection_timeout(), Connection::connect_with_config(config))
         .await
         .map_err(|_| format!("Oracle connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
