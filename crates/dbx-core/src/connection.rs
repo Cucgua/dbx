@@ -29,7 +29,7 @@ pub enum PoolKind {
     Oracle(Arc<tokio::sync::Mutex<db::oracle_driver::OracleClient>>),
     Elasticsearch(db::elasticsearch_driver::EsClient),
     Dameng(Arc<std::sync::Mutex<db::dm_driver::DmClient>>),
-    Gaussdb(Arc<std::sync::Mutex<db::gaussdb_driver::GaussdbClient>>),
+    Gaussdb(Arc<tokio::sync::Mutex<db::gaussdb_driver::GaussdbClient>>),
 }
 
 pub struct AppState {
@@ -188,7 +188,7 @@ impl AppState {
                     &db_config.password,
                 )
                 .await?;
-                PoolKind::Gaussdb(Arc::new(std::sync::Mutex::new(client)))
+                PoolKind::Gaussdb(Arc::new(tokio::sync::Mutex::new(client)))
             }
         };
 

@@ -113,7 +113,7 @@ pub fn extract_dameng(
 pub fn extract_gaussdb(
     connections: &HashMap<String, PoolKind>,
     key: &str,
-) -> Option<Arc<std::sync::Mutex<db::gaussdb_driver::GaussdbClient>>> {
+) -> Option<Arc<tokio::sync::Mutex<db::gaussdb_driver::GaussdbClient>>> {
     match connections.get(key)? {
         PoolKind::Gaussdb(client) => Some(client.clone()),
         _ => None,
@@ -144,8 +144,8 @@ pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Resul
         }
         if let Some(client) = extract_gaussdb(&connections, connection_id) {
             drop(connections);
-            let client = client.lock().map_err(|e| e.to_string())?;
-            return db::gaussdb_driver::list_databases(&client);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_databases(&mut client).await;
         }
     }
 
@@ -183,8 +183,8 @@ pub async fn list_schemas_core(state: &AppState, connection_id: &str, database: 
         }
         if let Some(client) = extract_gaussdb(&connections, &pool_key) {
             drop(connections);
-            let client = client.lock().map_err(|e| e.to_string())?;
-            return db::gaussdb_driver::list_schemas(&client);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_schemas(&mut client).await;
         }
     }
 
@@ -233,8 +233,8 @@ pub async fn list_tables_core(
         }
         if let Some(client) = extract_gaussdb(&connections, &pool_key) {
             drop(connections);
-            let client = client.lock().map_err(|e| e.to_string())?;
-            return db::gaussdb_driver::list_tables(&client, schema);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_tables(&mut client, schema).await;
         }
     }
 
@@ -286,8 +286,8 @@ pub async fn get_columns_core(
         }
         if let Some(client) = extract_gaussdb(&connections, &pool_key) {
             drop(connections);
-            let client = client.lock().map_err(|e| e.to_string())?;
-            return db::gaussdb_driver::get_columns(&client, schema, table);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::get_columns(&mut client, schema, table).await;
         }
     }
 
@@ -330,8 +330,8 @@ pub async fn list_indexes_core(
         }
         if let Some(client) = extract_gaussdb(&connections, &pool_key) {
             drop(connections);
-            let client = client.lock().map_err(|e| e.to_string())?;
-            return db::gaussdb_driver::list_indexes(&client, schema, table);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_indexes(&mut client, schema, table).await;
         }
     }
 
@@ -374,8 +374,8 @@ pub async fn list_foreign_keys_core(
         }
         if let Some(client) = extract_gaussdb(&connections, &pool_key) {
             drop(connections);
-            let client = client.lock().map_err(|e| e.to_string())?;
-            return db::gaussdb_driver::list_foreign_keys(&client, schema, table);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_foreign_keys(&mut client, schema, table).await;
         }
     }
 
@@ -418,8 +418,8 @@ pub async fn list_triggers_core(
         }
         if let Some(client) = extract_gaussdb(&connections, &pool_key) {
             drop(connections);
-            let client = client.lock().map_err(|e| e.to_string())?;
-            return db::gaussdb_driver::list_triggers(&client, schema, table);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_triggers(&mut client, schema, table).await;
         }
     }
 
@@ -488,8 +488,8 @@ pub async fn get_table_ddl_core(
         }
         if let Some(client) = extract_gaussdb(&connections, &pool_key) {
             drop(connections);
-            let client = client.lock().map_err(|e| e.to_string())?;
-            return build_gaussdb_ddl(&client, schema, table);
+            let mut client = client.lock().await;
+            return build_gaussdb_ddl(&mut client, schema, table).await;
         }
     }
 
@@ -746,14 +746,14 @@ pub fn build_dameng_ddl(client: &db::dm_driver::DmClient, schema: &str, table: &
     Ok(ddl)
 }
 
-pub fn build_gaussdb_ddl(
-    client: &db::gaussdb_driver::GaussdbClient,
+pub async fn build_gaussdb_ddl(
+    client: &mut db::gaussdb_driver::GaussdbClient,
     schema: &str,
     table: &str,
 ) -> Result<String, String> {
-    let columns = db::gaussdb_driver::get_columns(client, schema, table)?;
-    let indexes = db::gaussdb_driver::list_indexes(client, schema, table)?;
-    let fkeys = db::gaussdb_driver::list_foreign_keys(client, schema, table)?;
+    let columns = db::gaussdb_driver::get_columns(client, schema, table).await?;
+    let indexes = db::gaussdb_driver::list_indexes(client, schema, table).await?;
+    let fkeys = db::gaussdb_driver::list_foreign_keys(client, schema, table).await?;
 
     let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
     let col_lines: Vec<String> = columns

@@ -217,7 +217,7 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
                 &config.password,
             )
             .await?;
-            PoolKind::Gaussdb(std::sync::Arc::new(std::sync::Mutex::new(client)))
+            PoolKind::Gaussdb(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
         }
     };
 

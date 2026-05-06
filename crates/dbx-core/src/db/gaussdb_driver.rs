@@ -1,103 +1,67 @@
 use std::time::Instant;
 
-use odbc_api::{buffers::TextRowSet, ConnectionOptions, Cursor, ResultSetMetadata};
-
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 use super::CONNECTION_TIMEOUT_SECS;
 
 pub struct GaussdbClient {
-    conn: odbc_api::Connection<'static>,
+    client: rust_gaussdb::Client,
 }
 
 unsafe impl Send for GaussdbClient {}
 
 impl GaussdbClient {
-    pub fn query_rows(&self, sql: &str) -> Result<Vec<Vec<String>>, String> {
-        match self.conn.execute(sql, (), None).map_err(|e| e.to_string())? {
-            Some(cursor) => read_cursor(cursor),
-            None => Ok(vec![]),
+    async fn query_rows(&mut self, sql: &str) -> Result<Vec<Vec<Option<String>>>, String> {
+        let rows = self.client.query(sql, &[]).await.map_err(|e| e.to_string())?;
+        let mut result = Vec::new();
+        for row in &rows {
+            let mut vals = Vec::new();
+            for i in 0..row.columns().len() {
+                vals.push(row.try_get::<String>(i));
+            }
+            result.push(vals);
         }
+        Ok(result)
     }
 
-    fn query_single_column(&self, sql: &str) -> Result<Vec<String>, String> {
-        Ok(self.query_rows(sql)?.into_iter().filter_map(|r| r.into_iter().next()).collect())
+    async fn query_single_column(&mut self, sql: &str) -> Result<Vec<String>, String> {
+        Ok(self.query_rows(sql).await?.into_iter().filter_map(|r| r.into_iter().next().flatten()).collect())
     }
-}
-
-fn read_cursor(cursor: impl Cursor) -> Result<Vec<Vec<String>>, String> {
-    let mut cursor = cursor;
-    let col_count = cursor.num_result_cols().map_err(|e| e.to_string())? as u16;
-    let buffer = TextRowSet::for_cursor(1000, &mut cursor, Some(8192)).map_err(|e| e.to_string())?;
-    let mut row_cursor = cursor.bind_buffer(buffer).map_err(|e| e.to_string())?;
-    let mut rows = Vec::new();
-    while let Some(batch) = row_cursor.fetch().map_err(|e| e.to_string())? {
-        for row_idx in 0..batch.num_rows() {
-            let vals: Vec<String> = (0..col_count as usize)
-                .map(|col| {
-                    batch.at(col, row_idx).and_then(|bytes| std::str::from_utf8(bytes).ok()).unwrap_or("").to_string()
-                })
-                .collect();
-            rows.push(vals);
-        }
-    }
-    Ok(rows)
 }
 
 pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &str) -> Result<GaussdbClient, String> {
-    let conn_str = format!(
-        "Driver={{GaussDBA}};Servername={host};Port={port};Database={db};UID={user};PWD={pass}",
-        host = host,
-        port = port,
-        db = database,
-        user = user,
-        pass = pass,
-    );
+    let dsn = format!("host={host} port={port} user={user} password={pass} dbname={database}");
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS),
-        tokio::task::spawn_blocking(move || {
-            super::ODBC_ENV.connect_with_connection_string(&conn_str, ConnectionOptions::default())
-                .map_err(|e| {
-                    let msg = e.to_string();
-                    if msg.contains("Data source name not found") || msg.contains("Can't open lib") {
-                        format!(
-                            "GaussDB ODBC driver not found. Please install the GaussDB ODBC driver \
-                             and register it in odbcinst.ini (Linux/macOS) or the ODBC Data Source Administrator (Windows). \
-                             Original error: {msg}"
-                        )
-                    } else {
-                        format!("GaussDB connection failed: {msg}")
-                    }
-                })
-                .map(|conn| GaussdbClient { conn })
-        }),
-    )
+    let result = tokio::time::timeout(std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS), async {
+        rust_gaussdb::Client::connect(&dsn).await.map_err(|e| format!("GaussDB connection failed: {e}"))
+    })
     .await
-    .map_err(|_| format!("GaussDB connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
-    .map_err(|e| format!("GaussDB connection task failed: {e}"))?;
+    .map_err(|_| format!("GaussDB connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?;
 
-    result
+    result.map(|client| GaussdbClient { client })
 }
 
-pub fn list_databases(client: &GaussdbClient) -> Result<Vec<DatabaseInfo>, String> {
-    let rows =
-        client.query_single_column("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")?;
+pub async fn list_databases(client: &mut GaussdbClient) -> Result<Vec<DatabaseInfo>, String> {
+    let rows = client
+        .query_single_column("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+        .await?;
     Ok(rows.into_iter().map(|name| DatabaseInfo { name }).collect())
 }
 
-pub fn list_schemas(client: &GaussdbClient) -> Result<Vec<String>, String> {
-    client.query_single_column(
-        "SELECT DISTINCT nspname FROM pg_catalog.pg_namespace n \
-         WHERE nspname NOT LIKE 'pg_%' \
-         AND nspname NOT IN ('information_schema', 'cstore', 'snapshot', 'db4ai', 'dbe_perf', \
-           'dbe_pldebugger', 'dbe_pldeveloper', 'pkg_service', 'pkg_util', 'sqladvisor', 'blockchain') \
-         AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c WHERE c.relnamespace = n.oid AND c.relkind IN ('r', 'v', 'm')) \
-         ORDER BY nspname",
-    )
+pub async fn list_schemas(client: &mut GaussdbClient) -> Result<Vec<String>, String> {
+    client
+        .query_single_column(
+            "SELECT DISTINCT nspname FROM pg_catalog.pg_namespace n \
+             WHERE nspname NOT LIKE 'pg_%' \
+             AND nspname NOT IN ('information_schema', 'cstore', 'snapshot', 'db4ai', 'dbe_perf', \
+               'dbe_pldebugger', 'dbe_pldeveloper', 'pkg_service', 'pkg_util', 'sqladvisor', 'blockchain') \
+             AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c WHERE c.relnamespace = n.oid AND c.relkind IN ('r', 'v', 'm')) \
+             ORDER BY nspname",
+        )
+        .await
 }
 
-pub fn list_tables(client: &GaussdbClient, schema: &str) -> Result<Vec<TableInfo>, String> {
+pub async fn list_tables(client: &mut GaussdbClient, schema: &str) -> Result<Vec<TableInfo>, String> {
     let s = schema.replace('\'', "''");
     let sql = format!(
         "SELECT c.relname, CASE c.relkind WHEN 'r' THEN 'TABLE' WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'VIEW' ELSE 'TABLE' END \
@@ -106,62 +70,66 @@ pub fn list_tables(client: &GaussdbClient, schema: &str) -> Result<Vec<TableInfo
          WHERE n.nspname = '{s}' AND c.relkind IN ('r', 'v', 'm') \
          ORDER BY c.relname"
     );
-    let rows = client.query_rows(&sql)?;
+    let rows = client.query_rows(&sql).await?;
     Ok(rows
         .into_iter()
         .map(|r| {
-            let raw_type = r.get(1).cloned().unwrap_or_default();
+            let raw_type = r.get(1).and_then(|v| v.clone()).unwrap_or_default();
             TableInfo {
-                name: r.first().cloned().unwrap_or_default(),
+                name: r.first().and_then(|v| v.clone()).unwrap_or_default(),
                 table_type: if raw_type.contains("VIEW") { "VIEW".to_string() } else { "TABLE".to_string() },
             }
         })
         .collect())
 }
 
-pub fn get_columns(client: &GaussdbClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+pub async fn get_columns(client: &mut GaussdbClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
 
-    let pk_rows = client.query_single_column(&format!(
-        "SELECT a.attname FROM pg_catalog.pg_index i \
-         JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
-         WHERE i.indrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = '{t}' \
-           AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = '{s}')) \
-         AND i.indisprimary"
-    ))?;
+    let pk_rows = client
+        .query_single_column(&format!(
+            "SELECT a.attname FROM pg_catalog.pg_index i \
+             JOIN pg_catalog.pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
+             WHERE i.indrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = '{t}' \
+               AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = '{s}')) \
+             AND i.indisprimary"
+        ))
+        .await?;
     let pk_names: std::collections::HashSet<String> = pk_rows.into_iter().collect();
 
-    let col_rows = client.query_rows(&format!(
-        "SELECT a.attname, format_type(a.atttypid, a.atttypmod), \
-         CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END, \
-         pg_catalog.pg_get_expr(d.adbin, d.adrelid), \
-         CASE WHEN t.typname IN ('numeric', 'float4', 'float8') THEN COALESCE(((a.atttypmod - 4) >> 16) & 65535, -1) ELSE NULL END, \
-         CASE WHEN t.typname = 'numeric' THEN COALESCE((a.atttypmod - 4) & 65535, -1) ELSE NULL END, \
-         CASE WHEN a.atttypmod > 0 AND t.typname IN ('varchar', 'bpchar') THEN a.atttypmod - 4 ELSE NULL END \
-         FROM pg_catalog.pg_attribute a \
-         JOIN pg_catalog.pg_type t ON t.oid = a.atttypid \
-         LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
-         WHERE a.attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = '{t}' \
-           AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = '{s}')) \
-         AND a.attnum > 0 AND NOT a.attisdropped \
-         ORDER BY a.attnum"
-    ))?;
+    let col_rows = client
+        .query_rows(&format!(
+            "SELECT a.attname, format_type(a.atttypid, a.atttypmod), \
+             CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END, \
+             pg_catalog.pg_get_expr(d.adbin, d.adrelid), \
+             CASE WHEN t.typname IN ('numeric', 'float4', 'float8') THEN COALESCE(((a.atttypmod - 4) >> 16) & 65535, -1) ELSE NULL END, \
+             CASE WHEN t.typname = 'numeric' THEN COALESCE((a.atttypmod - 4) & 65535, -1) ELSE NULL END, \
+             CASE WHEN a.atttypmod > 0 AND t.typname IN ('varchar', 'bpchar') THEN a.atttypmod - 4 ELSE NULL END \
+             FROM pg_catalog.pg_attribute a \
+             JOIN pg_catalog.pg_type t ON t.oid = a.atttypid \
+             LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+             WHERE a.attrelid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = '{t}' \
+               AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = '{s}')) \
+             AND a.attnum > 0 AND NOT a.attisdropped \
+             ORDER BY a.attnum"
+        ))
+        .await?;
 
     Ok(col_rows
         .into_iter()
         .map(|r| {
-            let name = r.first().cloned().unwrap_or_default();
-            let data_type = r.get(1).cloned().unwrap_or_default();
-            let num_prec = r.get(4).and_then(|v| v.parse::<i32>().ok());
-            let num_scale = r.get(5).and_then(|v| v.parse::<i32>().ok());
-            let char_len = r.get(6).and_then(|v| v.parse::<i32>().ok());
+            let name = r.first().and_then(|v| v.clone()).unwrap_or_default();
+            let data_type = r.get(1).and_then(|v| v.clone()).unwrap_or_default();
+            let num_prec = r.get(4).and_then(|v| v.as_ref()?.parse::<i32>().ok());
+            let num_scale = r.get(5).and_then(|v| v.as_ref()?.parse::<i32>().ok());
+            let char_len = r.get(6).and_then(|v| v.as_ref()?.parse::<i32>().ok());
             ColumnInfo {
                 is_primary_key: pk_names.contains(&name),
                 name,
                 data_type,
-                is_nullable: r.get(2).map(|v| v == "YES").unwrap_or(false),
-                column_default: r.get(3).filter(|v| !v.is_empty()).cloned(),
+                is_nullable: r.get(2).and_then(|v| v.as_ref()).map(|v| v == "YES").unwrap_or(false),
+                column_default: r.get(3).and_then(|v| v.clone()).filter(|v| !v.is_empty()),
                 extra: None,
                 comment: None,
                 numeric_precision: num_prec,
@@ -172,18 +140,18 @@ pub fn get_columns(client: &GaussdbClient, schema: &str, table: &str) -> Result<
         .collect())
 }
 
-pub fn list_indexes(client: &GaussdbClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
+pub async fn list_indexes(client: &mut GaussdbClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
     let sql = format!(
         "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = '{s}' AND tablename = '{t}' ORDER BY indexname"
     );
-    let rows = client.query_rows(&sql)?;
+    let rows = client.query_rows(&sql).await?;
     Ok(rows
         .into_iter()
         .map(|r| {
-            let name = r.first().cloned().unwrap_or_default();
-            let def = r.get(1).cloned().unwrap_or_default();
+            let name = r.first().and_then(|v| v.clone()).unwrap_or_default();
+            let def = r.get(1).and_then(|v| v.clone()).unwrap_or_default();
             let is_unique = def.to_uppercase().contains("UNIQUE");
             let is_primary = def.to_uppercase().contains("PRIMARY");
             let columns = def
@@ -205,7 +173,11 @@ pub fn list_indexes(client: &GaussdbClient, schema: &str, table: &str) -> Result
         .collect())
 }
 
-pub fn list_foreign_keys(client: &GaussdbClient, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
+pub async fn list_foreign_keys(
+    client: &mut GaussdbClient,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ForeignKeyInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
     let sql = format!(
@@ -219,48 +191,44 @@ pub fn list_foreign_keys(client: &GaussdbClient, schema: &str, table: &str) -> R
          WHERE con.contype = 'f' AND n.nspname = '{s}' AND cl.relname = '{t}' \
          ORDER BY con.conname"
     );
-    let rows = client.query_rows(&sql)?;
+    let rows = client.query_rows(&sql).await?;
     Ok(rows
         .into_iter()
         .map(|r| ForeignKeyInfo {
-            name: r.first().cloned().unwrap_or_default(),
-            column: r.get(1).cloned().unwrap_or_default(),
-            ref_table: r.get(2).cloned().unwrap_or_default(),
-            ref_column: r.get(3).cloned().unwrap_or_default(),
+            name: r.first().and_then(|v| v.clone()).unwrap_or_default(),
+            column: r.get(1).and_then(|v| v.clone()).unwrap_or_default(),
+            ref_table: r.get(2).and_then(|v| v.clone()).unwrap_or_default(),
+            ref_column: r.get(3).and_then(|v| v.clone()).unwrap_or_default(),
         })
         .collect())
 }
 
-pub fn list_triggers(client: &GaussdbClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
+pub async fn list_triggers(client: &mut GaussdbClient, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
     let sql = format!(
-        "SELECT t.tgname, em.event, CASE WHEN t.tgtype & 2 = 2 THEN 'BEFORE' ELSE 'AFTER' END \
+        "SELECT t.tgname, \
+         CASE WHEN t.tgtype & 4 = 4 THEN 'INSERT' WHEN t.tgtype & 8 = 8 THEN 'DELETE' \
+         WHEN t.tgtype & 16 = 16 THEN 'UPDATE' ELSE 'UNKNOWN' END, \
+         CASE WHEN t.tgtype & 2 = 2 THEN 'BEFORE' ELSE 'AFTER' END \
          FROM pg_catalog.pg_trigger t \
          JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-         CROSS JOIN LATERAL ( \
-           SELECT CASE \
-             WHEN t.tgtype & 4 = 4 THEN 'INSERT' \
-             WHEN t.tgtype & 8 = 8 THEN 'DELETE' \
-             WHEN t.tgtype & 16 = 16 THEN 'UPDATE' \
-             ELSE 'UNKNOWN' END AS event \
-         ) em \
          WHERE NOT t.tgisinternal AND n.nspname = '{s}' AND c.relname = '{t}' \
          ORDER BY t.tgname"
     );
-    let rows = client.query_rows(&sql)?;
+    let rows = client.query_rows(&sql).await?;
     Ok(rows
         .into_iter()
         .map(|r| TriggerInfo {
-            name: r.first().cloned().unwrap_or_default(),
-            event: r.get(1).cloned().unwrap_or_default(),
-            timing: r.get(2).cloned().unwrap_or_default(),
+            name: r.first().and_then(|v| v.clone()).unwrap_or_default(),
+            event: r.get(1).and_then(|v| v.clone()).unwrap_or_default(),
+            timing: r.get(2).and_then(|v| v.clone()).unwrap_or_default(),
         })
         .collect())
 }
 
-pub fn execute_query_sync(client: &GaussdbClient, sql: &str) -> Result<QueryResult, String> {
+pub async fn execute_query(client: &mut GaussdbClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
     let trimmed = sql.to_uppercase();
@@ -268,75 +236,43 @@ pub fn execute_query_sync(client: &GaussdbClient, sql: &str) -> Result<QueryResu
     if trimmed.starts_with("SELECT")
         || trimmed.starts_with("WITH")
         || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("DESCRIBE")
         || trimmed.starts_with("EXPLAIN")
     {
-        match client.conn.execute(sql, (), None).map_err(|e| e.to_string())? {
-            Some(mut cursor) => {
-                let col_count = cursor.num_result_cols().map_err(|e| e.to_string())? as u16;
-                let columns: Vec<String> = (1..=col_count)
-                    .map(|i| cursor.col_name(i).map_err(|e| e.to_string()).unwrap_or_else(|_| format!("col{i}")))
-                    .collect();
+        let rows = client.client.query(sql, &[]).await.map_err(|e| e.to_string())?;
 
-                let buffer = TextRowSet::for_cursor(1000, &mut cursor, Some(8192)).map_err(|e| e.to_string())?;
-                let mut row_cursor = cursor.bind_buffer(buffer).map_err(|e| e.to_string())?;
+        let columns: Vec<String> = if let Some(first) = rows.first() {
+            first.columns().iter().map(|c| c.name.clone()).collect()
+        } else {
+            Vec::new()
+        };
 
-                let mut rows = Vec::new();
-                while let Some(batch) = row_cursor.fetch().map_err(|e| e.to_string())? {
-                    for row_idx in 0..batch.num_rows() {
-                        let vals: Vec<serde_json::Value> = (0..col_count as usize)
-                            .map(|col| {
-                                batch
-                                    .at(col, row_idx)
-                                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                                    .map(|s| serde_json::Value::String(s.to_string()))
-                                    .unwrap_or(serde_json::Value::Null)
-                            })
-                            .collect();
-                        rows.push(vals);
-                        if rows.len() >= crate::query::MAX_ROWS {
-                            break;
-                        }
-                    }
-                    if rows.len() >= crate::query::MAX_ROWS {
-                        break;
-                    }
-                }
-
-                let truncated = rows.len() >= crate::query::MAX_ROWS;
-                Ok(QueryResult {
-                    columns,
-                    rows,
-                    affected_rows: 0,
-                    execution_time_ms: start.elapsed().as_millis(),
-                    truncated,
-                })
+        let mut result_rows = Vec::new();
+        for row in &rows {
+            let vals: Vec<serde_json::Value> = (0..row.columns().len())
+                .map(|i| row.try_get::<String>(i).map(serde_json::Value::String).unwrap_or(serde_json::Value::Null))
+                .collect();
+            result_rows.push(vals);
+            if result_rows.len() >= crate::query::MAX_ROWS {
+                break;
             }
-            None => Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                affected_rows: 0,
-                execution_time_ms: start.elapsed().as_millis(),
-                truncated: false,
-            }),
         }
+
+        let truncated = result_rows.len() >= crate::query::MAX_ROWS;
+        Ok(QueryResult {
+            columns,
+            rows: result_rows,
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated,
+        })
     } else {
-        match client.conn.execute(sql, (), None) {
-            Ok(Some(_cursor)) => Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                affected_rows: 0,
-                execution_time_ms: start.elapsed().as_millis(),
-                truncated: false,
-            }),
-            Ok(None) => Ok(QueryResult {
-                columns: vec![],
-                rows: vec![],
-                affected_rows: 0,
-                execution_time_ms: start.elapsed().as_millis(),
-                truncated: false,
-            }),
-            Err(e) => Err(e.to_string()),
-        }
+        let affected = client.client.execute(sql).await.map_err(|e| e.to_string())?;
+        Ok(QueryResult {
+            columns: vec![],
+            rows: vec![],
+            affected_rows: affected,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        })
     }
 }
