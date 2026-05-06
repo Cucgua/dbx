@@ -82,6 +82,23 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
         .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
         .or_else(|_| row.try_get::<uuid::Uuid, _>(idx).map(|v| serde_json::Value::String(v.to_string())))
         .or_else(|e| pg_temporal_to_json_value(row, idx).ok_or(e))
+        .or_else(|_| {
+            row.try_get_raw(idx).map(|raw| {
+                if raw.is_null() {
+                    return serde_json::Value::Null;
+                }
+                match raw.as_bytes() {
+                    Ok(bytes) => match std::str::from_utf8(bytes) {
+                        Ok(s) => serde_json::Value::String(s.to_string()),
+                        Err(_) => {
+                            let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                            serde_json::Value::String(hex)
+                        }
+                    },
+                    Err(_) => serde_json::Value::Null,
+                }
+            })
+        })
         .unwrap_or(serde_json::Value::Null)
 }
 
