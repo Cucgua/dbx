@@ -1,3 +1,4 @@
+use log;
 use oracle_rs::{Config, Connection};
 use std::time::Instant;
 
@@ -37,8 +38,11 @@ fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
 }
 
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
-    let result =
-        conn.query("SELECT username FROM all_users ORDER BY username", &[]).await.map_err(|e| e.to_string())?;
+    log::debug!("[oracle] list_databases: querying all_users");
+    let result = conn.query("SELECT username FROM all_users ORDER BY username", &[]).await.map_err(|e| {
+        log::error!("[oracle] list_databases failed: {e}");
+        e.to_string()
+    })?;
     Ok(result.rows.iter().map(|row| DatabaseInfo { name: row.get_string(0).unwrap_or("").to_string() }).collect())
 }
 
@@ -56,7 +60,11 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
          ORDER BY 1",
         s = schema.replace('\'', "''")
     );
-    let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
+    log::debug!("[oracle] list_tables: schema={schema}, sql={sql}");
+    let result = conn.query(&sql, &[]).await.map_err(|e| {
+        log::error!("[oracle] list_tables failed: {e}");
+        e.to_string()
+    })?;
     Ok(result
         .rows
         .iter()
@@ -68,6 +76,7 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
 }
 
 pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+    log::debug!("[oracle] get_columns: schema={schema}, table={table}");
     let s = schema.replace('\'', "''");
     let t = table.replace('\'', "''");
 
@@ -81,7 +90,10 @@ pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Resu
             &[],
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            log::error!("[oracle] get_columns pk query failed: {e}");
+            e.to_string()
+        })?;
     let pk_names: std::collections::HashSet<String> =
         pk_result.rows.iter().filter_map(|row| row.get_string(0).map(|s| s.to_string())).collect();
 
@@ -229,6 +241,7 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
     let trimmed = sql.to_uppercase();
+    log::debug!("[oracle] execute_query: sql={}", &sql[..sql.len().min(200)]);
 
     if trimmed.starts_with("SELECT")
         || trimmed.starts_with("WITH")
@@ -236,7 +249,10 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
         || trimmed.starts_with("DESCRIBE")
         || trimmed.starts_with("EXPLAIN")
     {
-        let result = conn.query(sql, &[]).await.map_err(|e| e.to_string())?;
+        let result = conn.query(sql, &[]).await.map_err(|e| {
+            log::error!("[oracle] execute_query SELECT failed: {e}");
+            e.to_string()
+        })?;
         let columns: Vec<String> = result.columns.iter().map(|c| c.name.clone()).collect();
         let rows: Vec<Vec<serde_json::Value>> = result
             .rows

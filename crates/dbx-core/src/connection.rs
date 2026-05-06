@@ -72,9 +72,22 @@ impl AppState {
 
         let conns = self.connections.lock().await;
         if conns.contains_key(&pool_key) {
-            return Ok(pool_key);
+            if let Some(PoolKind::Oracle(client)) = conns.get(&pool_key) {
+                let conn = client.lock().await;
+                if conn.is_closed() {
+                    drop(conn);
+                    drop(conns);
+                    log::info!("[oracle] connection closed, reconnecting...");
+                    self.connections.lock().await.remove(&pool_key);
+                } else {
+                    return Ok(pool_key);
+                }
+            } else {
+                return Ok(pool_key);
+            }
+        } else {
+            drop(conns);
         }
-        drop(conns);
 
         let configs = self.configs.lock().await;
         let config = configs.get(connection_id).ok_or("Connection config not found")?.clone();
