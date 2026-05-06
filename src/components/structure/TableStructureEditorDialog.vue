@@ -32,6 +32,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useToast } from "@/composables/useToast";
 import {
   buildTableStructureChangeSql,
+  buildCreateTableSql,
   type EditableStructureColumn,
   type EditableStructureIndex,
 } from "@/lib/tableStructureEditorSql";
@@ -107,19 +108,32 @@ const indexColLabels = computed(() => [
   t("structureEditor.actions"),
 ]);
 const targetSchema = computed(() => props.prefillSchema || props.prefillDatabase || "");
-const targetLabel = computed(() =>
-  [connection.value?.name, props.prefillDatabase, props.prefillSchema, props.prefillTable].filter(Boolean).join(" / "),
-);
+const isCreateMode = computed(() => !props.prefillTable);
+const newTableName = ref("");
+const targetLabel = computed(() => {
+  const parts = [connection.value?.name, props.prefillDatabase, props.prefillSchema];
+  if (!isCreateMode.value) parts.push(props.prefillTable);
+  return parts.filter(Boolean).join(" / ");
+});
 
-const changeSql = computed(() =>
-  buildTableStructureChangeSql({
+const changeSql = computed(() => {
+  if (isCreateMode.value) {
+    return buildCreateTableSql({
+      databaseType: databaseType.value,
+      schema: props.prefillSchema,
+      tableName: newTableName.value,
+      columns: columns.value,
+      indexes: indexes.value,
+    });
+  }
+  return buildTableStructureChangeSql({
     databaseType: databaseType.value,
     schema: props.prefillSchema,
     tableName: props.prefillTable || "",
     columns: columns.value,
     indexes: indexes.value,
-  }),
-);
+  });
+});
 const pendingStatements = computed(() => changeSql.value.statements);
 const warnings = computed(() => changeSql.value.warnings);
 const canApply = computed(
@@ -129,7 +143,7 @@ const canApply = computed(
     pendingStatements.value.length > 0 &&
     warnings.value.length === 0 &&
     !!props.prefillConnectionId &&
-    !!props.prefillTable,
+    (isCreateMode.value ? !!newTableName.value.trim() : !!props.prefillTable),
 );
 
 function resetState() {
@@ -141,6 +155,7 @@ function resetState() {
   indexes.value = [];
   foreignKeys.value = [];
   triggers.value = [];
+  newTableName.value = "";
 }
 
 async function loadStructure() {
@@ -246,7 +261,11 @@ async function applyChanges() {
     await api.executeBatch(props.prefillConnectionId, props.prefillDatabase, pendingStatements.value);
     toast(t("structureEditor.saved"), 2500);
     emit("saved");
-    await loadStructure();
+    if (isCreateMode.value) {
+      open.value = false;
+    } else {
+      await loadStructure();
+    }
   } catch (e: any) {
     errorMessage.value = e?.message || String(e);
   } finally {
@@ -268,7 +287,7 @@ watch(open, (value) => {
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <TableProperties class="h-4 w-4" />
-          {{ t("structureEditor.title") }}
+          {{ isCreateMode ? t("structureEditor.createTitle") : t("structureEditor.title") }}
         </DialogTitle>
       </DialogHeader>
 
@@ -277,10 +296,26 @@ watch(open, (value) => {
           <Database class="h-3.5 w-3.5 text-muted-foreground" />
           <span class="min-w-0 flex-1 truncate font-medium">{{ targetLabel || t("editor.noDatabase") }}</span>
           <Badge variant="outline">{{ connection?.driver_label || databaseType }}</Badge>
-          <Button variant="ghost" size="sm" class="h-7 gap-1" :disabled="loading || saving" @click="loadStructure">
+          <Button
+            v-if="!isCreateMode"
+            variant="ghost"
+            size="sm"
+            class="h-7 gap-1"
+            :disabled="loading || saving"
+            @click="loadStructure"
+          >
             <RefreshCw class="h-3.5 w-3.5" />
             {{ t("structureEditor.refresh") }}
           </Button>
+        </div>
+
+        <div v-if="isCreateMode" class="flex items-center gap-3">
+          <label class="text-xs font-medium text-muted-foreground shrink-0">{{ t("structureEditor.tableName") }}</label>
+          <Input
+            v-model="newTableName"
+            :placeholder="t('contextMenu.duplicateNamePlaceholder')"
+            class="h-7 text-xs max-w-[240px]"
+          />
         </div>
 
         <div v-if="loading" class="flex h-[420px] items-center justify-center gap-2 text-sm text-muted-foreground">

@@ -297,3 +297,76 @@ export function buildTableStructureChangeSql(options: BuildTableStructureChangeS
 
   return { statements, warnings };
 }
+
+export function buildCreateTableSql(options: BuildTableStructureChangeSqlOptions): TableStructureChangeSql {
+  const warnings: string[] = [];
+
+  if (!clean(options.tableName)) {
+    warnings.push("Table name is required.");
+  }
+
+  const activeColumns = options.columns.filter((c) => !c.markedForDrop);
+  if (activeColumns.length === 0) {
+    warnings.push("At least one column is required.");
+  }
+
+  const names = new Set<string>();
+  for (const col of activeColumns) {
+    if (!clean(col.name)) warnings.push("Column name cannot be empty.");
+    if (!clean(col.dataType)) warnings.push(`Column "${col.name || "(new)"}" type cannot be empty.`);
+    const key = clean(col.name).toLowerCase();
+    if (key && names.has(key)) warnings.push(`Column "${col.name}" is duplicated.`);
+    if (key) names.add(key);
+  }
+
+  if (warnings.length > 0) return { statements: [], warnings };
+
+  const databaseType = options.databaseType;
+  const table = qualifiedTable(databaseType, options.schema, options.tableName);
+  const statements: string[] = [];
+
+  const pkColumns = activeColumns.filter((c) => c.isPrimaryKey);
+  const colDefs = activeColumns.map((col) => {
+    const parts = [quoteIdent(databaseType, col.name), col.dataType.trim()];
+    if (!col.isNullable && !col.isPrimaryKey) parts.push("NOT NULL");
+    const defaultValue = normalizeDefault(col.defaultValue);
+    if (defaultValue) parts.push(`DEFAULT ${defaultValue}`);
+    if (databaseType === "mysql" && clean(col.comment)) {
+      parts.push(`COMMENT ${quoteString(clean(col.comment))}`);
+    }
+    return parts.join(" ");
+  });
+
+  if (pkColumns.length > 0) {
+    const pkList = pkColumns.map((c) => quoteIdent(databaseType, c.name)).join(", ");
+    colDefs.push(`PRIMARY KEY (${pkList})`);
+  }
+
+  statements.push(`CREATE TABLE ${table} (\n  ${colDefs.join(",\n  ")}\n);`);
+
+  if (databaseType === "postgres") {
+    for (const col of activeColumns) {
+      if (clean(col.comment)) {
+        statements.push(
+          `COMMENT ON COLUMN ${table}.${quoteIdent(databaseType, col.name)} IS ${quoteString(clean(col.comment))};`,
+        );
+      }
+    }
+  }
+
+  for (const index of options.indexes.filter((idx) => !idx.markedForDrop && !idx.isPrimary)) {
+    const name = clean(index.name);
+    const columns = index.columns.map(clean).filter(Boolean);
+    if (!name || columns.length === 0) continue;
+    const unique = index.isUnique ? "UNIQUE " : "";
+    const cols = columns.map((c) => quoteIdent(databaseType, c)).join(", ");
+    const idxType = clean(index.indexType);
+    const usingClause = idxType && databaseType === "postgres" ? ` USING ${idxType}` : "";
+    const typePrefix = idxType && databaseType === "sqlserver" ? `${idxType} ` : "";
+    statements.push(
+      `CREATE ${unique}${typePrefix}INDEX ${quoteIdent(databaseType, name)} ON ${table}${usingClause} (${cols});`,
+    );
+  }
+
+  return { statements, warnings };
+}

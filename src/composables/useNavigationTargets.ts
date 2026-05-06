@@ -52,7 +52,11 @@ export function useNavigationTargets(dialogs: {
   showFieldLineageDialog: { value: boolean };
   showDatabaseSearchDialog: { value: boolean };
   structurePrefillTable: { value: string };
+  structurePrefillConnectionId?: { value: string };
+  structurePrefillDatabase?: { value: string };
+  structurePrefillSchema?: { value: string };
 }) {
+  const connectionStore = useConnectionStore();
   const queryStore = useQueryStore();
 
   async function openLineageTarget(target: NavigationTarget) {
@@ -69,6 +73,17 @@ export function useNavigationTargets(dialogs: {
     reloadData: () => Promise<void>,
     toast: (msg: string, duration?: number) => void,
   ) {
+    if (!dialogs.structurePrefillTable.value) {
+      const connId = dialogs.structurePrefillConnectionId?.value;
+      const db = dialogs.structurePrefillDatabase?.value;
+      const schema = dialogs.structurePrefillSchema?.value;
+      if (connId && db) {
+        try {
+          await connectionStore.loadTables(connId, db, schema || undefined);
+        } catch {}
+      }
+      return;
+    }
     const activeTab = queryStore.tabs.find((t) => t.id === queryStore.activeTabId);
     if (activeTab?.mode === "data" && activeTab.tableMeta?.tableName === dialogs.structurePrefillTable.value) {
       try {

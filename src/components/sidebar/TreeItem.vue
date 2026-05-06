@@ -33,6 +33,10 @@ import {
   Search,
   FolderInput,
   FolderPlus,
+  Eraser,
+  Scissors,
+  CopyPlus,
+  Plus,
 } from "lucide-vue-next";
 import {
   ContextMenu,
@@ -58,6 +62,7 @@ import {
 } from "@/lib/databaseExport";
 import { qualifiedTableName as buildQualifiedTableName, quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { treeNodeRowAction } from "@/lib/treeNodeClick";
+import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import ConnectionErrorIndicator from "@/components/connection/ConnectionErrorIndicator.vue";
@@ -341,6 +346,148 @@ async function confirmDelete() {
 
 function copyName() {
   navigator.clipboard.writeText(props.node.label);
+}
+
+// --- Table Management Operations ---
+const showDropTableConfirm = ref(false);
+const showEmptyTableConfirm = ref(false);
+const showTruncateTableConfirm = ref(false);
+const showDuplicateDialog = ref(false);
+const duplicateTableName = ref("");
+
+const isTableNotView = computed(() => props.node.type === "table");
+
+const supportsTruncate = computed(() => {
+  const dbType = currentDatabaseType();
+  return dbType !== "sqlite" && dbType !== "duckdb";
+});
+
+const canCreateTable = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return (
+    (props.node.type === "database" || props.node.type === "schema") &&
+    !!props.node.database &&
+    !!config &&
+    tableStructureSupportedTypes.has(config.db_type)
+  );
+});
+
+function buildDropTableSql(): string {
+  return `DROP TABLE ${qualifiedTableName(props.node.label, props.node.schema)};`;
+}
+
+function buildEmptyTableSql(): string {
+  return `DELETE FROM ${qualifiedTableName(props.node.label, props.node.schema)};`;
+}
+
+function buildTruncateTableSql(): string {
+  const dbType = currentDatabaseType();
+  const name = qualifiedTableName(props.node.label, props.node.schema);
+  if (dbType === "sqlite" || dbType === "duckdb") return `DELETE FROM ${name};`;
+  return `TRUNCATE TABLE ${name};`;
+}
+
+function dropTable() {
+  showDropTableConfirm.value = true;
+}
+
+async function confirmDropTable() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    await api.executeQuery(node.connectionId, node.database, buildDropTableSql(), node.schema);
+    toast(t("contextMenu.dropTableSuccess", { name: node.label }), 3000);
+    if (node.schema) {
+      await connectionStore.loadTables(node.connectionId, node.database, node.schema);
+    } else {
+      await connectionStore.loadTables(node.connectionId, node.database);
+    }
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function emptyTable() {
+  showEmptyTableConfirm.value = true;
+}
+
+async function confirmEmptyTable() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    await api.executeQuery(node.connectionId, node.database, buildEmptyTableSql(), node.schema);
+    toast(t("contextMenu.emptyTableSuccess", { name: node.label }), 3000);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function truncateTable() {
+  showTruncateTableConfirm.value = true;
+}
+
+async function confirmTruncateTable() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    await api.executeQuery(node.connectionId, node.database, buildTruncateTableSql(), node.schema);
+    toast(t("contextMenu.truncateTableSuccess", { name: node.label }), 3000);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function duplicateStructure() {
+  duplicateTableName.value = `${props.node.label}_copy`;
+  showDuplicateDialog.value = true;
+}
+
+async function confirmDuplicateStructure() {
+  const node = props.node;
+  const newName = duplicateTableName.value.trim();
+  if (!newName || !node.connectionId || !node.database) return;
+  showDuplicateDialog.value = false;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    const dbType = currentDatabaseType();
+    const source = qualifiedTableName(node.label, node.schema);
+    const target = qualifiedTableName(newName, node.schema);
+    let sql: string;
+    if (dbType === "mysql") {
+      sql = `CREATE TABLE ${target} LIKE ${source};`;
+    } else if (dbType === "postgres" || dbType === "redshift") {
+      sql = `CREATE TABLE ${target} (LIKE ${source} INCLUDING ALL);`;
+    } else if (dbType === "sqlserver") {
+      sql = `SELECT TOP 0 * INTO ${target} FROM ${source};`;
+    } else if (dbType === "oracle") {
+      sql = `CREATE TABLE ${target} AS SELECT * FROM ${source} WHERE 1=0`;
+    } else {
+      sql = `CREATE TABLE ${target} AS SELECT * FROM ${source} WHERE 0;`;
+    }
+    await api.executeQuery(node.connectionId, node.database, sql, node.schema);
+    toast(t("contextMenu.duplicateStructureSuccess", { name: newName }), 3000);
+    if (node.schema) {
+      await connectionStore.loadTables(node.connectionId, node.database, node.schema);
+    } else {
+      await connectionStore.loadTables(node.connectionId, node.database);
+    }
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function createTable() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  connectionStore.structureEditorSource = {
+    connectionId: node.connectionId,
+    database: node.database,
+    schema: node.schema,
+    tableName: "",
+  };
 }
 
 async function collectDatabaseExportTables(): Promise<Array<{ schema?: string; name: string; displayName: string }>> {
@@ -1033,6 +1180,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
         </ContextMenuItem>
+        <ContextMenuItem v-if="canCreateTable" @click="createTable">
+          <Plus class="w-4 h-4" /> {{ t("contextMenu.createTable") }}
+        </ContextMenuItem>
         <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
           <FileCode class="w-4 h-4" /> {{ t("sqlFile.title") }}
         </ContextMenuItem>
@@ -1089,6 +1239,22 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem @click="exportStructure">
           <FileCode class="w-4 h-4" /> {{ t("contextMenu.exportStructure") }}
         </ContextMenuItem>
+        <template v-if="isTableNotView">
+          <ContextMenuSeparator />
+          <ContextMenuItem @click="duplicateStructure">
+            <CopyPlus class="w-4 h-4" /> {{ t("contextMenu.duplicateStructure") }}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem v-if="supportsTruncate" class="text-destructive" @click="truncateTable">
+            <Scissors class="w-4 h-4" /> {{ t("contextMenu.truncateTable") }}
+          </ContextMenuItem>
+          <ContextMenuItem class="text-destructive" @click="emptyTable">
+            <Eraser class="w-4 h-4" /> {{ t("contextMenu.emptyTable") }}
+          </ContextMenuItem>
+          <ContextMenuItem class="text-destructive" @click="dropTable">
+            <Trash2 class="w-4 h-4" /> {{ t("contextMenu.dropTable") }}
+          </ContextMenuItem>
+        </template>
         <ContextMenuSeparator />
         <ContextMenuItem @click="refresh">
           <RefreshCw class="w-4 h-4" /> {{ t("contextMenu.refreshChildren") }}
@@ -1164,6 +1330,52 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       <DialogFooter>
         <Button variant="outline" @click="showDeleteGroupConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
         <Button variant="destructive" @click="confirmDeleteGroup">{{ t("connectionGroup.deleteGroup") }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <DangerConfirmDialog
+    v-model:open="showDropTableConfirm"
+    :title="t('contextMenu.confirmDropTableTitle')"
+    :message="t('contextMenu.confirmDropTableMessage', { name: node.label })"
+    :sql="buildDropTableSql()"
+    :confirm-label="t('contextMenu.dropTable')"
+    @confirm="confirmDropTable"
+  />
+
+  <DangerConfirmDialog
+    v-model:open="showEmptyTableConfirm"
+    :title="t('contextMenu.confirmEmptyTableTitle')"
+    :message="t('contextMenu.confirmEmptyTableMessage', { name: node.label })"
+    :sql="buildEmptyTableSql()"
+    :confirm-label="t('contextMenu.emptyTable')"
+    @confirm="confirmEmptyTable"
+  />
+
+  <DangerConfirmDialog
+    v-model:open="showTruncateTableConfirm"
+    :title="t('contextMenu.confirmTruncateTableTitle')"
+    :message="t('contextMenu.confirmTruncateTableMessage', { name: node.label })"
+    :sql="buildTruncateTableSql()"
+    :confirm-label="t('contextMenu.truncateTable')"
+    @confirm="confirmTruncateTable"
+  />
+
+  <Dialog v-model:open="showDuplicateDialog">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("contextMenu.duplicateNameTitle") }}</DialogTitle>
+      </DialogHeader>
+      <Input
+        v-model="duplicateTableName"
+        :placeholder="t('contextMenu.duplicateNamePlaceholder')"
+        @keydown.enter.prevent="confirmDuplicateStructure"
+      />
+      <DialogFooter>
+        <Button variant="outline" @click="showDuplicateDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="!duplicateTableName.trim()" @click="confirmDuplicateStructure">{{
+          t("dangerDialog.confirm")
+        }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
