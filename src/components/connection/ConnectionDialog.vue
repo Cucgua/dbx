@@ -843,20 +843,6 @@ async function browseDbFilePath() {
                     </p>
                   </div>
 
-                  <div v-if="selectedType === 'gaussdb'" class="grid grid-cols-4 items-center gap-4">
-                    <span />
-                    <p class="col-span-3 text-xs text-muted-foreground">
-                      {{ t("connection.gaussdbOdbcHint") }}
-                      <a
-                        href="https://support.huaweicloud.com/mgtg-dws/dws_01_0032.html"
-                        target="_blank"
-                        class="underline text-primary hover:text-primary/80"
-                      >
-                        {{ t("connection.gaussdbDownload") }}
-                      </a>
-                    </p>
-                  </div>
-
                   <div v-if="form.db_type === 'oracle'" class="grid grid-cols-4 items-center gap-4">
                     <Label class="text-right text-xs">SYSDBA</Label>
                     <label class="col-span-3 flex items-center gap-2 cursor-pointer">

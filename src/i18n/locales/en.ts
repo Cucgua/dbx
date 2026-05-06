@@ -113,8 +113,6 @@ export default {
     sshExposeLan: "Expose tunnel to LAN",
     dmCompatHint: "Requires DM8 ODBC driver installed on your system.",
     dmDownload: "Download from Dameng",
-    gaussdbOdbcHint: "Requires GaussDB ODBC driver installed on your system.",
-    gaussdbDownload: "Download from Huawei Cloud",
     mongoLegacyHint:
       "For older MongoDB servers, enter authSource=admin&authMechanism=SCRAM-SHA-1 here; add directConnection=true only when needed for direct standalone connections.",
     compatible: "Compatible",
