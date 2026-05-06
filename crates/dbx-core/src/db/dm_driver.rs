@@ -81,12 +81,19 @@ pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &s
 }
 
 pub fn list_databases(client: &DmClient) -> Result<Vec<DatabaseInfo>, String> {
-    let rows = client.query_single_column("SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME")?;
+    let rows = client.query_single_column(
+        "SELECT USERNAME FROM ALL_USERS \
+         WHERE USERNAME NOT IN (\
+           'SYS','SYSDBA','SYSAUDITOR','SYSSSO','CTISYS',\
+           'SYS_DBA','_SYS_STATISTICS','SYS_PHM'\
+         ) ORDER BY USERNAME",
+    )?;
     Ok(rows.into_iter().map(|name| DatabaseInfo { name }).collect())
 }
 
 pub fn list_schemas(client: &DmClient) -> Result<Vec<String>, String> {
-    client.query_single_column("SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME")
+    let dbs = list_databases(client)?;
+    Ok(dbs.into_iter().map(|d| d.name).collect())
 }
 
 pub fn list_tables(client: &DmClient, schema: &str) -> Result<Vec<TableInfo>, String> {

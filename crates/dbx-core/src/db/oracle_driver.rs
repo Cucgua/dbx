@@ -39,17 +39,45 @@ fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
 
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
     log::debug!("[oracle] list_databases: querying all_users");
-    let result = conn.query("SELECT username FROM all_users ORDER BY username", &[]).await.map_err(|e| {
-        log::error!("[oracle] list_databases failed: {e}");
-        e.to_string()
-    })?;
+    let result = conn
+        .query(
+            "SELECT username FROM all_users \
+             WHERE oracle_maintained = 'N' \
+             OR NOT EXISTS (SELECT 1 FROM all_users WHERE oracle_maintained IS NOT NULL) \
+             ORDER BY username",
+            &[],
+        )
+        .await;
+
+    let result = match result {
+        Ok(r) => r,
+        Err(_) => conn
+            .query(
+                "SELECT username FROM all_users \
+                 WHERE username NOT IN (\
+                   'SYS','SYSTEM','SYSMAN','DBSNMP','SYSBACKUP','SYSDG','SYSKM','OUTLN',\
+                   'AUDSYS','LBACSYS','DVF','DVSYS','APPQOSSYS','CTXSYS','MDSYS','MDDATA',\
+                   'ORDSYS','ORDDATA','ORDPLUGINS','XDB','ANONYMOUS','DIP','EXFSYS',\
+                   'GSMADMIN_INTERNAL','GSMCATUSER','GSMUSER','OJVMSYS','OLAPSYS',\
+                   'ORACLE_OCM','SI_INFORMTN_SCHEMA','WMSYS','XS$NULL','DBSFWUSER',\
+                   'REMOTE_SCHEDULER_AGENT','PDBADMIN','DGPDB_INT','OPS$ORACLE',\
+                   'GGSYS','FLOWS_FILES','APEX_PUBLIC_USER'\
+                 ) ORDER BY username",
+                &[],
+            )
+            .await
+            .map_err(|e| {
+                log::error!("[oracle] list_databases failed: {e}");
+                e.to_string()
+            })?,
+    };
+
     Ok(result.rows.iter().map(|row| DatabaseInfo { name: row.get_string(0).unwrap_or("").to_string() }).collect())
 }
 
 pub async fn list_schemas(conn: &OracleClient) -> Result<Vec<String>, String> {
-    let result =
-        conn.query("SELECT username FROM all_users ORDER BY username", &[]).await.map_err(|e| e.to_string())?;
-    Ok(result.rows.iter().map(|row| row.get_string(0).unwrap_or("").to_string()).collect())
+    let dbs = list_databases(conn).await?;
+    Ok(dbs.into_iter().map(|d| d.name).collect())
 }
 
 pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableInfo>, String> {
