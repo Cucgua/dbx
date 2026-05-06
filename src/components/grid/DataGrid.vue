@@ -1048,9 +1048,9 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
       defaultPath: defaultFileName,
       filters: [{ name: filterName, extensions: [filterExt] }],
     });
-    if (path) await writeTextFile(path, content);
+    if (path) await writeTextFile(path, "﻿" + content);
   } else {
-    const blob = new Blob([content], { type: "text/plain" });
+    const blob = new Blob(["﻿", content], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
