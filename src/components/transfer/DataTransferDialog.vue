@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useConnectionStore } from "@/stores/connectionStore";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
-import type { TransferProgress } from "@/lib/api";
+import type { TransferProgress, TransferMode } from "@/lib/api";
 import type { DatabaseType } from "@/types/database";
 import { nextTransferTerminalState } from "@/lib/transferProgressState";
 import { ArrowRightLeft, Check, X, Loader2, Square, CheckSquare } from "lucide-vue-next";
@@ -47,7 +47,7 @@ const targetSchema = ref("");
 
 // Options
 const createTable = ref(true);
-const truncateBefore = ref(false);
+const transferMode = ref<TransferMode>("append");
 const batchSize = ref(1000);
 
 // Transfer state
@@ -188,7 +188,7 @@ function resetState() {
   targetDatabases.value = [];
   targetSchema.value = "";
   createTable.value = true;
-  truncateBefore.value = false;
+  transferMode.value = "append";
   batchSize.value = 1000;
   isTransferring.value = false;
   transferProgress.value.clear();
@@ -230,7 +230,7 @@ async function startTransfer() {
     targetSchema: targetSchema.value,
     tables: [...selectedTables.value],
     createTable: createTable.value,
-    truncateBefore: truncateBefore.value,
+    mode: transferMode.value,
     batchSize: batchSize.value,
   };
 
@@ -437,10 +437,18 @@ const totalTransferred = computed(() =>
             <Square v-else class="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
             {{ t("transfer.createTable") }}
           </div>
-          <div class="flex items-center gap-2 cursor-pointer text-xs" @click="truncateBefore = !truncateBefore">
-            <CheckSquare v-if="truncateBefore" class="w-3.5 h-3.5 text-primary shrink-0" />
-            <Square v-else class="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
-            {{ t("transfer.truncateBefore") }}
+          <div class="flex items-center gap-3">
+            <Label class="text-xs shrink-0">{{ t("transfer.transferMode") }}</Label>
+            <Select v-model="transferMode">
+              <SelectTrigger class="h-7 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="append">{{ t("transfer.modeAppend") }}</SelectItem>
+                <SelectItem value="overwrite">{{ t("transfer.modeOverwrite") }}</SelectItem>
+                <SelectItem value="upsert">{{ t("transfer.modeUpsert") }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div class="flex items-center gap-3">
             <Label class="text-xs shrink-0">{{ t("transfer.batchSize") }}</Label>

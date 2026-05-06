@@ -450,6 +450,8 @@ export async function listenSqlFileProgress(handler: (progress: SqlFileProgress)
 }
 
 // --- Data Transfer ---
+export type TransferMode = "append" | "overwrite" | "upsert";
+
 export interface TransferRequest {
   transferId: string;
   sourceConnectionId: string;
@@ -460,7 +462,7 @@ export interface TransferRequest {
   targetSchema: string;
   tables: string[];
   createTable: boolean;
-  truncateBefore: boolean;
+  mode: TransferMode;
   batchSize: number;
 }
 

@@ -137,6 +137,7 @@ export type {
   SqlFileProgress,
   TransferRequest,
   TransferProgress,
+  TransferMode,
   TableImportMode,
   TableImportStatus,
   TableImportColumnMapping,

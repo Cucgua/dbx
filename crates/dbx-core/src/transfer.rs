@@ -9,6 +9,15 @@ use crate::models::connection::DatabaseType;
 static CANCELLED: std::sync::LazyLock<RwLock<HashSet<String>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashSet::new()));
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum TransferMode {
+    #[default]
+    Append,
+    Overwrite,
+    Upsert,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferRequest {
@@ -21,7 +30,8 @@ pub struct TransferRequest {
     pub target_schema: String,
     pub tables: Vec<String>,
     pub create_table: bool,
-    pub truncate_before: bool,
+    #[serde(default)]
+    pub mode: TransferMode,
     pub batch_size: usize,
 }
 
@@ -286,6 +296,150 @@ pub fn generate_insert(
     format!("INSERT INTO {full_table} ({col_list}) VALUES\n{}", value_rows.join(",\n"))
 }
 
+pub fn generate_upsert(
+    columns: &[String],
+    rows: &[Vec<serde_json::Value>],
+    table: &str,
+    schema: &str,
+    db_type: &DatabaseType,
+    pk_columns: &[String],
+) -> String {
+    if rows.is_empty() || pk_columns.is_empty() {
+        return String::new();
+    }
+
+    let full_table = qualified_table(table, schema, db_type);
+    let col_list = columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
+
+    let value_rows: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let vals: Vec<String> = row.iter().map(|v| escape_value(v, db_type)).collect();
+            format!("({})", vals.join(", "))
+        })
+        .collect();
+
+    let non_pk_columns: Vec<&String> = columns.iter().filter(|c| !pk_columns.contains(c)).collect();
+
+    match db_type {
+        DatabaseType::Postgres | DatabaseType::Sqlite | DatabaseType::DuckDb => {
+            let pk_list = pk_columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
+            let mut sql = format!("INSERT INTO {full_table} ({col_list}) VALUES\n{}", value_rows.join(",\n"));
+            if non_pk_columns.is_empty() {
+                sql.push_str(&format!("\nON CONFLICT ({pk_list}) DO NOTHING"));
+            } else {
+                let update_set = non_pk_columns
+                    .iter()
+                    .map(|c| {
+                        let qc = quote_identifier(c, db_type);
+                        format!("{qc} = EXCLUDED.{qc}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                sql.push_str(&format!("\nON CONFLICT ({pk_list}) DO UPDATE SET {update_set}"));
+            }
+            sql
+        }
+        DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => {
+            let mut sql = format!("INSERT INTO {full_table} ({col_list}) VALUES\n{}", value_rows.join(",\n"));
+            if non_pk_columns.is_empty() {
+                sql.push_str("\nON DUPLICATE KEY UPDATE ");
+                let first_pk = quote_identifier(&pk_columns[0], db_type);
+                sql.push_str(&format!("{first_pk} = {first_pk}"));
+            } else {
+                let update_set = non_pk_columns
+                    .iter()
+                    .map(|c| {
+                        let qc = quote_identifier(c, db_type);
+                        format!("{qc} = VALUES({qc})")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                sql.push_str(&format!("\nON DUPLICATE KEY UPDATE {update_set}"));
+            }
+            sql
+        }
+        DatabaseType::SqlServer => {
+            let src_col_list = columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
+            let on_clause = pk_columns
+                .iter()
+                .map(|c| {
+                    let qc = quote_identifier(c, db_type);
+                    format!("target.{qc} = src.{qc}")
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ");
+
+            let mut sql = format!(
+                "MERGE INTO {full_table} AS target USING (VALUES\n{}\n) AS src ({src_col_list}) ON {on_clause}",
+                value_rows.join(",\n")
+            );
+
+            if !non_pk_columns.is_empty() {
+                let update_set = non_pk_columns
+                    .iter()
+                    .map(|c| {
+                        let qc = quote_identifier(c, db_type);
+                        format!("target.{qc} = src.{qc}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                sql.push_str(&format!("\nWHEN MATCHED THEN UPDATE SET {update_set}"));
+            }
+
+            let insert_cols = columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
+            let insert_vals =
+                columns.iter().map(|c| format!("src.{}", quote_identifier(c, db_type))).collect::<Vec<_>>().join(", ");
+            sql.push_str(&format!("\nWHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals});"));
+            sql
+        }
+        DatabaseType::Oracle => {
+            let using_rows: Vec<String> = rows
+                .iter()
+                .map(|row| {
+                    let vals: Vec<String> = row
+                        .iter()
+                        .zip(columns.iter())
+                        .map(|(v, c)| format!("{} AS {}", escape_value(v, db_type), quote_identifier(c, db_type)))
+                        .collect();
+                    format!("SELECT {} FROM dual", vals.join(", "))
+                })
+                .collect();
+
+            let on_clause = pk_columns
+                .iter()
+                .map(|c| {
+                    let qc = quote_identifier(c, db_type);
+                    format!("t.{qc} = s.{qc}")
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ");
+
+            let mut sql =
+                format!("MERGE INTO {full_table} t USING ({}) s ON ({on_clause})", using_rows.join(" UNION ALL "));
+
+            if !non_pk_columns.is_empty() {
+                let update_set = non_pk_columns
+                    .iter()
+                    .map(|c| {
+                        let qc = quote_identifier(c, db_type);
+                        format!("t.{qc} = s.{qc}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                sql.push_str(&format!("\nWHEN MATCHED THEN UPDATE SET {update_set}"));
+            }
+
+            let insert_cols = columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
+            let insert_vals =
+                columns.iter().map(|c| format!("s.{}", quote_identifier(c, db_type))).collect::<Vec<_>>().join(", ");
+            sql.push_str(&format!("\nWHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})"));
+            sql
+        }
+        _ => generate_insert(columns, rows, table, schema, db_type),
+    }
+}
+
 pub fn pagination_sql(
     columns: &[String],
     table: &str,
@@ -443,31 +597,7 @@ pub async fn get_columns_for_transfer(
         let table = table.to_string();
         return tokio::task::spawn_blocking(move || {
             let con = con.lock().map_err(|e| e.to_string())?;
-            let mut stmt = con
-                .prepare(
-                    "SELECT column_name, data_type, is_nullable, column_default
-                 FROM information_schema.columns
-                 WHERE table_schema = 'main' AND table_name = ?
-                 ORDER BY ordinal_position",
-                )
-                .map_err(|e| e.to_string())?;
-            let rows = stmt
-                .query_map([&table], |row| {
-                    Ok(db::ColumnInfo {
-                        name: row.get::<_, String>(0)?,
-                        data_type: row.get::<_, String>(1)?,
-                        is_nullable: row.get::<_, String>(2).unwrap_or_default() == "YES",
-                        column_default: row.get::<_, Option<String>>(3)?,
-                        is_primary_key: false,
-                        extra: None,
-                        comment: None,
-                        numeric_precision: None,
-                        numeric_scale: None,
-                        character_maximum_length: None,
-                    })
-                })
-                .map_err(|e| e.to_string())?;
-            Ok(rows.filter_map(|r| r.ok()).collect())
+            crate::schema::duckdb_query_columns(&con, &table)
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -601,8 +731,8 @@ where
         }
     }
 
-    // Truncate target if requested
-    if request.truncate_before {
+    // Truncate target if overwrite mode
+    if request.mode == TransferMode::Overwrite {
         let full_table = qualified_table(table, &request.target_schema, target_db_type);
         let truncate_sql = match target_db_type {
             DatabaseType::Sqlite | DatabaseType::DuckDb => format!("DELETE FROM {full_table}"),
@@ -610,6 +740,34 @@ where
         };
         execute_on_pool(state, target_pool_key, &truncate_sql).await.map_err(|e| format!("Failed to truncate: {e}"))?;
     }
+
+    // Determine effective mode and PK columns for upsert
+    let (effective_mode, pk_columns) = if request.mode == TransferMode::Upsert {
+        if matches!(target_db_type, DatabaseType::ClickHouse) {
+            log::warn!("[transfer] upsert not supported for ClickHouse, falling back to append");
+            (TransferMode::Append, vec![])
+        } else {
+            let target_columns = get_columns_for_transfer(
+                state,
+                target_pool_key,
+                &request.target_connection_id,
+                &request.target_database,
+                &request.target_schema,
+                table,
+            )
+            .await
+            .unwrap_or_default();
+            let pks: Vec<String> = target_columns.iter().filter(|c| c.is_primary_key).map(|c| c.name.clone()).collect();
+            if pks.is_empty() {
+                log::warn!("[transfer] table {} has no primary key, falling back to append", table);
+                (TransferMode::Append, vec![])
+            } else {
+                (TransferMode::Upsert, pks)
+            }
+        }
+    } else {
+        (request.mode.clone(), vec![])
+    };
 
     // Transfer data in batches
     let batch_size = if request.batch_size == 0 { 1000 } else { request.batch_size };
@@ -629,9 +787,14 @@ where
             break;
         }
 
-        let insert_sql = generate_insert(&col_names, &result.rows, table, &request.target_schema, target_db_type);
-        if !insert_sql.is_empty() {
-            execute_on_pool(state, target_pool_key, &insert_sql)
+        let batch_sql = match effective_mode {
+            TransferMode::Upsert => {
+                generate_upsert(&col_names, &result.rows, table, &request.target_schema, target_db_type, &pk_columns)
+            }
+            _ => generate_insert(&col_names, &result.rows, table, &request.target_schema, target_db_type),
+        };
+        if !batch_sql.is_empty() {
+            execute_on_pool(state, target_pool_key, &batch_sql)
                 .await
                 .map_err(|e| format!("Insert failed at offset {offset}: {e}"))?;
         }
