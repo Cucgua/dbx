@@ -112,7 +112,7 @@ export default {
     sshExposeLan: "允许局域网访问隧道",
     dmCompatHint: "需要开启达梦 PG 兼容模式（dm.ini 中设置 COMPATIBLE_MODE=7 并重启服务）",
     mongoLegacyHint:
-      "MongoDB 表单连接会自动补充 directConnection；带用户名时默认使用当前数据库认证源（留空为 admin）和 SCRAM-SHA-1，可在此覆盖。",
+      "连接旧版 MongoDB 时，可在此填写 authSource=admin&authMechanism=SCRAM-SHA-1；直连单节点时可按需追加 directConnection=true。",
     compatible: "兼容",
     mainstream: "主流",
     color: "颜色",

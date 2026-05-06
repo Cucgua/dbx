@@ -113,7 +113,7 @@ export default {
     sshExposeLan: "Expose tunnel to LAN",
     dmCompatHint: "Requires DM PG compatibility mode (set COMPATIBLE_MODE=7 in dm.ini and restart)",
     mongoLegacyHint:
-      "MongoDB form connections add directConnection automatically; authenticated connections default to the selected database as auth source (admin when blank) and SCRAM-SHA-1, which you can override here.",
+      "For older MongoDB servers, enter authSource=admin&authMechanism=SCRAM-SHA-1 here; add directConnection=true only when needed for direct standalone connections.",
     compatible: "Compatible",
     mainstream: "Popular",
     color: "Color",
