@@ -1305,31 +1305,37 @@ function escapeAndHighlightKeywords(s: string): string {
                   >
                     #
                   </div>
-                  <div
-                    v-for="(col, colIdx) in result.columns"
-                    :key="col"
-                    class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/50 select-none relative overflow-hidden"
-                    :style="{ width: `var(--col-w-${colIdx})` }"
-                    :title="columnCommentMap.get(col)"
-                    @click="toggleSort(col)"
-                  >
-                    <span class="flex min-w-0 items-center gap-1 overflow-hidden">
-                      <span class="min-w-0 truncate">{{ col }}</span>
-                      <ArrowUp v-if="sortCol === col && sortDir === 'asc'" class="h-3 w-3 shrink-0" />
-                      <ArrowDown v-else-if="sortCol === col && sortDir === 'desc'" class="h-3 w-3 shrink-0" />
-                      <span
-                        v-if="columnTypeMap.get(col)"
-                        class="shrink overflow-hidden truncate text-[10px] font-normal"
-                        :class="typeColorClass(columnTypeMap.get(col)!)"
+                  <Tooltip v-for="(col, colIdx) in result.columns" :key="col">
+                    <TooltipTrigger as-child>
+                      <div
+                        class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/50 select-none relative overflow-hidden"
+                        :style="{ width: `var(--col-w-${colIdx})` }"
+                        @click="toggleSort(col)"
                       >
-                        #{{ columnTypeMap.get(col) }}
-                      </span>
-                    </span>
-                    <div
-                      class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
-                      @mousedown.stop="onResizeStart(colIdx, $event)"
-                    />
-                  </div>
+                        <span class="flex min-w-0 items-center gap-1 overflow-hidden">
+                          <span class="min-w-0 truncate">{{ col }}</span>
+                          <ArrowUp v-if="sortCol === col && sortDir === 'asc'" class="h-3 w-3 shrink-0" />
+                          <ArrowDown v-else-if="sortCol === col && sortDir === 'desc'" class="h-3 w-3 shrink-0" />
+                        </span>
+                        <div
+                          class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
+                          @mousedown.stop="onResizeStart(colIdx, $event)"
+                        />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      v-if="columnTypeMap.get(col)"
+                      side="bottom"
+                      class="text-xs grid grid-cols-[auto_1fr] gap-x-2"
+                    >
+                      <span class="text-muted-foreground">{{ t("grid.columnType") }}</span>
+                      <span :class="typeColorClass(columnTypeMap.get(col)!)">{{ columnTypeMap.get(col) }}</span>
+                      <template v-if="columnCommentMap.get(col)">
+                        <span class="text-muted-foreground">{{ t("grid.columnComment") }}</span>
+                        <span>{{ columnCommentMap.get(col) }}</span>
+                      </template>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
