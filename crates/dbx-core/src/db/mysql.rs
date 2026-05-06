@@ -94,7 +94,12 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
     }
 
     if upper_type == "BOOLEAN" {
-        return row.try_get::<bool, _>(idx).map(serde_json::Value::Bool).unwrap_or(serde_json::Value::Null);
+        // MySQL BOOLEAN is an alias for TINYINT(1); display as integer
+        return row
+            .try_get::<i8, _>(idx)
+            .map(|v| serde_json::Value::Number((v as i64).into()))
+            .or_else(|_| row.try_get::<bool, _>(idx).map(|v| serde_json::Value::Number((v as i64).into())))
+            .unwrap_or(serde_json::Value::Null);
     }
 
     if upper_type.contains("BIGINT") {
