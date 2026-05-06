@@ -214,6 +214,9 @@ function applyProfile(val: string, preserveConnectionFields = false) {
     form.value.port = profile.port;
     form.value.username = profile.user;
     form.value.url_params = profile.urlParams || "";
+    if (profile.type === "sqlite" || profile.type === "duckdb") {
+      form.value.host = "";
+    }
   }
 }
 
@@ -514,6 +517,24 @@ async function browseSshKeyPath() {
     }
   }
 }
+
+async function browseDbFilePath() {
+  if (isTauriRuntime()) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const filters =
+      form.value.db_type === "duckdb"
+        ? [{ name: "DuckDB", extensions: ["duckdb", "db"] }]
+        : [{ name: "SQLite", extensions: ["db", "sqlite", "sqlite3"] }];
+    const selected = await open({
+      title: "Select Database File",
+      multiple: false,
+      filters,
+    });
+    if (selected && typeof selected === "string") {
+      form.value.host = selected;
+    }
+  }
+}
 </script>
 
 <template>
@@ -687,7 +708,17 @@ async function browseSshKeyPath() {
                 <template v-if="form.db_type === 'sqlite' || form.db_type === 'duckdb'">
                   <div class="grid grid-cols-4 items-center gap-4">
                     <Label class="text-right">{{ t("connection.filePath") }}</Label>
-                    <Input v-model="form.host" class="col-span-3" placeholder="/path/to/database.db" />
+                    <div class="col-span-3 flex items-center gap-1">
+                      <Input v-model="form.host" class="flex-1" placeholder="/path/to/database.db" />
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseDbFilePath">
+                            <FolderOpen class="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{{ t("connection.sshKeyPathBrowse") }}</TooltipContent>
+                      </Tooltip>
+                    </div>
                   </div>
                 </template>
 
