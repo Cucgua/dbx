@@ -91,8 +91,8 @@ export function useAppUpdater() {
 
   async function restartApp() {
     if (!isTauriRuntime()) return;
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    await relaunch();
+    const { exit } = await import("@tauri-apps/plugin-process");
+    await exit(0);
   }
 
   return {

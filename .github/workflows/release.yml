@@ -63,6 +63,10 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         run: brew install unixodbc
 
+      - name: Bundle ODBC library (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        run: cp "$(brew --prefix unixodbc)/lib/libodbc.2.dylib" src-tauri/
+
       - name: Install Apple certificate (macOS)
         if: startsWith(matrix.platform, 'macos')
         env:

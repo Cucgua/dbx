@@ -51,6 +51,8 @@ export default {
     downloading: "下载中 {progress}%",
     downloadFailed: "更新下载失败：{error}",
     restart: "立即重启",
+    exitAndUpdate: "退出并更新",
+    reopenHint: "更新将在重新打开应用后生效",
   },
   sidebar: {
     connections: "连接",
