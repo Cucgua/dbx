@@ -57,6 +57,7 @@ import {
 import type { AiMessage } from "@/lib/api";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
+import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -143,12 +144,16 @@ async function changeConnection(connectionId: string) {
   connectionStore.activeConnectionId = connectionId;
   const tab = props.tab;
   if (tab) {
-    queryStore.updateConnection(tab.id, connectionId, conn.database || "");
+    queryStore.updateConnection(tab.id, connectionId, resolveDefaultDatabase(conn, []));
   } else {
-    queryStore.createTab(connectionId, conn.database || "");
+    queryStore.createTab(connectionId, resolveDefaultDatabase(conn, []));
   }
   try {
     await loadDatabaseOptions(connectionId);
+    const database = resolveDefaultDatabase(conn, allDbOptions.value[connectionId] || []);
+    if (tab) {
+      queryStore.updateDatabase(tab.id, database);
+    }
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
   }

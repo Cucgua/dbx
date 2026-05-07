@@ -264,6 +264,28 @@ export const useConnectionStore = defineStore("connection", () => {
     invalidateCompletionCache(config.id);
   }
 
+  async function setDefaultDatabase(connectionId: string, database: string) {
+    const config = getConfig(connectionId);
+    if (!config || config.database === database) return;
+    await updateConnection({
+      ...config,
+      database,
+    });
+  }
+
+  async function clearDefaultDatabase(connectionId: string) {
+    const config = getConfig(connectionId);
+    if (!config || !config.database) return;
+    await updateConnection({
+      ...config,
+      database: undefined,
+    });
+  }
+
+  function isDefaultDatabase(connectionId: string, database: string): boolean {
+    return getConfig(connectionId)?.database === database && database !== "";
+  }
+
   async function connect(config: ConnectionConfig) {
     config = normalizeConnection(config);
     const pendingNode = findNode(treeNodes.value, config.id);
@@ -934,6 +956,9 @@ export const useConnectionStore = defineStore("connection", () => {
     addConnection,
     addEphemeralConnection,
     updateConnection,
+    setDefaultDatabase,
+    clearDefaultDatabase,
+    isDefaultDatabase,
     removeConnection,
     editingConnectionId,
     startEditing,
