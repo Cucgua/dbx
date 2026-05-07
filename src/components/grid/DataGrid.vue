@@ -1375,7 +1375,7 @@ function escapeAndHighlightKeywords(s: string): string {
               </div>
               <pre
                 v-else
-                class="flex-1 min-w-0 text-xs font-mono p-3 overflow-auto ddl-code leading-5"
+                class="flex-1 min-w-0 text-xs font-mono p-3 overflow-auto ddl-code leading-5 select-text"
                 :class="ddlWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'"
                 v-html="highlightSql(ddlContent)"
               ></pre>
