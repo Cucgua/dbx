@@ -211,7 +211,14 @@ pub async fn do_execute(
             };
             wait_for_query(cancel_token, db::oracle_driver::execute_query(&*client, sql)).await.map(truncate_result)
         }
-        PoolKind::Elasticsearch(_) => Err("Use document browser for Elasticsearch".to_string()),
+        PoolKind::Elasticsearch(client) => {
+            let client = client.clone();
+            let sql = sql.to_string();
+            drop(connections);
+            wait_for_query(cancel_token, db::elasticsearch_driver::execute_rest_query(&client, &sql))
+                .await
+                .map(truncate_result)
+        }
         PoolKind::Redis(_) => Err("Use Redis-specific commands".to_string()),
         PoolKind::MongoDb(_) => Err("Use MongoDB-specific commands".to_string()),
         PoolKind::Dameng(client) => {

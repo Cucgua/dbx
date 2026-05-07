@@ -181,7 +181,7 @@ function databaseDisplayName(database: string): string {
           </SelectContent>
         </Select>
       </div>
-      <div class="flex items-center gap-1">
+      <div v-if="activeConnection?.db_type !== 'elasticsearch'" class="flex items-center gap-1">
         <Database class="h-3.5 w-3.5 shrink-0" />
         <Select
           :model-value="activeDatabaseValue"
