@@ -67,8 +67,11 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         run: |
           ODBC_LIB="$(brew --prefix unixodbc)/lib/libodbc.2.dylib"
+          LTDL_LIB="$(brew --prefix libtool)/lib/libltdl.7.dylib"
           install_name_tool -id "@rpath/libodbc.2.dylib" "$ODBC_LIB"
-          cp "$ODBC_LIB" src-tauri/
+          install_name_tool -id "@rpath/libltdl.7.dylib" "$LTDL_LIB"
+          install_name_tool -change "$LTDL_LIB" "@rpath/libltdl.7.dylib" "$ODBC_LIB"
+          cp "$ODBC_LIB" "$LTDL_LIB" src-tauri/
 
       - name: Install Apple certificate (macOS)
         if: startsWith(matrix.platform, 'macos')
