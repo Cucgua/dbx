@@ -22,7 +22,7 @@ tiberius = { version = "0.12.3", default-features = false, features = ["tds73", 
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures = "0.3"
 mongodb = "3.2.5"
-oracle-rs = { git = "https://github.com/t8y2/oracle-rs", branch = "main" }
+oracle-rs = { git = "https://github.com/t8y2/rust-oracle", branch = "main" }
 russh = "0.60"
 portpicker = "0.1.1"
 csv = "1"

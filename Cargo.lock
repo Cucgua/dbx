@@ -4853,7 +4853,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 [[package]]
 name = "oracle-rs"
 version = "0.1.6"
-source = "git+https://github.com/t8y2/oracle-rs?branch=main#c80539f24494b73439ec078456a33b975605f94c"
+source = "git+https://github.com/t8y2/rust-oracle?branch=main#7652ddfd685b5fdca7f9237d7d70f95ddb59da73"
 dependencies = [
  "aes 0.8.4",
  "async-trait",
