@@ -162,8 +162,11 @@ pub async fn list_databases(pool: &PgPool) -> Result<Vec<DatabaseInfo>, String> 
 
 pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, String> {
     let rows: Vec<PgRow> = sqlx::query(
-        "SELECT table_name, table_type FROM information_schema.tables \
-         WHERE table_schema = $1 ORDER BY table_name",
+        "SELECT t.table_name, t.table_type, obj_description(c.oid) AS table_comment \
+         FROM information_schema.tables t \
+         LEFT JOIN pg_catalog.pg_class c ON c.relname = t.table_name \
+         LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.table_schema \
+         WHERE t.table_schema = $1 ORDER BY t.table_name",
     )
     .bind(schema)
     .fetch_all(pool)
@@ -175,6 +178,7 @@ pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, 
         .map(|row| TableInfo {
             name: row.get::<String, _>("table_name"),
             table_type: row.get::<String, _>("table_type"),
+            comment: row.get::<Option<String>, _>("table_comment").filter(|s| !s.is_empty()),
         })
         .collect())
 }

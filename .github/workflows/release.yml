@@ -61,7 +61,17 @@ jobs:
 
       - name: Install system dependencies (macOS)
         if: startsWith(matrix.platform, 'macos')
-        run: brew install unixodbc
+        run: |
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            arch -x86_64 /bin/bash -c '
+              eval "$(/usr/local/bin/brew shellenv 2>/dev/null || /usr/local/Homebrew/bin/brew shellenv 2>/dev/null)"
+              brew install unixodbc
+            '
+            echo "LIBRARY_PATH=/usr/local/lib" >> "$GITHUB_ENV"
+            echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig" >> "$GITHUB_ENV"
+          else
+            brew install unixodbc
+          fi
 
       - name: Install Apple certificate (macOS)
         if: startsWith(matrix.platform, 'macos')

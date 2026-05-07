@@ -185,7 +185,7 @@ pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, Strin
 
 pub async fn list_tables(pool: &MySqlPool, database: &str) -> Result<Vec<TableInfo>, String> {
     let sql = format!(
-        "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
+        "SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
         quote_value(database),
     );
     let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
@@ -195,6 +195,7 @@ pub async fn list_tables(pool: &MySqlPool, database: &str) -> Result<Vec<TableIn
         .map(|row| TableInfo {
             name: get_str_by_name(row, "TABLE_NAME"),
             table_type: get_str_by_name(row, "TABLE_TYPE"),
+            comment: row.try_get::<String, _>("TABLE_COMMENT").ok().filter(|s| !s.is_empty()),
         })
         .collect())
 }

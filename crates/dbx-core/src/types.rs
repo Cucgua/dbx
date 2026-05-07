@@ -9,6 +9,7 @@ pub struct DatabaseInfo {
 pub struct TableInfo {
     pub name: String,
     pub table_type: String, // "TABLE" or "VIEW"
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
