@@ -39,7 +39,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgNTBDQzMwMTQ1RkMwM0YyRgpSV1F2UDhCZkZERE1VQlphdXFPZTNvT3NFaWZ1UUxGd1cxSzZBNWFRSUNiNzBvd2tkTks0dklCSQo=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1QTA3NEQ0NDUzMDgyNkQKUldSdGdqQkYxSFNnVll1SW9mU2I2TzVMeUtvN3orcU1rQmIraTNLazIweHphRVNERzhnU3hyYmcK",
       "endpoints": [
         "https://github.com/Cucgua/dbx/releases/latest/download/latest.json"
       ]
