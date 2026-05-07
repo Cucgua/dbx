@@ -52,6 +52,7 @@ export const executeQuery = forward("executeQuery");
 export const executeMulti = forward("executeMulti");
 export const executeBatch = forward("executeBatch");
 export const executeScript = forward("executeScript");
+export const executeInTransaction = forward("executeInTransaction");
 export const cancelQuery = forward("cancelQuery");
 
 // AI

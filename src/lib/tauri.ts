@@ -176,6 +176,15 @@ export async function executeScript(
   return invoke("execute_script", { connectionId, database, sql, schema });
 }
 
+export async function executeInTransaction(
+  connectionId: string,
+  database: string,
+  statements: string[],
+  schema?: string,
+): Promise<QueryResult> {
+  return invoke("execute_in_transaction", { connectionId, database, statements, schema });
+}
+
 export async function listIndexes(
   connectionId: string,
   database: string,

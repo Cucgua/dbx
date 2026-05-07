@@ -6,7 +6,9 @@ import { orderPinnedFirst } from "@/lib/pinnedItems";
 import { canCancelQueryExecution } from "@/lib/queryExecutionState";
 import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
+import { analyzeEditableQuery, allPrimaryKeysPresent } from "@/lib/sqlAnalysis";
 import * as api from "@/lib/api";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 
 interface SavedTab {
@@ -227,6 +229,71 @@ export const useQueryStore = defineStore("query", () => {
     await executeTabSql(activeTabId.value, sql);
   }
 
+  /**
+   * Analyze if the query result is editable (single-table SELECT with primary keys).
+   * If editable, fetches table metadata and sets queryAnalysis + tableMeta on the tab.
+   */
+  async function analyzeQueryEditability(tab: QueryTab, sql: string) {
+    if (tab.mode !== "query") return;
+    if (!tab.result || !tab.result.columns.length) {
+      tab.queryAnalysis = undefined;
+      tab.tableMeta = undefined;
+      return;
+    }
+
+    const analysis = analyzeEditableQuery(sql);
+    if (!analysis) {
+      tab.queryAnalysis = undefined;
+      tab.tableMeta = undefined;
+      return;
+    }
+
+    if (!tab.connectionId || !tab.database) {
+      tab.queryAnalysis = undefined;
+      tab.tableMeta = undefined;
+      return;
+    }
+
+    // Resolve schema per database type
+    const connStore = useConnectionStore();
+    const conn = connStore.getConfig(tab.connectionId);
+    const dbType = conn?.db_type || "";
+    let schema = analysis.schema || tab.schema;
+    if (!schema) {
+      if (dbType === "postgres") schema = "public";
+      else schema = "";
+    }
+
+    try {
+      const columns = await api.getColumns(tab.connectionId, tab.database, schema, analysis.tableName);
+      const primaryKeys = columns.filter((c) => c.is_primary_key).map((c) => c.name);
+
+      if (primaryKeys.length === 0) {
+        tab.queryAnalysis = undefined;
+        tab.tableMeta = undefined;
+        return;
+      }
+
+      if (!allPrimaryKeysPresent(primaryKeys, tab.result.columns)) {
+        tab.queryAnalysis = undefined;
+        tab.tableMeta = undefined;
+        return;
+      }
+
+      tab.tableMeta = {
+        schema: schema || undefined,
+        tableName: analysis.tableName,
+        columns,
+        primaryKeys,
+      };
+      tab.queryAnalysis = analysis;
+    } catch (err) {
+      console.error("[DBX] ERROR fetching columns for editable query:", err);
+      tab.queryAnalysis = undefined;
+      tab.tableMeta = undefined;
+    }
+  }
+
   async function executeTabSql(id: string, sql: string) {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || !sql.trim()) return;
@@ -249,6 +316,8 @@ export const useQueryStore = defineStore("query", () => {
           current.activeResultIndex = undefined;
           current.result = results[0];
         }
+        // Analyze editability after successful execution
+        await analyzeQueryEditability(current, sql);
       }
     } catch (e: any) {
       const current = tabs.value.find((t) => t.id === id);
@@ -256,6 +325,7 @@ export const useQueryStore = defineStore("query", () => {
         current.result = toErrorResult(e);
         current.results = undefined;
         current.activeResultIndex = undefined;
+        current.queryAnalysis = undefined;
       }
     } finally {
       const current = tabs.value.find((t) => t.id === id);

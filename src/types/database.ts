@@ -172,4 +172,10 @@ export interface QueryTab {
     columns: ColumnInfo[];
     primaryKeys: string[];
   };
+  queryAnalysis?: {
+    schema?: string;
+    tableName: string;
+    selectStar: boolean;
+    columns: string[];
+  };
 }

@@ -218,6 +218,10 @@ export default {
     rowsPerPageShort: " 行/页",
     columnDetails: "列详情",
     queryError: "查询出错",
+    refresh: "刷新",
+    commit: "提交",
+    rollback: "回滚",
+    transactionActive: "编辑中",
   },
   welcome: {
     title: "数据库工作台",

@@ -94,6 +94,7 @@ async fn main() {
         .route("/query/execute-multi", post(routes::query::execute_multi))
         .route("/query/execute-batch", post(routes::query::execute_batch))
         .route("/query/execute-script", post(routes::query::execute_script))
+        .route("/query/execute-in-transaction", post(routes::query::execute_in_transaction))
         .route("/query/cancel", post(routes::query::cancel_query))
         // Redis
         .route("/redis/list-databases", post(routes::redis::list_databases))

@@ -219,6 +219,10 @@ export default {
     rowsPerPageShort: " rows",
     columnDetails: "Column Details",
     queryError: "Query Error",
+    refresh: "Refresh",
+    commit: "Commit",
+    rollback: "Rollback",
+    transactionActive: "Editing",
   },
   welcome: {
     title: "Database Workspace",
