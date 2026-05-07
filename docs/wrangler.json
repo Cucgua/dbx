@@ -1,3 +1,8 @@
 {
-  "pages_build_output_dir": "out"
+  "name": "dbx-docs",
+  "compatibility_date": "2026-05-07",
+  "pages_build_output_dir": "out",
+  "assets": {
+    "directory": "./out"
+  }
 }
