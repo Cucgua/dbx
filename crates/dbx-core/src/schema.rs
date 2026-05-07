@@ -10,11 +10,7 @@ pub fn duckdb_query_tables(con: &duckdb::Connection) -> Result<Vec<db::TableInfo
     ).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
-            Ok(db::TableInfo {
-                name: row.get::<_, String>(0)?,
-                table_type: row.get::<_, String>(1)?,
-                comment: None,
-            })
+            Ok(db::TableInfo { name: row.get::<_, String>(0)?, table_type: row.get::<_, String>(1)?, comment: None })
         })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
