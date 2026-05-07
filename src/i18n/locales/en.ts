@@ -134,6 +134,8 @@ export default {
     selectConnection: "Select connection",
     selectDatabase: "Select database",
     selectSchema: "Select schema",
+    setDefaultDatabase: "Set Default",
+    defaultDatabase: "Default",
   },
   tabs: {
     sql: "SQL",
@@ -415,6 +417,8 @@ export default {
     closeOtherTabs: "Close Other Tabs",
     closeAllTabs: "Close All Tabs",
     copyName: "Copy Name",
+    setDefaultDatabase: "Set as Default Database",
+    clearDefaultDatabase: "Clear Default Database",
     exportDatabase: "Export Database",
     exportDatabaseSuccess: "Exported {count} tables, up to {limit} rows each",
     exportDatabaseFailed: "Failed to export database: {message}",

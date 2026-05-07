@@ -51,8 +51,10 @@ import {
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useToast } from "@/composables/useToast";
+import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import type { DatabaseType, QueryResult, TreeNode, TreeNodeType } from "@/types/database";
 import * as api from "@/lib/api";
+import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import {
   DATABASE_EXPORT_PAGE_SIZE,
   DATABASE_EXPORT_ROW_LIMIT,
@@ -80,12 +82,14 @@ import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import ConnectionErrorIndicator from "@/components/connection/ConnectionErrorIndicator.vue";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const { toast } = useToast();
+const { getDatabaseOptions } = useDatabaseOptions();
 
 const props = defineProps<{
   node: TreeNode;
@@ -295,9 +299,36 @@ async function newQuery() {
   try {
     await connectionStore.ensureConnected(node.connectionId);
     connectionStore.activeConnectionId = node.connectionId;
-    queryStore.createTab(node.connectionId, node.database || "", undefined, "query");
+    if (node.database) {
+      queryStore.createTab(node.connectionId, node.database, undefined, "query");
+      return;
+    }
+    const connection = connectionStore.getConfig(node.connectionId);
+    if (!connection) return;
+    const options = await getDatabaseOptions(node.connectionId);
+    queryStore.createTab(node.connectionId, resolveDefaultDatabase(connection, options), undefined, "query");
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function setNodeAsDefaultDatabase() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  try {
+    await connectionStore.setDefaultDatabase(node.connectionId, node.database);
+  } catch (e: any) {
+    toast(t("connection.saveFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function clearNodeDefaultDatabase() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  try {
+    await connectionStore.clearDefaultDatabase(node.connectionId);
+  } catch (e: any) {
+    toast(t("connection.saveFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
@@ -818,6 +849,13 @@ const canOpenFieldLineage = computed(() => {
   );
 });
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));
+const isNodeDefaultDatabase = computed(
+  () =>
+    (props.node.type === "database" || props.node.type === "redis-db" || props.node.type === "mongo-db") &&
+    !!props.node.connectionId &&
+    !!props.node.database &&
+    connectionStore.isDefaultDatabase(props.node.connectionId, props.node.database),
+);
 const hasTypeMenu = computed(() => {
   const t = props.node.type;
   return (
@@ -1047,6 +1085,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             @vue:mounted="($event: any) => $event.el.focus()"
           />
           <span v-else class="min-w-0 flex-1 truncate">{{ isGroupLabel(node) ? t(node.label) : node.label }}</span>
+          <Badge v-if="isNodeDefaultDatabase" variant="secondary" class="h-4 px-1.5 text-[10px]">
+            {{ t("editor.defaultDatabase") }}
+          </Badge>
           <span v-if="columnComment" class="truncate text-muted-foreground/60 text-[10px] max-w-[40%]">{{
             columnComment
           }}</span>
@@ -1165,6 +1206,12 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
         </ContextMenuItem>
+        <ContextMenuItem v-if="node.type === 'database' && !isNodeDefaultDatabase" @click="setNodeAsDefaultDatabase">
+          <Database class="w-4 h-4" /> {{ t("contextMenu.setDefaultDatabase") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="node.type === 'database' && isNodeDefaultDatabase" @click="clearNodeDefaultDatabase">
+          <Database class="w-4 h-4" /> {{ t("contextMenu.clearDefaultDatabase") }}
+        </ContextMenuItem>
         <ContextMenuItem v-if="canCreateTable" @click="createTable">
           <Plus class="w-4 h-4" /> {{ t("contextMenu.createTable") }}
         </ContextMenuItem>
@@ -1191,6 +1238,18 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
           <Loader2 v-if="isExportingDatabase" class="w-4 h-4 animate-spin" />
           <Download v-else class="w-4 h-4" />
           {{ t("contextMenu.exportDatabase") }}
+        </ContextMenuItem>
+      </template>
+
+      <template v-if="node.type === 'redis-db' || node.type === 'mongo-db'">
+        <ContextMenuItem @click="newQuery">
+          <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="!isNodeDefaultDatabase" @click="setNodeAsDefaultDatabase">
+          <Database class="w-4 h-4" /> {{ t("contextMenu.setDefaultDatabase") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="isNodeDefaultDatabase" @click="clearNodeDefaultDatabase">
+          <Database class="w-4 h-4" /> {{ t("contextMenu.clearDefaultDatabase") }}
         </ContextMenuItem>
       </template>
 

@@ -133,6 +133,8 @@ export default {
     selectConnection: "选择连接",
     selectDatabase: "选择数据库",
     selectSchema: "选择模式",
+    setDefaultDatabase: "设为默认",
+    defaultDatabase: "默认库",
   },
   tabs: {
     sql: "SQL",
@@ -407,6 +409,8 @@ export default {
     closeOtherTabs: "关闭其他标签页",
     closeAllTabs: "关闭全部标签页",
     copyName: "复制名称",
+    setDefaultDatabase: "设为默认数据库",
+    clearDefaultDatabase: "取消默认数据库",
     exportDatabase: "导出数据库",
     exportDatabaseSuccess: "已导出 {count} 张表，每表最多 {limit} 行",
     exportDatabaseFailed: "导出数据库失败：{message}",
