@@ -16,10 +16,13 @@ RUN pnpm build
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS backend
 ARG TARGETARCH
 WORKDIR /app
-RUN dpkg --add-architecture arm64 && dpkg --add-architecture amd64 \
+RUN dpkg --add-architecture arm64 \
+    && echo "deb [arch=arm64] http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/arm64.list \
+    && echo "deb [arch=arm64] http://deb.debian.org/debian bookworm-updates main" >> /etc/apt/sources.list.d/arm64.list \
+    && echo "deb [arch=arm64] http://deb.debian.org/debian-security bookworm-security main" >> /etc/apt/sources.list.d/arm64.list \
     && apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake pkg-config perl python3-pip gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu \
-    unixodbc-dev unixodbc-dev:arm64 unixodbc-dev:amd64 \
+    unixodbc-dev unixodbc-dev:arm64 \
     && pip3 install --break-system-packages ziglang \
     && cargo install cargo-zigbuild \
     && rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
