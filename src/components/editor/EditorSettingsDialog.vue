@@ -2,7 +2,7 @@
 import { ref, watch, shallowRef, computed } from "vue";
 import type { EditorView as EditorViewType } from "@codemirror/view";
 import { useI18n } from "vue-i18n";
-import { FolderOpen, Settings } from "lucide-vue-next";
+import { Copy, FolderOpen, RefreshCw, Settings } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,8 @@ import {
 } from "@/stores/settingsStore";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
+import * as api from "@/lib/api";
+import type { McpHttpStatus } from "@/lib/api";
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
@@ -38,6 +40,30 @@ const editTheme = ref(settingsStore.editorSettings.theme);
 const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
 const editOracleClientLibDir = ref(settingsStore.appSettings.oracleClientLibDir);
 const editOracleClientConfigDir = ref(settingsStore.appSettings.oracleClientConfigDir);
+const editMcpHttpEnabled = ref(settingsStore.appSettings.mcpHttpEnabled);
+const editMcpHttpHost = ref(settingsStore.appSettings.mcpHttpHost);
+const editMcpHttpPort = ref(String(settingsStore.appSettings.mcpHttpPort));
+const mcpHttpStatus = ref<McpHttpStatus | null>(null);
+const mcpStatusLoading = ref(false);
+const mcpStatusError = ref("");
+
+const normalizedMcpHttpHost = computed(() => editMcpHttpHost.value.trim());
+const normalizedMcpHttpPort = computed(() => Number(editMcpHttpPort.value));
+const isMcpHttpHostValid = computed(() => normalizedMcpHttpHost.value.length > 0);
+const isMcpHttpPortValid = computed(
+  () =>
+    Number.isInteger(normalizedMcpHttpPort.value) &&
+    normalizedMcpHttpPort.value > 0 &&
+    normalizedMcpHttpPort.value <= 65535,
+);
+const isMcpHttpSettingsValid = computed(() => isMcpHttpHostValid.value && isMcpHttpPortValid.value);
+const mcpEndpointPreview = computed(
+  () => `http://${normalizedMcpHttpHost.value || "127.0.0.1"}:${normalizedMcpHttpPort.value || 7424}/mcp`,
+);
+const mcpStatusStartedAt = computed(() => {
+  if (!mcpHttpStatus.value?.started_at) return "";
+  return new Date(mcpHttpStatus.value.started_at).toLocaleString();
+});
 
 // Sync from store when dialog opens
 watch(
@@ -52,6 +78,10 @@ watch(
       editExecuteMode.value = settingsStore.editorSettings.executeMode;
       editOracleClientLibDir.value = settingsStore.appSettings.oracleClientLibDir;
       editOracleClientConfigDir.value = settingsStore.appSettings.oracleClientConfigDir;
+      editMcpHttpEnabled.value = settingsStore.appSettings.mcpHttpEnabled;
+      editMcpHttpHost.value = settingsStore.appSettings.mcpHttpHost;
+      editMcpHttpPort.value = String(settingsStore.appSettings.mcpHttpPort);
+      await refreshMcpHttpStatus();
     }
   },
 );
@@ -69,6 +99,14 @@ function hasSystemChanges(): boolean {
   return (
     editOracleClientLibDir.value !== settingsStore.appSettings.oracleClientLibDir ||
     editOracleClientConfigDir.value !== settingsStore.appSettings.oracleClientConfigDir
+  );
+}
+
+function hasMcpChanges(): boolean {
+  return (
+    editMcpHttpEnabled.value !== settingsStore.appSettings.mcpHttpEnabled ||
+    normalizedMcpHttpHost.value !== settingsStore.appSettings.mcpHttpHost ||
+    normalizedMcpHttpPort.value !== settingsStore.appSettings.mcpHttpPort
   );
 }
 
@@ -90,6 +128,16 @@ function applySystemSettings() {
   emit("update:open", false);
 }
 
+function applyMcpSettings() {
+  if (!isMcpHttpSettingsValid.value) return;
+  settingsStore.updateAppSettings({
+    mcpHttpEnabled: editMcpHttpEnabled.value,
+    mcpHttpHost: normalizedMcpHttpHost.value,
+    mcpHttpPort: normalizedMcpHttpPort.value,
+  });
+  emit("update:open", false);
+}
+
 function resetEditorDefaults() {
   editFontFamily.value = DEFAULT_EDITOR_SETTINGS.fontFamily;
   editFontSize.value = DEFAULT_EDITOR_SETTINGS.fontSize;
@@ -100,6 +148,12 @@ function resetEditorDefaults() {
 function resetSystemDefaults() {
   editOracleClientLibDir.value = DEFAULT_APP_SETTINGS.oracleClientLibDir;
   editOracleClientConfigDir.value = DEFAULT_APP_SETTINGS.oracleClientConfigDir;
+}
+
+function resetMcpDefaults() {
+  editMcpHttpEnabled.value = DEFAULT_APP_SETTINGS.mcpHttpEnabled;
+  editMcpHttpHost.value = DEFAULT_APP_SETTINGS.mcpHttpHost;
+  editMcpHttpPort.value = String(DEFAULT_APP_SETTINGS.mcpHttpPort);
 }
 
 function onExecuteModeChange(v: any) {
@@ -117,6 +171,25 @@ function onThemeChange(v: any) {
 const activeSettingsTab = ref("editor");
 const isWeb = !isTauriRuntime();
 const isDesktop = !isWeb;
+
+async function refreshMcpHttpStatus() {
+  if (!isDesktop) return;
+  mcpStatusLoading.value = true;
+  mcpStatusError.value = "";
+  try {
+    mcpHttpStatus.value = await api.loadMcpHttpStatus();
+  } catch (e) {
+    mcpHttpStatus.value = null;
+    mcpStatusError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    mcpStatusLoading.value = false;
+  }
+}
+
+async function copyText(text: string) {
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+}
 
 watch(
   () => props.open,
@@ -297,6 +370,7 @@ watch(
         <TabsList class="w-full">
           <TabsTrigger value="editor" class="flex-1">{{ t("settings.editorTab") }}</TabsTrigger>
           <TabsTrigger v-if="isDesktop" value="system" class="flex-1">{{ t("settings.systemTab") }}</TabsTrigger>
+          <TabsTrigger v-if="isDesktop" value="mcp" class="flex-1">{{ t("settings.mcpTab") }}</TabsTrigger>
           <TabsTrigger v-if="isWeb" value="security" class="flex-1">{{ t("settings.securityTab") }}</TabsTrigger>
         </TabsList>
 
@@ -462,6 +536,156 @@ watch(
               {{ t("common.close") }}
             </Button>
             <Button :disabled="!hasSystemChanges()" @click="applySystemSettings">
+              {{ t("settings.apply") }}
+            </Button>
+          </DialogFooter>
+        </TabsContent>
+
+        <TabsContent v-if="isDesktop" value="mcp" class="space-y-5 py-2">
+          <div class="space-y-4">
+            <div>
+              <Label class="text-base">{{ t("settings.mcpTitle") }}</Label>
+              <p class="mt-1 text-sm text-muted-foreground">{{ t("settings.mcpDescription") }}</p>
+            </div>
+
+            <div class="flex items-start justify-between gap-4 rounded-md border px-3 py-3">
+              <div class="min-w-0 space-y-1">
+                <Label for="mcp-http-enabled">{{ t("settings.mcpEnabled") }}</Label>
+                <p class="text-xs text-muted-foreground">{{ t("settings.mcpEnabledHint") }}</p>
+              </div>
+              <input
+                id="mcp-http-enabled"
+                v-model="editMcpHttpEnabled"
+                type="checkbox"
+                class="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+              />
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-[1fr_140px]">
+              <div class="space-y-2">
+                <Label>{{ t("settings.mcpHost") }}</Label>
+                <Input v-model="editMcpHttpHost" class="h-9" placeholder="127.0.0.1" />
+                <p class="text-xs text-muted-foreground">{{ t("settings.mcpHostHint") }}</p>
+              </div>
+              <div class="space-y-2">
+                <Label>{{ t("settings.mcpPort") }}</Label>
+                <Input
+                  :model-value="editMcpHttpPort"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  class="h-9"
+                  :aria-invalid="!isMcpHttpPortValid"
+                  @update:model-value="editMcpHttpPort = String($event)"
+                />
+                <p class="text-xs text-muted-foreground">{{ t("settings.mcpPortHint") }}</p>
+              </div>
+            </div>
+
+            <div class="space-y-2">
+              <Label>{{ t("settings.mcpEndpointPreview") }}</Label>
+              <div class="flex gap-2">
+                <Input :model-value="mcpEndpointPreview" readonly class="h-9 font-mono text-xs" />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  class="h-9 w-9 shrink-0"
+                  :title="t('settings.mcpCopyEndpoint')"
+                  @click="copyText(mcpEndpointPreview)"
+                >
+                  <Copy class="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            <Separator />
+
+            <div class="space-y-3">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <Label class="text-sm">{{ t("settings.mcpCurrentStatus") }}</Label>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {{
+                      mcpHttpStatus
+                        ? mcpHttpStatus.enabled
+                          ? t("settings.mcpStatusRunning")
+                          : t("settings.mcpStatusDisabled")
+                        : t("settings.mcpStatusUnknown")
+                    }}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  class="h-8 w-8 shrink-0"
+                  :title="t('settings.mcpRefreshStatus')"
+                  :disabled="mcpStatusLoading"
+                  @click="refreshMcpHttpStatus"
+                >
+                  <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': mcpStatusLoading }" />
+                </Button>
+              </div>
+
+              <p v-if="mcpStatusError" class="text-xs text-destructive">{{ mcpStatusError }}</p>
+
+              <div v-if="mcpHttpStatus" class="space-y-3">
+                <div class="space-y-2">
+                  <Label>{{ t("settings.mcpCurrentEndpoint") }}</Label>
+                  <div class="flex gap-2">
+                    <Input :model-value="mcpHttpStatus.endpoint" readonly class="h-9 font-mono text-xs" />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      class="h-9 w-9 shrink-0"
+                      :title="t('settings.mcpCopyEndpoint')"
+                      @click="copyText(mcpHttpStatus.endpoint)"
+                    >
+                      <Copy class="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div class="space-y-2">
+                  <Label>{{ t("settings.mcpToken") }}</Label>
+                  <div class="flex gap-2">
+                    <Input
+                      :model-value="mcpHttpStatus.token"
+                      readonly
+                      type="password"
+                      class="h-9 font-mono text-xs"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      class="h-9 w-9 shrink-0"
+                      :title="t('settings.mcpCopyToken')"
+                      @click="copyText(mcpHttpStatus.token)"
+                    >
+                      <Copy class="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <p v-if="mcpStatusStartedAt" class="text-xs text-muted-foreground">
+                  {{ t("settings.mcpStartedAt", { time: mcpStatusStartedAt }) }}
+                </p>
+              </div>
+            </div>
+
+            <p class="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              {{ t("settings.mcpRestartHint") }}
+            </p>
+          </div>
+
+          <DialogFooter class="gap-2 sm:gap-0">
+            <Button variant="outline" @click="resetMcpDefaults">
+              {{ t("settings.resetDefaults") }}
+            </Button>
+            <div class="flex-1" />
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+            <Button :disabled="!hasMcpChanges() || !isMcpHttpSettingsValid" @click="applyMcpSettings">
               {{ t("settings.apply") }}
             </Button>
           </DialogFooter>

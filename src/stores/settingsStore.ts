@@ -50,6 +50,9 @@ export interface EditorSettings {
 export interface AppSettings {
   oracleClientLibDir: string;
   oracleClientConfigDir: string;
+  mcpHttpEnabled: boolean;
+  mcpHttpHost: string;
+  mcpHttpPort: number;
 }
 
 export const EDITOR_THEMES: { value: EditorTheme; label: string; dark: boolean }[] = [
@@ -84,6 +87,9 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   oracleClientLibDir: "",
   oracleClientConfigDir: "",
+  mcpHttpEnabled: true,
+  mcpHttpHost: "127.0.0.1",
+  mcpHttpPort: 7424,
 };
 
 export const STORAGE_KEY = "dbx-editor-settings";
@@ -169,6 +175,9 @@ export const useSettingsStore = defineStore("settings", () => {
     appSettings.value = {
       oracleClientLibDir: saved?.oracleClientLibDir || DEFAULT_APP_SETTINGS.oracleClientLibDir,
       oracleClientConfigDir: saved?.oracleClientConfigDir || DEFAULT_APP_SETTINGS.oracleClientConfigDir,
+      mcpHttpEnabled: saved?.mcpHttpEnabled ?? DEFAULT_APP_SETTINGS.mcpHttpEnabled,
+      mcpHttpHost: saved?.mcpHttpHost || DEFAULT_APP_SETTINGS.mcpHttpHost,
+      mcpHttpPort: saved?.mcpHttpPort || DEFAULT_APP_SETTINGS.mcpHttpPort,
     };
     isAppSettingsLoaded.value = true;
   }

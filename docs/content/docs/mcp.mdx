@@ -19,6 +19,42 @@ AI Agent → MCP Server → Your Database → Results
 
 ## Quick Start
 
+### Desktop HTTP MCP (recommended for Windows/WSL)
+
+When DBX Desktop is running, it starts a Streamable HTTP MCP service. The service exists only while DBX is running. Default endpoint:
+
+```text
+http://127.0.0.1:7424/mcp
+```
+
+Auth details are written to:
+
+```text
+%APPDATA%\com.dbx.app\mcp-http.json
+```
+
+MCP clients must send:
+
+```text
+Authorization: Bearer <token>
+```
+
+For WSL clients connecting to DBX running on Windows, set this before starting DBX:
+
+```powershell
+$env:DBX_MCP_HOST = "0.0.0.0"
+```
+
+Then configure the client endpoint as:
+
+```text
+http://<windows-host-ip>:7424/mcp
+```
+
+Do not expose MCP to a LAN without authorization. DBX MCP tools can read connection metadata and execute SQL queries.
+
+### npm stdio MCP (compatibility mode)
+
 ### 1. Install
 
 ```bash
@@ -141,7 +177,7 @@ Execute a SQL query in DBX desktop app UI. **Requires DBX to be running.**
 
 ### Connection Configs
 
-The MCP Server reads DBX's connection config files:
+Desktop HTTP MCP directly reuses DBX's current SQLite storage and runtime connection state. The npm stdio MCP server reads DBX's connection config files:
 
 | Platform | Path |
 |---|---|
@@ -153,7 +189,7 @@ Passwords are retrieved from the system keyring (macOS Keychain / Linux Secret S
 
 ### UI Integration
 
-`dbx_open_table` and `dbx_execute_and_show` communicate with the running DBX app via a local HTTP interface:
+Desktop HTTP MCP emits Tauri events directly to open tabs in the frontend. The npm stdio MCP `dbx_open_table` and `dbx_execute_and_show` tools communicate with the running DBX app through a local HTTP bridge:
 
 ```
 AI Agent → MCP Server → HTTP localhost → DBX backend → Tauri event → Frontend opens tab
@@ -180,5 +216,6 @@ MCP query support: PostgreSQL, MySQL, and compatible databases (Doris, StarRocks
 ## Requirements
 
 - [DBX](https://github.com/t8y2/dbx) installed with at least one connection configured
-- Node.js 18+
-- UI integration requires DBX v0.3.9+
+- Desktop HTTP MCP requires DBX to be running
+- npm stdio MCP requires Node.js 18+
+- npm stdio MCP UI integration requires DBX v0.3.9+

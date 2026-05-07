@@ -70,6 +70,9 @@ function defaultAppSettings(): AppSettings {
   return {
     oracleClientLibDir: "",
     oracleClientConfigDir: "",
+    mcpHttpEnabled: true,
+    mcpHttpHost: "127.0.0.1",
+    mcpHttpPort: 7424,
   };
 }
 
@@ -109,6 +112,10 @@ export async function loadAppSettings(): Promise<AppSettings> {
   } catch {
     return defaultAppSettings();
   }
+}
+
+export async function loadMcpHttpStatus(): Promise<null> {
+  return null;
 }
 
 // ---------------------------------------------------------------------------

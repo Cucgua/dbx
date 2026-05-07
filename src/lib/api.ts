@@ -68,6 +68,7 @@ export const deleteAiConversation = forward("deleteAiConversation");
 // App Settings
 export const saveAppSettings = forward("saveAppSettings");
 export const loadAppSettings = forward("loadAppSettings");
+export const loadMcpHttpStatus = forward("loadMcpHttpStatus");
 
 // SQL File Execution
 export const previewSqlFile = forward("previewSqlFile");
@@ -130,6 +131,7 @@ export type {
   AiChatMessage,
   AiConversation,
   UpdateInfo,
+  McpHttpStatus,
   RedisKeyInfo,
   RedisValue,
   RedisScanResult,

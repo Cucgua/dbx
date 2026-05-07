@@ -95,6 +95,8 @@ SSH 隧道（密钥和密码认证）· 断线自动重连 · 危险操作确认
 
 DBX 提供 [MCP Server](mcp/)，让 AI 编程助手直接使用 DBX 中已配置的数据库连接查询数据。
 
+Windows/WSL 场景可直接使用 DBX 桌面端内置的 HTTP MCP 服务；打开 DBX 后即可通过 `http://127.0.0.1:7424/mcp` 访问，认证信息见 `%APPDATA%\com.dbx.app\mcp-http.json`。
+
 ```bash
 npx @dbx-app/mcp-server
 ```

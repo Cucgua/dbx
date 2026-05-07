@@ -2,10 +2,28 @@ mod commands;
 mod db;
 mod models;
 
+use async_trait::async_trait;
 use commands::connection::AppState;
 use dbx_core::storage::Storage;
+use dbx_mcp::{DesktopEventSink, McpExecuteQueryEvent, McpOpenTableEvent};
 use std::sync::Arc;
-use tauri::{Manager, RunEvent};
+use tauri::{Emitter, Manager, RunEvent};
+
+#[derive(Clone)]
+struct TauriMcpEvents {
+    app: tauri::AppHandle,
+}
+
+#[async_trait]
+impl DesktopEventSink for TauriMcpEvents {
+    async fn open_table(&self, event: McpOpenTableEvent) -> Result<(), String> {
+        self.app.emit("mcp-open-table", event).map_err(|e| e.to_string())
+    }
+
+    async fn execute_query(&self, event: McpExecuteQueryEvent) -> Result<(), String> {
+        self.app.emit("mcp-execute-query", event).map_err(|e| e.to_string())
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,7 +55,17 @@ pub fn run() {
             app.manage(state.clone());
 
             let app_handle = app.handle().clone();
-            commands::mcp_bridge::start(app_handle, state);
+            commands::mcp_bridge::start(app_handle.clone(), state.clone());
+            let mcp_options = dbx_mcp::McpRuntimeOptions {
+                app_data_dir: data_dir,
+                state,
+                events: Arc::new(TauriMcpEvents { app: app_handle }),
+            };
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = dbx_mcp::run(mcp_options).await {
+                    log::warn!("DBX MCP HTTP server stopped: {err}");
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -66,6 +94,7 @@ pub fn run() {
             commands::connection::load_sidebar_layout,
             commands::settings::save_app_settings,
             commands::settings::load_app_settings,
+            commands::settings::load_mcp_http_status,
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::list_schemas,

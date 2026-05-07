@@ -79,6 +79,19 @@ export async function loadAppSettings(): Promise<AppSettings> {
   return invoke("load_app_settings");
 }
 
+export interface McpHttpStatus {
+  enabled: boolean;
+  host: string;
+  port: number;
+  endpoint: string;
+  token: string;
+  started_at: string;
+}
+
+export async function loadMcpHttpStatus(): Promise<McpHttpStatus | null> {
+  return invoke("load_mcp_http_status");
+}
+
 // --- AI Conversations ---
 
 export interface AiChatMessage {

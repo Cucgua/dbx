@@ -95,6 +95,8 @@ Dark mode with native title bar sync · 9 editor themes · English & 简体中�
 
 DBX provides an [MCP server](mcp/) that lets AI coding agents query your databases using connections already configured in DBX.
 
+For Windows/WSL workflows, DBX Desktop also exposes a built-in HTTP MCP service while the app is running. The default endpoint is `http://127.0.0.1:7424/mcp`, with auth details in `%APPDATA%\com.dbx.app\mcp-http.json`.
+
 ```bash
 npx @dbx-app/mcp-server
 ```

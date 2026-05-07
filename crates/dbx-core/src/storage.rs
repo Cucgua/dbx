@@ -224,6 +224,9 @@ impl Storage {
 
         set_optional_string(map, "oracleClientLibDir", settings.oracle_client_lib_dir());
         set_optional_string(map, "oracleClientConfigDir", settings.oracle_client_config_dir());
+        set_optional_bool(map, "mcpHttpEnabled", settings.mcp_http_enabled);
+        set_optional_string(map, "mcpHttpHost", settings.mcp_http_host());
+        set_optional_u16(map, "mcpHttpPort", settings.mcp_http_port);
         self.save_app_settings_value(&value).await
     }
 
@@ -254,6 +257,28 @@ fn set_optional_string(map: &mut serde_json::Map<String, serde_json::Value>, key
     match value {
         Some(value) => {
             map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+        }
+        None => {
+            map.remove(key);
+        }
+    }
+}
+
+fn set_optional_bool(map: &mut serde_json::Map<String, serde_json::Value>, key: &str, value: Option<bool>) {
+    match value {
+        Some(value) => {
+            map.insert(key.to_string(), serde_json::Value::Bool(value));
+        }
+        None => {
+            map.remove(key);
+        }
+    }
+}
+
+fn set_optional_u16(map: &mut serde_json::Map<String, serde_json::Value>, key: &str, value: Option<u16>) {
+    match value {
+        Some(value) => {
+            map.insert(key.to_string(), serde_json::Value::Number(serde_json::Number::from(u64::from(value))));
         }
         None => {
             map.remove(key);
