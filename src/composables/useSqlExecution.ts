@@ -6,7 +6,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useToast } from "@/composables/useToast";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
 
-const DANGER_RE = /\b(DROP|DELETE|TRUNCATE|ALTER|UPDATE|MERGE|REPLACE)\b/i;
+const DANGER_RE = /^\s*(DROP|DELETE|TRUNCATE|ALTER|UPDATE|MERGE|REPLACE)\b/i;
 
 export function stripSqlComments(sql: string): string {
   return sql
@@ -16,7 +16,8 @@ export function stripSqlComments(sql: string): string {
 }
 
 export function isDangerousSql(sql: string): boolean {
-  return DANGER_RE.test(stripSqlComments(sql));
+  const cleaned = stripSqlComments(sql);
+  return cleaned.split(";").some((stmt) => DANGER_RE.test(stmt));
 }
 
 export function useSqlExecution(deps: {

@@ -49,7 +49,7 @@ function onConfirm() {
         <p class="text-sm text-muted-foreground mb-3">{{ message || t("dangerDialog.message") }}</p>
         <pre
           v-if="details || sql"
-          class="text-xs bg-muted p-3 rounded overflow-auto max-h-40 font-mono whitespace-pre-wrap"
+          class="text-xs bg-muted p-3 rounded overflow-auto max-h-40 min-w-0 font-mono whitespace-pre-wrap"
           >{{ details || sql }}</pre
         >
       </div>
