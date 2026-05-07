@@ -28,9 +28,6 @@ import {
   Info,
   Rows3,
   TriangleAlert,
-  RefreshCcw,
-  RotateCcw,
-  Table2,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -1088,6 +1085,8 @@ function escapeAndHighlightKeywords(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(SQL_KEYWORDS, '<span class="ddl-kw">$1</span>');
 }
+
+defineExpose({ useTransaction, transactionActive, isSaving, onToolbarRefresh, onToolbarCommit, onToolbarRollback });
 </script>
 
 <template>
@@ -1095,55 +1094,6 @@ function escapeAndHighlightKeywords(s: string): string {
     <ContextMenu>
       <ContextMenuTrigger as-child>
         <div v-if="hasData" class="flex-1 flex flex-col overflow-hidden">
-          <!-- Transaction toolbar -->
-          <div
-            v-if="useTransaction"
-            class="flex items-center gap-1.5 px-2 py-1 border-b shrink-0"
-            :class="transactionActive ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-muted/20'"
-          >
-            <span
-              v-if="tableMeta"
-              class="inline-flex items-center gap-1 text-xs font-medium"
-              :class="transactionActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'"
-            >
-              <Table2 class="w-3 h-3" />
-              {{ tableMeta.tableName }}
-            </span>
-            <span
-              v-if="transactionActive"
-              class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1"
-            >
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              {{ t("grid.transactionActive") }}
-            </span>
-            <span class="flex-1" />
-            <Button variant="ghost" size="sm" class="h-5 text-xs px-1.5" :disabled="isSaving" @click="onToolbarRefresh">
-              <Loader2 v-if="loading" class="w-3 h-3 mr-1 animate-spin" />
-              <RefreshCcw v-else class="w-3 h-3 mr-1" />
-              {{ t("grid.refresh") }}
-            </Button>
-            <Button
-              :variant="transactionActive ? 'default' : 'secondary'"
-              size="sm"
-              class="h-5 text-xs px-1.5"
-              :disabled="!transactionActive || isSaving"
-              @click="onToolbarCommit"
-            >
-              <Loader2 v-if="isSaving" class="w-3 h-3 mr-1 animate-spin" />
-              <Save v-else class="w-3 h-3 mr-1" />
-              {{ t("grid.commit") }}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              class="h-5 text-xs px-1.5"
-              :disabled="!transactionActive"
-              @click="onToolbarRollback"
-            >
-              <RotateCcw class="w-3 h-3 mr-1" />
-              {{ t("grid.rollback") }}
-            </Button>
-          </div>
           <!-- Search bar -->
           <div class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20">
             <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
