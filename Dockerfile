@@ -53,6 +53,7 @@ RUN case "$TARGETARCH" in \
     LIBRARY_PATH="/usr/lib/$lib_arch" \
     PKG_CONFIG_PATH="/usr/lib/$lib_arch/pkgconfig" \
     PKG_CONFIG_SYSROOT_DIR="/" \
+    RUSTFLAGS="-L native=/usr/lib/$lib_arch" \
     cargo zigbuild --release -p dbx-web --target "$rust_target" || true
 
 # Copy real sources and rebuild (only application code recompiles)
@@ -67,6 +68,7 @@ RUN case "$TARGETARCH" in \
     LIBRARY_PATH="/usr/lib/$lib_arch" \
     PKG_CONFIG_PATH="/usr/lib/$lib_arch/pkgconfig" \
     PKG_CONFIG_SYSROOT_DIR="/" \
+    RUSTFLAGS="-L native=/usr/lib/$lib_arch" \
     cargo zigbuild --release -p dbx-web --target "$rust_target" && \
     mkdir -p "/out/linux/$TARGETARCH" && \
     cp "/app/target/$rust_target/release/dbx-web" "/out/linux/$TARGETARCH/"
