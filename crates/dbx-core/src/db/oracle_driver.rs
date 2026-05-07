@@ -1,5 +1,5 @@
 use log;
-use oracle_rs::{Config, Connection};
+use rust_oracle::{Config, Connection};
 use std::time::Instant;
 
 use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
@@ -23,16 +23,16 @@ pub async fn connect(
         .map_err(|e| format!("Oracle connection failed: {e}"))
 }
 
-fn value_to_json(val: &oracle_rs::Value) -> serde_json::Value {
+fn value_to_json(val: &rust_oracle::Value) -> serde_json::Value {
     match val {
-        oracle_rs::Value::Null => serde_json::Value::Null,
-        oracle_rs::Value::String(s) => serde_json::Value::String(s.clone()),
-        oracle_rs::Value::Integer(n) => serde_json::Value::Number((*n).into()),
-        oracle_rs::Value::Float(f) => {
+        rust_oracle::Value::Null => serde_json::Value::Null,
+        rust_oracle::Value::String(s) => serde_json::Value::String(s.clone()),
+        rust_oracle::Value::Integer(n) => serde_json::Value::Number((*n).into()),
+        rust_oracle::Value::Float(f) => {
             serde_json::Number::from_f64(*f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
         }
-        oracle_rs::Value::Boolean(b) => serde_json::Value::Bool(*b),
-        oracle_rs::Value::Json(v) => v.clone(),
+        rust_oracle::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        rust_oracle::Value::Json(v) => v.clone(),
         _ => serde_json::Value::String(format!("{val:?}")),
     }
 }
