@@ -267,6 +267,21 @@ function onHandleCloseColumnPanel() {
                 :result="activeTab.result"
                 :sql="activeTab.lastExecutedSql || activeTab.sql"
                 :loading="activeTab.isExecuting"
+                :editable="!!activeTab.queryAnalysis"
+                :database-type="activeConnection?.db_type"
+                :connection-id="activeTab.connectionId"
+                :database="activeTab.database"
+                :table-meta="activeTab.tableMeta"
+                :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
+                @reload="emit('reload')"
+                @paginate="
+                  (offset: number, limit: number, whereInput?: string, orderBy?: string) =>
+                    emit('paginate', offset, limit, whereInput, orderBy)
+                "
+                @sort="
+                  (column: string, direction: 'asc' | 'desc' | null, whereInput?: string) =>
+                    emit('sort', column, direction, whereInput)
+                "
               />
               <div
                 v-if="activeTab.result?.columns.includes('Error')"

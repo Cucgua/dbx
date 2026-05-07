@@ -28,6 +28,9 @@ import {
   Info,
   Rows3,
   TriangleAlert,
+  RefreshCcw,
+  RotateCcw,
+  Table2,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -461,6 +464,37 @@ const deletedRowCount = computed(() => deletedRows.value.size);
 const pendingChangeCount = computed(() => dirtyRowCount.value + newRowCount.value + deletedRowCount.value);
 const hasPendingChanges = computed(() => pendingChangeCount.value > 0);
 
+// --- Transaction state ---
+const transactionActive = ref(false);
+const isSaving = ref(false);
+
+function enterTransaction() {
+  transactionActive.value = true;
+}
+
+function exitTransaction() {
+  transactionActive.value = false;
+}
+
+function shouldUseTransaction(): boolean {
+  return props.editable && !!props.connectionId && !!props.database && !!props.tableMeta;
+}
+
+async function onToolbarRefresh() {
+  if (transactionActive.value) {
+    discardChanges();
+  }
+  emit("reload");
+}
+
+async function onToolbarCommit() {
+  await saveChanges();
+}
+
+function onToolbarRollback() {
+  discardChanges();
+}
+
 const sortedRows = computed(() => {
   let rows = props.result.rows.map((row, sourceIndex) => ({ row, sourceIndex }));
   if (clientSearchText.value) {
@@ -760,6 +794,10 @@ function commitEdit() {
   if (newVal !== oldVal) {
     if (!dirtyRows.value.has(item.sourceIndex)) dirtyRows.value.set(item.sourceIndex, new Map());
     dirtyRows.value.get(item.sourceIndex)!.set(col, newVal);
+    // Enter transaction mode on first edit
+    if (shouldUseTransaction() && !transactionActive.value) {
+      enterTransaction();
+    }
   } else {
     const rowChanges = dirtyRows.value.get(item.sourceIndex);
     rowChanges?.delete(col);
@@ -790,6 +828,9 @@ function onEditKeydown(e: KeyboardEvent) {
 function addRow() {
   rowStatusFilter.value = rowStatusFilterAfterAddingRow(rowStatusFilter.value);
   newRows.value.push(props.result.columns.map(() => null));
+  if (shouldUseTransaction() && !transactionActive.value) {
+    enterTransaction();
+  }
   const rowId = -newRows.value.length;
   nextTick(() => {
     const el = getScrollerElement();
@@ -808,6 +849,9 @@ function applyDeleteRow(rowId: number) {
     deletedRows.value.add(item.sourceIndex);
   }
   if (editingCell.value?.rowId === rowId) editingCell.value = null;
+  if (shouldUseTransaction() && !transactionActive.value) {
+    enterTransaction();
+  }
 }
 
 const showDeleteRowConfirm = ref(false);
@@ -858,12 +902,22 @@ async function saveChanges() {
   const stmts = generateSaveStatements();
   if (stmts.length === 0) return;
   saveError.value = "";
+  isSaving.value = true;
 
-  if (props.connectionId && props.database) {
+  if (shouldUseTransaction() && props.connectionId && props.database) {
+    try {
+      await api.executeInTransaction(props.connectionId, props.database, stmts, props.tableMeta?.schema);
+    } catch (e: any) {
+      saveError.value = String(e.message || e);
+      isSaving.value = false;
+      return;
+    }
+  } else if (props.connectionId && props.database) {
     try {
       await api.executeBatch(props.connectionId, props.database, stmts);
     } catch (e: any) {
       saveError.value = String(e.message || e);
+      isSaving.value = false;
       return;
     }
   } else if (props.onExecuteSql) {
@@ -873,12 +927,15 @@ async function saveChanges() {
       }
     } catch (e: any) {
       saveError.value = String(e.message || e);
+      isSaving.value = false;
       return;
     }
   }
   dirtyRows.value.clear();
   newRows.value = [];
   deletedRows.value.clear();
+  exitTransaction();
+  isSaving.value = false;
   emit("reload");
 }
 
@@ -887,6 +944,7 @@ function discardChanges() {
   newRows.value = [];
   deletedRows.value.clear();
   editingCell.value = null;
+  exitTransaction();
 }
 
 // --- Cell selection and detail ---
@@ -1009,6 +1067,7 @@ watch(
     detailCell.value = null;
     showTranspose.value = false;
     transposeRowIndex.value = null;
+    exitTransaction();
   },
 );
 
@@ -1211,6 +1270,55 @@ function escapeAndHighlightKeywords(s: string): string {
     <ContextMenu>
       <ContextMenuTrigger as-child>
         <div v-if="hasData" class="flex-1 flex flex-col overflow-hidden">
+          <!-- Transaction toolbar -->
+          <div
+            v-if="shouldUseTransaction()"
+            class="flex items-center gap-1.5 px-2 py-1 border-b shrink-0"
+            :class="transactionActive ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-muted/20'"
+          >
+            <span
+              v-if="tableMeta"
+              class="inline-flex items-center gap-1 text-xs font-medium"
+              :class="transactionActive ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'"
+            >
+              <Table2 class="w-3 h-3" />
+              {{ tableMeta.tableName }}
+            </span>
+            <span
+              v-if="transactionActive"
+              class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1"
+            >
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              {{ t("grid.transactionActive") }}
+            </span>
+            <span class="flex-1" />
+            <Button variant="ghost" size="sm" class="h-5 text-xs px-1.5" :disabled="isSaving" @click="onToolbarRefresh">
+              <Loader2 v-if="loading" class="w-3 h-3 mr-1 animate-spin" />
+              <RefreshCcw v-else class="w-3 h-3 mr-1" />
+              {{ t("grid.refresh") }}
+            </Button>
+            <Button
+              :variant="transactionActive ? 'default' : 'secondary'"
+              size="sm"
+              class="h-5 text-xs px-1.5"
+              :disabled="!transactionActive || isSaving"
+              @click="onToolbarCommit"
+            >
+              <Loader2 v-if="isSaving" class="w-3 h-3 mr-1 animate-spin" />
+              <Save v-else class="w-3 h-3 mr-1" />
+              {{ t("grid.commit") }}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-5 text-xs px-1.5"
+              :disabled="!transactionActive"
+              @click="onToolbarRollback"
+            >
+              <RotateCcw class="w-3 h-3 mr-1" />
+              {{ t("grid.rollback") }}
+            </Button>
+          </div>
           <!-- Search bar -->
           <div class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20 relative">
             <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -1673,7 +1781,7 @@ function escapeAndHighlightKeywords(s: string): string {
       <span>{{ result.execution_time_ms }}ms</span>
       <span v-if="hasCellSelection" class="text-foreground">{{ selectionSummary }}</span>
 
-      <template v-if="editable && tableMeta">
+      <template v-if="editable && tableMeta && !transactionActive">
         <span v-if="hasPendingChanges" class="ml-2 text-foreground">
           {{ t("grid.pendingChanges", { count: pendingChangeCount }) }}
         </span>

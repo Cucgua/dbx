@@ -77,6 +77,7 @@ pub fn run() {
             commands::query::cancel_query,
             commands::query::execute_batch,
             commands::query::execute_script,
+            commands::query::execute_in_transaction,
             commands::sql_file::preview_sql_file,
             commands::sql_file::execute_sql_file,
             commands::sql_file::cancel_sql_file_execution,

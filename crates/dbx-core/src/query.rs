@@ -361,6 +361,123 @@ pub async fn execute_statements(
     })
 }
 
+/// Execute multiple SQL statements within a single transaction (BEGIN ... COMMIT).
+/// If any statement fails, ROLLBACK is issued and an error is returned.
+/// For databases that don't support explicit transactions (Redis, MongoDB), this
+/// falls back to executing statements sequentially.
+pub async fn execute_statements_in_transaction(
+    state: &AppState,
+    connection_id: &str,
+    database: &str,
+    statements: &[String],
+    schema: Option<&str>,
+) -> Result<db::QueryResult, String> {
+    let pool_key = if database.is_empty() {
+        connection_id.to_string()
+    } else {
+        state.get_or_create_pool(connection_id, Some(database)).await?
+    };
+
+    // Check if this connection supports transactions
+    let supports_tx = {
+        let connections = state.connections.lock().await;
+        matches!(
+            connections.get(&pool_key),
+            Some(PoolKind::Mysql(_, _))
+                | Some(PoolKind::Postgres(_))
+                | Some(PoolKind::Sqlite(_))
+                | Some(PoolKind::ClickHouse(_))
+                | Some(PoolKind::SqlServer(_))
+                | Some(PoolKind::Dameng(_))
+                | Some(PoolKind::Gaussdb(_))
+        )
+    };
+
+    let start = std::time::Instant::now();
+
+    if !supports_tx {
+        // Fallback: execute statements sequentially without transaction
+        let mut total_affected: u64 = 0;
+        for (i, sql) in statements.iter().enumerate() {
+            match do_execute(state, &pool_key, sql, schema, None).await {
+                Ok(result) => {
+                    total_affected += result.affected_rows;
+                }
+                Err(e) => {
+                    log::warn!("Statement {} failed (no transaction support): {}", i + 1, e);
+                    return Err(format!(
+                        "Statement {} failed: {}. No transaction support for this database type.",
+                        i + 1,
+                        e
+                    ));
+                }
+            }
+        }
+        return Ok(db::QueryResult {
+            columns: vec![],
+            rows: vec![],
+            affected_rows: total_affected,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        });
+    }
+
+    // Execute within transaction
+    match do_execute(state, &pool_key, "BEGIN", schema, None).await {
+        Ok(_) => {}
+        Err(e) => {
+            log::warn!("BEGIN failed: {}, proceeding without transaction", e);
+            // Fallback without transaction
+            let mut total_affected: u64 = 0;
+            for sql in statements {
+                match do_execute(state, &pool_key, sql, schema, None).await {
+                    Ok(result) => total_affected += result.affected_rows,
+                    Err(e2) => return Err(e2),
+                }
+            }
+            return Ok(db::QueryResult {
+                columns: vec![],
+                rows: vec![],
+                affected_rows: total_affected,
+                execution_time_ms: start.elapsed().as_millis(),
+                truncated: false,
+            });
+        }
+    }
+
+    let mut total_affected: u64 = 0;
+    for (i, sql) in statements.iter().enumerate() {
+        match do_execute(state, &pool_key, sql, schema, None).await {
+            Ok(result) => {
+                total_affected += result.affected_rows;
+            }
+            Err(e) => {
+                // Rollback on failure
+                if let Err(rb_err) = do_execute(state, &pool_key, "ROLLBACK", schema, None).await {
+                    log::error!("ROLLBACK failed after statement {} error: {}", i + 1, rb_err);
+                }
+                return Err(format!("Statement {} failed: {}", i + 1, e));
+            }
+        }
+    }
+
+    // Commit
+    match do_execute(state, &pool_key, "COMMIT", schema, None).await {
+        Ok(_) => {}
+        Err(e) => {
+            return Err(format!("COMMIT failed: {}", e));
+        }
+    }
+
+    Ok(db::QueryResult {
+        columns: vec![],
+        rows: vec![],
+        affected_rows: total_affected,
+        execution_time_ms: start.elapsed().as_millis(),
+        truncated: false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
