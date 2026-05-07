@@ -129,10 +129,26 @@ pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str
         .iter()
         .map(|row| {
             let base = row.get::<&str, _>(1).unwrap_or("").to_string();
-            let max_len = row.get::<i32, _>(7);
-            let dt_prec = row.get::<i32, _>(8);
-            let num_prec = row.get::<i32, _>(5);
-            let num_scale = row.get::<i32, _>(6);
+            let max_len = row
+                .try_get::<i32, _>(7)
+                .ok()
+                .flatten()
+                .or_else(|| row.try_get::<i16, _>(7).ok().flatten().map(|v| v as i32));
+            let dt_prec = row
+                .try_get::<i32, _>(8)
+                .ok()
+                .flatten()
+                .or_else(|| row.try_get::<i16, _>(8).ok().flatten().map(|v| v as i32));
+            let num_prec = row
+                .try_get::<i32, _>(5)
+                .ok()
+                .flatten()
+                .or_else(|| row.try_get::<i16, _>(5).ok().flatten().map(|v| v as i32));
+            let num_scale = row
+                .try_get::<i32, _>(6)
+                .ok()
+                .flatten()
+                .or_else(|| row.try_get::<i16, _>(6).ok().flatten().map(|v| v as i32));
             let data_type = match base.to_lowercase().as_str() {
                 "varchar" => match max_len {
                     Some(-1) => "varchar(max)".to_string(),
