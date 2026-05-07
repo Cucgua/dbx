@@ -1,39 +1,68 @@
 ---
 title: What is DBX?
-description: An open-source, lightweight, cross-platform database management tool built with Tauri 2 and Rust.
+description: Open-source, lightweight, AI-powered database management tool. 15 MB for 25+ databases.
 ---
 
-# What is DBX?
+<Callout type="info">
+15 MB install size. 25+ database engines. Built-in AI assistant. Desktop + Docker deployment.
+</Callout>
 
-DBX is an open-source, lightweight, cross-platform database management tool built with [Tauri 2](https://tauri.app/) and Rust.
+DBX is an open-source, lightweight, cross-platform database management tool built with [Tauri 2](https://tauri.app/) and Rust. No bundled Chromium — just a 15 MB installer that manages MySQL, PostgreSQL, MongoDB, Redis, and 25+ more databases.
 
-<div style={{textAlign: "center"}}>
-  <img src="/screenshot.png" alt="DBX Screenshot" style={{maxWidth: "100%", borderRadius: "8px", margin: "16px 0"}} />
-</div>
+![DBX Screenshot](/screenshot-dark.png)
 
 ## Why DBX?
 
-- **Lightweight** — ~15 MB installer, no bundled Chromium
-- **Multi-database** — One tool for MySQL, PostgreSQL, SQLite, Redis, MongoDB, and 20+ more
-- **AI-powered** — Built-in AI assistant + MCP server for external AI agents
-- **Secure** — Passwords in system keyring, SSH tunnels, encrypted config export
-- **Cross-platform** — macOS, Windows, Linux, Docker (self-hosted)
+<Cards>
+  <Card title="Ultra-Lightweight" href="/en/docs/getting-started">
+    ~15 MB installer, no Chromium. Tauri 2 + Rust for native performance and instant startup.
+  </Card>
+  <Card title="25+ Databases" href="/en/docs/databases">
+    One tool for MySQL, PostgreSQL, SQLite, Redis, MongoDB, ClickHouse, SQL Server, Oracle, and more.
+  </Card>
+  <Card title="AI-Powered" href="/en/docs/ai-assistant">
+    Built-in AI assistant: natural language to SQL, query optimization, error fixing. MCP Server lets Claude/Cursor query your databases directly.
+  </Card>
+  <Card title="Secure by Default" href="/en/docs/ssh-tunnel">
+    Passwords in system keyring (macOS Keychain / Windows Credential Manager). SSH tunnels and AES-256-GCM encrypted config export.
+  </Card>
+</Cards>
 
 ## Key Features
 
-- **Query Editor** — Syntax highlighting, autocomplete, query history
-- **Data Grid** — Virtual scrolling, inline editing, data export
-- **Schema Browser** — Tree view, search, pin, column comments
-- **Schema Diagram** — Visual ER diagram of your database schema
-- **Schema Diff** — Compare and sync schemas between databases
-- **Explain Plan** — Visualize query execution plans
-- **Data Transfer** — Move data between different database engines
-- **Table Import** — Import CSV, TSV, JSON, Excel files into tables
-- **Database Export** — Export database structure and data as SQL
-- **Field Lineage** — Trace column relationships across tables and views
-- **Config Export** — Encrypted export/import of connection configurations
-- **AI Assistant** — Natural language to SQL, query explanation, optimization
-- **MCP Server** — Let AI agents query your databases directly
+<Cards>
+  <Card title="Query Editor" href="/en/docs/query-editor">
+    Powered by CodeMirror 6. Syntax highlighting, smart autocomplete, JOIN suggestions, query history.
+  </Card>
+  <Card title="Data Grid" href="/en/docs/data-grid">
+    Virtual scrolling for 100K+ rows. Inline editing with SQL preview before saving.
+  </Card>
+  <Card title="Schema Browser" href="/en/docs/schema-browser">
+    Tree view with search, pin, context menus, column comments, and connection colors.
+  </Card>
+  <Card title="Schema Diff" href="/en/docs/schema-diff">
+    Compare schemas across databases and generate sync SQL. Dev vs Production in one click.
+  </Card>
+  <Card title="Data Transfer" href="/en/docs/data-transfer">
+    Cross-engine migration — MySQL to PostgreSQL with automatic type mapping.
+  </Card>
+  <Card title="Field Lineage" href="/en/docs/field-lineage">
+    Trace column relationships across foreign keys, views, and query history with confidence levels.
+  </Card>
+</Cards>
+
+## How DBX Compares
+
+| | DBX | DBeaver | Navicat | TablePlus |
+|---|---|---|---|---|
+| **Install Size** | ~15 MB | ~300 MB | ~200 MB | ~80 MB |
+| **Price** | Free (AGPL) | Free / $230 | $180+ | $99+ |
+| **Database Support** | 25+ | 80+ | 15+ | 20+ |
+| **Built-in AI** | ✅ | ❌ | ✅ | ❌ |
+| **MCP Integration** | ✅ | ❌ | ❌ | ❌ |
+| **Docker Self-Host** | ✅ | ❌ | ❌ | ❌ |
+| **Field Lineage** | ✅ | ❌ | ❌ | ❌ |
+| **Schema Diff** | ✅ | ✅ | ✅ | ❌ |
 
 ## Tech Stack
 

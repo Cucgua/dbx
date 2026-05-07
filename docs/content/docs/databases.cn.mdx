@@ -1,9 +1,11 @@
 ---
 title: 数据库支持
-description: DBX 通过 Rust 原生驱动支持 25+ 种数据库。
+description: 通过 Rust 原生驱动支持 25+ 种数据库，无 JDBC 依赖。
 ---
 
-DBX 通过 Rust 原生驱动支持 25+ 种数据库。
+<Callout type="info">
+Rust 原生驱动，不依赖 JDBC。MySQL / PostgreSQL 兼容数据库开箱即用。
+</Callout>
 
 ## 完整支持
 
@@ -24,7 +26,7 @@ DBX 通过 Rust 原生驱动支持 25+ 种数据库。
 
 ## MySQL 兼容
 
-以下数据库使用 MySQL 协议，通过 MySQL 驱动连接：
+以下数据库使用 MySQL 协议，通过 MySQL 驱动连接，开箱即用：
 
 | 数据库 | 默认端口 |
 |---|---|
@@ -41,13 +43,13 @@ DBX 通过 Rust 原生驱动支持 25+ 种数据库。
 
 以下数据库使用 PostgreSQL 协议，通过 PostgreSQL 驱动连接：
 
-| 数据库 | 默认端口 | 备注 |
-|---|---|---|
-| openGauss | 5432 | |
-| KingBase（人大金仓） | 54321 | |
-| Vastbase | 5432 | |
-| Redshift | 5439 | |
-| CockroachDB | 26257 | |
+| 数据库 | 默认端口 |
+|---|---|
+| openGauss | 5432 |
+| KingBase（人大金仓） | 54321 |
+| Vastbase | 5432 |
+| Redshift | 5439 |
+| CockroachDB | 26257 |
 
 ## ODBC 数据库
 
@@ -57,27 +59,27 @@ DM（达梦）通过 ODBC 连接，需要在系统上安装对应的 ODBC 驱动
 
 达梦 DM8 通过 ODBC 驱动连接。默认端口：**5236**，默认用户：**SYSDBA**。
 
-**Linux 配置：**
+<Tabs groupId="dm-platform" items={['Linux', 'Windows', 'macOS']}>
+  <Tab value="Linux">
+    ```bash
+    # 安装 unixODBC
+    sudo apt install unixodbc
 
-```bash
-# 安装 unixODBC
-sudo apt install unixodbc
+    # 安装达梦数据库（安装包含 ODBC 驱动）
+    # 下载地址：https://eco.dameng.com/download/
 
-# 安装达梦数据库（安装包含 ODBC 驱动）
-# 下载地址：https://eco.dameng.com/download/
-
-# 在 /etc/odbcinst.ini 中注册驱动
-sudo tee -a /etc/odbcinst.ini << 'EOF'
-[DM8 ODBC DRIVER]
-Description = DM8 ODBC Driver
-Driver = /opt/dmdbms/bin/libdodbc.so
-EOF
-```
-
-**Windows 配置：**
-
-达梦安装程序会自动注册 ODBC 驱动，无需手动配置。
-
-**macOS 配置：**
-
-达梦暂未提供 macOS 原生 ODBC 驱动。开发/测试建议使用 Linux 环境连接。
+    # 在 /etc/odbcinst.ini 中注册驱动
+    sudo tee -a /etc/odbcinst.ini << 'EOF'
+    [DM8 ODBC DRIVER]
+    Description = DM8 ODBC Driver
+    Driver = /opt/dmdbms/bin/libdodbc.so
+    EOF
+    ```
+  </Tab>
+  <Tab value="Windows">
+    达梦安装程序会自动注册 ODBC 驱动，无需手动配置。
+  </Tab>
+  <Tab value="macOS">
+    达梦暂未提供 macOS 原生 ODBC 驱动。开发/测试建议使用 Linux 环境连接。
+  </Tab>
+</Tabs>

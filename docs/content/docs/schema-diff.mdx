@@ -1,36 +1,42 @@
 ---
 title: Schema Diff
-description: Compare database schemas and generate SQL to synchronize them.
+description: Compare database schemas, generate sync SQL, and align dev with production in one click.
 ---
 
-# Schema Diff
+<Callout type="info">
+Compare schemas across databases and generate sync SQL. Align dev, staging, and production environments in one click.
+</Callout>
 
-Schema Diff compares the structure of two databases and generates the SQL needed to synchronize them. This is useful for identifying differences between development and production environments, or between any two database instances.
+## Use Cases
 
-## Comparing Schemas
+- **Dev vs Production** — Check whether schema changes in development have been applied to production
+- **Multi-environment alignment** — Ensure staging, QA, and production share the same table structure
+- **Version migration** — Compare old and new database versions and generate migration scripts
 
-To start a comparison:
+## Workflow
 
-1. Open the Schema Diff panel.
-2. Select the **source** connection and database.
-3. Select the **target** connection and database.
-4. Run the comparison.
+<Steps>
+  <Step>
+    ### Select Source and Target
+    Choose the **source** and **target** database connections. They can be on different servers or even different database engines.
+  </Step>
+  <Step>
+    ### Run Comparison
+    Click "Compare" and DBX analyzes all tables and columns across both databases.
+  </Step>
+  <Step>
+    ### Review Differences
+    Results are presented in a clear list:
+    - Tables that exist only in the source
+    - Tables that exist only in the target
+    - Tables with structural differences (column types, defaults, indexes)
+  </Step>
+  <Step>
+    ### Generate and Execute Sync SQL
+    DBX generates `CREATE TABLE`, `ALTER TABLE`, and `DROP TABLE` statements based on the differences. Review and execute them directly in DBX.
+  </Step>
+</Steps>
 
-DBX analyzes both schemas and presents a side-by-side diff of all structural differences, including:
-
-- Tables that exist in one database but not the other
-- Columns that differ in type, default value, or nullability
-- Index and constraint differences
-
-## Generating Sync SQL
-
-After the comparison is complete, DBX generates the SQL statements required to bring the target database in line with the source. This may include `CREATE TABLE`, `ALTER TABLE`, `DROP TABLE`, and related statements depending on the differences found.
-
-You can review the generated SQL before taking any action.
-
-## Executing Sync Directly
-
-Once you have reviewed the generated SQL, you can execute it directly within DBX against the target database. There is no need to copy the SQL to an external tool -- the sync can be completed in a single workflow.
-
-> **Warning:**
-> Schema sync can make destructive changes (such as dropping tables or columns). Always review the generated SQL carefully before executing, and consider backing up the target database first.
+<Callout type="warn">
+Schema sync may include destructive operations (such as dropping tables or columns). Always review the generated SQL carefully and consider backing up the target database first.
+</Callout>

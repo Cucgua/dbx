@@ -1,50 +1,122 @@
 ---
 title: AI Assistant
-description: Built-in AI assistant for writing, explaining, optimizing, and fixing SQL queries.
+description: Built-in AI assistant for natural language to SQL, query optimization, error fixing. Supports Claude, OpenAI, and custom endpoints.
 ---
 
-# AI Assistant
+<Callout type="info">
+Built-in AI assistant — no plugins needed. Describe what you want in plain language, and AI generates SQL, optimizes queries, and fixes errors.
+</Callout>
 
-DBX has a built-in AI assistant that helps you write, explain, optimize, and fix SQL queries.
+DBX's AI assistant is deeply integrated with your database metadata. It knows your tables, columns, and relationships, so the SQL it generates actually works with your schema.
+
+![DBX AI Assistant](/screenshot-ai.jpg)
 
 ## Setup
 
-1. Click the **Settings** icon in the toolbar
-2. Go to **AI Settings**
-3. Choose your provider (Claude, OpenAI, or a custom OpenAI-compatible endpoint)
-4. Enter your API key (and endpoint URL for custom providers)
-5. Select a model
+<Steps>
+  <Step>
+    ### Open Settings
+    Click the **Settings** icon in the toolbar.
+  </Step>
+  <Step>
+    ### Choose AI Provider
+    Go to **AI Settings** and select your provider.
+  </Step>
+  <Step>
+    ### Enter API Key
+    Enter your API key (and endpoint URL for custom providers).
+  </Step>
+  <Step>
+    ### Select a Model
+    Pick a model and you're ready to go.
+  </Step>
+</Steps>
 
-## Features
+## Core Features
 
 ### Natural Language to SQL
 
-Describe what you want to query in plain language:
+Describe what you want to query in plain language. The AI generates SQL based on your actual database schema:
 
-> "Show me the top 10 customers by total order amount"
+> **You say:** "Show me the top 10 customers by total order amount in the last month"
+>
+> **AI generates:**
+> ```sql
+> SELECT c.name, SUM(o.amount) AS total_amount
+> FROM customers c
+> JOIN orders o ON c.id = o.customer_id
+> WHERE o.created_at >= NOW() - INTERVAL 30 DAY
+> GROUP BY c.id, c.name
+> ORDER BY total_amount DESC
+> LIMIT 10;
+> ```
 
-The AI assistant will generate the SQL based on your database schema.
+The AI auto-detects tables and columns in your connected database — it won't generate references to tables or columns that don't exist.
 
 ### Explain SQL
 
-Select a SQL query and ask the AI to explain what it does.
+Select a complex SQL query and ask the AI to explain it. It breaks down:
+
+- What each subquery does
+- The purpose of JOIN conditions
+- What the WHERE clause filters
+- How aggregation and grouping work
 
 ### Optimize SQL
 
-Get suggestions for improving query performance.
+The AI analyzes your query for potential performance issues and suggests improvements:
+
+- Missing indexes
+- Full table scans that could be avoided
+- Subqueries that could be rewritten as JOINs
+- Unnecessary sorting or deduplication
 
 ### Fix Errors
 
-When a query fails, click **Fix with AI** to get a corrected version.
+When a query fails, click **Fix with AI**. The AI reads the error message and your SQL, then generates a corrected version. Common fixes include:
+
+- Syntax error corrections
+- Misspelled table or column names
+- Missing GROUP BY columns
+- Type mismatches
 
 ## Supported Providers
 
-| Provider | Models |
-|---|---|
-| Anthropic (Claude) | Claude 4 Opus, Claude 4 Sonnet, Claude 3.5 Haiku |
-| OpenAI | GPT-4o, GPT-4o-mini, o3-mini |
-| Custom / OpenAI-compatible | Any endpoint that implements the OpenAI chat completions API (e.g., Ollama, LM Studio, Azure OpenAI, self-hosted models) |
+<Tabs groupId="ai-provider" items={['Anthropic (Claude)', 'OpenAI', 'Custom Endpoint']}>
+  <Tab value="Anthropic (Claude)">
+    | Model | Best For |
+    |---|---|
+    | Claude 4 Opus | Complex queries, highest quality |
+    | Claude 4 Sonnet | Balance of speed and quality |
+    | Claude 3.5 Haiku | Fastest responses |
+
+    Select **Anthropic** in AI Settings and enter your API key.
+  </Tab>
+  <Tab value="OpenAI">
+    | Model | Best For |
+    |---|---|
+    | GPT-4o | Latest flagship model |
+    | GPT-4o-mini | Lightweight and fast |
+    | o3-mini | Enhanced reasoning |
+
+    Select **OpenAI** in AI Settings and enter your API key.
+  </Tab>
+  <Tab value="Custom Endpoint">
+    Any endpoint that implements the OpenAI Chat Completions API works, including:
+
+    - **Ollama** — Run open-source models locally
+    - **LM Studio** — Local model management
+    - **Azure OpenAI** — Enterprise deployment
+    - **DeepSeek / Qwen** — Additional model providers
+
+    Select **Custom Endpoint** in AI Settings and enter the endpoint URL and API key.
+  </Tab>
+</Tabs>
 
 ## Beyond Built-in AI
 
-For a more powerful AI-driven database experience, try the [MCP integration](/docs/mcp). It lets AI coding agents like Claude Code and Cursor directly query your databases and open results in DBX.
+<Callout type="info">
+Want AI to not just generate SQL, but actually execute queries and browse results? Try the [MCP integration](/en/docs/mcp).
+</Callout>
+
+MCP integration lets AI coding agents like Claude Code and Cursor query your databases directly through DBX and open results in the DBX UI. You can have a natural language conversation with AI in your IDE, and it automatically calls DBX to run queries and return results.

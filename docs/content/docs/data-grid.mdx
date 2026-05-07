@@ -1,50 +1,49 @@
 ---
 title: Data Grid
-description: Browse, edit, and export query results in a high-performance spreadsheet-like interface.
+description: Virtual scrolling for 100K+ rows, inline editing with SQL preview, multi-format export.
 ---
 
-# Data Grid
-
-The Data Grid displays query results and table data in a high-performance, spreadsheet-like interface. It supports browsing large datasets, inline editing, and exporting data in multiple formats.
+<Callout type="info">
+Virtual scrolling keeps it smooth at 100K+ rows. Inline editing with full SQL preview before committing any changes.
+</Callout>
 
 ## Virtual Scrolling
 
-The grid uses virtual scrolling to handle large result sets efficiently. Only the rows visible on screen are rendered at any given time, so performance remains consistent whether you are viewing 100 rows or 100,000 rows.
+The grid uses virtual scrolling — only the rows visible on screen are rendered at any given time, so performance remains consistent whether you are viewing 100 rows or 100,000 rows.
 
 ## Inline Editing
 
-You can edit data directly in the grid without writing SQL manually. The following operations are supported:
+Edit data directly in the grid without writing SQL:
 
-- **UPDATE** -- Click a cell to modify its value. Changed cells are highlighted to indicate pending modifications.
-- **INSERT** -- Add a new row at the bottom of the grid and fill in cell values.
-- **DELETE** -- Select one or more rows and mark them for deletion.
+- **UPDATE** — Click a cell to modify its value. Changed cells are highlighted
+- **INSERT** — Add a new row at the bottom and fill in cell values
+- **DELETE** — Select rows and mark them for deletion
 
-### SQL Preview Before Saving
+All changes are staged locally and not written to the database until you confirm.
 
-Before any changes are committed to the database, DBX shows a preview of the exact SQL statements that will be executed (`UPDATE`, `INSERT`, or `DELETE`). You can review the generated SQL and confirm or cancel.
+## SQL Preview
 
-## Sorting
+<Callout type="info">
+Before saving, DBX shows a preview of the exact `UPDATE`, `INSERT`, or `DELETE` statements that will be executed. Review and confirm before committing.
+</Callout>
 
-Click a column header to sort by that column. Click again to toggle between ascending and descending order.
+This prevents accidental data modifications and gives you full visibility into what will change.
 
-## Search and Filtering
+## Sorting and Filtering
 
-- **Search** -- Use the search bar to find text across all visible columns.
-- **WHERE Filter** -- Apply a custom `WHERE` clause to filter data at the database level. This is more efficient than client-side search for large tables because only matching rows are fetched.
+- **Sort** — Click a column header to sort ascending or descending
+- **Search** — Use the search bar to find text across all visible columns
+- **WHERE Filter** — Apply a custom `WHERE` clause for database-level filtering. More efficient than client-side search for large tables
 
 ## Column Resize and Row Numbers
 
-- Drag column borders to resize columns to your preferred width.
-- Row numbers are displayed in the leftmost column for easy reference.
+- Drag column borders to resize columns
+- Row numbers are displayed in the leftmost column
 
 ## Export
 
-Export the current result set in one of the following formats:
-
 | Format | Description |
 |---|---|
-| CSV | Comma-separated values, compatible with Excel and other spreadsheet tools |
+| CSV | Comma-separated values, compatible with Excel and spreadsheet tools |
 | JSON | Array of objects, suitable for use in code or APIs |
 | Markdown | Markdown table, useful for pasting into documentation or chat |
-
-Use the export button in the grid toolbar and select the desired format.

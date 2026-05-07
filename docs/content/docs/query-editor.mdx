@@ -1,37 +1,39 @@
 ---
 title: Query Editor
-description: Write and execute SQL with syntax highlighting, autocomplete, and query history.
+description: CodeMirror 6-powered SQL editor with syntax highlighting, smart autocomplete, JOIN suggestions, and query history.
 ---
 
-# Query Editor
-
-The Query Editor is the primary workspace for writing and executing SQL in DBX. It is built on CodeMirror 6, providing a fast, modern editing experience with deep database awareness.
+<Callout type="info">
+Built on CodeMirror 6 with deep database metadata awareness. A SQL editing experience that rivals a full IDE.
+</Callout>
 
 ## Syntax Highlighting
 
-The editor applies language-aware syntax highlighting for SQL. Keywords, identifiers, strings, numbers, and comments are visually distinguished, making queries easier to read and write.
+The editor applies language-aware syntax highlighting for SQL. Keywords, identifiers, strings, numbers, and comments are visually distinguished, making queries easier to read and write. Highlighting rules adapt automatically based on the connected database type.
 
 ## Autocomplete
 
 As you type, the editor suggests completions drawn from your actual database metadata:
 
-- **Keywords** -- standard SQL keywords (`SELECT`, `FROM`, `WHERE`, etc.)
-- **Table names** -- all tables and views visible in the current connection
-- **Column names** -- columns scoped to the tables referenced in your query
-- **JOIN suggestions** -- when typing a `JOIN` clause, the editor suggests related tables and join conditions based on foreign key relationships
+- **Keywords** — standard SQL keywords (`SELECT`, `FROM`, `WHERE`, etc.)
+- **Table names** — all tables and views visible in the current connection
+- **Column names** — columns scoped to the tables referenced in your query
+- **JOIN suggestions** — when typing a `JOIN` clause, the editor suggests related tables and join conditions based on foreign key relationships
 
 Completions appear automatically and can also be triggered manually with the platform shortcut.
 
 ## Executing Queries
 
+<Callout type="info">
+Shortcut: `Cmd+Enter` (macOS) / `Ctrl+Enter` (Windows/Linux). When text is selected, only the selection is executed.
+</Callout>
+
 | Action | Shortcut |
 |---|---|
-| Execute the current query | `Cmd+Enter` (macOS) / `Ctrl+Enter` (Windows/Linux) |
-| Execute selected text | Select text, then `Cmd+Enter` / `Ctrl+Enter` |
+| Execute all SQL | `Cmd+Enter` / `Ctrl+Enter` |
+| Execute selected SQL | Select text, then `Cmd+Enter` / `Ctrl+Enter` |
 
-When no text is selected, the editor executes the full content of the editor. When a portion of text is selected, only that selection is executed. This is useful for running a single statement out of a multi-statement script.
-
-Results appear immediately below the editor in the Data Grid.
+Results appear immediately below the editor in the Data Grid, showing returned rows, execution time, and affected row count.
 
 ## SQL Formatting
 
@@ -39,10 +41,9 @@ Use the format button in the toolbar to auto-format your SQL. The formatter stan
 
 ## Query History
 
-Every executed query is recorded in your local query history. You can open the history panel to:
+Every executed query is recorded in your local query history:
 
-- Browse previously executed queries
+- Browse previously executed queries in the history panel
+- Click any past query to load it back into the editor
 - Search through past queries by keyword
-- Re-open a previous query in the editor with a single click
-
-Query history is stored per connection, so switching connections shows only the relevant history.
+- History is stored per connection — switching connections shows only the relevant history
