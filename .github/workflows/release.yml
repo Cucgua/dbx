@@ -65,7 +65,10 @@ jobs:
 
       - name: Bundle ODBC library (macOS)
         if: startsWith(matrix.platform, 'macos')
-        run: cp "$(brew --prefix unixodbc)/lib/libodbc.2.dylib" src-tauri/
+        run: |
+          ODBC_LIB="$(brew --prefix unixodbc)/lib/libodbc.2.dylib"
+          install_name_tool -id "@rpath/libodbc.2.dylib" "$ODBC_LIB"
+          cp "$ODBC_LIB" src-tauri/
 
       - name: Install Apple certificate (macOS)
         if: startsWith(matrix.platform, 'macos')
