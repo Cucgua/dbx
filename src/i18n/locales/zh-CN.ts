@@ -403,6 +403,7 @@ export default {
     confirmDeleteTitle: "删除连接",
     confirmDeleteMessage: "确定要删除「{name}」吗？此操作不可撤销。",
     editConnection: "编辑连接",
+    duplicateConnection: "复制连接",
     newQuery: "新建查询",
     viewData: "查看数据",
     editStructure: "编辑表结构",

@@ -411,6 +411,7 @@ export default {
     confirmDeleteTitle: "Delete Connection",
     confirmDeleteMessage: 'Are you sure you want to delete "{name}"? This cannot be undone.',
     editConnection: "Edit Connection",
+    duplicateConnection: "Duplicate Connection",
     newQuery: "New Query",
     viewData: "View Data",
     editStructure: "Edit Structure",

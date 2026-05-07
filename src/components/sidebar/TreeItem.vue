@@ -54,6 +54,7 @@ import { useToast } from "@/composables/useToast";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import type { DatabaseType, QueryResult, TreeNode, TreeNodeType } from "@/types/database";
 import * as api from "@/lib/api";
+import { uuid } from "@/lib/utils";
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import {
   DATABASE_EXPORT_PAGE_SIZE,
@@ -359,6 +360,15 @@ async function confirmDelete() {
 
 function copyName() {
   navigator.clipboard.writeText(props.node.label);
+}
+
+async function duplicateConnection() {
+  const connId = props.node.connectionId;
+  if (!connId) return;
+  const config = connectionStore.getConfig(connId);
+  if (!config) return;
+  const newConfig = { ...config, id: uuid(), name: `${config.name} (Copy)` };
+  await connectionStore.addConnection(newConfig);
 }
 
 // --- Table Management Operations ---
@@ -1186,6 +1196,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem @click="editConnection">
           <Pencil class="w-4 h-4" /> {{ t("contextMenu.editConnection") }}
         </ContextMenuItem>
+        <ContextMenuItem @click="duplicateConnection">
+          <CopyPlus class="w-4 h-4" /> {{ t("contextMenu.duplicateConnection") }}
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem class="text-destructive" @click="deleteConnection">
           <Trash2 class="w-4 h-4" /> {{ t("contextMenu.deleteConnection") }}
@@ -1317,8 +1330,10 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         </ContextMenuItem>
       </template>
 
-      <ContextMenuSeparator v-if="hasTypeMenu" />
-      <ContextMenuItem @click="copyName"> <Copy class="w-4 h-4" /> {{ t("contextMenu.copyName") }} </ContextMenuItem>
+      <template v-if="node.type !== 'connection'">
+        <ContextMenuSeparator v-if="hasTypeMenu" />
+        <ContextMenuItem @click="copyName"> <Copy class="w-4 h-4" /> {{ t("contextMenu.copyName") }} </ContextMenuItem>
+      </template>
     </ContextMenuContent>
   </ContextMenu>
 
