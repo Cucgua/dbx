@@ -132,10 +132,18 @@ export const useConnectionStore = defineStore("connection", () => {
       dameng: "DM (Dameng)",
       gaussdb: "GaussDB",
     };
+
+    const profile = config.driver_profile || config.db_type;
+    let dbType = config.db_type;
+    if ((profile === "gaussdb" || profile === "opengauss") && dbType === "postgres") {
+      dbType = "gaussdb" as ConnectionConfig["db_type"];
+    }
+
     return {
       ...config,
-      driver_profile: config.driver_profile || config.db_type,
-      driver_label: config.driver_label || labelMap[config.driver_profile || config.db_type] || config.db_type,
+      db_type: dbType,
+      driver_profile: profile,
+      driver_label: config.driver_label || labelMap[profile] || config.db_type,
       url_params: config.url_params || "",
     };
   }
