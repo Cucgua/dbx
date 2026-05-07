@@ -669,12 +669,16 @@ export const useConnectionStore = defineStore("connection", () => {
       const schemas = await api.listSchemas(connectionId, database);
       const tableGroups = await Promise.all(
         schemas.map(async (schema) => {
-          const tables = await api.listTables(connectionId, database, schema);
-          return tables.map((table) => ({
-            name: table.name,
-            schema,
-            type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
-          }));
+          try {
+            const tables = await api.listTables(connectionId, database, schema);
+            return tables.map((table) => ({
+              name: table.name,
+              schema,
+              type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
+            }));
+          } catch {
+            return [];
+          }
         }),
       );
       completionTablesCache.value[cacheKey] = tableGroups.flat();

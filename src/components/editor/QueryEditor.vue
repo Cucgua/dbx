@@ -114,76 +114,80 @@ async function formatCurrentSql() {
 async function provideSqlCompletions(currentState: import("@codemirror/state").EditorState, position: number) {
   if (!props.connectionId || !props.database) return null;
 
-  const fullDoc = currentState.doc.toString();
-  const completionContext = getSqlCompletionContext(fullDoc, position);
-  const tables = await connectionStore.listCompletionTables(props.connectionId, props.database);
+  try {
+    const fullDoc = currentState.doc.toString();
+    const completionContext = getSqlCompletionContext(fullDoc, position);
+    const tables = await connectionStore.listCompletionTables(props.connectionId, props.database);
 
-  // Collect referenced tables — enrich with schema from cached tables list
-  let refs = completionContext.referencedTables.map((rt) => {
-    // If no schema, look it up in the cached tables
-    if (!rt.schema) {
-      const cached = tables.find((t) => t.name.toLowerCase() === rt.name.toLowerCase());
-      if (cached && cached.schema) {
-        return { ...rt, schema: cached.schema };
+    // Collect referenced tables — enrich with schema from cached tables list
+    let refs = completionContext.referencedTables.map((rt) => {
+      // If no schema, look it up in the cached tables
+      if (!rt.schema) {
+        const cached = tables.find((t) => t.name.toLowerCase() === rt.name.toLowerCase());
+        if (cached && cached.schema) {
+          return { ...rt, schema: cached.schema };
+        }
       }
+      return rt;
+    });
+
+    // If no referenced tables but qualifier exists, infer table from tables list
+    if (refs.length === 0 && completionContext.qualifier) {
+      const q = completionContext.qualifier.toLowerCase();
+      const matched = tables.filter((t) => t.name.toLowerCase() === q || t.name.toLowerCase().endsWith("." + q));
+      refs = matched.map((t) => ({ name: t.name, schema: t.schema }));
     }
-    return rt;
-  });
 
-  // If no referenced tables but qualifier exists, infer table from tables list
-  if (refs.length === 0 && completionContext.qualifier) {
-    const q = completionContext.qualifier.toLowerCase();
-    const matched = tables.filter((t) => t.name.toLowerCase() === q || t.name.toLowerCase().endsWith("." + q));
-    refs = matched.map((t) => ({ name: t.name, schema: t.schema }));
-  }
+    await Promise.all(
+      refs.map(async (refTable) => {
+        const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
+        if (cachedColumnsByTable.has(cacheKey)) {
+          return;
+        }
+        try {
+          const columns = await connectionStore.listCompletionColumns(
+            props.connectionId!,
+            props.database!,
+            refTable.name,
+            refTable.schema,
+          );
+          cachedColumnsByTable.set(cacheKey, columns);
+        } catch (e) {
+          console.error(`[DBX] Failed to load columns for ${cacheKey}:`, e);
+        }
+      }),
+    );
 
-  await Promise.all(
-    refs.map(async (refTable) => {
+    // Build columnsByTable from persistent cache — only include columns for referenced tables
+    const columnsByTable = new Map<string, SqlCompletionColumn[]>();
+    for (const refTable of refs) {
       const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
-      if (cachedColumnsByTable.has(cacheKey)) {
-        return;
+      const cached = cachedColumnsByTable.get(cacheKey);
+      if (cached) {
+        columnsByTable.set(cacheKey, cached);
       }
-      try {
-        const columns = await connectionStore.listCompletionColumns(
-          props.connectionId!,
-          props.database!,
-          refTable.name,
-          refTable.schema,
-        );
-        cachedColumnsByTable.set(cacheKey, columns);
-      } catch (e) {
-        console.error(`[DBX] Failed to load columns for ${cacheKey}:`, e);
-      }
-    }),
-  );
-
-  // Build columnsByTable from persistent cache — only include columns for referenced tables
-  const columnsByTable = new Map<string, SqlCompletionColumn[]>();
-  for (const refTable of refs) {
-    const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
-    const cached = cachedColumnsByTable.get(cacheKey);
-    if (cached) {
-      columnsByTable.set(cacheKey, cached);
     }
+
+    const items = buildSqlCompletionItemsFromContext(completionContext, {
+      tables,
+      columnsByTable,
+    });
+
+    if (items.length === 0) return null;
+
+    return {
+      from: position - completionContext.prefix.length,
+      options: items.map((item) => ({
+        label: item.label,
+        type: item.type === "keyword" ? "keyword" : item.type === "table" ? "class" : "property",
+        detail: item.detail,
+        boost: item.boost,
+      })),
+      validFor: /^[\w$]*$/,
+    };
+  } catch {
+    return null;
   }
-
-  const items = buildSqlCompletionItemsFromContext(completionContext, {
-    tables,
-    columnsByTable,
-  });
-
-  if (items.length === 0) return null;
-
-  return {
-    from: position - completionContext.prefix.length,
-    options: items.map((item) => ({
-      label: item.label,
-      type: item.type === "keyword" ? "keyword" : item.type === "table" ? "class" : "property",
-      detail: item.detail,
-      boost: item.boost,
-    })),
-    validFor: /^[\w$]*$/,
-  };
 }
 
 async function refreshCompletionCache() {
