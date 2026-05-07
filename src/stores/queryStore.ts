@@ -234,41 +234,27 @@ export const useQueryStore = defineStore("query", () => {
    * If editable, fetches table metadata and sets queryAnalysis + tableMeta on the tab.
    */
   async function analyzeQueryEditability(tab: QueryTab, sql: string) {
-    console.log("[DBX] === analyzeQueryEditability CALLED ===", { tabId: tab.id });
-    // Only analyze for query mode tabs with a valid result set
-    if (tab.mode !== "query") {
-      console.log("[DBX] SKIP: mode is not query, mode =", tab.mode);
-      return;
-    }
+    if (tab.mode !== "query") return;
     if (!tab.result || !tab.result.columns.length) {
-      console.log("[DBX] SKIP: no result or no columns", {
-        hasResult: !!tab.result,
-        colCount: tab.result?.columns.length,
-      });
       tab.queryAnalysis = undefined;
       tab.tableMeta = undefined;
       return;
     }
-
-    console.log("[DBX] analyzeQueryEditability:", {
-      sql: sql.substring(0, 100),
-      mode: tab.mode,
-      columns: tab.result.columns,
-      connectionId: tab.connectionId,
-      database: tab.database,
-      schema: tab.schema,
-    });
 
     const analysis = analyzeEditableQuery(sql);
-    console.log("[DBX] analyzeEditableQuery result:", analysis);
     if (!analysis) {
-      console.log("[DBX] SKIP: analyzeEditableQuery returned null");
       tab.queryAnalysis = undefined;
       tab.tableMeta = undefined;
       return;
     }
 
-    // Resolve schema: use explicit schema from analysis/tab, else fall back to db-type defaults
+    if (!tab.connectionId || !tab.database) {
+      tab.queryAnalysis = undefined;
+      tab.tableMeta = undefined;
+      return;
+    }
+
+    // Resolve schema per database type
     const connStore = useConnectionStore();
     const conn = connStore.getConfig(tab.connectionId);
     const dbType = conn?.db_type || "";
@@ -277,115 +263,38 @@ export const useQueryStore = defineStore("query", () => {
       if (dbType === "postgres") schema = "public";
       else schema = "";
     }
-    console.log("[DBX] Resolved schema:", schema, "dbType:", dbType);
-    if (analysis.selectStar && tab.connectionId && tab.database) {
-      try {
-        console.log("[DBX] Fetching columns:", {
-          connectionId: tab.connectionId,
-          database: tab.database,
-          schema,
-          tableName: analysis.tableName,
-        });
-        const columns = await api.getColumns(tab.connectionId, tab.database, schema, analysis.tableName);
-        console.log(
-          "[DBX] Columns fetched:",
-          columns.length,
-          "columns, PKs:",
-          columns.filter((c) => c.is_primary_key).map((c) => c.name),
-        );
-        const primaryKeys = columns.filter((c) => c.is_primary_key).map((c) => c.name);
 
-        if (primaryKeys.length === 0) {
-          console.log("[DBX] SKIP: no primary keys found for table", analysis.tableName);
-          tab.queryAnalysis = undefined;
-          tab.tableMeta = undefined;
-          return;
-        }
+    try {
+      const columns = await api.getColumns(tab.connectionId, tab.database, schema, analysis.tableName);
+      const primaryKeys = columns.filter((c) => c.is_primary_key).map((c) => c.name);
 
-        tab.tableMeta = {
-          schema: schema || undefined,
-          tableName: analysis.tableName,
-          columns,
-          primaryKeys,
-        };
-
-        // Verify all PK columns are present in result
-        if (!allPrimaryKeysPresent(primaryKeys, tab.result.columns)) {
-          console.log(
-            "[DBX] SKIP: not all PKs in result columns. PKs:",
-            primaryKeys,
-            "Result cols:",
-            tab.result.columns,
-          );
-          tab.queryAnalysis = undefined;
-          tab.tableMeta = undefined;
-          return;
-        }
-
-        console.log("[DBX] SET queryAnalysis + tableMeta successfully");
-        tab.queryAnalysis = analysis;
-      } catch (err) {
-        console.error("[DBX] ERROR fetching columns:", err);
-        tab.queryAnalysis = undefined;
-        tab.tableMeta = undefined;
-      }
-    } else {
-      // Non-SELECT *: need to fetch table metadata to get PK info
-      console.log("[DBX] Non-SELECT* path, fetching table metadata");
-      if (!tab.connectionId || !tab.database) {
-        console.log("[DBX] SKIP: no connectionId or database");
+      if (primaryKeys.length === 0) {
         tab.queryAnalysis = undefined;
         tab.tableMeta = undefined;
         return;
       }
-      try {
-        const columns = await api.getColumns(tab.connectionId, tab.database, schema, analysis.tableName);
-        console.log(
-          "[DBX] Columns fetched:",
-          columns.length,
-          "columns, PKs:",
-          columns.filter((c) => c.is_primary_key).map((c) => c.name),
-        );
-        const primaryKeys = columns.filter((c) => c.is_primary_key).map((c) => c.name);
 
-        if (primaryKeys.length === 0) {
-          console.log("[DBX] SKIP: no primary keys found for table", analysis.tableName);
-          tab.queryAnalysis = undefined;
-          tab.tableMeta = undefined;
-          return;
-        }
-
-        // Check all PKs are in the result columns
-        if (!allPrimaryKeysPresent(primaryKeys, tab.result.columns)) {
-          console.log(
-            "[DBX] SKIP: not all PKs in result columns. PKs:",
-            primaryKeys,
-            "Result cols:",
-            tab.result.columns,
-          );
-          tab.queryAnalysis = undefined;
-          tab.tableMeta = undefined;
-          return;
-        }
-
-        console.log("[DBX] SET queryAnalysis + tableMeta successfully (non-SELECT* path)");
-        tab.tableMeta = {
-          schema: schema || undefined,
-          tableName: analysis.tableName,
-          columns,
-          primaryKeys,
-        };
-        tab.queryAnalysis = analysis;
-      } catch (err) {
-        console.error("[DBX] ERROR fetching columns (non-SELECT* path):", err);
+      if (!allPrimaryKeysPresent(primaryKeys, tab.result.columns)) {
         tab.queryAnalysis = undefined;
         tab.tableMeta = undefined;
+        return;
       }
+
+      tab.tableMeta = {
+        schema: schema || undefined,
+        tableName: analysis.tableName,
+        columns,
+        primaryKeys,
+      };
+      tab.queryAnalysis = analysis;
+    } catch (err) {
+      console.error("[DBX] ERROR fetching columns for editable query:", err);
+      tab.queryAnalysis = undefined;
+      tab.tableMeta = undefined;
     }
   }
 
   async function executeTabSql(id: string, sql: string) {
-    console.log("[DBX] === executeTabSql CALLED ===", { tabId: id, sql: sql.substring(0, 80) });
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || !sql.trim()) return;
 

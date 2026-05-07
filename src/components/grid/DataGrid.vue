@@ -476,9 +476,7 @@ function exitTransaction() {
   transactionActive.value = false;
 }
 
-function shouldUseTransaction(): boolean {
-  return props.editable && !!props.connectionId && !!props.database && !!props.tableMeta;
-}
+const useTransaction = computed(() => props.editable && !!props.connectionId && !!props.database && !!props.tableMeta);
 
 async function onToolbarRefresh() {
   if (transactionActive.value) {
@@ -795,7 +793,7 @@ function commitEdit() {
     if (!dirtyRows.value.has(item.sourceIndex)) dirtyRows.value.set(item.sourceIndex, new Map());
     dirtyRows.value.get(item.sourceIndex)!.set(col, newVal);
     // Enter transaction mode on first edit
-    if (shouldUseTransaction() && !transactionActive.value) {
+    if (useTransaction.value && !transactionActive.value) {
       enterTransaction();
     }
   } else {
@@ -828,7 +826,7 @@ function onEditKeydown(e: KeyboardEvent) {
 function addRow() {
   rowStatusFilter.value = rowStatusFilterAfterAddingRow(rowStatusFilter.value);
   newRows.value.push(props.result.columns.map(() => null));
-  if (shouldUseTransaction() && !transactionActive.value) {
+  if (useTransaction.value && !transactionActive.value) {
     enterTransaction();
   }
   const rowId = -newRows.value.length;
@@ -849,7 +847,7 @@ function applyDeleteRow(rowId: number) {
     deletedRows.value.add(item.sourceIndex);
   }
   if (editingCell.value?.rowId === rowId) editingCell.value = null;
-  if (shouldUseTransaction() && !transactionActive.value) {
+  if (useTransaction.value && !transactionActive.value) {
     enterTransaction();
   }
 }
@@ -904,7 +902,7 @@ async function saveChanges() {
   saveError.value = "";
   isSaving.value = true;
 
-  if (shouldUseTransaction() && props.connectionId && props.database) {
+  if (useTransaction.value && props.connectionId && props.database) {
     try {
       await api.executeInTransaction(props.connectionId, props.database, stmts, props.tableMeta?.schema);
     } catch (e: any) {
@@ -1272,7 +1270,7 @@ function escapeAndHighlightKeywords(s: string): string {
         <div v-if="hasData" class="flex-1 flex flex-col overflow-hidden">
           <!-- Transaction toolbar -->
           <div
-            v-if="shouldUseTransaction()"
+            v-if="useTransaction"
             class="flex items-center gap-1.5 px-2 py-1 border-b shrink-0"
             :class="transactionActive ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-muted/20'"
           >
