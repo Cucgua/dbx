@@ -99,6 +99,7 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
         .map(|row| TableInfo {
             name: row.get_string(0).unwrap_or("").to_string(),
             table_type: row.get_string(1).unwrap_or("TABLE").to_string(),
+            comment: None,
         })
         .collect())
 }

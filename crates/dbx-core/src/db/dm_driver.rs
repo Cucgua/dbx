@@ -110,6 +110,7 @@ pub fn list_tables(client: &DmClient, schema: &str) -> Result<Vec<TableInfo>, St
         .map(|r| TableInfo {
             name: r.first().cloned().unwrap_or_default(),
             table_type: r.get(1).cloned().unwrap_or_else(|| "TABLE".to_string()),
+            comment: None,
         })
         .collect())
 }

@@ -106,6 +106,7 @@ pub async fn list_tables(client: &mut SqlServerClient, schema: &str) -> Result<V
         .map(|row| TableInfo {
             name: row.get::<&str, _>(0).unwrap_or("").to_string(),
             table_type: row.get::<&str, _>(1).unwrap_or("BASE TABLE").to_string(),
+            comment: None,
         })
         .collect())
 }

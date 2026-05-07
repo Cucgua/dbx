@@ -47,6 +47,7 @@ pub async fn list_tables(pool: &SqlitePool, _schema: &str) -> Result<Vec<TableIn
             TableInfo {
                 name: row.get::<String, _>("name"),
                 table_type: if t == "view" { "VIEW".to_string() } else { "BASE TABLE".to_string() },
+                comment: None,
             }
         })
         .collect())

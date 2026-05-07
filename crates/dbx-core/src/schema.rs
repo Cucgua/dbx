@@ -9,7 +9,9 @@ pub fn duckdb_query_tables(con: &duckdb::Connection) -> Result<Vec<db::TableInfo
         "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'main' ORDER BY table_name"
     ).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |row| Ok(db::TableInfo { name: row.get::<_, String>(0)?, table_type: row.get::<_, String>(1)? }))
+        .query_map([], |row| {
+            Ok(db::TableInfo { name: row.get::<_, String>(0)?, table_type: row.get::<_, String>(1)?, comment: None })
+        })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }

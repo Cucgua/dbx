@@ -78,6 +78,7 @@ pub async fn list_tables(client: &mut GaussdbClient, schema: &str) -> Result<Vec
             TableInfo {
                 name: r.first().and_then(|v| v.clone()).unwrap_or_default(),
                 table_type: if raw_type.contains("VIEW") { "VIEW".to_string() } else { "TABLE".to_string() },
+                comment: None,
             }
         })
         .collect())

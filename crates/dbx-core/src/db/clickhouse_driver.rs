@@ -96,7 +96,11 @@ pub async fn list_tables(client: &ChClient, database: &str) -> Result<Vec<TableI
         .map(|row| {
             let engine = row.get(1).and_then(|v| v.as_str()).unwrap_or("");
             let table_type = if engine.contains("View") { "VIEW" } else { "BASE TABLE" };
-            TableInfo { name: row[0].as_str().unwrap_or("").to_string(), table_type: table_type.to_string() }
+            TableInfo {
+                name: row[0].as_str().unwrap_or("").to_string(),
+                table_type: table_type.to_string(),
+                comment: None,
+            }
         })
         .collect())
 }
