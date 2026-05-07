@@ -94,7 +94,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   reload: [];
-  paginate: [offset: number, limit: number, whereInput?: string];
+  paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
   sort: [column: string, direction: "asc" | "desc" | null, whereInput?: string];
 }>();
 
@@ -426,20 +426,24 @@ const wherePredicate = computed(() => normalizeWhereInput(searchText.value));
 const activeWhereInput = computed(() => (isWhereSearch.value && wherePredicate.value ? searchText.value : undefined));
 const clientSearchText = computed(() => (isWhereSearch.value ? "" : searchText.value));
 
+function currentOrderBy(): string | undefined {
+  return sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined;
+}
+
 function prevPage() {
   if (currentPage.value <= 1) return;
   currentPage.value--;
-  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value);
+  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value, currentOrderBy());
 }
 function nextPage() {
   if (!isFullPage.value) return;
   currentPage.value++;
-  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value);
+  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value, currentOrderBy());
 }
 function changePageSize(size: number) {
   pageSize.value = size;
   currentPage.value = 1;
-  emit("paginate", 0, size, activeWhereInput.value);
+  emit("paginate", 0, size, activeWhereInput.value, currentOrderBy());
 }
 
 // --- Editing ---

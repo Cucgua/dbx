@@ -40,7 +40,7 @@ const emit = defineEmits<{
   editorCursorChange: [pos: number];
   formatError: [];
   reload: [];
-  paginate: [offset: number, limit: number, whereInput?: string];
+  paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
   sort: [column: string, direction: "asc" | "desc" | null, whereInput?: string];
   executeSql: [sql: string];
   clickTable: [tableName: string];
@@ -341,7 +341,8 @@ function onHandleCloseColumnPanel() {
           :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
           @reload="emit('reload')"
           @paginate="
-            (offset: number, limit: number, whereInput?: string) => emit('paginate', offset, limit, whereInput)
+            (offset: number, limit: number, whereInput?: string, orderBy?: string) =>
+              emit('paginate', offset, limit, whereInput, orderBy)
           "
           @sort="
             (column: string, direction: 'asc' | 'desc' | null, whereInput?: string) =>

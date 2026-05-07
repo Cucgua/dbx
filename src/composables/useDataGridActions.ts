@@ -48,10 +48,10 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     queryStore.executeCurrentTab();
   }
 
-  async function onPaginate(offset: number, limit: number, whereInput?: string) {
+  async function onPaginate(offset: number, limit: number, whereInput?: string, orderBy?: string) {
     const tab = activeTab.value;
     if (!tab?.tableMeta) return;
-    const sql = buildTableSql(tab, { limit, offset, whereInput });
+    const sql = buildTableSql(tab, { limit, offset, whereInput, orderBy });
     queryStore.updateSql(tab.id, sql);
     await queryStore.executeCurrentTab();
   }
