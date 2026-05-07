@@ -648,12 +648,7 @@ watch(
                 <div class="space-y-2">
                   <Label>{{ t("settings.mcpToken") }}</Label>
                   <div class="flex gap-2">
-                    <Input
-                      :model-value="mcpHttpStatus.token"
-                      readonly
-                      type="password"
-                      class="h-9 font-mono text-xs"
-                    />
+                    <Input :model-value="mcpHttpStatus.token" readonly type="password" class="h-9 font-mono text-xs" />
                     <Button
                       variant="outline"
                       size="icon"
