@@ -40,6 +40,24 @@ pub fn connection_timeout() -> Duration {
     Duration::from_secs(CONNECTION_TIMEOUT_SECS)
 }
 
+const JS_MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+
+pub fn safe_i64_to_json(v: i64) -> serde_json::Value {
+    if v > JS_MAX_SAFE_INTEGER || v < -JS_MAX_SAFE_INTEGER {
+        serde_json::Value::String(v.to_string())
+    } else {
+        serde_json::Value::Number(v.into())
+    }
+}
+
+pub fn safe_u64_to_json(v: u64) -> serde_json::Value {
+    if v > JS_MAX_SAFE_INTEGER as u64 {
+        serde_json::Value::String(v.to_string())
+    } else {
+        serde_json::Value::Number(v.into())
+    }
+}
+
 pub fn tcp_probe_timeout() -> Duration {
     Duration::from_secs(TCP_PROBE_TIMEOUT_SECS)
 }

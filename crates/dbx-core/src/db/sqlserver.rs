@@ -62,7 +62,7 @@ fn row_to_json(row: &tiberius::Row) -> Vec<serde_json::Value> {
             } else if let Some(v) = row.try_get::<i32, _>(i).ok().flatten() {
                 serde_json::Value::Number(v.into())
             } else if let Some(v) = row.try_get::<i64, _>(i).ok().flatten() {
-                serde_json::Value::Number(v.into())
+                super::safe_i64_to_json(v)
             } else if let Some(v) = row.try_get::<f64, _>(i).ok().flatten() {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
             } else if let Some(v) = row.try_get::<bool, _>(i).ok().flatten() {
