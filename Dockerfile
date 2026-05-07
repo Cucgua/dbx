@@ -16,9 +16,10 @@ RUN pnpm build
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS backend
 ARG TARGETARCH
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN dpkg --add-architecture arm64 && dpkg --add-architecture amd64 \
+    && apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake pkg-config perl python3-pip gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu \
-    unixodbc-dev \
+    unixodbc-dev unixodbc-dev:arm64 unixodbc-dev:amd64 \
     && pip3 install --break-system-packages ziglang \
     && cargo install cargo-zigbuild \
     && rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
@@ -38,10 +39,13 @@ COPY src-tauri/build.rs src-tauri/
 COPY src-tauri/tauri.conf.json src-tauri/
 
 RUN case "$TARGETARCH" in \
-      amd64) rust_target=x86_64-unknown-linux-gnu ;; \
-      arm64) rust_target=aarch64-unknown-linux-gnu ;; \
+      amd64) rust_target=x86_64-unknown-linux-gnu; lib_arch=x86_64-linux-gnu ;; \
+      arm64) rust_target=aarch64-unknown-linux-gnu; lib_arch=aarch64-linux-gnu ;; \
       *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
     esac && \
+    LIBRARY_PATH="/usr/lib/$lib_arch" \
+    PKG_CONFIG_PATH="/usr/lib/$lib_arch/pkgconfig" \
+    PKG_CONFIG_SYSROOT_DIR="/" \
     cargo zigbuild --release -p dbx-web --target "$rust_target" || true
 
 # Copy real sources and rebuild (only application code recompiles)
@@ -49,10 +53,13 @@ COPY crates/ crates/
 COPY src-web/ src-web/
 
 RUN case "$TARGETARCH" in \
-      amd64) rust_target=x86_64-unknown-linux-gnu ;; \
-      arm64) rust_target=aarch64-unknown-linux-gnu ;; \
+      amd64) rust_target=x86_64-unknown-linux-gnu; lib_arch=x86_64-linux-gnu ;; \
+      arm64) rust_target=aarch64-unknown-linux-gnu; lib_arch=aarch64-linux-gnu ;; \
       *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
     esac && \
+    LIBRARY_PATH="/usr/lib/$lib_arch" \
+    PKG_CONFIG_PATH="/usr/lib/$lib_arch/pkgconfig" \
+    PKG_CONFIG_SYSROOT_DIR="/" \
     cargo zigbuild --release -p dbx-web --target "$rust_target" && \
     mkdir -p "/out/linux/$TARGETARCH" && \
     cp "/app/target/$rust_target/release/dbx-web" "/out/linux/$TARGETARCH/"
