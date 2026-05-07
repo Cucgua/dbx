@@ -16,17 +16,21 @@ RUN pnpm build
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS backend
 ARG TARGETARCH
 WORKDIR /app
-RUN dpkg --add-architecture arm64 \
-    && echo "deb [arch=arm64] http://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/arm64.list \
-    && echo "deb [arch=arm64] http://deb.debian.org/debian bookworm-updates main" >> /etc/apt/sources.list.d/arm64.list \
-    && echo "deb [arch=arm64] http://deb.debian.org/debian-security bookworm-security main" >> /etc/apt/sources.list.d/arm64.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake pkg-config perl python3-pip gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu \
-    unixodbc-dev unixodbc-dev:arm64 \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake pkg-config perl python3-pip gcc-aarch64-linux-gnu \
+    unixodbc-dev \
     && pip3 install --break-system-packages ziglang \
     && cargo install cargo-zigbuild \
     && rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /tmp/arm64-odbc && cd /tmp/arm64-odbc \
+    && curl -sLO http://deb.debian.org/debian/pool/main/u/unixodbc/libodbc2_2.3.11-2+deb12u1_arm64.deb \
+    && curl -sLO http://deb.debian.org/debian/pool/main/u/unixodbc/libodbcinst2_2.3.11-2+deb12u1_arm64.deb \
+    && curl -sLO http://deb.debian.org/debian/pool/main/u/unixodbc/unixodbc-dev_2.3.11-2+deb12u1_arm64.deb \
+    && dpkg -x libodbc2_*.deb / \
+    && dpkg -x libodbcinst2_*.deb / \
+    && dpkg -x unixodbc-dev_*.deb / \
+    && rm -rf /tmp/arm64-odbc
 
 # Copy dependency manifests only and create dummy sources to pre-compile dependencies.
 # This layer is cached by GHA as long as Cargo.toml/Cargo.lock don't change.
