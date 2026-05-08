@@ -287,6 +287,7 @@ mod tests {
             ssh_expose_lan: false,
             ssl: false,
             connection_string: None,
+            sysdba: false,
         }
     }
 
