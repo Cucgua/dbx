@@ -428,7 +428,7 @@ const activeCellDetail = computed(() => {
   if (!item || !column) return null;
   const value = item.data[cell.col] ?? null;
   const rawValue = formatCell(value);
-  const valueText = value === null ? "" : String(value);
+  const valueText = value === null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
   const trimmed = valueText.trim();
   const maybeJson = typeof value === "string" && (trimmed.startsWith("{") || trimmed.startsWith("["));
   let formattedJson = "";
@@ -578,7 +578,7 @@ function startEdit(rowId: number, colIdx: number) {
   isCancelling = false;
   editingCell.value = { rowId, col: colIdx };
   const val = item?.data[colIdx] ?? null;
-  editValue.value = val === null ? "" : String(val);
+  editValue.value = val === null ? "" : typeof val === "object" ? JSON.stringify(val) : String(val);
   nextTick(() => {
     const input = document.querySelector(".cell-edit-input") as HTMLInputElement;
     input?.focus();
