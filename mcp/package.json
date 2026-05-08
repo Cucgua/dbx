@@ -1,6 +1,6 @@
 {
   "name": "@dbx-app/mcp-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "mcpName": "io.github.t8y2/dbx",
   "description": "MCP server for DBX \u2014 query databases from Claude Code, Cursor, and other AI agents",
   "type": "module",

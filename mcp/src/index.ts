@@ -61,7 +61,7 @@ function mdTable(headers: string[], rows: string[][]): string {
 
 const server = new McpServer({
   name: "dbx",
-  version: "0.2.0",
+  version: "0.2.1",
 });
 
 server.tool(
