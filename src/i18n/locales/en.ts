@@ -532,6 +532,8 @@ export default {
     members: "{count} members",
     entries: "{count} entries",
     noExpiry: "no expiry",
+    binaryStringReadonlyHint:
+      "Binary string values are shown as escaped text in read-only mode; editing raw bytes is not supported.",
   },
   mongo: {
     documents: "{count} documents",

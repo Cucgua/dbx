@@ -288,6 +288,7 @@ mod tests {
             ssl: false,
             sysdba: false,
             connection_string: None,
+            sysdba: false,
         }
     }
 
