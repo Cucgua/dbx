@@ -13,7 +13,10 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     return quoteTableIdentifier(config?.db_type, name);
   }
 
-  function buildTableSql(tab: QueryTab, options: { orderBy?: string; limit?: number; offset?: number } = {}): string {
+  function buildTableSql(
+    tab: QueryTab,
+    options: { orderBy?: string; limit?: number; offset?: number; whereInput?: string } = {},
+  ): string {
     const config = connectionStore.getConfig(tab.connectionId);
     const fallbackOrderColumns =
       config?.db_type === "sqlserver" && !tab.tableMeta?.primaryKeys?.length
@@ -36,28 +39,33 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     await queryStore.executeTabSql(tab.id, sql);
   }
 
-  async function onReloadData() {
+  async function onReloadData(sql?: string, whereInput?: string) {
     const tab = activeTab.value;
     if (!tab) return;
     if (tab.mode === "data" && tab.tableMeta) {
-      queryStore.updateSql(tab.id, buildTableSql(tab));
+      queryStore.updateSql(tab.id, buildTableSql(tab, { whereInput }));
+      return queryStore.executeCurrentTab();
     }
-    queryStore.executeCurrentTab();
+    // Results mode: re-run only the SQL that produced the current result set
+    if (sql?.trim()) {
+      return queryStore.executeTabSql(tab.id, sql);
+    }
+    return queryStore.executeCurrentTab();
   }
 
-  async function onPaginate(offset: number, limit: number, orderBy?: string) {
+  async function onPaginate(offset: number, limit: number, whereInput?: string, orderBy?: string) {
     const tab = activeTab.value;
     if (!tab?.tableMeta) return;
-    const sql = buildTableSql(tab, { limit, offset, orderBy });
+    const sql = buildTableSql(tab, { limit, offset, whereInput, orderBy });
     queryStore.updateSql(tab.id, sql);
     await queryStore.executeCurrentTab();
   }
 
-  async function onSort(column: string, direction: "asc" | "desc" | null) {
+  async function onSort(column: string, direction: "asc" | "desc" | null, whereInput?: string) {
     const tab = activeTab.value;
     if (!tab?.tableMeta) return;
     const orderBy = direction ? `${quoteIdent(tab, column)} ${direction.toUpperCase()}` : undefined;
-    const sql = buildTableSql(tab, { orderBy });
+    const sql = buildTableSql(tab, { orderBy, whereInput });
     queryStore.updateSql(tab.id, sql);
     await queryStore.executeCurrentTab();
   }

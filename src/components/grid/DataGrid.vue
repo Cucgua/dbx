@@ -28,6 +28,8 @@ import {
   Info,
   Rows3,
   TriangleAlert,
+  RefreshCcw,
+  RotateCcw,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,7 +62,7 @@ import {
   type CellPosition,
   type CellSelectionRange,
 } from "@/lib/gridSelection";
-import { quoteTableIdentifier } from "@/lib/tableSelectSql";
+import { buildTableSelectSql, normalizeWhereInput, quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { buildDataGridSaveStatements, formatGridSqlLiteral } from "@/lib/dataGridSql";
 import { formatMarkdownTable } from "@/lib/markdownTable";
 import {
@@ -82,6 +84,7 @@ const props = defineProps<{
   databaseType?: DatabaseType;
   connectionId?: string;
   database?: string;
+  context?: "results" | "table-data";
   tableMeta?: {
     schema?: string;
     tableName: string;
@@ -93,9 +96,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  reload: [];
-  paginate: [offset: number, limit: number, orderBy?: string];
-  sort: [column: string, direction: "asc" | "desc" | null];
+  reload: [sql?: string, whereInput?: string];
+  paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
+  sort: [column: string, direction: "asc" | "desc" | null, whereInput?: string];
 }>();
 
 const hasData = computed(() => props.result.columns.length > 0);
@@ -202,14 +205,154 @@ const showTranspose = ref(false);
 const sortCol = ref<string | null>(null);
 const sortDir = ref<"asc" | "desc">("asc");
 const searchText = ref("");
+const searchSuggestions = ref<string[]>([]);
+const suggestionIndex = ref(-1);
+const searchInputRef = ref<HTMLInputElement>();
+const measureRef = ref<HTMLSpanElement>();
+const suggestionLeft = ref(0);
+
+function updateSuggestionPosition() {
+  nextTick(() => {
+    const input = searchInputRef.value;
+    const measure = measureRef.value;
+    if (!input || !measure) return;
+    const cursorPos = input.selectionStart ?? 0;
+    measure.textContent = searchText.value.slice(0, cursorPos);
+    suggestionLeft.value = measure.getBoundingClientRect().width;
+  });
+}
+
+watch(searchText, (val) => {
+  searchSuggestions.value = [];
+  if (!canUseWhereSearch.value || !props.tableMeta?.columns?.length) return;
+
+  const trimmed = val.trimStart();
+  const lower = trimmed.toLowerCase();
+
+  if (trimmed.length > 0 && lower !== "where" && "where".startsWith(lower)) {
+    searchSuggestions.value = ["WHERE "];
+    suggestionIndex.value = 0;
+    updateSuggestionPosition();
+    return;
+  }
+
+  const m = val.match(/^\s*where\s+(.+)$/i);
+  if (m) {
+    const lastToken = m[1].split(/[\s,()><=!]+/).pop() || "";
+    if (lastToken.length > 0) {
+      const tl = lastToken.toLowerCase();
+      searchSuggestions.value = props.tableMeta.columns
+        .map((c) => c.name)
+        .filter((n) => n.toLowerCase().startsWith(tl) && n.toLowerCase() !== tl)
+        .slice(0, 8);
+      suggestionIndex.value = 0;
+      updateSuggestionPosition();
+    }
+  }
+});
+
+function acceptSuggestion() {
+  const idx = suggestionIndex.value;
+  if (idx < 0 || idx >= searchSuggestions.value.length) return;
+  const sug = searchSuggestions.value[idx];
+
+  if (sug === "WHERE ") {
+    const trimmed = searchText.value.trimStart();
+    const leading = searchText.value.slice(0, searchText.value.length - trimmed.length);
+    searchText.value = leading + "WHERE ";
+  } else {
+    const lastWordMatch = searchText.value.match(/([^\s,()><=!]+)$/);
+    if (lastWordMatch) {
+      const lastWord = lastWordMatch[1];
+      const prefix = searchText.value.slice(0, -lastWord.length);
+      searchText.value = prefix + sug;
+    }
+  }
+  searchSuggestions.value = [];
+  suggestionIndex.value = -1;
+  searchInputRef.value?.focus();
+}
+
+function dismissSuggestions() {
+  searchSuggestions.value = [];
+  suggestionIndex.value = -1;
+}
+
+function navigateSuggestion(delta: number) {
+  if (searchSuggestions.value.length === 0) return;
+  suggestionIndex.value = Math.min(Math.max(suggestionIndex.value + delta, 0), searchSuggestions.value.length - 1);
+}
+
+const PAIRS: Record<string, string> = { "'": "'", '"': '"', "(": ")" };
 
 function onSearchKeydown(e: KeyboardEvent) {
+  if (e.key in PAIRS && !e.ctrlKey && !e.metaKey) {
+    const input = e.target as HTMLInputElement;
+    const start = input.selectionStart ?? 0;
+    const end = input.selectionEnd ?? 0;
+    const close = PAIRS[e.key];
+
+    if (start !== end) {
+      // Wrap selection: 'text' → 'text'
+      e.preventDefault();
+      const selected = searchText.value.slice(start, end);
+      searchText.value = searchText.value.slice(0, start) + e.key + selected + close + searchText.value.slice(end);
+      nextTick(() => {
+        input.setSelectionRange(start + 1 + selected.length, start + 1 + selected.length);
+      });
+      suggestionIndex.value = -1;
+      return;
+    }
+
+    if (e.key === close && searchText.value[start] === close) {
+      // Cursor before matching close char → skip over it (only for quotes)
+      e.preventDefault();
+      input.setSelectionRange(start + 1, start + 1);
+      return;
+    }
+
+    e.preventDefault();
+    searchText.value = searchText.value.slice(0, start) + e.key + close + searchText.value.slice(end);
+    nextTick(() => {
+      input.setSelectionRange(start + 1, start + 1);
+    });
+    suggestionIndex.value = -1;
+    return;
+  }
+
+  if (searchSuggestions.value.length > 0) {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      acceptSuggestion();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      dismissSuggestions();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateSuggestion(1);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateSuggestion(-1);
+      return;
+    }
+  }
+  if (e.key === "Enter") {
+    onSearchEnter(e);
+    return;
+  }
   if (e.key === "Escape") {
     searchText.value = "";
   }
 }
 
 const saveError = ref("");
+const isApplyingWhere = ref(false);
 const rowStatusFilter = ref<RowStatusFilter>("all");
 const columnWidths = ref<number[]>([]);
 const gridRef = ref<HTMLDivElement>();
@@ -280,7 +423,11 @@ watch(() => props.result.columns.length, initColumnWidths);
 const pageSize = ref(100);
 const currentPage = ref(1);
 const isFullPage = computed(() => props.result.rows.length >= pageSize.value);
-const clientSearchText = computed(() => searchText.value);
+const canUseWhereSearch = computed(() => !!props.tableMeta && !!props.onExecuteSql);
+const isWhereSearch = computed(() => canUseWhereSearch.value && /^\s*where\b/i.test(searchText.value));
+const wherePredicate = computed(() => normalizeWhereInput(searchText.value));
+const activeWhereInput = computed(() => (isWhereSearch.value && wherePredicate.value ? searchText.value : undefined));
+const clientSearchText = computed(() => (isWhereSearch.value ? "" : searchText.value));
 
 function currentOrderBy(): string | undefined {
   return sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined;
@@ -289,17 +436,17 @@ function currentOrderBy(): string | undefined {
 function prevPage() {
   if (currentPage.value <= 1) return;
   currentPage.value--;
-  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentOrderBy());
+  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value, currentOrderBy());
 }
 function nextPage() {
   if (!isFullPage.value) return;
   currentPage.value++;
-  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentOrderBy());
+  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value, currentOrderBy());
 }
 function changePageSize(size: number) {
   pageSize.value = size;
   currentPage.value = 1;
-  emit("paginate", 0, size, currentOrderBy());
+  emit("paginate", 0, size, activeWhereInput.value, currentOrderBy());
 }
 
 // --- Editing ---
@@ -335,7 +482,7 @@ async function onToolbarRefresh() {
   if (transactionActive.value) {
     discardChanges();
   }
-  emit("reload");
+  emit("reload", props.sql, searchText.value);
 }
 
 async function onToolbarCommit() {
@@ -457,16 +604,45 @@ function toggleSort(colName: string) {
   if (sortCol.value === colName) {
     if (sortDir.value === "asc") {
       sortDir.value = "desc";
-      emit("sort", colName, "desc");
+      emit("sort", colName, "desc", activeWhereInput.value);
     } else {
       sortCol.value = null;
       sortDir.value = "asc";
-      emit("sort", colName, null);
+      emit("sort", colName, null, activeWhereInput.value);
     }
   } else {
     sortCol.value = colName;
     sortDir.value = "asc";
-    emit("sort", colName, "asc");
+    emit("sort", colName, "asc", activeWhereInput.value);
+  }
+}
+
+function onSearchEnter(event: KeyboardEvent) {
+  if (!isWhereSearch.value) return;
+  event.preventDefault();
+  void applyWhereSearch();
+}
+
+async function applyWhereSearch() {
+  if (!props.tableMeta || !props.onExecuteSql || !wherePredicate.value) return;
+  isApplyingWhere.value = true;
+  saveError.value = "";
+  currentPage.value = 1;
+  try {
+    const sql = buildTableSelectSql({
+      databaseType: props.databaseType,
+      schema: props.tableMeta.schema,
+      tableName: props.tableMeta.tableName,
+      primaryKeys: props.tableMeta.primaryKeys,
+      orderBy: sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined,
+      limit: pageSize.value,
+      whereInput: searchText.value,
+    });
+    await props.onExecuteSql(sql);
+  } catch (e: any) {
+    saveError.value = String(e?.message || e);
+  } finally {
+    isApplyingWhere.value = false;
   }
 }
 
@@ -760,7 +936,7 @@ async function saveChanges() {
   deletedRows.value.clear();
   exitTransaction();
   isSaving.value = false;
-  emit("reload");
+  emit("reload", props.sql, searchText.value);
 }
 
 function discardChanges() {
@@ -1088,7 +1264,16 @@ function escapeAndHighlightKeywords(s: string): string {
     .replace(SQL_KEYWORDS, '<span class="ddl-kw">$1</span>');
 }
 
-defineExpose({ useTransaction, transactionActive, isSaving, onToolbarRefresh, onToolbarCommit, onToolbarRollback });
+defineExpose({
+  useTransaction,
+  transactionActive,
+  isSaving,
+  onToolbarRefresh,
+  onToolbarCommit,
+  onToolbarRollback,
+  showDdl,
+  toggleDdl,
+});
 </script>
 
 <template>
@@ -1097,17 +1282,80 @@ defineExpose({ useTransaction, transactionActive, isSaving, onToolbarRefresh, on
       <ContextMenuTrigger as-child>
         <div v-if="hasData" class="flex-1 flex flex-col overflow-hidden">
           <!-- Search bar -->
-          <div class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20">
-            <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <div
+            v-if="useTransaction || props.context === 'table-data'"
+            class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20 relative"
+          >
+            <Search
+              class="w-3.5 h-3.5 text-muted-foreground shrink-0"
+              :style="props.context === 'table-data' ? '' : 'visibility: hidden'"
+            />
             <input
+              ref="searchInputRef"
               v-model="searchText"
               autocapitalize="off"
               autocorrect="off"
               spellcheck="false"
               class="flex-1 h-5 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
-              :placeholder="t('grid.search')"
+              :placeholder="canUseWhereSearch ? t('grid.searchOrWhere') : t('grid.search')"
               @keydown="onSearchKeydown"
+              @click="updateSuggestionPosition"
+              :style="props.context === 'table-data' ? '' : 'visibility: hidden'"
             />
+            <span
+              ref="measureRef"
+              class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
+              aria-hidden="true"
+            />
+            <!-- Suggestion dropdown -->
+            <div
+              v-if="searchSuggestions.length > 0"
+              class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
+              :style="{ left: suggestionLeft + 24 + 'px' }"
+            >
+              <div
+                v-for="(sug, idx) in searchSuggestions"
+                :key="sug"
+                class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
+                :class="idx === suggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
+                @mousedown.prevent="
+                  suggestionIndex = idx;
+                  acceptSuggestion();
+                "
+                @mouseenter="suggestionIndex = idx"
+              >
+                <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
+                <span>{{ sug }}</span>
+              </div>
+            </div>
+            <Button
+              v-if="isWhereSearch"
+              variant="ghost"
+              size="sm"
+              class="h-5 text-xs px-1.5 shrink-0"
+              :disabled="isApplyingWhere || !wherePredicate"
+              @click="applyWhereSearch"
+            >
+              <Loader2 v-if="isApplyingWhere" class="w-3 h-3 mr-1 animate-spin" />
+              <Search v-else class="w-3 h-3 mr-1" />
+              {{ t("grid.applyWhere") }}
+            </Button>
+            <span v-if="hasActiveFilter" class="text-xs text-muted-foreground">
+              {{ displayItems.length }}/{{ totalFilterableRowCount }}
+            </span>
+            <span
+              v-if="transactionActive"
+              class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1"
+            >
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              {{ t("grid.transactionActive") }}
+            </span>
+
+            <Button variant="ghost" size="sm" class="h-5 text-xs px-1.5" :disabled="isSaving" @click="onToolbarRefresh">
+              <Loader2 v-if="loading" class="w-3 h-3 mr-1 animate-spin" />
+              <RefreshCcw v-else class="w-3 h-3 mr-1" />
+              {{ t("grid.refresh") }}
+            </Button>
             <Select
               v-if="editable && tableMeta"
               :model-value="rowStatusFilter"
@@ -1124,9 +1372,6 @@ defineExpose({ useTransaction, transactionActive, isSaving, onToolbarRefresh, on
                 <SelectItem value="deleted">{{ t("grid.statusDeleted") }}</SelectItem>
               </SelectContent>
             </Select>
-            <span v-if="hasActiveFilter" class="text-xs text-muted-foreground">
-              {{ displayItems.length }}/{{ totalFilterableRowCount }}
-            </span>
             <Button
               v-if="editable && tableMeta"
               variant="ghost"
@@ -1137,14 +1382,25 @@ defineExpose({ useTransaction, transactionActive, isSaving, onToolbarRefresh, on
               <Plus class="w-3 h-3 mr-1" /> {{ t("grid.addRow") }}
             </Button>
             <Button
-              v-if="tableMeta && connectionId"
-              variant="ghost"
+              :variant="transactionActive ? 'default' : 'secondary'"
               size="sm"
-              class="h-5 text-xs px-1.5 shrink-0"
-              :class="{ 'bg-accent': showDdl }"
-              @click="toggleDdl"
+              class="h-5 text-xs px-1.5"
+              :disabled="!transactionActive || isSaving"
+              @click="onToolbarCommit"
             >
-              <Code2 class="w-3 h-3 mr-1" /> DDL
+              <Loader2 v-if="isSaving" class="w-3 h-3 mr-1 animate-spin" />
+              <Save v-else class="w-3 h-3 mr-1" />
+              {{ t("grid.commit") }}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-5 text-xs px-1.5"
+              :disabled="!transactionActive"
+              @click="onToolbarRollback"
+            >
+              <RotateCcw class="w-3 h-3 mr-1" />
+              {{ t("grid.rollback") }}
             </Button>
           </div>
           <!-- Content area: table + DDL drawer -->
