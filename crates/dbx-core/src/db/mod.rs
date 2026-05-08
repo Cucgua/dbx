@@ -6,6 +6,7 @@ pub mod file_validator;
 pub mod gaussdb_driver;
 pub mod mongo_driver;
 pub mod mysql;
+pub mod ob_oracle;
 pub mod oracle_driver;
 pub mod postgres;
 pub mod redis_driver;

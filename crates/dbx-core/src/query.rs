@@ -154,9 +154,9 @@ pub async fn do_execute(
             })
             .await
         }
-        PoolKind::Mysql(p, bare) => {
+        PoolKind::Mysql(p, mode) => {
             let p = p.clone();
-            let bare = *bare;
+            let bare = *mode == crate::connection::MysqlMode::Bare;
             drop(connections);
             wait_for_query(cancel_token, db::mysql::execute_query(&p, sql, bare)).await.map(truncate_result)
         }
@@ -396,7 +396,7 @@ pub async fn execute_statements_in_transaction(
         let conns = state.connections.lock().await;
         conns.get(&pool_key).map(|p| match p {
             PoolKind::Postgres(pg) => TxPath::Pg(pg.clone()),
-            PoolKind::Mysql(mp, bare) => TxPath::Mysql(mp.clone(), *bare),
+            PoolKind::Mysql(mp, _mode) => TxPath::Mysql(mp.clone(), false),
             PoolKind::Sqlite(sq) => TxPath::Sqlite(sq.clone()),
             PoolKind::ClickHouse(_) | PoolKind::SqlServer(_) | PoolKind::Dameng(_) | PoolKind::Gaussdb(_) => {
                 TxPath::Explicit

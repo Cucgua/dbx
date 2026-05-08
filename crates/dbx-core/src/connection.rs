@@ -17,8 +17,15 @@ pub fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MysqlMode {
+    Normal,
+    Bare,
+    OceanBaseOracle,
+}
+
 pub enum PoolKind {
-    Mysql(sqlx::mysql::MySqlPool, bool),
+    Mysql(sqlx::mysql::MySqlPool, MysqlMode),
     Postgres(sqlx::postgres::PgPool),
     Sqlite(sqlx::sqlite::SqlitePool),
     Redis(tokio::sync::Mutex<redis::aio::MultiplexedConnection>),
@@ -111,11 +118,15 @@ impl AppState {
         let url = connection_url_for_endpoint(&db_config, &host, port);
         let pool = match db_config.db_type {
             DatabaseType::Mysql if db_config.needs_bare_mysql() => {
-                PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true)
+                PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
             }
-            DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, false),
+            DatabaseType::Mysql => {
+                let pool = db::mysql::connect(&url).await?;
+                let mode = detect_ob_oracle_mode(&db_config, &pool).await;
+                PoolKind::Mysql(pool, mode)
+            }
             DatabaseType::Doris | DatabaseType::StarRocks => {
-                PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true)
+                PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
             }
             DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
             DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?),
@@ -286,5 +297,19 @@ pub async fn probe_connection_endpoint(config: &ConnectionConfig, host: &str, po
         DatabaseType::Sqlite | DatabaseType::DuckDb => Ok(()),
         DatabaseType::MongoDb if config.connection_string.as_deref().is_some_and(|value| !value.is_empty()) => Ok(()),
         _ => db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port).await,
+    }
+}
+
+async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &sqlx::mysql::MySqlPool) -> MysqlMode {
+    let profile = config.driver_profile.as_deref().unwrap_or("").to_lowercase();
+    if !profile.contains("oceanbase") {
+        return MysqlMode::Normal;
+    }
+    match sqlx::query_as::<_, (String, String)>("SHOW VARIABLES LIKE 'ob_compatibility_mode'")
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(Some((_, val))) if val.to_lowercase() == "oracle" => MysqlMode::OceanBaseOracle,
+        _ => MysqlMode::Normal,
     }
 }

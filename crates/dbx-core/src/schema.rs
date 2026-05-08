@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::connection::{AppState, PoolKind};
+use crate::connection::{AppState, MysqlMode, PoolKind};
 use crate::db;
 
 pub fn duckdb_query_tables(con: &duckdb::Connection) -> Result<Vec<db::TableInfo>, String> {
@@ -155,7 +155,13 @@ pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Resul
     let pool = connections.get(connection_id).ok_or("Connection not found")?;
 
     match pool {
-        PoolKind::Mysql(p, _) => db::mysql::list_databases(p).await,
+        PoolKind::Mysql(p, mode) => {
+            if *mode == MysqlMode::OceanBaseOracle {
+                db::ob_oracle::list_databases(p).await
+            } else {
+                db::mysql::list_databases(p).await
+            }
+        }
         PoolKind::Postgres(p) => db::postgres::list_databases(p).await,
         PoolKind::Sqlite(p) => db::sqlite::list_databases(p).await,
         PoolKind::DuckDb(_) => Ok(vec![db::DatabaseInfo { name: "main".to_string() }]),
@@ -244,7 +250,13 @@ pub async fn list_tables_core(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p, _) => db::mysql::list_tables(p, schema).await,
+        PoolKind::Mysql(p, mode) => {
+            if *mode == MysqlMode::OceanBaseOracle {
+                db::ob_oracle::list_tables(p, schema).await
+            } else {
+                db::mysql::list_tables(p, schema).await
+            }
+        }
         PoolKind::Postgres(p) => db::postgres::list_tables(p, schema).await,
         PoolKind::Sqlite(p) => db::sqlite::list_tables(p, schema).await,
         _ => Ok(vec![]),
@@ -297,7 +309,13 @@ pub async fn get_columns_core(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p, _) => db::mysql::get_columns(p, database, table).await,
+        PoolKind::Mysql(p, mode) => {
+            if *mode == MysqlMode::OceanBaseOracle {
+                db::ob_oracle::get_columns(p, database, table).await
+            } else {
+                db::mysql::get_columns(p, database, table).await
+            }
+        }
         PoolKind::Postgres(p) => db::postgres::get_columns(p, schema, table).await,
         PoolKind::Sqlite(p) => db::sqlite::get_columns(p, schema, table).await,
         _ => Ok(vec![]),
@@ -341,7 +359,13 @@ pub async fn list_indexes_core(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p, _) => db::mysql::list_indexes(p, schema, table).await,
+        PoolKind::Mysql(p, mode) => {
+            if *mode == MysqlMode::OceanBaseOracle {
+                db::ob_oracle::list_indexes(p, schema, table).await
+            } else {
+                db::mysql::list_indexes(p, schema, table).await
+            }
+        }
         PoolKind::Postgres(p) => db::postgres::list_indexes(p, schema, table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_indexes(p, schema, table).await,
         _ => Ok(vec![]),
@@ -385,7 +409,13 @@ pub async fn list_foreign_keys_core(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p, _) => db::mysql::list_foreign_keys(p, schema, table).await,
+        PoolKind::Mysql(p, mode) => {
+            if *mode == MysqlMode::OceanBaseOracle {
+                db::ob_oracle::list_foreign_keys(p, schema, table).await
+            } else {
+                db::mysql::list_foreign_keys(p, schema, table).await
+            }
+        }
         PoolKind::Postgres(p) => db::postgres::list_foreign_keys(p, schema, table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_foreign_keys(p, schema, table).await,
         _ => Ok(vec![]),
@@ -429,7 +459,13 @@ pub async fn list_triggers_core(
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
-        PoolKind::Mysql(p, _) => db::mysql::list_triggers(p, schema, table).await,
+        PoolKind::Mysql(p, mode) => {
+            if *mode == MysqlMode::OceanBaseOracle {
+                db::ob_oracle::list_triggers(p, schema, table).await
+            } else {
+                db::mysql::list_triggers(p, schema, table).await
+            }
+        }
         PoolKind::Postgres(p) => db::postgres::list_triggers(p, schema, table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_triggers(p, schema, table).await,
         _ => Ok(vec![]),

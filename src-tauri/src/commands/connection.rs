@@ -3,7 +3,7 @@ use tauri::State;
 
 pub use dbx_core::connection::{
     connection_url_for_endpoint, expand_tilde, probe_connection_endpoint, redacted_connection_url_for_endpoint,
-    AppState, PoolKind,
+    AppState, MysqlMode, PoolKind,
 };
 use dbx_core::db;
 use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
@@ -149,9 +149,13 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
     let url = connection_url_for_endpoint(&config, &host, port);
 
     let pool = match config.db_type {
-        DatabaseType::Mysql if config.needs_bare_mysql() => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
-        DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, false),
-        DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(db::mysql::connect_bare(&url).await?, true),
+        DatabaseType::Mysql if config.needs_bare_mysql() => {
+            PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
+        }
+        DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, MysqlMode::Normal),
+        DatabaseType::Doris | DatabaseType::StarRocks => {
+            PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
+        }
         DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
         DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&config.host)).await?),
         DatabaseType::Redis => {

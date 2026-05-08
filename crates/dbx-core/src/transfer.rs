@@ -473,9 +473,9 @@ pub async fn execute_on_pool(state: &AppState, pool_key: &str, sql: &str) -> Res
     let pool = connections.get(pool_key).ok_or("Connection not found")?;
 
     match pool {
-        PoolKind::Mysql(p, bare) => {
+        PoolKind::Mysql(p, mode) => {
             let p = p.clone();
-            let bare = *bare;
+            let bare = *mode == crate::connection::MysqlMode::Bare;
             drop(connections);
             db::mysql::execute_query(&p, sql, bare).await
         }
