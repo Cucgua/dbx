@@ -336,8 +336,8 @@ function onHandleCloseColumnPanel() {
           <span
             class="inline-flex items-center rounded border border-border bg-muted/30 px-2 py-0.5 text-muted-foreground truncate"
           >
-            {{ databaseDisplayNameForTab(activeTab.connectionId, activeTab.database) }}
-            <template v-if="activeTab.tableMeta?.schema"> &middot; {{ activeTab.tableMeta.schema }}</template>
+            <template v-if="activeTab.tableMeta?.schema">{{ activeTab.tableMeta.schema }}@</template
+            >{{ databaseDisplayNameForTab(activeTab.connectionId, activeTab.database) }}
           </span>
           <span v-if="activeTab.tableMeta" class="ml-auto text-muted-foreground">
             {{ activeTab.tableMeta.columns.length }} {{ t("tree.columns") }}

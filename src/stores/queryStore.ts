@@ -332,7 +332,7 @@ export const useQueryStore = defineStore("query", () => {
         current.results = undefined;
         current.activeResultIndex = undefined;
         current.queryAnalysis = undefined;
-        current.tableMeta = undefined;
+        if (current.mode !== "data") current.tableMeta = undefined;
         current.resultBaseSql = options?.resultBaseSql ?? sql;
         current.resultSortedSql = options?.resultSortedSql;
       }

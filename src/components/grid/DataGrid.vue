@@ -432,6 +432,11 @@ const wherePredicate = computed(() => (canUseWhereSearch.value ? normalizeWhereI
 const activeWhereInput = computed(() => (isWhereSearch.value && wherePredicate.value ? searchText.value : undefined));
 const clientSearchText = computed(() => (isWhereSearch.value ? "" : searchText.value));
 
+const orderByInput = ref("");
+const hasOrderByInput = computed(() => orderByInput.value.trim().length > 0);
+const whereFilterInput = ref("");
+const hasWhereFilterInput = computed(() => whereFilterInput.value.trim().length > 0);
+
 function currentOrderBy(): string | undefined {
   return sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined;
 }
@@ -642,6 +647,58 @@ async function applyWhereSearch() {
       orderBy: sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined,
       limit: pageSize.value,
       whereInput: searchText.value,
+    });
+    await props.onExecuteSql(sql);
+  } catch (e: any) {
+    saveError.value = String(e?.message || e);
+  } finally {
+    isApplyingWhere.value = false;
+  }
+}
+
+async function applyOrderBySearch() {
+  if (!props.tableMeta || !props.onExecuteSql) return;
+  const orderByClause = orderByInput.value.trim() || undefined;
+  isApplyingWhere.value = true;
+  saveError.value = "";
+  currentPage.value = 1;
+  sortCol.value = null;
+  sortColIndex.value = null;
+  sortDir.value = "asc";
+  try {
+    const sql = buildTableSelectSql({
+      databaseType: props.databaseType,
+      schema: props.tableMeta.schema,
+      tableName: props.tableMeta.tableName,
+      primaryKeys: props.tableMeta.primaryKeys,
+      orderBy: orderByClause,
+      limit: pageSize.value,
+      whereInput: whereFilterInput.value.trim() || undefined,
+    });
+    await props.onExecuteSql(sql);
+  } catch (e: any) {
+    saveError.value = String(e?.message || e);
+  } finally {
+    isApplyingWhere.value = false;
+  }
+}
+
+async function applyWhereFilter() {
+  if (!props.tableMeta || !props.onExecuteSql) return;
+  isApplyingWhere.value = true;
+  saveError.value = "";
+  currentPage.value = 1;
+  try {
+    const sql = buildTableSelectSql({
+      databaseType: props.databaseType,
+      schema: props.tableMeta.schema,
+      tableName: props.tableMeta.tableName,
+      primaryKeys: props.tableMeta.primaryKeys,
+      orderBy:
+        orderByInput.value.trim() ||
+        (sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined),
+      limit: pageSize.value,
+      whereInput: whereFilterInput.value.trim() || undefined,
     });
     await props.onExecuteSql(sql);
   } catch (e: any) {
@@ -1297,71 +1354,114 @@ defineExpose({
   <div ref="gridRef" class="h-full flex flex-col overflow-hidden" :style="columnVars">
     <ContextMenu>
       <ContextMenuTrigger as-child>
-        <div v-if="hasData" class="flex-1 flex flex-col overflow-hidden">
+        <div v-if="hasData || canUseWhereSearch" class="flex-1 flex flex-col overflow-hidden">
           <!-- Search bar -->
-          <div class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20 relative">
-            <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            <input
-              ref="searchInputRef"
-              v-model="searchText"
-              autocapitalize="off"
-              autocorrect="off"
-              spellcheck="false"
-              class="flex-1 h-5 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
-              :placeholder="canUseWhereSearch ? t('grid.searchOrWhere') : t('grid.search')"
-              @keydown="onSearchKeydown"
-              @click="updateSuggestionPosition"
-            />
-            <span
-              ref="measureRef"
-              class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
-              aria-hidden="true"
-            />
-            <!-- Suggestion dropdown -->
-            <div
-              v-if="searchSuggestions.length > 0"
-              class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
-              :style="{ left: suggestionLeft + 24 + 'px' }"
-            >
+          <div class="flex items-center border-b shrink-0 bg-muted/20 relative">
+            <div class="flex-1 flex items-center gap-1 px-2 py-1 min-w-0">
+              <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <input
+                ref="searchInputRef"
+                v-model="searchText"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
+                :placeholder="t('grid.search')"
+                @keydown="onSearchKeydown"
+                @click="updateSuggestionPosition"
+              />
+              <span
+                ref="measureRef"
+                class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
+                aria-hidden="true"
+              />
+              <!-- Suggestion dropdown -->
               <div
-                v-for="(sug, idx) in searchSuggestions"
-                :key="sug"
-                class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
-                :class="idx === suggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
-                @mousedown.prevent="
-                  suggestionIndex = idx;
-                  acceptSuggestion();
-                "
-                @mouseenter="suggestionIndex = idx"
+                v-if="searchSuggestions.length > 0"
+                class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
+                :style="{ left: suggestionLeft + 24 + 'px' }"
               >
-                <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
-                <span>{{ sug }}</span>
+                <div
+                  v-for="(sug, idx) in searchSuggestions"
+                  :key="sug"
+                  class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
+                  :class="idx === suggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
+                  @mousedown.prevent="
+                    suggestionIndex = idx;
+                    acceptSuggestion();
+                  "
+                  @mouseenter="suggestionIndex = idx"
+                >
+                  <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
+                  <span>{{ sug }}</span>
+                </div>
               </div>
+              <span v-if="hasActiveFilter" class="text-xs text-muted-foreground shrink-0 px-1">
+                {{ displayItems.length }}/{{ totalFilterableRowCount }}
+              </span>
+              <span
+                v-if="transactionActive"
+                class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1 shrink-0 px-1"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {{ t("grid.transactionActive") }}
+              </span>
             </div>
+
+            <template v-if="canUseWhereSearch">
+              <div class="flex-1 flex items-center gap-1 px-2 py-1 border-l min-w-0">
+                <span class="text-foreground/60 text-xs font-medium select-none shrink-0">WHERE</span>
+                <input
+                  v-model="whereFilterInput"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  spellcheck="false"
+                  class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
+                  placeholder="id > 100"
+                  @keydown.enter.prevent="applyWhereFilter"
+                />
+                <button
+                  v-if="hasWhereFilterInput"
+                  class="text-muted-foreground hover:text-foreground shrink-0"
+                  @click="
+                    whereFilterInput = '';
+                    applyWhereFilter();
+                  "
+                >
+                  <X class="w-3 h-3" />
+                </button>
+              </div>
+              <div class="flex-1 flex items-center gap-1 px-2 py-1 border-l border-r min-w-0">
+                <span class="text-foreground/60 text-xs font-medium select-none shrink-0">ORDER BY</span>
+                <input
+                  v-model="orderByInput"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  spellcheck="false"
+                  class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
+                  placeholder="column desc"
+                  @keydown.enter.prevent="applyOrderBySearch"
+                />
+                <button
+                  v-if="hasOrderByInput"
+                  class="text-muted-foreground hover:text-foreground shrink-0"
+                  @click="
+                    orderByInput = '';
+                    applyOrderBySearch();
+                  "
+                >
+                  <X class="w-3 h-3" />
+                </button>
+              </div>
+            </template>
+
             <Button
-              v-if="isWhereSearch"
               variant="ghost"
               size="sm"
               class="h-5 text-xs px-1.5 shrink-0"
-              :disabled="isApplyingWhere || !wherePredicate"
-              @click="applyWhereSearch"
+              :disabled="isSaving"
+              @click="onToolbarRefresh"
             >
-              <Loader2 v-if="isApplyingWhere" class="w-3 h-3 mr-1 animate-spin" />
-              <Search v-else class="w-3 h-3 mr-1" />
-              {{ t("grid.applyWhere") }}
-            </Button>
-            <span v-if="hasActiveFilter" class="text-xs text-muted-foreground">
-              {{ displayItems.length }}/{{ totalFilterableRowCount }}
-            </span>
-            <span
-              v-if="transactionActive"
-              class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1"
-            >
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              {{ t("grid.transactionActive") }}
-            </span>
-
-            <Button variant="ghost" size="sm" class="h-5 text-xs px-1.5" :disabled="isSaving" @click="onToolbarRefresh">
               <Loader2 v-if="loading" class="w-3 h-3 mr-1 animate-spin" />
               <RefreshCcw v-else class="w-3 h-3 mr-1" />
               {{ t("grid.refresh") }}
