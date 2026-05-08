@@ -55,7 +55,6 @@ pub async fn list_schemas(client: &mut GaussdbClient) -> Result<Vec<String>, Str
              WHERE nspname NOT LIKE 'pg_%' \
              AND nspname NOT IN ('information_schema', 'cstore', 'snapshot', 'db4ai', 'dbe_perf', \
                'dbe_pldebugger', 'dbe_pldeveloper', 'pkg_service', 'pkg_util', 'sqladvisor', 'blockchain') \
-             AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c WHERE c.relnamespace = n.oid AND c.relkind IN ('r', 'v', 'm')) \
              ORDER BY nspname",
         )
         .await
