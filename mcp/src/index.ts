@@ -159,6 +159,7 @@ server.tool(
       name, db_type, host, port, username, password,
       database, ssl, ssh_enabled: false,
     } as Omit<ConnectionConfig, "id">);
+    await notifyReload();
     return text(`Connection "${config.name}" added (id: ${config.id}).`);
   },
 );
@@ -172,6 +173,7 @@ server.tool(
   async ({ connection_name }) => {
     const removed = await backend.removeConnection(connection_name);
     if (!removed) return text(`Connection "${connection_name}" not found.`);
+    await notifyReload();
     return text(`Connection "${connection_name}" removed.`);
   },
 );
@@ -198,6 +200,13 @@ async function getBridgeUrl(): Promise<string> {
   const portFile = join(appDataDir(), "mcp-bridge-port");
   const port = (await readFile(portFile, "utf-8")).trim();
   return `http://127.0.0.1:${port}`;
+}
+
+async function notifyReload(): Promise<void> {
+  try {
+    const bridgeUrl = await getBridgeUrl();
+    await fetch(`${bridgeUrl}/reload-connections`, { method: "POST" });
+  } catch {}
 }
 
 // Desktop-only tools: open table and execute-and-show require the Tauri bridge
