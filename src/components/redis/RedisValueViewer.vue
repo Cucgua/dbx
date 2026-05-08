@@ -165,7 +165,7 @@ onMounted(load);
 
     <template v-else-if="data">
       <!-- Header -->
-      <div class="flex items-center gap-2 px-4 py-2 border-b bg-muted/30 shrink-0">
+      <div class="h-9 flex items-center gap-2 px-4 border-b bg-muted/30 shrink-0">
         <span class="font-mono text-sm font-medium truncate">{{ data.key_display }}</span>
         <Badge variant="secondary" class="text-xs">{{ data.key_type }}</Badge>
         <Badge v-if="data.ttl > 0" variant="outline" class="text-xs">TTL: {{ data.ttl }}s</Badge>
