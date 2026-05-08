@@ -38,7 +38,7 @@ fn value_to_json(val: &rust_oracle::Value) -> serde_json::Value {
 }
 
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
-    log::debug!("[oracle] list_databases: querying all_users");
+    log::info!("[oracle] list_databases: START");
     let result = conn
         .query(
             "SELECT username FROM all_users \
@@ -49,11 +49,15 @@ pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, St
         )
         .await;
 
+    log::info!("[oracle] list_databases: primary done, ok={}", result.is_ok());
+
     let result = match result {
         Ok(r) => r,
-        Err(_) => conn
-            .query(
-                "SELECT username FROM all_users \
+        Err(e) => {
+            log::info!("[oracle] list_databases: primary err={e}, trying fallback...");
+            let r = conn
+                .query(
+                    "SELECT username FROM all_users \
                  WHERE username NOT IN (\
                    'SYS','SYSTEM','SYSMAN','DBSNMP','SYSBACKUP','SYSDG','SYSKM','OUTLN',\
                    'AUDSYS','LBACSYS','DVF','DVSYS','APPQOSSYS','CTXSYS','MDSYS','MDDATA',\
@@ -63,15 +67,18 @@ pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, St
                    'REMOTE_SCHEDULER_AGENT','PDBADMIN','DGPDB_INT','OPS$ORACLE',\
                    'GGSYS','FLOWS_FILES','APEX_PUBLIC_USER'\
                  ) ORDER BY username",
-                &[],
-            )
-            .await
-            .map_err(|e| {
-                log::error!("[oracle] list_databases failed: {e}");
+                    &[],
+                )
+                .await;
+            log::info!("[oracle] list_databases: fallback done, ok={}", r.is_ok());
+            r.map_err(|e| {
+                log::error!("[oracle] list_databases fallback err: {e}");
                 e.to_string()
-            })?,
+            })?
+        }
     };
 
+    log::info!("[oracle] list_databases: DONE, {} rows", result.rows.len());
     Ok(result.rows.iter().map(|row| DatabaseInfo { name: row.get_string(0).unwrap_or("").to_string() }).collect())
 }
 

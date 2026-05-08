@@ -1,0 +1,69 @@
+name: Auto Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr.diff
+          # Truncate to ~30k chars to stay within LLM context
+          head -c 30000 /tmp/pr.diff > /tmp/pr_truncated.diff
+
+      - name: Review with DeepSeek
+        id: review
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          DIFF=$(cat /tmp/pr_truncated.diff | jq -Rs .)
+          TITLE=$(echo '${{ github.event.pull_request.title }}' | jq -Rs .)
+          BODY=$(echo '${{ github.event.pull_request.body }}' | head -c 2000 | jq -Rs .)
+
+          RESPONSE=$(curl -s https://api.deepseek.com/chat/completions \
+            -H "Authorization: Bearer ${DEEPSEEK_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"model\": \"deepseek-chat\",
+              \"messages\": [
+                {
+                  \"role\": \"system\",
+                  \"content\": \"你是一个专业的代码审查员。请审查以下 Pull Request 的代码变更，给出简洁的中文评审意见。重点关注：1. 潜在的 bug 或逻辑错误 2. 安全问题 3. 性能问题 4. 代码风格和可读性。如果代码没有问题，简单说 LGTM 并给出简短总结。不要逐行重复代码。\"
+                },
+                {
+                  \"role\": \"user\",
+                  \"content\": \"PR 标题: ${TITLE}\n\nPR 描述: ${BODY}\n\n代码变更:\n${DIFF}\"
+                }
+              ],
+              \"max_tokens\": 2000
+            }")
+
+          REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "审查失败，请手动检查。"')
+
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "comment<<$EOF" >> "$GITHUB_OUTPUT"
+          echo "$REVIEW" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Post review comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "$(cat <<'EOF'
+          🤖 **Auto Review by DeepSeek**
+
+          ${{ steps.review.outputs.comment }}
+          EOF
+          )"
