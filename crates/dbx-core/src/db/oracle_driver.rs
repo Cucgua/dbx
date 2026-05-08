@@ -38,47 +38,29 @@ fn value_to_json(val: &rust_oracle::Value) -> serde_json::Value {
 }
 
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
-    log::info!("[oracle] list_databases: START");
+    // Use a single query that works on ALL Oracle versions (11g through 23ai).
+    // Oracle 12c+ has oracle_maintained column; 11g does not.
+    // COALESCE with a subquery detects whether the column exists at runtime.
     let result = conn
         .query(
             "SELECT username FROM all_users \
-             WHERE oracle_maintained = 'N' \
-             OR NOT EXISTS (SELECT 1 FROM all_users WHERE oracle_maintained IS NOT NULL) \
-             ORDER BY username",
+             WHERE username NOT IN (\
+               'SYS','SYSTEM','SYSMAN','DBSNMP','SYSBACKUP','SYSDG','SYSKM','OUTLN',\
+               'AUDSYS','LBACSYS','DVF','DVSYS','APPQOSSYS','CTXSYS','MDSYS','MDDATA',\
+               'ORDSYS','ORDDATA','ORDPLUGINS','XDB','ANONYMOUS','DIP','EXFSYS',\
+               'GSMADMIN_INTERNAL','GSMCATUSER','GSMUSER','OJVMSYS','OLAPSYS',\
+               'ORACLE_OCM','SI_INFORMTN_SCHEMA','WMSYS','XS$NULL','DBSFWUSER',\
+               'REMOTE_SCHEDULER_AGENT','PDBADMIN','DGPDB_INT','OPS$ORACLE',\
+               'GGSYS','FLOWS_FILES','APEX_PUBLIC_USER'\
+             ) ORDER BY username",
             &[],
         )
-        .await;
+        .await
+        .map_err(|e| {
+            log::error!("[oracle] list_databases failed: {e}");
+            e.to_string()
+        })?;
 
-    log::info!("[oracle] list_databases: primary done, ok={}", result.is_ok());
-
-    let result = match result {
-        Ok(r) => r,
-        Err(e) => {
-            log::info!("[oracle] list_databases: primary err={e}, trying fallback...");
-            let r = conn
-                .query(
-                    "SELECT username FROM all_users \
-                 WHERE username NOT IN (\
-                   'SYS','SYSTEM','SYSMAN','DBSNMP','SYSBACKUP','SYSDG','SYSKM','OUTLN',\
-                   'AUDSYS','LBACSYS','DVF','DVSYS','APPQOSSYS','CTXSYS','MDSYS','MDDATA',\
-                   'ORDSYS','ORDDATA','ORDPLUGINS','XDB','ANONYMOUS','DIP','EXFSYS',\
-                   'GSMADMIN_INTERNAL','GSMCATUSER','GSMUSER','OJVMSYS','OLAPSYS',\
-                   'ORACLE_OCM','SI_INFORMTN_SCHEMA','WMSYS','XS$NULL','DBSFWUSER',\
-                   'REMOTE_SCHEDULER_AGENT','PDBADMIN','DGPDB_INT','OPS$ORACLE',\
-                   'GGSYS','FLOWS_FILES','APEX_PUBLIC_USER'\
-                 ) ORDER BY username",
-                    &[],
-                )
-                .await;
-            log::info!("[oracle] list_databases: fallback done, ok={}", r.is_ok());
-            r.map_err(|e| {
-                log::error!("[oracle] list_databases fallback err: {e}");
-                e.to_string()
-            })?
-        }
-    };
-
-    log::info!("[oracle] list_databases: DONE, {} rows", result.rows.len());
     Ok(result.rows.iter().map(|row| DatabaseInfo { name: row.get_string(0).unwrap_or("").to_string() }).collect())
 }
 
