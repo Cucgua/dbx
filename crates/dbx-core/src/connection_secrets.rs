@@ -286,6 +286,7 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssl: false,
+            sysdba: false,
             connection_string: None,
         }
     }
