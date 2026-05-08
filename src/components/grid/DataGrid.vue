@@ -31,6 +31,7 @@ import {
   TriangleAlert,
   RefreshCcw,
   RotateCcw,
+  Pencil,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -556,7 +557,7 @@ const sortedRows = computed(() => {
 
 function rowDataWithChanges(row: CellValue[], sourceIndex: number): CellValue[] {
   const dirty = dirtyRows.value.get(sourceIndex);
-  return row.map((v, colIdx) => dirty?.get(colIdx) ?? v);
+  return row.map((v, colIdx) => (dirty?.has(colIdx) ? dirty.get(colIdx)! : v));
 }
 
 interface RowItem {
@@ -637,6 +638,7 @@ const activeCellDetail = computed(() => {
   }
   return {
     rowNumber: cell.rowIndex + 1,
+    rowId: item.id,
     colIndex: cell.col,
     column,
     type: columnTypeMap.value.get(column) || "",
@@ -645,8 +647,82 @@ const activeCellDetail = computed(() => {
     rawValue,
     length: value === null ? 0 : String(value).length,
     formattedJson,
+    isEditable: props.editable && !item.isDeleted,
   };
 });
+
+const detailEditValue = ref("");
+const isEditingDetail = ref(false);
+
+function startDetailEdit() {
+  const detail = activeCellDetail.value;
+  if (!detail || !detail.isEditable) return;
+  detailEditValue.value =
+    detail.value === null ? "" : typeof detail.value === "object" ? JSON.stringify(detail.value) : String(detail.value);
+  isEditingDetail.value = true;
+}
+
+function commitDetailEdit() {
+  const detail = activeCellDetail.value;
+  if (!detail || !isEditingDetail.value) return;
+  isEditingDetail.value = false;
+
+  const item = getRowItem(detail.rowId);
+  if (!item || item.isDeleted) return;
+
+  if (item.isNew && item.newIndex !== undefined) {
+    const oldVal = newRows.value[item.newIndex]?.[detail.colIndex];
+    newRows.value[item.newIndex][detail.colIndex] = coerceCellValue(detailEditValue.value, oldVal);
+    return;
+  }
+
+  if (item.sourceIndex === undefined) return;
+
+  const oldVal = props.result.rows[item.sourceIndex]?.[detail.colIndex];
+  const newVal = coerceCellValue(detailEditValue.value, oldVal);
+  if (newVal !== oldVal) {
+    if (!dirtyRows.value.has(item.sourceIndex)) dirtyRows.value.set(item.sourceIndex, new Map());
+    dirtyRows.value.get(item.sourceIndex)!.set(detail.colIndex, newVal);
+    if (useTransaction.value && !transactionActive.value) {
+      enterTransaction();
+    }
+  } else {
+    const rowChanges = dirtyRows.value.get(item.sourceIndex);
+    rowChanges?.delete(detail.colIndex);
+    if (rowChanges?.size === 0) dirtyRows.value.delete(item.sourceIndex);
+  }
+  dirtyRows.value = new Map(dirtyRows.value);
+}
+
+function cancelDetailEdit() {
+  isEditingDetail.value = false;
+}
+
+function setDetailNull() {
+  const detail = activeCellDetail.value;
+  if (!detail || !detail.isEditable) return;
+
+  const item = getRowItem(detail.rowId);
+  if (!item || item.isDeleted) return;
+
+  if (item.isNew && item.newIndex !== undefined) {
+    newRows.value[item.newIndex][detail.colIndex] = null;
+    newRows.value = [...newRows.value];
+    isEditingDetail.value = false;
+    detailCell.value = { ...detailCell.value! };
+    return;
+  }
+
+  if (item.sourceIndex === undefined) return;
+  if (!dirtyRows.value.has(item.sourceIndex)) dirtyRows.value.set(item.sourceIndex, new Map());
+  dirtyRows.value.get(item.sourceIndex)!.set(detail.colIndex, null);
+  dirtyRows.value = new Map(dirtyRows.value);
+  if (useTransaction.value && !transactionActive.value) {
+    enterTransaction();
+  }
+  isEditingDetail.value = false;
+  detailCell.value = { ...detailCell.value! };
+}
 
 function toggleSort(colName: string, colIdx: number) {
   if (isResizing) return;
@@ -1802,8 +1878,26 @@ defineExpose({
                 </div>
                 <div class="space-y-1">
                   <div class="text-muted-foreground">{{ t("grid.cellValue") }}</div>
+                  <template v-if="isEditingDetail">
+                    <textarea
+                      v-model="detailEditValue"
+                      class="w-full h-40 rounded border bg-background p-2 font-mono text-xs outline-none resize-y focus:border-primary"
+                      @keydown.escape.stop="cancelDetailEdit"
+                    />
+                    <div class="flex gap-1 mt-1">
+                      <Button size="sm" class="h-6 text-xs" @click="commitDetailEdit">
+                        {{ t("dangerDialog.confirm") }}
+                      </Button>
+                      <Button variant="outline" size="sm" class="h-6 text-xs" @click="cancelDetailEdit">
+                        {{ t("dangerDialog.cancel") }}
+                      </Button>
+                    </div>
+                  </template>
                   <pre
-                    class="max-h-56 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words"
+                    v-else
+                    class="max-h-56 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words cursor-pointer hover:border-primary/50"
+                    :class="{ 'cursor-text': activeCellDetail.isEditable }"
+                    @dblclick="startDetailEdit"
                     >{{ activeCellDetail.rawValue }}</pre
                   >
                 </div>
@@ -1817,6 +1911,24 @@ defineExpose({
               </div>
 
               <div class="border-t p-2 grid grid-cols-1 gap-1">
+                <Button
+                  v-if="activeCellDetail.isEditable && !isEditingDetail"
+                  variant="ghost"
+                  size="sm"
+                  class="h-7 justify-start text-xs"
+                  @click="startDetailEdit"
+                >
+                  <Pencil class="w-3 h-3 mr-2" /> {{ t("grid.editValue") }}
+                </Button>
+                <Button
+                  v-if="activeCellDetail.isEditable && activeCellDetail.value !== null"
+                  variant="ghost"
+                  size="sm"
+                  class="h-7 justify-start text-xs"
+                  @click="setDetailNull"
+                >
+                  <X class="w-3 h-3 mr-2" /> {{ t("grid.setNull") }}
+                </Button>
                 <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailValue">
                   <Copy class="w-3 h-3 mr-2" /> {{ t("grid.copyValue") }}
                 </Button>

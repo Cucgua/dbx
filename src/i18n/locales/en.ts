@@ -214,6 +214,8 @@ export default {
     noComment: "No comment",
     formattedJson: "Formatted JSON",
     copyValue: "Copy Value",
+    editValue: "Edit Value",
+    setNull: "Set NULL",
     copyColumnName: "Copy Column Name",
     copySqlCondition: "Copy SQL Condition",
     transpose: "Transpose Row",

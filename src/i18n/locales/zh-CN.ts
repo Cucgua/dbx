@@ -213,6 +213,8 @@ export default {
     noComment: "暂无注释",
     formattedJson: "格式化 JSON",
     copyValue: "复制值",
+    editValue: "编辑值",
+    setNull: "设为 NULL",
     copyColumnName: "复制列名",
     copySqlCondition: "复制 SQL 条件",
     transpose: "转置查看",
