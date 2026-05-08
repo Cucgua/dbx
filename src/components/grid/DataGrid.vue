@@ -1486,7 +1486,7 @@ defineExpose({
               <RecycleScroller
                 v-else
                 ref="scrollerRef"
-                class="data-grid-scroller flex-1 overflow-x-auto"
+                class="data-grid-scroller flex-1 overflow-x-auto overscroll-none"
                 :items="displayItems"
                 :item-size="26"
                 key-field="id"
