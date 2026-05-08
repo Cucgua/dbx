@@ -349,6 +349,10 @@ fn redis_bytes_need_escape(bytes: &[u8]) -> bool {
 }
 
 fn redis_bytes_to_display(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.replace('\\', "\\\\");
+    }
+
     let mut output = String::new();
     for &byte in bytes {
         match byte {
@@ -496,6 +500,13 @@ mod tests {
         let bytes = [0xAC, 0xED, 0x00, 0x05, b't', 0x00, b'A', b'\\'];
 
         assert_eq!(redis_key_bytes_to_display(&bytes), "\\xac\\xed\\x00\\x05t\\x00A\\\\");
+    }
+
+    #[test]
+    fn preserves_utf8_keys_as_readable_text() {
+        let bytes = "用户:配置".as_bytes();
+
+        assert_eq!(redis_key_bytes_to_display(bytes), "用户:配置");
     }
 
     #[test]

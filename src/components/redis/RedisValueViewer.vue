@@ -189,7 +189,7 @@ onMounted(load);
           @input="handleStringInput"
         />
         <div v-if="isBinaryStringValue" class="px-4 py-2 border-t text-xs text-muted-foreground shrink-0">
-          二进制字符串按转义文本只读展示；当前不支持直接编辑原始字节值。
+          {{ t("redis.binaryStringReadonlyHint") }}
         </div>
         <div v-if="isEditing" class="px-4 py-2 border-t flex justify-end gap-2 shrink-0">
           <Button

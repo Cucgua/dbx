@@ -523,6 +523,7 @@ export default {
     members: "{count} 个成员",
     entries: "{count} 条记录",
     noExpiry: "永不过期",
+    binaryStringReadonlyHint: "二进制字符串按转义文本只读展示；当前不支持直接编辑原始字节值。",
   },
   mongo: {
     documents: "{count} 个文档",
