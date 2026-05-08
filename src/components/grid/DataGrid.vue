@@ -10,6 +10,7 @@ import { useI18n } from "vue-i18n";
 import {
   ArrowUp,
   ArrowDown,
+  ArrowUpDown,
   Download,
   Plus,
   Trash2,
@@ -1433,7 +1434,7 @@ defineExpose({
                         :style="{ width: `var(--col-w-${colIdx})` }"
                         @click="toggleSort(col, colIdx)"
                       >
-                        <span class="flex min-w-0 items-center gap-1 overflow-hidden">
+                        <span class="flex min-w-0 items-center gap-1 overflow-hidden group">
                           <span class="min-w-0 truncate">{{ col }}</span>
                           <ArrowUp
                             v-if="sortCol === col && sortColIndex === colIdx && sortDir === 'asc'"
@@ -1442,6 +1443,10 @@ defineExpose({
                           <ArrowDown
                             v-else-if="sortCol === col && sortColIndex === colIdx && sortDir === 'desc'"
                             class="h-3 w-3 shrink-0"
+                          />
+                          <ArrowUpDown
+                            v-else
+                            class="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-30 transition-opacity"
                           />
                         </span>
                         <div
