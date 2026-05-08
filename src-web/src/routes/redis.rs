@@ -146,8 +146,8 @@ pub async fn hash_set(
         &req.field,
         value,
     )
-        .await
-        .map_err(AppError)?;
+    .await
+    .map_err(AppError)?;
     Ok(Json(()))
 }
 
@@ -197,13 +197,7 @@ pub async fn set_remove(
     State(state): State<Arc<WebState>>,
     Json(req): Json<RedisSetRequest>,
 ) -> Result<Json<()>, AppError> {
-    dbx_core::redis_ops::redis_set_remove_in_db_core(
-        &state.app,
-        &req.connection_id,
-        req.db,
-        &req.key_raw,
-        &req.member,
-    )
+    dbx_core::redis_ops::redis_set_remove_in_db_core(&state.app, &req.connection_id, req.db, &req.key_raw, &req.member)
         .await
         .map_err(AppError)?;
     Ok(Json(()))

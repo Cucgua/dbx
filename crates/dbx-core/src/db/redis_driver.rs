@@ -139,7 +139,8 @@ pub async fn get_value(con: &mut redis::aio::MultiplexedConnection, key: &[u8]) 
             (redis_raw_to_json(v), value_is_binary)
         }
         "list" => {
-            let v: RedisRawValue = redis::cmd("LRANGE").arg(key).arg(0).arg(-1).query_async(con).await.map_err(|e| e.to_string())?;
+            let v: RedisRawValue =
+                redis::cmd("LRANGE").arg(key).arg(0).arg(-1).query_async(con).await.map_err(|e| e.to_string())?;
             (redis_array_to_json(v), false)
         }
         "set" => {
@@ -368,9 +369,7 @@ pub fn redis_key_bytes_to_raw(bytes: &[u8]) -> String {
 }
 
 pub fn redis_key_raw_to_bytes(value: &str) -> Result<Vec<u8>, String> {
-    base64::engine::general_purpose::STANDARD
-        .decode(value)
-        .map_err(|e| format!("Invalid Redis key encoding: {e}"))
+    base64::engine::general_purpose::STANDARD.decode(value).map_err(|e| format!("Invalid Redis key encoding: {e}"))
 }
 
 pub async fn set_string(
@@ -426,8 +425,8 @@ pub async fn set_remove(con: &mut redis::aio::MultiplexedConnection, key: &[u8],
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_database_count, parse_scan_keys, parse_stream_entries, redis_key_bytes_to_display, redis_key_bytes_to_raw,
-        redis_key_raw_to_bytes, redis_raw_to_json, RedisRawValue,
+        parse_database_count, parse_scan_keys, parse_stream_entries, redis_key_bytes_to_display,
+        redis_key_bytes_to_raw, redis_key_raw_to_bytes, redis_raw_to_json, RedisRawValue,
     };
 
     fn bulk(value: &str) -> RedisRawValue {
