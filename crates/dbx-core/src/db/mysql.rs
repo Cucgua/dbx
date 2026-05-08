@@ -132,6 +132,8 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
         .map(serde_json::Value::String)
         .or_else(|_| row.try_get::<i64, _>(idx).map(super::safe_i64_to_json))
         .or_else(|_| row.try_get::<u64, _>(idx).map(super::safe_u64_to_json))
+        .or_else(|_| row.try_get::<i32, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<i16, _>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| {
             row.try_get::<f64, _>(idx).map(|v| {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
@@ -142,6 +144,11 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
             row.try_get::<Vec<u8>, _>(idx).map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
         })
         .or_else(|e| mysql_temporal_to_json_value(row, idx).ok_or(e))
+        .or_else(|_| row.try_get_unchecked::<String, _>(idx).map(serde_json::Value::String))
+        .or_else(|_| {
+            row.try_get_unchecked::<Vec<u8>, _>(idx)
+                .map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
+        })
         .unwrap_or(serde_json::Value::Null)
 }
 

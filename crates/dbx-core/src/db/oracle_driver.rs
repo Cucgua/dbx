@@ -22,16 +22,6 @@ pub async fn connect(
         .map_err(|_| format!("Oracle connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
         .map_err(|e| format!("Oracle connection failed: {e}"))?;
 
-    // Verify connection works with a simple query
-    log::info!("[oracle] connect: verifying with SELECT 1 FROM DUAL...");
-    conn.query("SELECT 1 FROM DUAL", &[]).await.map_err(|e| format!("Oracle connection verification failed: {e}"))?;
-    log::info!("[oracle] connect: verification OK, testing multi-row...");
-    let r = conn
-        .query("SELECT username FROM all_users ORDER BY username", &[])
-        .await
-        .map_err(|e| format!("Oracle multi-row test failed: {e}"))?;
-    log::info!("[oracle] connect: multi-row OK, {} rows", r.rows.len());
-
     Ok(conn)
 }
 
@@ -270,6 +260,11 @@ pub async fn list_triggers(conn: &OracleClient, schema: &str, table: &str) -> Re
 pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
+
+    // Rewrite FETCH FIRST N ROWS ONLY → ROWNUM for Oracle 11g compatibility
+    let sql = rewrite_fetch_first(sql);
+    let sql = sql.as_ref();
+
     let trimmed = sql.to_uppercase();
     log::debug!("[oracle] execute_query: sql={}", &sql[..sql.len().min(200)]);
 
@@ -323,4 +318,18 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
             }
         }
     }
+}
+
+fn rewrite_fetch_first(sql: &str) -> std::borrow::Cow<'_, str> {
+    let upper = sql.to_uppercase();
+    if let Some(pos) = upper.find("FETCH FIRST") {
+        if let Some(end) = upper[pos..].find("ROWS ONLY") {
+            let between = sql[pos + 11..pos + end].trim();
+            if let Ok(n) = between.parse::<u64>() {
+                let base = sql[..pos].trim_end();
+                return std::borrow::Cow::Owned(format!("SELECT * FROM ({base}) WHERE ROWNUM <= {n}"));
+            }
+        }
+    }
+    std::borrow::Cow::Borrowed(sql)
 }
