@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
-import { X, Pin, ChevronRight } from "lucide-vue-next";
+import { X, Pin, ChevronRight, Table2, Code2 } from "lucide-vue-next";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -12,7 +12,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useQueryStore } from "@/stores/queryStore";
 import { useTabScroll } from "@/composables/useTabScroll";
-import { connectionColor, tabDisplayTitle, tabTooltipLines, tabModeLabel } from "@/lib/tabPresentation";
+import { connectionColor, tabDisplayTitle, tabTooltipLines } from "@/lib/tabPresentation";
 
 const { t } = useI18n();
 const queryStore = useQueryStore();
@@ -78,9 +78,14 @@ watch(
                 @mousedown.middle.prevent="queryStore.closeTab(tab.id)"
               >
                 <span
-                  class="h-1.5 w-1.5 rounded-full shrink-0"
-                  :style="{ backgroundColor: connectionColor(tab.connectionId) || '#9ca3af' }"
-                />
+                  class="shrink-0"
+                  :class="
+                    tab.mode === 'data' ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'
+                  "
+                >
+                  <Table2 v-if="tab.mode === 'data'" class="h-3.5 w-3.5" />
+                  <Code2 v-else class="h-3.5 w-3.5" />
+                </span>
                 <span class="min-w-0 truncate flex-1">{{ tabDisplayTitle(tab) }}</span>
                 <Tooltip>
                   <TooltipTrigger as-child>
@@ -94,16 +99,6 @@ watch(
                   </TooltipTrigger>
                   <TooltipContent>{{ tab.pinned ? t("contextMenu.unpin") : t("contextMenu.pin") }}</TooltipContent>
                 </Tooltip>
-                <span
-                  class="shrink-0 rounded border px-1 text-[10px] leading-4"
-                  :class="
-                    tab.mode === 'data'
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-                      : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300'
-                  "
-                >
-                  {{ tabModeLabel(tab) }}
-                </span>
                 <button
                   class="rounded hover:bg-muted-foreground/20 p-0.5 shrink-0"
                   @click.stop="queryStore.closeTab(tab.id)"

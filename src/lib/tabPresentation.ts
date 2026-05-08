@@ -30,16 +30,17 @@ export function tabDisplayTitle(tab: QueryTab): string {
   const database = databaseDisplayNameForTab(tab.connectionId, tab.database);
   if (isPreviewTab(tab)) return tab.title;
   if (tab.mode === "data" && tab.tableMeta?.tableName) {
-    return tab.tableMeta.tableName;
+    const suffix = tab.tableMeta.schema ? `@${database}.${tab.tableMeta.schema}` : `@${database}`;
+    return `${tab.tableMeta.tableName}${suffix}`;
   }
   if (tab.mode === "query") {
-    return `${connectionDisplayName(tab.connectionId)} | ${database}`;
+    return `${connectionDisplayName(tab.connectionId)}@${database}`;
   }
   if (tab.mode === "mongo" && tab.sql) {
-    return `${database} | ${tab.sql}`;
+    return `${tab.sql}@${database}`;
   }
   if (tab.mode === "redis") {
-    return `${connectionDisplayName(tab.connectionId)} | ${database}`;
+    return `${connectionDisplayName(tab.connectionId)}@${database}`;
   }
   return tab.title;
 }
