@@ -493,6 +493,8 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       const querySchema = schema || database;
       const tables = await api.listTables(connectionId, database, querySchema);
+      const config = getConfig(connectionId);
+      const effectiveSchema = schema || (config?.db_type && isSchemaAware(config.db_type) ? database : undefined);
       setChildren(
         node,
         tables.map((t) => ({
@@ -501,7 +503,7 @@ export const useConnectionStore = defineStore("connection", () => {
           type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
           connectionId,
           database,
-          schema,
+          schema: effectiveSchema,
           isExpanded: false,
           children: [],
         })),

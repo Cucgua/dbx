@@ -15,8 +15,7 @@ pub async fn connect(
     pass: &str,
     sysdba: bool,
 ) -> Result<OracleClient, String> {
-    let mut config = Config::new(host, port, service, user, pass);
-    config.sysdba = sysdba;
+    let config = Config::new(host, port, service, user, pass).with_statement_cache_size(0).sysdba_flag(sysdba);
     let conn = tokio::time::timeout(connection_timeout(), Connection::connect_with_config(config))
         .await
         .map_err(|_| format!("Oracle connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
@@ -40,9 +39,6 @@ fn value_to_json(val: &rust_oracle::Value) -> serde_json::Value {
 }
 
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
-    // Use a single query that works on ALL Oracle versions (11g through 23ai).
-    // Oracle 12c+ has oracle_maintained column; 11g does not.
-    // COALESCE with a subquery detects whether the column exists at runtime.
     let result = conn
         .query(
             "SELECT username FROM all_users \
@@ -54,7 +50,11 @@ pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, St
                'ORACLE_OCM','SI_INFORMTN_SCHEMA','WMSYS','XS$NULL','DBSFWUSER',\
                'REMOTE_SCHEDULER_AGENT','PDBADMIN','DGPDB_INT','OPS$ORACLE',\
                'GGSYS','FLOWS_FILES','APEX_PUBLIC_USER'\
-             ) ORDER BY username",
+             ) \
+             AND username NOT LIKE 'APEX_%' \
+             AND username NOT LIKE 'FLOWS_%' \
+             AND username NOT LIKE '%$%' \
+             ORDER BY username",
             &[],
         )
         .await
@@ -73,10 +73,10 @@ pub async fn list_schemas(conn: &OracleClient) -> Result<Vec<String>, String> {
 
 pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableInfo>, String> {
     let sql = format!(
-        "SELECT table_name, 'TABLE' AS table_type FROM all_tables WHERE owner = '{s}' \
-         UNION ALL \
-         SELECT view_name, 'VIEW' FROM all_views WHERE owner = '{s}' \
-         ORDER BY 1",
+        "SELECT object_name, \
+         CASE object_type WHEN 'VIEW' THEN 'VIEW' ELSE 'TABLE' END AS table_type \
+         FROM all_objects WHERE owner = '{s}' AND object_type IN ('TABLE','VIEW') \
+         ORDER BY object_name",
         s = schema.replace('\'', "''")
     );
     log::debug!("[oracle] list_tables: schema={schema}, sql={sql}");
@@ -266,7 +266,6 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
     let sql = sql.as_ref();
 
     let trimmed = sql.to_uppercase();
-    log::debug!("[oracle] execute_query: sql={}", &sql[..sql.len().min(200)]);
 
     if trimmed.starts_with("SELECT")
         || trimmed.starts_with("WITH")
@@ -274,7 +273,6 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
         || trimmed.starts_with("DESCRIBE")
         || trimmed.starts_with("EXPLAIN")
     {
-        log::info!("[oracle] execute_query: final sql={}", &sql[..sql.len().min(200)]);
         let result = conn.query(sql, &[]).await.map_err(|e| {
             log::error!("[oracle] execute_query SELECT failed: {e}");
             e.to_string()
