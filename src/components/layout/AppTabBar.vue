@@ -12,7 +12,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useQueryStore } from "@/stores/queryStore";
 import { useTabScroll } from "@/composables/useTabScroll";
-import { connectionColor, tabDisplayTitle, tabTooltipLines } from "@/lib/tabPresentation";
+import { tabDisplayTitle, tabTooltipLines } from "@/lib/tabPresentation";
 
 const { t } = useI18n();
 const queryStore = useQueryStore();

@@ -361,9 +361,33 @@ const gridRef = ref<HTMLDivElement>();
 const headerRef = ref<HTMLDivElement>();
 const { width: gridWidth } = useElementSize(gridRef);
 
+const COL_MIN_WIDTH = 60;
+const COL_MAX_WIDTH = 400;
+const COL_CHAR_WIDTH = 8;
+const COL_HEADER_PADDING = 48;
+const COL_CELL_PADDING = 28;
+const COL_SAMPLE_ROWS = 50;
+
+function estimateTextWidth(text: string, padding: number): number {
+  return text.length * COL_CHAR_WIDTH + padding;
+}
+
 function initColumnWidths() {
   if (columnWidths.value.length !== props.result.columns.length) {
-    columnWidths.value = props.result.columns.map(() => 150);
+    const rows = props.result.rows;
+    const sampleCount = Math.min(rows.length, COL_SAMPLE_ROWS);
+    columnWidths.value = props.result.columns.map((colName, colIdx) => {
+      let maxWidth = estimateTextWidth(colName, COL_HEADER_PADDING);
+      for (let i = 0; i < sampleCount; i++) {
+        const val = rows[i]?.[colIdx];
+        if (val == null) continue;
+        const text = typeof val === "object" ? JSON.stringify(val) : String(val);
+        const displayLen = Math.min(text.length, 60);
+        const w = displayLen * COL_CHAR_WIDTH + COL_CELL_PADDING;
+        if (w > maxWidth) maxWidth = w;
+      }
+      return Math.max(COL_MIN_WIDTH, Math.min(COL_MAX_WIDTH, Math.round(maxWidth)));
+    });
   }
 }
 
@@ -392,6 +416,23 @@ function onResizeStart(colIdx: number, event: MouseEvent) {
   };
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
+}
+
+function autoFitColumn(colIdx: number) {
+  const colName = props.result.columns[colIdx];
+  if (!colName) return;
+  const rows = props.result.rows;
+  const sampleCount = Math.min(rows.length, COL_SAMPLE_ROWS);
+  let maxWidth = estimateTextWidth(colName, COL_HEADER_PADDING);
+  for (let i = 0; i < sampleCount; i++) {
+    const val = rows[i]?.[colIdx];
+    if (val == null) continue;
+    const text = typeof val === "object" ? JSON.stringify(val) : String(val);
+    const displayLen = Math.min(text.length, 60);
+    const w = displayLen * COL_CHAR_WIDTH + COL_CELL_PADDING;
+    if (w > maxWidth) maxWidth = w;
+  }
+  columnWidths.value[colIdx] = Math.max(COL_MIN_WIDTH, Math.min(COL_MAX_WIDTH, Math.round(maxWidth)));
 }
 
 const ROW_NUM_WIDTH = 48;
@@ -1552,6 +1593,7 @@ defineExpose({
                         <div
                           class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
                           @mousedown.stop="onResizeStart(colIdx, $event)"
+                          @dblclick.stop="autoFitColumn(colIdx)"
                         />
                       </div>
                     </TooltipTrigger>
