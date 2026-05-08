@@ -75,6 +75,7 @@ watch(
                 "
                 :data-active-tab="tab.id === queryStore.activeTabId"
                 @click="queryStore.activeTabId = tab.id"
+                @mousedown.middle.prevent="queryStore.closeTab(tab.id)"
               >
                 <span
                   class="h-1.5 w-1.5 rounded-full shrink-0"

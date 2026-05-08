@@ -274,6 +274,7 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
         || trimmed.starts_with("DESCRIBE")
         || trimmed.starts_with("EXPLAIN")
     {
+        log::info!("[oracle] execute_query: final sql={}", &sql[..sql.len().min(200)]);
         let result = conn.query(sql, &[]).await.map_err(|e| {
             log::error!("[oracle] execute_query SELECT failed: {e}");
             e.to_string()
@@ -322,14 +323,34 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
 
 fn rewrite_fetch_first(sql: &str) -> std::borrow::Cow<'_, str> {
     let upper = sql.to_uppercase();
-    if let Some(pos) = upper.find("FETCH FIRST") {
-        if let Some(end) = upper[pos..].find("ROWS ONLY") {
-            let between = sql[pos + 11..pos + end].trim();
-            if let Ok(n) = between.parse::<u64>() {
-                let base = sql[..pos].trim_end();
-                return std::borrow::Cow::Owned(format!("SELECT * FROM ({base}) WHERE ROWNUM <= {n}"));
+    // Match: ... [OFFSET M ROWS] FETCH FIRST|NEXT N ROWS ONLY
+    let fetch_pos = upper.find("FETCH FIRST").or_else(|| upper.find("FETCH NEXT"));
+    let Some(fpos) = fetch_pos else { return std::borrow::Cow::Borrowed(sql) };
+    let after_fetch = &upper[fpos..];
+    let Some(end) = after_fetch.find("ROWS ONLY") else { return std::borrow::Cow::Borrowed(sql) };
+    let keyword_len = if after_fetch.starts_with("FETCH FIRST") { 11 } else { 10 };
+    let between = sql[fpos + keyword_len..fpos + end].trim();
+    let Ok(n) = between.parse::<u64>() else { return std::borrow::Cow::Borrowed(sql) };
+
+    // Check for OFFSET M ROWS before FETCH
+    let mut base = &sql[..fpos];
+    let base_upper = base.to_uppercase();
+    if let Some(opos) = base_upper.rfind("OFFSET ") {
+        let after_offset = base_upper[opos + 7..].trim();
+        if let Some(rpos) = after_offset.find(" ROWS") {
+            let offset_str = after_offset[..rpos].trim();
+            if let Ok(offset) = offset_str.parse::<u64>() {
+                let inner = sql[..opos].trim_end();
+                return std::borrow::Cow::Owned(format!(
+                    "SELECT * FROM (SELECT a.*, ROWNUM rn__ FROM ({inner}) a WHERE ROWNUM <= {}) WHERE rn__ > {offset}",
+                    offset + n
+                ));
             }
         }
+        base = sql[..opos].trim_end();
+    } else {
+        base = base.trim_end();
     }
-    std::borrow::Cow::Borrowed(sql)
+
+    std::borrow::Cow::Owned(format!("SELECT * FROM ({base}) WHERE ROWNUM <= {n}"))
 }
