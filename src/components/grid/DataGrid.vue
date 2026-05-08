@@ -1101,6 +1101,18 @@ function copyRow() {
   copyText(JSON.stringify(obj, null, 2));
 }
 
+function copyRowAsInsert() {
+  if (!contextCell.value) return;
+  const item = getRowItem(contextCell.value.rowId);
+  if (!item) return;
+  const cols = props.result.columns.map((c) => quoteIdent(c)).join(", ");
+  const vals = item.data.map((v) => escapeVal(v)).join(", ");
+  const table = props.tableMeta
+    ? (props.tableMeta.schema ? `${quoteIdent(props.tableMeta.schema)}.` : "") + quoteIdent(props.tableMeta.tableName)
+    : "table_name";
+  copyText(`INSERT INTO ${table} (${cols}) VALUES (${vals});`);
+}
+
 function copyAll() {
   const header = props.result.columns.join("\t");
   const body = displayItems.value.map((item) => item.data.map((c) => formatCell(c)).join("\t")).join("\n");
@@ -1732,6 +1744,7 @@ defineExpose({
       <ContextMenuContent class="w-60">
         <ContextMenuItem @click="copyCell">{{ t("grid.copyCell") }}</ContextMenuItem>
         <ContextMenuItem @click="copyRow">{{ t("grid.copyRow") }}</ContextMenuItem>
+        <ContextMenuItem @click="copyRowAsInsert">{{ t("grid.copyRowInsert") }}</ContextMenuItem>
         <ContextMenuItem @click="copyAll">{{ t("grid.copyAll") }}</ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem v-if="contextCell" @click="openTranspose(contextCell.rowIndex)">

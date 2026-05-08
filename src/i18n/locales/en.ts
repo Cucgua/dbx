@@ -172,6 +172,7 @@ export default {
     noFilteredRowsDescription: "Adjust the search text or row status filter.",
     copyCell: "Copy Cell",
     copyRow: "Copy Row (JSON)",
+    copyRowInsert: "Copy as INSERT",
     copyAll: "Copy All (TSV)",
     copySelectionTsv: "Copy Selection (TSV)",
     copySelectionCsv: "Copy Selection (CSV)",

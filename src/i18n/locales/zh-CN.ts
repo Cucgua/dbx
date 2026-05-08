@@ -171,6 +171,7 @@ export default {
     noFilteredRowsDescription: "调整搜索词或状态筛选试试。",
     copyCell: "复制单元格",
     copyRow: "复制行 (JSON)",
+    copyRowInsert: "复制为 INSERT 语句",
     copyAll: "复制全部 (TSV)",
     copySelectionTsv: "复制选区 (TSV)",
     copySelectionCsv: "复制选区 (CSV)",
