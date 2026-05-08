@@ -451,6 +451,22 @@ export default {
     tableOperationFailed: "Operation failed: {message}",
     duplicateNameTitle: "Duplicate Structure",
     duplicateNamePlaceholder: "New table name",
+    createDatabase: "Create Database",
+    dropDatabase: "Drop Database",
+    confirmDropDatabaseTitle: "Drop Database",
+    confirmDropDatabaseMessage:
+      'Are you sure you want to drop database "{name}"? This will permanently delete the database and all its data.',
+    createDatabaseSuccess: 'Database "{name}" created',
+    dropDatabaseSuccess: 'Database "{name}" dropped',
+    createDatabaseNamePlaceholder: "Database name",
+    createSchema: "Create Schema",
+    dropSchema: "Drop Schema",
+    confirmDropSchemaTitle: "Drop Schema",
+    confirmDropSchemaMessage:
+      'Are you sure you want to drop schema "{name}"? This will permanently delete the schema and all its objects.',
+    createSchemaSuccess: 'Schema "{name}" created',
+    dropSchemaSuccess: 'Schema "{name}" dropped',
+    createSchemaNamePlaceholder: "Schema name",
   },
   tree: {
     columns: "Columns",

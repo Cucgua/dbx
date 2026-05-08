@@ -73,6 +73,7 @@ import {
   FIELD_LINEAGE_SUPPORTED_TYPES,
   TREE_SCHEMA_TYPES,
   PG_LIKE_STRUCTURE_TYPES,
+  CREATE_DATABASE_SUPPORTED_TYPES,
   isSchemaAware,
   usesFetchFirst,
 } from "@/lib/databaseCapabilities";
@@ -378,6 +379,13 @@ const showTruncateTableConfirm = ref(false);
 const showDuplicateDialog = ref(false);
 const duplicateTableName = ref("");
 
+const showCreateDatabaseDialog = ref(false);
+const createDatabaseName = ref("");
+const showDropDatabaseConfirm = ref(false);
+const showCreateSchemaDialog = ref(false);
+const createSchemaName = ref("");
+const showDropSchemaConfirm = ref(false);
+
 const isTableNotView = computed(() => props.node.type === "table");
 
 const supportsTruncate = computed(() => {
@@ -393,6 +401,26 @@ const canCreateTable = computed(() => {
     !!config &&
     TABLE_STRUCTURE_SUPPORTED_TYPES.has(config.db_type)
   );
+});
+
+const canCreateDatabase = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "connection" && !!config && CREATE_DATABASE_SUPPORTED_TYPES.has(config.db_type);
+});
+
+const canDropDatabase = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "database" && !!config && CREATE_DATABASE_SUPPORTED_TYPES.has(config.db_type);
+});
+
+const canCreateSchema = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "database" && !!config && TREE_SCHEMA_TYPES.has(config.db_type);
+});
+
+const canDropSchema = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "schema" && !!config && TREE_SCHEMA_TYPES.has(config.db_type);
 });
 
 function buildDropTableSql(): string {
@@ -458,6 +486,93 @@ async function confirmTruncateTable() {
     await connectionStore.ensureConnected(node.connectionId);
     await api.executeQuery(node.connectionId, node.database, buildTruncateTableSql(), node.schema);
     toast(t("contextMenu.truncateTableSuccess", { name: node.label }), 3000);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function buildDropDatabaseSql(): string {
+  return `DROP DATABASE ${quoteIdent(props.node.label)};`;
+}
+
+function buildDropSchemaSql(): string {
+  const dbType = currentDatabaseType();
+  const name = quoteIdent(props.node.label);
+  if (dbType === "postgres" || dbType === "gaussdb") return `DROP SCHEMA ${name} CASCADE;`;
+  return `DROP SCHEMA ${name};`;
+}
+
+function openCreateDatabaseDialog() {
+  createDatabaseName.value = "";
+  showCreateDatabaseDialog.value = true;
+}
+
+async function confirmCreateDatabase() {
+  const node = props.node;
+  const name = createDatabaseName.value.trim();
+  if (!name || !node.connectionId) return;
+  showCreateDatabaseDialog.value = false;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    const sql = `CREATE DATABASE ${quoteIdent(name)};`;
+    await api.executeQuery(node.connectionId, "", sql);
+    toast(t("contextMenu.createDatabaseSuccess", { name }), 3000);
+    await connectionStore.loadDatabases(node.connectionId);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function dropDatabase() {
+  showDropDatabaseConfirm.value = true;
+}
+
+async function confirmDropDatabase() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    await api.executeQuery(node.connectionId, "", buildDropDatabaseSql());
+    toast(t("contextMenu.dropDatabaseSuccess", { name: node.label }), 3000);
+    await connectionStore.loadDatabases(node.connectionId);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function openCreateSchemaDialog() {
+  createSchemaName.value = "";
+  showCreateSchemaDialog.value = true;
+}
+
+async function confirmCreateSchema() {
+  const node = props.node;
+  const name = createSchemaName.value.trim();
+  if (!name || !node.connectionId || !node.database) return;
+  showCreateSchemaDialog.value = false;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    const sql = `CREATE SCHEMA ${quoteIdent(name)};`;
+    await api.executeQuery(node.connectionId, node.database, sql);
+    toast(t("contextMenu.createSchemaSuccess", { name }), 3000);
+    await connectionStore.loadSchemas(node.connectionId, node.database);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function dropSchema() {
+  showDropSchemaConfirm.value = true;
+}
+
+async function confirmDropSchema() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    await api.executeQuery(node.connectionId, node.database, buildDropSchemaSql());
+    toast(t("contextMenu.dropSchemaSuccess", { name: node.label }), 3000);
+    await connectionStore.loadSchemas(node.connectionId, node.database);
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -1163,6 +1278,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
           <FileCode class="w-4 h-4" /> {{ t("sqlFile.title") }}
         </ContextMenuItem>
+        <ContextMenuItem v-if="canCreateDatabase" @click="openCreateDatabaseDialog">
+          <Plus class="w-4 h-4" /> {{ t("contextMenu.createDatabase") }}
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub v-if="availableGroups.length > 0 || currentGroupId">
           <ContextMenuSubTrigger>
@@ -1228,6 +1346,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem v-if="canCreateTable" @click="createTable">
           <Plus class="w-4 h-4" /> {{ t("contextMenu.createTable") }}
         </ContextMenuItem>
+        <ContextMenuItem v-if="canCreateSchema" @click="openCreateSchemaDialog">
+          <Plus class="w-4 h-4" /> {{ t("contextMenu.createSchema") }}
+        </ContextMenuItem>
         <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
           <FileCode class="w-4 h-4" /> {{ t("sqlFile.title") }}
         </ContextMenuItem>
@@ -1252,6 +1373,15 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
           <Download v-else class="w-4 h-4" />
           {{ t("contextMenu.exportDatabase") }}
         </ContextMenuItem>
+        <template v-if="canDropDatabase || canDropSchema">
+          <ContextMenuSeparator />
+          <ContextMenuItem v-if="canDropDatabase" class="text-destructive" @click="dropDatabase">
+            <Trash2 class="w-4 h-4" /> {{ t("contextMenu.dropDatabase") }}
+          </ContextMenuItem>
+          <ContextMenuItem v-if="canDropSchema" class="text-destructive" @click="dropSchema">
+            <Trash2 class="w-4 h-4" /> {{ t("contextMenu.dropSchema") }}
+          </ContextMenuItem>
+        </template>
       </template>
 
       <template v-if="node.type === 'redis-db' || node.type === 'mongo-db'">
@@ -1438,4 +1568,60 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
+  <Dialog v-model:open="showCreateDatabaseDialog">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("contextMenu.createDatabase") }}</DialogTitle>
+      </DialogHeader>
+      <Input
+        v-model="createDatabaseName"
+        :placeholder="t('contextMenu.createDatabaseNamePlaceholder')"
+        @keydown.enter.prevent="confirmCreateDatabase"
+      />
+      <DialogFooter>
+        <Button variant="outline" @click="showCreateDatabaseDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="!createDatabaseName.trim()" @click="confirmCreateDatabase">{{
+          t("dangerDialog.confirm")
+        }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <DangerConfirmDialog
+    v-model:open="showDropDatabaseConfirm"
+    :title="t('contextMenu.confirmDropDatabaseTitle')"
+    :message="t('contextMenu.confirmDropDatabaseMessage', { name: node.label })"
+    :sql="buildDropDatabaseSql()"
+    :confirm-label="t('contextMenu.dropDatabase')"
+    @confirm="confirmDropDatabase"
+  />
+
+  <Dialog v-model:open="showCreateSchemaDialog">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("contextMenu.createSchema") }}</DialogTitle>
+      </DialogHeader>
+      <Input
+        v-model="createSchemaName"
+        :placeholder="t('contextMenu.createSchemaNamePlaceholder')"
+        @keydown.enter.prevent="confirmCreateSchema"
+      />
+      <DialogFooter>
+        <Button variant="outline" @click="showCreateSchemaDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="!createSchemaName.trim()" @click="confirmCreateSchema">{{
+          t("dangerDialog.confirm")
+        }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <DangerConfirmDialog
+    v-model:open="showDropSchemaConfirm"
+    :title="t('contextMenu.confirmDropSchemaTitle')"
+    :message="t('contextMenu.confirmDropSchemaMessage', { name: node.label })"
+    :sql="buildDropSchemaSql()"
+    :confirm-label="t('contextMenu.dropSchema')"
+    @confirm="confirmDropSchema"
+  />
 </template>

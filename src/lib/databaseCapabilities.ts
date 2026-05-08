@@ -52,6 +52,19 @@ export const TABLE_IMPORT_SUPPORTED_TYPES = new Set<DatabaseType>([
 
 export const TABLE_STRUCTURE_SUPPORTED_TYPES = new Set<DatabaseType>(["mysql", "postgres", "sqlite", "sqlserver"]);
 
+export const CREATE_DATABASE_SUPPORTED_TYPES = new Set<DatabaseType>([
+  "mysql",
+  "postgres",
+  "sqlserver",
+  "clickhouse",
+  "oracle",
+  "dameng",
+  "gaussdb",
+  "doris",
+  "starrocks",
+  "redshift",
+]);
+
 export const FIELD_LINEAGE_SUPPORTED_TYPES = new Set<DatabaseType>([
   "mysql",
   "postgres",
