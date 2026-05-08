@@ -377,9 +377,18 @@ async function reconnectRestoredTabs() {
   }
 }
 
+function handleContextMenu(e: MouseEvent) {
+  if (!(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+    e.preventDefault();
+  }
+}
+
 onMounted(async () => {
   applyTheme();
   window.addEventListener("keydown", handleKeydown, true);
+  if (isDesktop) {
+    document.addEventListener("contextmenu", handleContextMenu);
+  }
   if (!isDesktop) {
     try {
       const res = await fetch("/api/auth/check");
@@ -416,6 +425,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown, true);
+  document.removeEventListener("contextmenu", handleContextMenu);
 });
 </script>
 

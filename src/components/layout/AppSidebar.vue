@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { Upload, Download } from "lucide-vue-next";
+import { Upload, Download, RefreshCw } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import ConnectionTree from "@/components/sidebar/ConnectionTree.vue";
+import { useConnectionStore } from "@/stores/connectionStore";
 
 defineProps<{
   sidebarWidth: number;
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const connectionStore = useConnectionStore();
 </script>
 
 <template>
@@ -24,6 +26,14 @@ const { t } = useI18n();
       <div class="h-9 flex items-center px-3 text-xs font-medium text-muted-foreground border-b bg-muted/20">
         {{ t("sidebar.connections") }}
         <span class="flex-1" />
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button variant="ghost" size="icon" class="h-5 w-5" @click="connectionStore.refreshAllTree()">
+              <RefreshCw class="h-3 w-3" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{{ t("contextMenu.refreshChildren") }}</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger as-child>
             <Button variant="ghost" size="icon" class="h-5 w-5" @click="emit('import')">

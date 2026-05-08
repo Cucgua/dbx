@@ -411,6 +411,7 @@ export default {
     refreshChildren: "刷新",
     pin: "置顶",
     unpin: "取消置顶",
+    refreshTab: "刷新数据",
     closeTab: "关闭标签页",
     closeOtherTabs: "关闭其他标签页",
     closeAllTabs: "关闭全部标签页",

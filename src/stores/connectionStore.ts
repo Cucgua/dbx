@@ -800,6 +800,22 @@ export const useConnectionStore = defineStore("connection", () => {
     persistSidebarLayoutDebounced();
   }
 
+  function refreshAllTree() {
+    const resetChildren = (nodes: TreeNode[]) => {
+      for (const node of nodes) {
+        if (node.type === "connection-group") {
+          if (node.children) resetChildren(node.children);
+          continue;
+        }
+        if (node.isExpanded) {
+          node.isExpanded = false;
+          node.children = [];
+        }
+      }
+    };
+    resetChildren(treeNodes.value);
+  }
+
   async function exportConnectionsToFile(passphrase: string) {
     const { encryptConfig } = await import("@/lib/configCrypto");
     const exportData = { connections: connections.value, layout: sidebarLayout.value };
@@ -946,6 +962,7 @@ export const useConnectionStore = defineStore("connection", () => {
     connections,
     activeConnectionId,
     treeNodes,
+    refreshAllTree,
     connectedIds,
     connectionErrors,
     setConnectionError,
