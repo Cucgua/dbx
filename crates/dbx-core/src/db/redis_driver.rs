@@ -310,8 +310,8 @@ fn redis_value_to_string(value: RedisRawValue) -> Option<String> {
 
 fn redis_value_contains_binary(value: &RedisRawValue) -> bool {
     match value {
-        RedisRawValue::BulkString(bytes) => redis_bytes_need_escape(bytes),
-        RedisRawValue::VerbatimString { text, .. } => redis_bytes_need_escape(text.as_bytes()),
+        RedisRawValue::BulkString(bytes) => std::str::from_utf8(bytes).is_err(),
+        RedisRawValue::VerbatimString { text, .. } => std::str::from_utf8(text.as_bytes()).is_err(),
         _ => false,
     }
 }
@@ -342,10 +342,6 @@ fn redis_raw_to_json(value: RedisRawValue) -> serde_json::Value {
         RedisRawValue::Array(values) => serde_json::Value::Array(values.into_iter().map(redis_raw_to_json).collect()),
         other => serde_json::Value::String(redis_value_to_string(other).unwrap_or_default()),
     }
-}
-
-fn redis_bytes_need_escape(bytes: &[u8]) -> bool {
-    bytes.iter().any(|&byte| !matches!(byte, 0x20..=0x7e) || byte == b'\\')
 }
 
 fn redis_bytes_to_display(bytes: &[u8]) -> String {
@@ -430,7 +426,7 @@ pub async fn set_remove(con: &mut redis::aio::MultiplexedConnection, key: &[u8],
 mod tests {
     use super::{
         parse_database_count, parse_scan_keys, parse_stream_entries, redis_key_bytes_to_display,
-        redis_key_bytes_to_raw, redis_key_raw_to_bytes, redis_raw_to_json, RedisRawValue,
+        redis_key_bytes_to_raw, redis_key_raw_to_bytes, redis_raw_to_json, redis_value_contains_binary, RedisRawValue,
     };
 
     fn bulk(value: &str) -> RedisRawValue {
@@ -540,5 +536,12 @@ mod tests {
         let value = redis_raw_to_json(raw);
 
         assert_eq!(value, serde_json::Value::String("\\xac\\xed\\x00\\x05sr".to_string()));
+    }
+
+    #[test]
+    fn does_not_treat_utf8_with_backslashes_as_binary() {
+        let raw = RedisRawValue::BulkString(br#"C:\Users\path"#.to_vec());
+
+        assert!(!redis_value_contains_binary(&raw));
     }
 }
