@@ -470,11 +470,13 @@ function toggleSort(colName: string) {
   }
 }
 
+const CELL_DISPLAY_MAX_LENGTH = 256;
+
 function formatCell(value: CellValue): string {
   if (value === null) return "NULL";
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  const s = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return s.length > CELL_DISPLAY_MAX_LENGTH ? s.slice(0, CELL_DISPLAY_MAX_LENGTH) : s;
 }
 
 function quoteIdent(name: string): string {
