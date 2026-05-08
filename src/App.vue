@@ -320,7 +320,8 @@ function onAiReplaceSql(sql: string) {
 function onAiExecuteSql(sql: string) {
   const tabId = ensureQueryTab();
   queryStore.updateSql(tabId, sql);
-  nextTick(() => tryExecute());
+  selectedSql.value = "";
+  nextTick(() => tryExecute(sql));
 }
 
 function handleKeydown(e: KeyboardEvent) {

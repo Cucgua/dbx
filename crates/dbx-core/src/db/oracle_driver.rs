@@ -17,10 +17,22 @@ pub async fn connect(
 ) -> Result<OracleClient, String> {
     let mut config = Config::new(host, port, service, user, pass);
     config.sysdba = sysdba;
-    tokio::time::timeout(connection_timeout(), Connection::connect_with_config(config))
+    let conn = tokio::time::timeout(connection_timeout(), Connection::connect_with_config(config))
         .await
         .map_err(|_| format!("Oracle connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
-        .map_err(|e| format!("Oracle connection failed: {e}"))
+        .map_err(|e| format!("Oracle connection failed: {e}"))?;
+
+    // Verify connection works with a simple query
+    log::info!("[oracle] connect: verifying with SELECT 1 FROM DUAL...");
+    conn.query("SELECT 1 FROM DUAL", &[]).await.map_err(|e| format!("Oracle connection verification failed: {e}"))?;
+    log::info!("[oracle] connect: verification OK, testing multi-row...");
+    let r = conn
+        .query("SELECT username FROM all_users ORDER BY username", &[])
+        .await
+        .map_err(|e| format!("Oracle multi-row test failed: {e}"))?;
+    log::info!("[oracle] connect: multi-row OK, {} rows", r.rows.len());
+
+    Ok(conn)
 }
 
 fn value_to_json(val: &rust_oracle::Value) -> serde_json::Value {
