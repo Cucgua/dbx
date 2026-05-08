@@ -35,7 +35,7 @@ export default async function Layout({
       nav={{
         title: (
           <div className="flex items-center gap-2">
-            <img src="/dbx/logo.png" alt="DBX" width={24} height={24} />
+            <img src="/logo.png" alt="DBX" width={24} height={24} />
             <span className="font-semibold">DBX</span>
           </div>
         ),

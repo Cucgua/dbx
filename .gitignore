@@ -9,6 +9,7 @@ dist/
 docs/.next/
 docs/out/
 docs/.source/
+src-tauri/*.dylib
 
 # OS files
 .DS_Store

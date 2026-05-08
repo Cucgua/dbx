@@ -9,7 +9,9 @@ pub fn duckdb_query_tables(con: &duckdb::Connection) -> Result<Vec<db::TableInfo
         "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'main' ORDER BY table_name"
     ).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |row| Ok(db::TableInfo { name: row.get::<_, String>(0)?, table_type: row.get::<_, String>(1)? }))
+        .query_map([], |row| {
+            Ok(db::TableInfo { name: row.get::<_, String>(0)?, table_type: row.get::<_, String>(1)?, comment: None })
+        })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
@@ -100,6 +102,26 @@ pub fn extract_oracle(
     }
 }
 
+pub fn extract_dameng(
+    connections: &HashMap<String, PoolKind>,
+    key: &str,
+) -> Option<Arc<std::sync::Mutex<db::dm_driver::DmClient>>> {
+    match connections.get(key)? {
+        PoolKind::Dameng(client) => Some(client.clone()),
+        _ => None,
+    }
+}
+
+pub fn extract_gaussdb(
+    connections: &HashMap<String, PoolKind>,
+    key: &str,
+) -> Option<Arc<tokio::sync::Mutex<db::gaussdb_driver::GaussdbClient>>> {
+    match connections.get(key)? {
+        PoolKind::Gaussdb(client) => Some(client.clone()),
+        _ => None,
+    }
+}
+
 pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<db::DatabaseInfo>, String> {
     {
         let connections = state.connections.lock().await;
@@ -116,6 +138,16 @@ pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Resul
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_databases(&*client).await;
+        }
+        if let Some(client) = extract_dameng(&connections, connection_id) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_databases(&client);
+        }
+        if let Some(client) = extract_gaussdb(&connections, connection_id) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_databases(&mut client).await;
         }
     }
 
@@ -145,6 +177,16 @@ pub async fn list_schemas_core(state: &AppState, connection_id: &str, database: 
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_schemas(&*client).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_schemas(&client);
+        }
+        if let Some(client) = extract_gaussdb(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_schemas(&mut client).await;
         }
     }
 
@@ -185,6 +227,16 @@ pub async fn list_tables_core(
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_tables(&*client, schema).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_tables(&client, schema);
+        }
+        if let Some(client) = extract_gaussdb(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_tables(&mut client, schema).await;
         }
     }
 
@@ -229,6 +281,16 @@ pub async fn get_columns_core(
             let client = client.lock().await;
             return db::oracle_driver::get_columns(&*client, schema, table).await;
         }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::get_columns(&client, schema, table);
+        }
+        if let Some(client) = extract_gaussdb(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::get_columns(&mut client, schema, table).await;
+        }
     }
 
     let connections = state.connections.lock().await;
@@ -262,6 +324,16 @@ pub async fn list_indexes_core(
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_indexes(&*client, schema, table).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_indexes(&client, schema, table);
+        }
+        if let Some(client) = extract_gaussdb(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_indexes(&mut client, schema, table).await;
         }
     }
 
@@ -297,6 +369,16 @@ pub async fn list_foreign_keys_core(
             let client = client.lock().await;
             return db::oracle_driver::list_foreign_keys(&*client, schema, table).await;
         }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_foreign_keys(&client, schema, table);
+        }
+        if let Some(client) = extract_gaussdb(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_foreign_keys(&mut client, schema, table).await;
+        }
     }
 
     let connections = state.connections.lock().await;
@@ -330,6 +412,16 @@ pub async fn list_triggers_core(
             drop(connections);
             let client = client.lock().await;
             return db::oracle_driver::list_triggers(&*client, schema, table).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return db::dm_driver::list_triggers(&client, schema, table);
+        }
+        if let Some(client) = extract_gaussdb(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return db::gaussdb_driver::list_triggers(&mut client, schema, table).await;
         }
     }
 
@@ -390,6 +482,16 @@ pub async fn get_table_ddl_core(
             drop(connections);
             let client = client.lock().await;
             return build_oracle_ddl(&*client, schema, table).await;
+        }
+        if let Some(client) = extract_dameng(&connections, &pool_key) {
+            drop(connections);
+            let client = client.lock().map_err(|e| e.to_string())?;
+            return build_dameng_ddl(&client, schema, table);
+        }
+        if let Some(client) = extract_gaussdb(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return build_gaussdb_ddl(&mut client, schema, table).await;
         }
     }
 
@@ -556,6 +658,104 @@ pub async fn build_oracle_ddl(
     let columns = db::oracle_driver::get_columns(client, schema, table).await?;
     let indexes = db::oracle_driver::list_indexes(client, schema, table).await?;
     let fkeys = db::oracle_driver::list_foreign_keys(client, schema, table).await?;
+
+    let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
+    let col_lines: Vec<String> = columns
+        .iter()
+        .map(|c| {
+            let mut line = format!("  \"{}\" {}", c.name, c.data_type);
+            if !c.is_nullable {
+                line.push_str(" NOT NULL");
+            }
+            if let Some(ref def) = c.column_default {
+                line.push_str(&format!(" DEFAULT {def}"));
+            }
+            line
+        })
+        .collect();
+    ddl.push_str(&col_lines.join(",\n"));
+
+    let pks: Vec<&str> = columns.iter().filter(|c| c.is_primary_key).map(|c| c.name.as_str()).collect();
+    if !pks.is_empty() {
+        ddl.push_str(&format!(
+            ",\n  PRIMARY KEY ({})",
+            pks.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    for fk in &fkeys {
+        ddl.push_str(&format!(
+            ",\n  CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\"(\"{}\")",
+            fk.name, fk.column, fk.ref_table, fk.ref_column
+        ));
+    }
+    ddl.push_str("\n);\n");
+
+    for idx in &indexes {
+        if idx.is_primary {
+            continue;
+        }
+        let unique = if idx.is_unique { "UNIQUE " } else { "" };
+        let cols = idx.columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        ddl.push_str(&format!("\nCREATE {unique}INDEX \"{}\" ON \"{schema}\".\"{table}\" ({cols});", idx.name));
+    }
+    Ok(ddl)
+}
+
+pub fn build_dameng_ddl(client: &db::dm_driver::DmClient, schema: &str, table: &str) -> Result<String, String> {
+    let columns = db::dm_driver::get_columns(client, schema, table)?;
+    let indexes = db::dm_driver::list_indexes(client, schema, table)?;
+    let fkeys = db::dm_driver::list_foreign_keys(client, schema, table)?;
+
+    let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
+    let col_lines: Vec<String> = columns
+        .iter()
+        .map(|c| {
+            let mut line = format!("  \"{}\" {}", c.name, c.data_type);
+            if !c.is_nullable {
+                line.push_str(" NOT NULL");
+            }
+            if let Some(ref def) = c.column_default {
+                line.push_str(&format!(" DEFAULT {def}"));
+            }
+            line
+        })
+        .collect();
+    ddl.push_str(&col_lines.join(",\n"));
+
+    let pks: Vec<&str> = columns.iter().filter(|c| c.is_primary_key).map(|c| c.name.as_str()).collect();
+    if !pks.is_empty() {
+        ddl.push_str(&format!(
+            ",\n  PRIMARY KEY ({})",
+            pks.iter().map(|k| format!("\"{k}\"")).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    for fk in &fkeys {
+        ddl.push_str(&format!(
+            ",\n  CONSTRAINT \"{}\" FOREIGN KEY (\"{}\") REFERENCES \"{}\"(\"{}\")",
+            fk.name, fk.column, fk.ref_table, fk.ref_column
+        ));
+    }
+    ddl.push_str("\n);\n");
+
+    for idx in &indexes {
+        if idx.is_primary {
+            continue;
+        }
+        let unique = if idx.is_unique { "UNIQUE " } else { "" };
+        let cols = idx.columns.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        ddl.push_str(&format!("\nCREATE {unique}INDEX \"{}\" ON \"{schema}\".\"{table}\" ({cols});", idx.name));
+    }
+    Ok(ddl)
+}
+
+pub async fn build_gaussdb_ddl(
+    client: &mut db::gaussdb_driver::GaussdbClient,
+    schema: &str,
+    table: &str,
+) -> Result<String, String> {
+    let columns = db::gaussdb_driver::get_columns(client, schema, table).await?;
+    let indexes = db::gaussdb_driver::list_indexes(client, schema, table).await?;
+    let fkeys = db::gaussdb_driver::list_foreign_keys(client, schema, table).await?;
 
     let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
     let col_lines: Vec<String> = columns

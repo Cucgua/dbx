@@ -122,3 +122,20 @@ pub async fn execute_script(
 
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
+
+pub async fn execute_in_transaction(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<ExecuteBatchRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let result = dbx_core::query::execute_statements_in_transaction(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &req.statements,
+        req.schema.as_deref(),
+    )
+    .await
+    .map_err(AppError)?;
+
+    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+}

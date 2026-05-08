@@ -27,6 +27,7 @@ import {
   WrapText,
   Info,
   Rows3,
+  TriangleAlert,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,7 +60,7 @@ import {
   type CellPosition,
   type CellSelectionRange,
 } from "@/lib/gridSelection";
-import { buildTableSelectSql, normalizeWhereInput, quoteTableIdentifier } from "@/lib/tableSelectSql";
+import { quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { buildDataGridSaveStatements, formatGridSqlLiteral } from "@/lib/dataGridSql";
 import { formatMarkdownTable } from "@/lib/markdownTable";
 import {
@@ -93,8 +94,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   reload: [];
-  paginate: [offset: number, limit: number, whereInput?: string];
-  sort: [column: string, direction: "asc" | "desc" | null, whereInput?: string];
+  paginate: [offset: number, limit: number, orderBy?: string];
+  sort: [column: string, direction: "asc" | "desc" | null];
 }>();
 
 const hasData = computed(() => props.result.columns.length > 0);
@@ -201,154 +202,14 @@ const showTranspose = ref(false);
 const sortCol = ref<string | null>(null);
 const sortDir = ref<"asc" | "desc">("asc");
 const searchText = ref("");
-const searchSuggestions = ref<string[]>([]);
-const suggestionIndex = ref(-1);
-const searchInputRef = ref<HTMLInputElement>();
-const measureRef = ref<HTMLSpanElement>();
-const suggestionLeft = ref(0);
-
-function updateSuggestionPosition() {
-  nextTick(() => {
-    const input = searchInputRef.value;
-    const measure = measureRef.value;
-    if (!input || !measure) return;
-    const cursorPos = input.selectionStart ?? 0;
-    measure.textContent = searchText.value.slice(0, cursorPos);
-    suggestionLeft.value = measure.getBoundingClientRect().width;
-  });
-}
-
-watch(searchText, (val) => {
-  searchSuggestions.value = [];
-  if (!canUseWhereSearch.value || !props.tableMeta?.columns?.length) return;
-
-  const trimmed = val.trimStart();
-  const lower = trimmed.toLowerCase();
-
-  if (trimmed.length > 0 && lower !== "where" && "where".startsWith(lower)) {
-    searchSuggestions.value = ["WHERE "];
-    suggestionIndex.value = 0;
-    updateSuggestionPosition();
-    return;
-  }
-
-  const m = val.match(/^\s*where\s+(.+)$/i);
-  if (m) {
-    const lastToken = m[1].split(/[\s,()><=!]+/).pop() || "";
-    if (lastToken.length > 0) {
-      const tl = lastToken.toLowerCase();
-      searchSuggestions.value = props.tableMeta.columns
-        .map((c) => c.name)
-        .filter((n) => n.toLowerCase().startsWith(tl) && n.toLowerCase() !== tl)
-        .slice(0, 8);
-      suggestionIndex.value = 0;
-      updateSuggestionPosition();
-    }
-  }
-});
-
-function acceptSuggestion() {
-  const idx = suggestionIndex.value;
-  if (idx < 0 || idx >= searchSuggestions.value.length) return;
-  const sug = searchSuggestions.value[idx];
-
-  if (sug === "WHERE ") {
-    const trimmed = searchText.value.trimStart();
-    const leading = searchText.value.slice(0, searchText.value.length - trimmed.length);
-    searchText.value = leading + "WHERE ";
-  } else {
-    const lastWordMatch = searchText.value.match(/([^\s,()><=!]+)$/);
-    if (lastWordMatch) {
-      const lastWord = lastWordMatch[1];
-      const prefix = searchText.value.slice(0, -lastWord.length);
-      searchText.value = prefix + sug;
-    }
-  }
-  searchSuggestions.value = [];
-  suggestionIndex.value = -1;
-  searchInputRef.value?.focus();
-}
-
-function dismissSuggestions() {
-  searchSuggestions.value = [];
-  suggestionIndex.value = -1;
-}
-
-function navigateSuggestion(delta: number) {
-  if (searchSuggestions.value.length === 0) return;
-  suggestionIndex.value = Math.min(Math.max(suggestionIndex.value + delta, 0), searchSuggestions.value.length - 1);
-}
-
-const PAIRS: Record<string, string> = { "'": "'", '"': '"', "(": ")" };
 
 function onSearchKeydown(e: KeyboardEvent) {
-  if (e.key in PAIRS && !e.ctrlKey && !e.metaKey) {
-    const input = e.target as HTMLInputElement;
-    const start = input.selectionStart ?? 0;
-    const end = input.selectionEnd ?? 0;
-    const close = PAIRS[e.key];
-
-    if (start !== end) {
-      // Wrap selection: 'text' → 'text'
-      e.preventDefault();
-      const selected = searchText.value.slice(start, end);
-      searchText.value = searchText.value.slice(0, start) + e.key + selected + close + searchText.value.slice(end);
-      nextTick(() => {
-        input.setSelectionRange(start + 1 + selected.length, start + 1 + selected.length);
-      });
-      suggestionIndex.value = -1;
-      return;
-    }
-
-    if (searchText.value[start] === close) {
-      // Cursor before closing char → skip over it
-      e.preventDefault();
-      input.setSelectionRange(start + 1, start + 1);
-      return;
-    }
-
-    e.preventDefault();
-    searchText.value = searchText.value.slice(0, start) + e.key + close + searchText.value.slice(end);
-    nextTick(() => {
-      input.setSelectionRange(start + 1, start + 1);
-    });
-    suggestionIndex.value = -1;
-    return;
-  }
-
-  if (searchSuggestions.value.length > 0) {
-    if (e.key === "Tab") {
-      e.preventDefault();
-      acceptSuggestion();
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      dismissSuggestions();
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      navigateSuggestion(1);
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      navigateSuggestion(-1);
-      return;
-    }
-  }
-  if (e.key === "Enter") {
-    onSearchEnter(e);
-    return;
-  }
   if (e.key === "Escape") {
     searchText.value = "";
   }
 }
 
 const saveError = ref("");
-const isApplyingWhere = ref(false);
 const rowStatusFilter = ref<RowStatusFilter>("all");
 const columnWidths = ref<number[]>([]);
 const gridRef = ref<HTMLDivElement>();
@@ -419,26 +280,26 @@ watch(() => props.result.columns.length, initColumnWidths);
 const pageSize = ref(100);
 const currentPage = ref(1);
 const isFullPage = computed(() => props.result.rows.length >= pageSize.value);
-const canUseWhereSearch = computed(() => !!props.tableMeta && !!props.onExecuteSql);
-const isWhereSearch = computed(() => canUseWhereSearch.value && /^\s*where\b/i.test(searchText.value));
-const wherePredicate = computed(() => normalizeWhereInput(searchText.value));
-const activeWhereInput = computed(() => (isWhereSearch.value && wherePredicate.value ? searchText.value : undefined));
-const clientSearchText = computed(() => (isWhereSearch.value ? "" : searchText.value));
+const clientSearchText = computed(() => searchText.value);
+
+function currentOrderBy(): string | undefined {
+  return sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined;
+}
 
 function prevPage() {
   if (currentPage.value <= 1) return;
   currentPage.value--;
-  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value);
+  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentOrderBy());
 }
 function nextPage() {
   if (!isFullPage.value) return;
   currentPage.value++;
-  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value);
+  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentOrderBy());
 }
 function changePageSize(size: number) {
   pageSize.value = size;
   currentPage.value = 1;
-  emit("paginate", 0, size, activeWhereInput.value);
+  emit("paginate", 0, size, currentOrderBy());
 }
 
 // --- Editing ---
@@ -455,6 +316,35 @@ const newRowCount = computed(() => newRows.value.length);
 const deletedRowCount = computed(() => deletedRows.value.size);
 const pendingChangeCount = computed(() => dirtyRowCount.value + newRowCount.value + deletedRowCount.value);
 const hasPendingChanges = computed(() => pendingChangeCount.value > 0);
+
+// --- Transaction state ---
+const transactionActive = ref(false);
+const isSaving = ref(false);
+
+function enterTransaction() {
+  transactionActive.value = true;
+}
+
+function exitTransaction() {
+  transactionActive.value = false;
+}
+
+const useTransaction = computed(() => props.editable && !!props.connectionId && !!props.database && !!props.tableMeta);
+
+async function onToolbarRefresh() {
+  if (transactionActive.value) {
+    discardChanges();
+  }
+  emit("reload");
+}
+
+async function onToolbarCommit() {
+  await saveChanges();
+}
+
+function onToolbarRollback() {
+  discardChanges();
+}
 
 const sortedRows = computed(() => {
   let rows = props.result.rows.map((row, sourceIndex) => ({ row, sourceIndex }));
@@ -514,6 +404,10 @@ const emptyTitle = computed(() => (hasActiveFilter.value ? t("grid.noFilteredRow
 const emptyDescription = computed(() =>
   hasActiveFilter.value ? t("grid.noFilteredRowsDescription") : t("grid.noRowsDescription"),
 );
+const isErrorResult = computed(
+  () => props.result.columns.length === 1 && props.result.columns[0] === "Error" && props.result.rows.length > 0,
+);
+const errorMessage = computed(() => (isErrorResult.value ? String(props.result.rows[0]?.[0] ?? "") : ""));
 const selectedRange = computed<CellSelectionRange | null>(() => {
   if (!selectionAnchor.value || !selectionFocus.value) return null;
   return normalizeSelectionRange(selectionAnchor.value, selectionFocus.value);
@@ -534,7 +428,7 @@ const activeCellDetail = computed(() => {
   if (!item || !column) return null;
   const value = item.data[cell.col] ?? null;
   const rawValue = formatCell(value);
-  const valueText = value === null ? "" : String(value);
+  const valueText = value === null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
   const trimmed = valueText.trim();
   const maybeJson = typeof value === "string" && (trimmed.startsWith("{") || trimmed.startsWith("["));
   let formattedJson = "";
@@ -563,53 +457,26 @@ function toggleSort(colName: string) {
   if (sortCol.value === colName) {
     if (sortDir.value === "asc") {
       sortDir.value = "desc";
-      emit("sort", colName, "desc", activeWhereInput.value);
+      emit("sort", colName, "desc");
     } else {
       sortCol.value = null;
       sortDir.value = "asc";
-      emit("sort", colName, null, activeWhereInput.value);
+      emit("sort", colName, null);
     }
   } else {
     sortCol.value = colName;
     sortDir.value = "asc";
-    emit("sort", colName, "asc", activeWhereInput.value);
+    emit("sort", colName, "asc");
   }
 }
 
-function onSearchEnter(event: KeyboardEvent) {
-  if (!isWhereSearch.value) return;
-  event.preventDefault();
-  void applyWhereSearch();
-}
-
-async function applyWhereSearch() {
-  if (!props.tableMeta || !props.onExecuteSql || !wherePredicate.value) return;
-  isApplyingWhere.value = true;
-  saveError.value = "";
-  currentPage.value = 1;
-  try {
-    const sql = buildTableSelectSql({
-      databaseType: props.databaseType,
-      schema: props.tableMeta.schema,
-      tableName: props.tableMeta.tableName,
-      primaryKeys: props.tableMeta.primaryKeys,
-      orderBy: sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined,
-      limit: pageSize.value,
-      whereInput: searchText.value,
-    });
-    await props.onExecuteSql(sql);
-  } catch (e: any) {
-    saveError.value = String(e?.message || e);
-  } finally {
-    isApplyingWhere.value = false;
-  }
-}
+const CELL_DISPLAY_MAX_LENGTH = 256;
 
 function formatCell(value: CellValue): string {
   if (value === null) return "NULL";
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  const s = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return s.length > CELL_DISPLAY_MAX_LENGTH ? s.slice(0, CELL_DISPLAY_MAX_LENGTH) : s;
 }
 
 function quoteIdent(name: string): string {
@@ -713,7 +580,7 @@ function startEdit(rowId: number, colIdx: number) {
   isCancelling = false;
   editingCell.value = { rowId, col: colIdx };
   const val = item?.data[colIdx] ?? null;
-  editValue.value = val === null ? "" : String(val);
+  editValue.value = val === null ? "" : typeof val === "object" ? JSON.stringify(val) : String(val);
   nextTick(() => {
     const input = document.querySelector(".cell-edit-input") as HTMLInputElement;
     input?.focus();
@@ -751,6 +618,10 @@ function commitEdit() {
   if (newVal !== oldVal) {
     if (!dirtyRows.value.has(item.sourceIndex)) dirtyRows.value.set(item.sourceIndex, new Map());
     dirtyRows.value.get(item.sourceIndex)!.set(col, newVal);
+    // Enter transaction mode on first edit
+    if (useTransaction.value && !transactionActive.value) {
+      enterTransaction();
+    }
   } else {
     const rowChanges = dirtyRows.value.get(item.sourceIndex);
     rowChanges?.delete(col);
@@ -781,6 +652,9 @@ function onEditKeydown(e: KeyboardEvent) {
 function addRow() {
   rowStatusFilter.value = rowStatusFilterAfterAddingRow(rowStatusFilter.value);
   newRows.value.push(props.result.columns.map(() => null));
+  if (useTransaction.value && !transactionActive.value) {
+    enterTransaction();
+  }
   const rowId = -newRows.value.length;
   nextTick(() => {
     const el = getScrollerElement();
@@ -799,6 +673,9 @@ function applyDeleteRow(rowId: number) {
     deletedRows.value.add(item.sourceIndex);
   }
   if (editingCell.value?.rowId === rowId) editingCell.value = null;
+  if (useTransaction.value && !transactionActive.value) {
+    enterTransaction();
+  }
 }
 
 const showDeleteRowConfirm = ref(false);
@@ -849,12 +726,22 @@ async function saveChanges() {
   const stmts = generateSaveStatements();
   if (stmts.length === 0) return;
   saveError.value = "";
+  isSaving.value = true;
 
-  if (props.connectionId && props.database) {
+  if (useTransaction.value && props.connectionId && props.database) {
+    try {
+      await api.executeInTransaction(props.connectionId, props.database, stmts, props.tableMeta?.schema);
+    } catch (e: any) {
+      saveError.value = String(e.message || e);
+      isSaving.value = false;
+      return;
+    }
+  } else if (props.connectionId && props.database) {
     try {
       await api.executeBatch(props.connectionId, props.database, stmts);
     } catch (e: any) {
       saveError.value = String(e.message || e);
+      isSaving.value = false;
       return;
     }
   } else if (props.onExecuteSql) {
@@ -864,12 +751,15 @@ async function saveChanges() {
       }
     } catch (e: any) {
       saveError.value = String(e.message || e);
+      isSaving.value = false;
       return;
     }
   }
   dirtyRows.value.clear();
   newRows.value = [];
   deletedRows.value.clear();
+  exitTransaction();
+  isSaving.value = false;
   emit("reload");
 }
 
@@ -878,6 +768,7 @@ function discardChanges() {
   newRows.value = [];
   deletedRows.value.clear();
   editingCell.value = null;
+  exitTransaction();
 }
 
 // --- Cell selection and detail ---
@@ -1000,6 +891,7 @@ watch(
     detailCell.value = null;
     showTranspose.value = false;
     transposeRowIndex.value = null;
+    exitTransaction();
   },
 );
 
@@ -1043,9 +935,9 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
       defaultPath: defaultFileName,
       filters: [{ name: filterName, extensions: [filterExt] }],
     });
-    if (path) await writeTextFile(path, content);
+    if (path) await writeTextFile(path, "﻿" + content);
   } else {
-    const blob = new Blob([content], { type: "text/plain" });
+    const blob = new Blob(["﻿", content], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -1195,6 +1087,8 @@ function escapeAndHighlightKeywords(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(SQL_KEYWORDS, '<span class="ddl-kw">$1</span>');
 }
+
+defineExpose({ useTransaction, transactionActive, isSaving, onToolbarRefresh, onToolbarCommit, onToolbarRollback });
 </script>
 
 <template>
@@ -1203,45 +1097,17 @@ function escapeAndHighlightKeywords(s: string): string {
       <ContextMenuTrigger as-child>
         <div v-if="hasData" class="flex-1 flex flex-col overflow-hidden">
           <!-- Search bar -->
-          <div class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20 relative">
+          <div class="flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-muted/20">
             <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <input
-              ref="searchInputRef"
               v-model="searchText"
               autocapitalize="off"
               autocorrect="off"
               spellcheck="false"
               class="flex-1 h-5 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
-              :placeholder="canUseWhereSearch ? t('grid.searchOrWhere') : t('grid.search')"
+              :placeholder="t('grid.search')"
               @keydown="onSearchKeydown"
-              @click="updateSuggestionPosition"
             />
-            <span
-              ref="measureRef"
-              class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
-              aria-hidden="true"
-            />
-            <!-- Suggestion dropdown -->
-            <div
-              v-if="searchSuggestions.length > 0"
-              class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
-              :style="{ left: suggestionLeft + 24 + 'px' }"
-            >
-              <div
-                v-for="(sug, idx) in searchSuggestions"
-                :key="sug"
-                class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
-                :class="idx === suggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
-                @mousedown.prevent="
-                  suggestionIndex = idx;
-                  acceptSuggestion();
-                "
-                @mouseenter="suggestionIndex = idx"
-              >
-                <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
-                <span>{{ sug }}</span>
-              </div>
-            </div>
             <Select
               v-if="editable && tableMeta"
               :model-value="rowStatusFilter"
@@ -1261,18 +1127,6 @@ function escapeAndHighlightKeywords(s: string): string {
             <span v-if="hasActiveFilter" class="text-xs text-muted-foreground">
               {{ displayItems.length }}/{{ totalFilterableRowCount }}
             </span>
-            <Button
-              v-if="isWhereSearch"
-              variant="ghost"
-              size="sm"
-              class="h-5 text-xs px-1.5 shrink-0"
-              :disabled="isApplyingWhere || !wherePredicate"
-              @click="applyWhereSearch"
-            >
-              <Loader2 v-if="isApplyingWhere" class="w-3 h-3 mr-1 animate-spin" />
-              <Search v-else class="w-3 h-3 mr-1" />
-              {{ t("grid.applyWhere") }}
-            </Button>
             <Button
               v-if="editable && tableMeta"
               variant="ghost"
@@ -1340,7 +1194,18 @@ function escapeAndHighlightKeywords(s: string): string {
               </div>
 
               <div
-                v-if="!hasVisibleRows"
+                v-if="isErrorResult"
+                class="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-destructive"
+              >
+                <TriangleAlert class="h-8 w-8 text-destructive/50" aria-hidden="true" />
+                <div class="space-y-1">
+                  <div class="text-sm font-medium">{{ t("grid.queryError") }}</div>
+                  <div class="text-xs max-w-lg break-all text-destructive/80">{{ errorMessage }}</div>
+                </div>
+              </div>
+
+              <div
+                v-else-if="!hasVisibleRows"
                 class="flex-1 flex flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground"
               >
                 <component
@@ -1462,7 +1327,7 @@ function escapeAndHighlightKeywords(s: string): string {
               </div>
               <pre
                 v-else
-                class="flex-1 min-w-0 text-xs font-mono p-3 overflow-auto ddl-code leading-5"
+                class="flex-1 min-w-0 text-xs font-mono p-3 overflow-auto ddl-code leading-5 select-text"
                 :class="ddlWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'"
                 v-html="highlightSql(ddlContent)"
               ></pre>
@@ -1653,7 +1518,7 @@ function escapeAndHighlightKeywords(s: string): string {
       <span>{{ result.execution_time_ms }}ms</span>
       <span v-if="hasCellSelection" class="text-foreground">{{ selectionSummary }}</span>
 
-      <template v-if="editable && tableMeta">
+      <template v-if="editable && tableMeta && !transactionActive">
         <span v-if="hasPendingChanges" class="ml-2 text-foreground">
           {{ t("grid.pendingChanges", { count: pendingChangeCount }) }}
         </span>
@@ -1662,9 +1527,6 @@ function escapeAndHighlightKeywords(s: string): string {
         </Button>
         <Button v-if="hasPendingChanges" variant="ghost" size="sm" class="h-5 text-xs" @click="discardChanges">
           {{ t("grid.discard") }}
-        </Button>
-        <Button variant="ghost" size="sm" class="h-5 text-xs" @click="toggleDdl">
-          <Code2 class="w-3 h-3 mr-1" /> DDL
         </Button>
       </template>
 

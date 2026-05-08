@@ -1,11 +1,17 @@
 ---
 title: Field Lineage
-description: Trace column relationships across foreign keys, views, and query history.
+description: Trace column relationships across foreign keys, views, and query history. Essential for data governance.
 ---
 
-# Field Lineage
+<Callout type="info">
+Most database tools don't have this. DBX automatically traces column relationships from foreign keys, views, and query history, with confidence levels — essential for understanding how data flows through your schema.
+</Callout>
 
-Field Lineage helps you understand how columns in your database relate to each other. It traces relationships across foreign keys, views, and query history to give you a complete picture of where data comes from and where it flows.
+## Why Field Lineage?
+
+- **Data governance** — Understand where each column's data comes from and ensure data quality
+- **Impact analysis** — Before changing a table structure, see which downstream views or queries are affected
+- **Onboarding** — Quickly understand relationships across tables in a complex database
 
 ## Relationship Sources
 
@@ -13,27 +19,25 @@ DBX discovers column relationships from multiple sources, each with a different 
 
 ### Foreign Key Relationships (Certain)
 
-Relationships defined by foreign key constraints in the database schema. These are authoritative and marked with **certain** confidence because they are explicitly declared in the schema.
+Relationships defined by foreign key constraints. For example, `orders.user_id → users.id`. These are authoritative and the most reliable source.
 
 ### View References (Likely)
 
-When a view references columns from underlying tables, DBX traces those references. These relationships are marked with **likely** confidence because they are derived from view definitions rather than explicit constraints.
+DBX analyzes view definitions to trace which columns in the view map back to columns in the underlying tables.
 
 ### Query History References
 
-DBX analyzes your local query history to identify columns that are frequently joined or referenced together. These relationships are inferred from usage patterns.
+DBX analyzes your local query history to identify columns that are frequently joined or referenced together in `JOIN` and `WHERE` clauses.
 
 ### Same-Name Column Detection
 
-Columns that share the same name across different tables are flagged as potential relationships. This heuristic is useful for discovering implicit conventions (such as `user_id` appearing in multiple tables) that are not enforced by foreign keys.
+Columns that share the same name across different tables (e.g., `user_id` appearing in multiple tables) are flagged as potential relationships.
 
 ## Searching and Filtering
 
-The lineage panel provides:
-
-- **Search** -- Filter relationships by table name or column name.
-- **Confidence filter** -- Show only relationships at a specific confidence level (certain, likely, or all). This lets you focus on verified relationships or explore speculative ones.
+- **Search** — Filter relationships by table name or column name
+- **Confidence filter** — Show only relationships at a specific confidence level (certain, likely, or all)
 
 ## Click-Through Navigation
 
-Click any related table or column in the lineage view to navigate directly to it. This opens the target table in the Data Grid or Schema Browser, making it easy to follow data relationships across your schema without manually searching.
+Click any related table or column in the lineage view to navigate directly to it in the Data Grid or Schema Browser.

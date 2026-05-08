@@ -45,6 +45,7 @@ import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useQueryStore } from "@/stores/queryStore";
 import { useToast } from "@/composables/useToast";
 import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
+import { Marked } from "marked";
 import {
   aiTestConnection,
   aiCancelStream,
@@ -56,6 +57,7 @@ import {
 import type { AiMessage } from "@/lib/api";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
+import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -142,12 +144,16 @@ async function changeConnection(connectionId: string) {
   connectionStore.activeConnectionId = connectionId;
   const tab = props.tab;
   if (tab) {
-    queryStore.updateConnection(tab.id, connectionId, conn.database || "");
+    queryStore.updateConnection(tab.id, connectionId, resolveDefaultDatabase(conn, []));
   } else {
-    queryStore.createTab(connectionId, conn.database || "");
+    queryStore.createTab(connectionId, resolveDefaultDatabase(conn, []));
   }
   try {
     await loadDatabaseOptions(connectionId);
+    const database = resolveDefaultDatabase(conn, allDbOptions.value[connectionId] || []);
+    if (tab) {
+      queryStore.updateDatabase(tab.id, database);
+    }
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -439,10 +445,18 @@ function parseMessage(text: string): MessageSegment[] {
   return segments;
 }
 
+const markedInstance = new Marked({
+  breaks: true,
+  gfm: true,
+  renderer: {
+    code({ text }: { text: string }) {
+      return `<code class="rounded bg-muted px-1.5 py-0.5 text-[11px] font-mono">${text}</code>`;
+    },
+  },
+});
+
 function formatInlineText(text: string): string {
-  return text
-    .replace(/`([^`]+)`/g, '<code class="rounded bg-muted px-1.5 py-0.5 text-[11px] font-mono">$1</code>')
-    .replace(/\n/g, "<br>");
+  return markedInstance.parse(text) as string;
 }
 </script>
 
@@ -540,8 +554,8 @@ function formatInlineText(text: string): string {
                 </div>
               </div>
               <template v-for="(seg, j) in parseMessage(msg.content)" :key="j">
-                <div v-if="seg.type === 'text'" class="whitespace-normal">
-                  <span v-html="formatInlineText(seg.content)" />
+                <div v-if="seg.type === 'text'" class="ai-markdown whitespace-normal">
+                  <div v-html="formatInlineText(seg.content)" />
                 </div>
                 <div v-else class="my-2 rounded-md overflow-hidden bg-zinc-900 dark:bg-zinc-900">
                   <div
@@ -598,7 +612,7 @@ function formatInlineText(text: string): string {
           <Server v-else class="h-3 w-3 shrink-0" />
           <Select :model-value="connection?.id || ''" @update:model-value="(v: any) => changeConnection(v)">
             <SelectTrigger
-              class="h-5 w-auto border-0 rounded-none bg-transparent p-0 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3"
+              class="h-5 w-auto border-0 rounded-md bg-transparent dark:bg-transparent p-0 px-1 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3"
             >
               <SelectValue :placeholder="t('editor.selectConnection')">{{
                 connection?.name || t("editor.selectConnection")
@@ -625,7 +639,7 @@ function formatInlineText(text: string): string {
               "
             >
               <SelectTrigger
-                class="h-5 w-auto border-0 rounded-none bg-transparent p-0 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3"
+                class="h-5 w-auto border-0 rounded-md bg-transparent dark:bg-transparent p-0 px-1 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3"
               >
                 <SelectValue :placeholder="t('editor.selectDatabase')">{{
                   tab?.database || t("editor.selectDatabase")
@@ -788,3 +802,84 @@ function formatInlineText(text: string): string {
     </DialogContent>
   </Dialog>
 </template>
+
+<style scoped>
+.ai-markdown :deep(h1) {
+  font-size: 1em;
+  font-weight: 700;
+  margin: 0.5em 0 0.25em;
+}
+.ai-markdown :deep(h2) {
+  font-size: 0.95em;
+  font-weight: 600;
+  margin: 0.5em 0 0.25em;
+}
+.ai-markdown :deep(h3) {
+  font-size: 0.9em;
+  font-weight: 600;
+  margin: 0.4em 0 0.2em;
+}
+.ai-markdown :deep(p) {
+  margin: 0.3em 0;
+}
+.ai-markdown :deep(ul),
+.ai-markdown :deep(ol) {
+  padding-left: 1.4em;
+  margin: 0.3em 0;
+}
+.ai-markdown :deep(ul) {
+  list-style-type: disc;
+}
+.ai-markdown :deep(ol) {
+  list-style-type: decimal;
+}
+.ai-markdown :deep(li) {
+  margin: 0.15em 0;
+}
+.ai-markdown :deep(strong) {
+  font-weight: 600;
+}
+.ai-markdown :deep(a) {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+}
+.ai-markdown :deep(blockquote) {
+  border-left: 2px solid hsl(var(--muted-foreground) / 0.3);
+  padding-left: 0.75em;
+  margin: 0.3em 0;
+  color: hsl(var(--muted-foreground));
+}
+.ai-markdown :deep(code) {
+  border-radius: 0.25rem;
+  background: hsl(var(--muted));
+  padding: 0.125rem 0.375rem;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+.ai-markdown :deep(pre) {
+  background: hsl(var(--muted));
+  border-radius: 0.375rem;
+  padding: 0.5em 0.75em;
+  margin: 0.3em 0;
+  overflow-x: auto;
+}
+.ai-markdown :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+.ai-markdown :deep(table) {
+  border-collapse: collapse;
+  margin: 0.3em 0;
+  width: 100%;
+}
+.ai-markdown :deep(th),
+.ai-markdown :deep(td) {
+  border: 1px solid hsl(var(--border));
+  padding: 0.25em 0.5em;
+  text-align: left;
+}
+.ai-markdown :deep(th) {
+  font-weight: 600;
+  background: hsl(var(--muted));
+}
+</style>

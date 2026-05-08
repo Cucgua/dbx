@@ -1,35 +1,68 @@
 ---
 title: 什么是 DBX？
-description: DBX 是一款开源、轻量、跨平台的数据库管理工具，基于 Tauri 2 和 Rust 构建。
+description: 开源、轻量、AI 驱动的数据库管理工具，15 MB 管理 25+ 种数据库。
 ---
 
-DBX 是一款开源、轻量、跨平台的数据库管理工具，基于 [Tauri 2](https://tauri.app/) 和 Rust 构建。
+<Callout type="info">
+15 MB 安装包，25+ 种数据库，内置 AI 助手，桌面 + Docker 双模式部署。
+</Callout>
+
+DBX 是一款开源、轻量、跨平台的数据库管理工具，基于 [Tauri 2](https://tauri.app/) 和 Rust 构建。无需内嵌 Chromium，安装包仅 15 MB，却能管理 MySQL、PostgreSQL、MongoDB、Redis 等 25+ 种数据库。
+
+![DBX 截图](/screenshot-dark.png)
 
 ## 为什么选择 DBX？
 
-- **轻量** — 安装包约 15 MB，不内嵌 Chromium
-- **多数据库** — 一个工具管理 MySQL、PostgreSQL、SQLite、Redis、MongoDB 等 25+ 种数据库
-- **AI 驱动** — 内置 AI 助手 + MCP Server 对接外部 AI 编程助手
-- **安全** — 密码存储在系统钥匙串，支持 SSH 隧道，加密配置导出
-- **跨平台** — macOS、Windows、Linux
-- **Docker 自托管** — 支持通过 Docker 部署，适合团队共享和服务器环境
+<Cards>
+  <Card title="极致轻量" href="/cn/docs/getting-started">
+    ~15 MB 安装包，不内嵌 Chromium。Tauri 2 + Rust 原生性能，启动秒开。
+  </Card>
+  <Card title="25+ 数据库" href="/cn/docs/databases">
+    一个工具管理 MySQL、PostgreSQL、SQLite、Redis、MongoDB、ClickHouse、SQL Server、Oracle 等 25+ 种数据库。
+  </Card>
+  <Card title="AI 驱动" href="/cn/docs/ai-assistant">
+    内置 AI 助手：自然语言转 SQL、查询优化、错误修复。MCP Server 让 Claude/Cursor 直接查询你的数据库。
+  </Card>
+  <Card title="安全可靠" href="/cn/docs/ssh-tunnel">
+    密码存储在系统钥匙串（macOS Keychain / Windows Credential Manager），SSH 隧道，AES-256-GCM 加密配置导出。
+  </Card>
+</Cards>
 
 ## 核心功能
 
-- SQL 查询编辑器（语法高亮、智能补全、查询历史）
-- 数据表格（虚拟滚动、行内编辑、导出）
-- 结构浏览（树形视图、搜索、右键菜单）
-- Schema 图 / ER 图
-- 执行计划可视化
-- 表结构编辑器（可视化 DDL）
-- Schema 对比与同步
-- 数据迁移（跨引擎传输）
-- 数据导入（CSV、TSV、JSON、Excel）
-- 数据库导出（DDL + 数据）
-- 字段血缘分析
-- 配置导出/导入（加密传输）
-- AI 助手（自然语言转 SQL、优化、修复）
-- MCP Server（对接 Claude Code、Cursor 等）
+<Cards>
+  <Card title="查询编辑器" href="/cn/docs/query-editor">
+    CodeMirror 6 驱动，语法高亮、智能补全、JOIN 建议、查询历史。
+  </Card>
+  <Card title="数据表格" href="/cn/docs/data-grid">
+    虚拟滚动 10 万行不卡顿，行内编辑，保存前预览 SQL。
+  </Card>
+  <Card title="结构浏览" href="/cn/docs/schema-browser">
+    树形视图，搜索、置顶、右键菜单、字段注释、连接颜色标记。
+  </Card>
+  <Card title="Schema 对比" href="/cn/docs/schema-diff">
+    跨数据库结构对比，自动生成同步 SQL，开发 vs 生产一键对齐。
+  </Card>
+  <Card title="数据传输" href="/cn/docs/data-transfer">
+    跨引擎迁移 — MySQL → PostgreSQL，自动处理类型映射。
+  </Card>
+  <Card title="字段血缘" href="/cn/docs/field-lineage">
+    追踪外键、视图、查询历史中的字段关联，标注置信度。
+  </Card>
+</Cards>
+
+## 与竞品对比
+
+| | DBX | DBeaver | Navicat | TablePlus |
+|---|---|---|---|---|
+| **安装体积** | ~15 MB | ~300 MB | ~200 MB | ~80 MB |
+| **价格** | 免费 (AGPL) | 免费 / $230 | $180+ | $99+ |
+| **数据库支持** | 25+ | 80+ | 15+ | 20+ |
+| **内置 AI** | ✅ | ❌ | ✅ | ❌ |
+| **MCP 集成** | ✅ | ❌ | ❌ | ❌ |
+| **Docker 自托管** | ✅ | ❌ | ❌ | ❌ |
+| **字段血缘** | ✅ | ❌ | ❌ | ❌ |
+| **Schema 对比** | ✅ | ✅ | ✅ | ❌ |
 
 ## 技术栈
 

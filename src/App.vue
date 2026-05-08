@@ -29,10 +29,12 @@ import { useDataGridActions } from "@/composables/useDataGridActions";
 import { useTauriEvents } from "@/composables/useTauriEvents";
 import { setLocale, currentLocale } from "@/i18n";
 import * as api from "@/lib/api";
+import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isCloseTabShortcut, isExecuteSqlShortcut } from "@/lib/keyboardShortcuts";
 import { isPreviewTab } from "@/lib/tabPresentation";
+import { SQL_FILE_UNSUPPORTED_TYPES } from "@/lib/databaseCapabilities";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
@@ -103,9 +105,8 @@ const { onExecuteSql, onReloadData, onPaginate, onSort } = useDataGridActions(ac
 const { setupTauriListeners } = useTauriEvents({ openTableTarget });
 
 const appVersion = ref("");
-const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
 const hasSqlFileConnections = computed(() =>
-  connectionStore.connections.some((c) => !sqlFileUnsupportedTypes.has(c.db_type)),
+  connectionStore.connections.some((c) => !SQL_FILE_UNSUPPORTED_TYPES.has(c.db_type)),
 );
 const connectionStats = computed(() => ({
   total: connectionStore.connections.length,
@@ -204,26 +205,54 @@ async function openSqlFile() {
   }
 }
 
-function newQuery() {
+async function newQuery() {
   const connId = connectionStore.activeConnectionId || connectionStore.connections[0]?.id;
   if (!connId) return;
   const conn = connectionStore.getConfig(connId);
   if (!conn) return;
   connectionStore.activeConnectionId = connId;
-  queryStore.createTab(conn.id, conn.database || "");
+  const tabId = queryStore.createTab(conn.id, resolveDefaultDatabase(conn, []));
+  try {
+    await connectionStore.ensureConnected(connId);
+    const options = await getDatabaseOptions(connId);
+    queryStore.updateDatabase(tabId, resolveDefaultDatabase(conn, options));
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 async function openConnectionQuery(connectionId: string) {
   const connection = connectionStore.getConfig(connectionId);
   if (!connection) return;
   connectionStore.activeConnectionId = connectionId;
-  const tabId = queryStore.createTab(connectionId, connection.database || "");
+  const tabId = queryStore.createTab(connectionId, resolveDefaultDatabase(connection, []));
   try {
     await connectionStore.ensureConnected(connectionId);
     const options = await getDatabaseOptions(connectionId);
-    if (!connection.database && options[0]) queryStore.updateDatabase(tabId, options[0]);
+    queryStore.updateDatabase(tabId, resolveDefaultDatabase(connection, options));
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function onClickTable(tableName: string) {
+  const tab = activeTab.value;
+  if (!tab) return;
+  const connectionId = tab.connectionId;
+  const database = tab.database;
+
+  // Parse schema.table if needed
+  const [schema, rawTableName] = tableName.includes(".") ? tableName.split(".") : [database, tableName];
+
+  try {
+    await connectionStore.ensureConnected(connectionId);
+    const ddl = await api.getTableDdl(connectionId, database, schema || database, rawTableName);
+
+    // Create a new tab with the DDL
+    const tabId = queryStore.createTab(connectionId, database, `DDL - ${rawTableName}`);
+    queryStore.updateSql(tabId, ddl);
+  } catch (e: any) {
+    toast(`Failed to get table DDL: ${e?.message || String(e)}`, 5000);
   }
 }
 
@@ -232,12 +261,12 @@ async function changeActiveConnection(connectionId: string) {
   if (!tab) return;
   const connection = connectionStore.getConfig(connectionId);
   if (!connection) return;
-  queryStore.updateConnection(tab.id, connectionId, connection.database || "");
+  queryStore.updateConnection(tab.id, connectionId, resolveDefaultDatabase(connection, []));
   connectionStore.activeConnectionId = connectionId;
   try {
     await connectionStore.ensureConnected(connectionId);
     const options = await getDatabaseOptions(connectionId);
-    if (!connection.database && options[0]) queryStore.updateDatabase(tab.id, options[0]);
+    queryStore.updateDatabase(tab.id, resolveDefaultDatabase(connection, options));
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -246,6 +275,18 @@ async function changeActiveConnection(connectionId: string) {
 function changeActiveDatabase(database: string) {
   const tab = activeTab.value;
   if (tab) queryStore.updateDatabase(tab.id, database);
+}
+
+async function setActiveDatabaseAsDefault() {
+  const tab = activeTab.value;
+  if (!tab || !tab.connectionId || !tab.database) return;
+  await connectionStore.setDefaultDatabase(tab.connectionId, tab.database);
+}
+
+async function clearActiveDefaultDatabase() {
+  const tab = activeTab.value;
+  if (!tab || !tab.connectionId) return;
+  await connectionStore.clearDefaultDatabase(tab.connectionId);
 }
 
 function changeActiveSchema(schema: string | undefined) {
@@ -433,6 +474,8 @@ onUnmounted(() => {
                   @change-connection="changeActiveConnection"
                   @change-database="changeActiveDatabase"
                   @change-schema="changeActiveSchema"
+                  @set-default-database="setActiveDatabaseAsDefault"
+                  @clear-default-database="clearActiveDefaultDatabase"
                 />
                 <ContentArea
                   :active-tab="activeTab"
@@ -459,6 +502,7 @@ onUnmounted(() => {
                   @paginate="onPaginate"
                   @sort="onSort"
                   @execute-sql="onExecuteSql"
+                  @click-table="onClickTable"
                 />
               </div>
               <WelcomeScreen
@@ -544,7 +588,7 @@ onUnmounted(() => {
         <Transition name="toast">
           <div
             v-if="toastVisible"
-            class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-foreground text-background text-sm shadow-lg"
+            class="fixed bottom-6 left-1/2 -translate-x-1/2 z-100 px-4 py-2 rounded-lg bg-foreground text-background text-sm shadow-lg"
           >
             {{ toastMessage }}
           </div>

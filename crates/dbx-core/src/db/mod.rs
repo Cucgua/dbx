@@ -1,7 +1,9 @@
 pub mod clickhouse_driver;
+pub mod dm_driver;
 pub mod duckdb_driver;
 pub mod elasticsearch_driver;
 pub mod file_validator;
+pub mod gaussdb_driver;
 pub mod mongo_driver;
 pub mod mysql;
 pub mod oracle_driver;
@@ -21,8 +23,39 @@ pub use file_validator::validate_file_path;
 pub const CONNECTION_TIMEOUT_SECS: u64 = 5;
 pub const TCP_PROBE_TIMEOUT_SECS: u64 = 3;
 
+pub static ODBC_ENV: std::sync::LazyLock<odbc_api::Environment> = std::sync::LazyLock::new(|| {
+    if std::env::var("ODBCSYSINI").is_err() {
+        for dir in &["/opt/homebrew/etc", "/usr/local/etc", "/etc"] {
+            let path = std::path::Path::new(dir).join("odbcinst.ini");
+            if path.exists() {
+                std::env::set_var("ODBCSYSINI", dir);
+                break;
+            }
+        }
+    }
+    odbc_api::Environment::new().expect("Failed to initialize ODBC environment")
+});
+
 pub fn connection_timeout() -> Duration {
     Duration::from_secs(CONNECTION_TIMEOUT_SECS)
+}
+
+const JS_MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+
+pub fn safe_i64_to_json(v: i64) -> serde_json::Value {
+    if v > JS_MAX_SAFE_INTEGER || v < -JS_MAX_SAFE_INTEGER {
+        serde_json::Value::String(v.to_string())
+    } else {
+        serde_json::Value::Number(v.into())
+    }
+}
+
+pub fn safe_u64_to_json(v: u64) -> serde_json::Value {
+    if v > JS_MAX_SAFE_INTEGER as u64 {
+        serde_json::Value::String(v.to_string())
+    } else {
+        serde_json::Value::Number(v.into())
+    }
 }
 
 pub fn tcp_probe_timeout() -> Duration {

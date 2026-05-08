@@ -192,3 +192,115 @@ pub async fn delete_document(client: &EsClient, index: &str, id: &str) -> Result
 
     Ok(1)
 }
+
+pub async fn execute_rest_query(client: &EsClient, input: &str) -> Result<crate::types::QueryResult, String> {
+    let start = std::time::Instant::now();
+    let input = input.trim();
+
+    let (method, rest) = input.split_once(char::is_whitespace).ok_or("Invalid query: expected METHOD /path")?;
+    let method = method.to_uppercase();
+
+    let (path, body) = if let Some(pos) = rest.find('\n') {
+        let p = rest[..pos].trim();
+        let b = rest[pos + 1..].trim();
+        (p, if b.is_empty() { None } else { Some(b) })
+    } else {
+        (rest.trim(), None)
+    };
+
+    let path = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
+
+    let resp = match method.as_str() {
+        "GET" => {
+            let req = client.get(&path);
+            if let Some(b) = body {
+                let json: serde_json::Value = serde_json::from_str(b).map_err(|e| format!("Invalid JSON body: {e}"))?;
+                req.json(&json).send().await
+            } else {
+                req.send().await
+            }
+        }
+        "POST" => {
+            let req = client.post(&path);
+            if let Some(b) = body {
+                let json: serde_json::Value = serde_json::from_str(b).map_err(|e| format!("Invalid JSON body: {e}"))?;
+                req.json(&json).send().await
+            } else {
+                req.send().await
+            }
+        }
+        "PUT" => {
+            let req = client.put(&path);
+            if let Some(b) = body {
+                let json: serde_json::Value = serde_json::from_str(b).map_err(|e| format!("Invalid JSON body: {e}"))?;
+                req.json(&json).send().await
+            } else {
+                req.send().await
+            }
+        }
+        "DELETE" => client.delete(&path).send().await,
+        _ => return Err(format!("Unsupported HTTP method: {method}. Use GET, POST, PUT, or DELETE.")),
+    }
+    .map_err(|e| format!("Elasticsearch request failed: {e}"))?;
+
+    let status = resp.status().as_u16();
+    let body: serde_json::Value = resp.json().await.unwrap_or_else(|_| serde_json::Value::Null);
+
+    if let Some(hits) = body.pointer("/hits/hits").and_then(|v| v.as_array()) {
+        let mut all_keys = Vec::<String>::new();
+        let docs: Vec<serde_json::Map<String, serde_json::Value>> = hits
+            .iter()
+            .map(|hit| {
+                let mut row = serde_json::Map::new();
+                row.insert("_id".to_string(), hit.get("_id").cloned().unwrap_or(serde_json::Value::Null));
+                if let Some(source) = hit.get("_source").and_then(|s| s.as_object()) {
+                    for (k, v) in source {
+                        row.insert(k.clone(), v.clone());
+                    }
+                }
+                for k in row.keys() {
+                    if !all_keys.contains(k) {
+                        all_keys.push(k.clone());
+                    }
+                }
+                row
+            })
+            .collect();
+
+        let rows: Vec<Vec<serde_json::Value>> = docs
+            .iter()
+            .map(|doc| {
+                all_keys
+                    .iter()
+                    .map(|k| {
+                        doc.get(k)
+                            .map(|v| match v {
+                                serde_json::Value::String(s) => serde_json::Value::String(s.clone()),
+                                other => serde_json::Value::String(other.to_string()),
+                            })
+                            .unwrap_or(serde_json::Value::Null)
+                    })
+                    .collect()
+            })
+            .collect();
+
+        let total = body.pointer("/hits/total/value").and_then(|v| v.as_u64()).unwrap_or(rows.len() as u64);
+
+        Ok(crate::types::QueryResult {
+            columns: all_keys,
+            rows,
+            affected_rows: total,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        })
+    } else {
+        let pretty = serde_json::to_string_pretty(&body).unwrap_or_else(|_| body.to_string());
+        Ok(crate::types::QueryResult {
+            columns: vec!["status".to_string(), "response".to_string()],
+            rows: vec![vec![serde_json::Value::Number(status.into()), serde_json::Value::String(pretty)]],
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        })
+    }
+}

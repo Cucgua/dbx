@@ -1,11 +1,11 @@
 ---
 title: Table Import
-description: Import data from CSV, TSV, JSON, and Excel files into database tables.
+description: Import CSV, TSV, JSON, and Excel files into database tables with automatic column mapping.
 ---
 
-# Table Import
-
-Table Import lets you load data from local files into a database table. It supports common file formats and provides column mapping to ensure data lands in the right place.
+<Callout type="info">
+Import CSV, TSV, JSON, and Excel files with automatic column name matching. Choose between append and truncate modes.
+</Callout>
 
 ## Supported Formats
 
@@ -18,24 +18,32 @@ Table Import lets you load data from local files into a database table. It suppo
 
 ## Import Workflow
 
-1. Select the target connection, database, and table.
-2. Choose a file to import.
-3. Review the auto-generated column mapping.
-4. Select the import mode.
-5. Start the import.
-
-## Column Mapping
-
-After selecting a file, DBX reads the file headers (or keys, for JSON) and automatically maps them to columns in the target table by matching names. You can adjust the mapping manually if the names do not match exactly.
-
-Unmapped file columns are skipped. Unmapped table columns receive their default value or NULL.
+<Steps>
+  <Step>
+    ### Select Target Table
+    Right-click the target table and select "Import Data".
+  </Step>
+  <Step>
+    ### Choose File
+    Select the file to import.
+  </Step>
+  <Step>
+    ### Review Column Mapping
+    DBX auto-maps file columns to table columns by name. Adjust mappings manually if names don't match. Unmapped columns are skipped.
+  </Step>
+  <Step>
+    ### Select Mode and Import
+    Choose the import mode and click "Start Import".
+  </Step>
+</Steps>
 
 ## Import Modes
 
 | Mode | Behavior |
 |---|---|
-| **Append** | Insert the imported rows into the table alongside existing data. |
-| **Truncate then import** | Delete all existing rows from the table first, then insert the imported data. |
+| **Append** | Insert rows alongside existing data |
+| **Truncate then import** | Delete all existing rows first, then insert |
 
-> **Warning:**
-> Truncate mode permanently removes all existing data in the target table before importing. Make sure this is the intended behavior before proceeding.
+<Callout type="warn">
+Truncate mode permanently removes all existing data in the target table. Make sure this is the intended behavior.
+</Callout>

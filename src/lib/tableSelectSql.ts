@@ -1,4 +1,5 @@
 import type { DatabaseType } from "../types/database.ts";
+import { isSchemaAware, usesFetchFirst } from "@/lib/databaseCapabilities";
 
 export interface BuildTableSelectSqlOptions {
   databaseType?: DatabaseType;
@@ -22,7 +23,7 @@ export function qualifiedTableName(
   options: Pick<BuildTableSelectSqlOptions, "databaseType" | "schema" | "tableName">,
 ): string {
   const { databaseType, schema, tableName } = options;
-  if ((databaseType === "postgres" || databaseType === "oracle" || databaseType === "sqlserver") && schema) {
+  if (isSchemaAware(databaseType) && schema) {
     return `${quoteTableIdentifier(databaseType, schema)}.${quoteTableIdentifier(databaseType, tableName)}`;
   }
   return quoteTableIdentifier(databaseType, tableName);
@@ -47,7 +48,7 @@ export function buildTableSelectSql(options: BuildTableSelectSqlOptions): string
   const orderBy = options.orderBy ?? defaultOrderBy;
   const order = orderBy ? ` ORDER BY ${orderBy}` : "";
 
-  if (databaseType === "oracle") {
+  if (usesFetchFirst(databaseType)) {
     const offset = options.offset ? ` OFFSET ${options.offset} ROWS` : "";
     return `SELECT * FROM ${table}${where}${order}${offset} FETCH FIRST ${limit} ROWS ONLY`;
   }

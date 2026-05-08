@@ -1,9 +1,11 @@
 ---
 title: 查询编辑器
-description: 基于 CodeMirror 6 的 SQL 查询编辑器，提供语法高亮、智能补全和快捷操作。
+description: 基于 CodeMirror 6 的 SQL 编辑器，语法高亮、智能补全、JOIN 建议和查询历史。
 ---
 
-DBX 内置了基于 CodeMirror 6 的 SQL 查询编辑器，提供语法高亮、智能补全和快捷操作，帮助你高效编写和执行 SQL。
+<Callout type="info">
+基于 CodeMirror 6 构建，深度感知数据库元数据，SQL 编写体验媲美 IDE。
+</Callout>
 
 ## 语法高亮
 
@@ -11,25 +13,27 @@ DBX 内置了基于 CodeMirror 6 的 SQL 查询编辑器，提供语法高亮、
 
 ## SQL 自动补全
 
-在编辑器中输入时，DBX 会自动弹出补全建议，支持以下内容：
+在编辑器中输入时，DBX 会自动弹出补全建议：
 
-- **关键字** -- `SELECT`、`FROM`、`WHERE`、`GROUP BY` 等 SQL 关键字
-- **表名** -- 当前数据库中的所有表和视图
-- **字段名** -- 根据已输入的表名，自动补全对应的字段
-- **JOIN 补全** -- 输入 `JOIN` 后，自动建议可关联的表及关联条件
+- **关键字** — `SELECT`、`FROM`、`WHERE`、`GROUP BY` 等 SQL 关键字
+- **表名** — 当前数据库中的所有表和视图
+- **字段名** — 根据已输入的表名，自动补全对应的字段
+- **JOIN 补全** — 输入 `JOIN` 后，自动建议可关联的表及基于外键的关联条件
 
 补全列表会随着输入内容实时过滤，按 `Tab` 或 `Enter` 即可确认选择。
 
 ## 执行查询
 
-DBX 提供多种执行方式：
+<Callout type="info">
+快捷键：`Cmd+Enter`（macOS）/ `Ctrl+Enter`（Windows/Linux）。选中文本时，仅执行选中部分。
+</Callout>
 
 | 操作 | 快捷键 |
 |---|---|
-| 执行当前编辑器中的全部 SQL | `Cmd+Enter`（macOS）/ `Ctrl+Enter`（Windows/Linux） |
-| 仅执行选中的 SQL 片段 | 先选中文本，再按 `Cmd+Enter` |
+| 执行全部 SQL | `Cmd+Enter` / `Ctrl+Enter` |
+| 执行选中的 SQL | 先选中文本，再按 `Cmd+Enter` / `Ctrl+Enter` |
 
-执行结果会显示在编辑器下方的结果面板中，包括返回的数据行、执行耗时和影响行数。
+执行结果会显示在编辑器下方的数据表格中，包括返回的数据行、执行耗时和影响行数。
 
 ## SQL 格式化
 
@@ -37,8 +41,9 @@ DBX 提供多种执行方式：
 
 ## 查询历史
 
-DBX 会自动记录你执行过的 SQL 语句。你可以：
+DBX 会自动记录你执行过的 SQL 语句：
 
 - 在查询历史面板中浏览之前执行过的所有 SQL
 - 点击某条历史记录，将其填入编辑器重新执行
 - 按时间顺序查看历史记录
+- 每个连接独立记录，切换连接后只显示该连接的历史

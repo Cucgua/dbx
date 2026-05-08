@@ -1,50 +1,122 @@
 ---
 title: AI 助手
-description: 内置 AI 助手，帮你编写、解释、优化和修复 SQL 查询。
+description: 内置 AI 助手，自然语言转 SQL、查询优化、错误修复，支持 Claude/OpenAI/自定义端点。
 ---
 
-DBX 内置 AI 助手，帮你编写、解释、优化和修复 SQL 查询。
+<Callout type="info">
+内置 AI 助手，无需额外安装插件。自然语言描述需求，AI 帮你生成 SQL、优化查询、修复错误。
+</Callout>
+
+DBX 内置 AI 助手，深度集成数据库元数据，能根据你的表结构和字段生成精准的 SQL。
+
+![DBX AI 助手](/screenshot-ai.jpg)
 
 ## 设置
 
-1. 点击工具栏的 **设置** 图标
-2. 进入 **AI 设置**
-3. 选择供应商（Claude、OpenAI 或自定义端点）
-4. 输入 API Key
-5. 选择模型
+<Steps>
+  <Step>
+    ### 打开设置
+    点击工具栏的 **设置** 图标。
+  </Step>
+  <Step>
+    ### 选择 AI 供应商
+    进入 **AI 设置**，选择供应商。
+  </Step>
+  <Step>
+    ### 输入 API Key
+    填入你的 API Key（如使用自定义端点，还需填入端点 URL）。
+  </Step>
+  <Step>
+    ### 选择模型并开始使用
+    选择一个模型，完成设置。回到编辑器即可使用 AI 功能。
+  </Step>
+</Steps>
 
-## 功能
+## 核心功能
 
 ### 自然语言转 SQL
 
-用自然语言描述你想查询的内容：
+用自然语言描述你的查询需求，AI 助手根据数据库结构生成对应的 SQL：
 
-> "查看最近 10 个订单金额最高的客户"
+> **你说：** "查看最近 10 个订单金额最高的客户"
+>
+> **AI 生成：**
+> ```sql
+> SELECT c.name, SUM(o.amount) AS total_amount
+> FROM customers c
+> JOIN orders o ON c.id = o.customer_id
+> WHERE o.created_at >= NOW() - INTERVAL 30 DAY
+> GROUP BY c.id, c.name
+> ORDER BY total_amount DESC
+> LIMIT 10;
+> ```
 
-AI 助手会根据你的数据库结构生成 SQL。
+AI 会自动识别你当前连接的数据库中的表名和字段名，不会生成不存在的表或字段。
 
 ### 解释 SQL
 
-选中一段 SQL 查询，让 AI 解释它的作用。
+选中一段复杂的 SQL 查询，AI 会逐步解释它的逻辑：
+
+- 每个子查询的作用
+- JOIN 条件的含义
+- WHERE 过滤条件的业务意义
+- 聚合函数和分组逻辑
 
 ### 优化 SQL
 
-获取查询性能优化建议。
+AI 会分析查询的潜在性能问题，给出优化建议：
+
+- 是否缺少索引
+- 是否可以减少全表扫描
+- 子查询是否可以改写为 JOIN
+- 是否存在不必要的排序或去重
 
 ### 修复错误
 
-查询执行失败时，点击 **AI 修复** 获取修正后的版本。
+查询执行失败时，点击 **AI 修复**，AI 会根据错误信息和 SQL 内容自动生成修正版本。常见场景包括：
+
+- 语法错误修正
+- 字段名或表名拼写错误
+- 缺少 GROUP BY 字段
+- 类型不匹配
 
 ## 支持的供应商
 
-| 供应商 | 模型 |
-|---|---|
-| Anthropic (Claude) | Claude 4 Opus、Claude 4 Sonnet、Claude 3.5 Haiku |
-| OpenAI | GPT-4o、GPT-4o-mini、o3-mini |
-| 自定义端点 | 任何 OpenAI 兼容的 API 端点 |
+<Tabs groupId="ai-provider" items={['Anthropic (Claude)', 'OpenAI', '自定义端点']}>
+  <Tab value="Anthropic (Claude)">
+    | 模型 | 说明 |
+    |---|---|
+    | Claude 4 Opus | 最强模型，复杂查询推荐 |
+    | Claude 4 Sonnet | 速度与质量平衡 |
+    | Claude 3.5 Haiku | 最快响应 |
 
-你可以配置自定义的 OpenAI 兼容端点（自定义端点），连接第三方或自托管的 AI 服务。只需在 AI 设置中选择"自定义端点"，填入 API 地址和 Key 即可。
+    在 AI 设置中选择 **Anthropic**，填入 API Key 即可。
+  </Tab>
+  <Tab value="OpenAI">
+    | 模型 | 说明 |
+    |---|---|
+    | GPT-4o | 最新旗舰模型 |
+    | GPT-4o-mini | 轻量快速 |
+    | o3-mini | 推理增强 |
+
+    在 AI 设置中选择 **OpenAI**，填入 API Key 即可。
+  </Tab>
+  <Tab value="自定义端点">
+    任何兼容 OpenAI Chat Completions API 的端点都可以使用，例如：
+
+    - **Ollama** — 本地运行开源模型
+    - **LM Studio** — 本地模型管理
+    - **Azure OpenAI** — 企业级部署
+    - **DeepSeek / Qwen** — 国产大模型
+
+    在 AI 设置中选择 **自定义端点**，填入端点 URL 和 API Key。
+  </Tab>
+</Tabs>
 
 ## 更强大的 AI 体验
 
-除了内置 AI 助手，还可以试试 [MCP 集成](/cn/docs/mcp)。它让 Claude Code、Cursor 等 AI 编程助手直接查询你的数据库，并在 DBX 中打开结果。
+<Callout type="info">
+想让 AI 助手不只是生成 SQL，还能直接执行查询、浏览数据？试试 [MCP 集成](/cn/docs/mcp)。
+</Callout>
+
+MCP 集成让 Claude Code、Cursor 等 AI 编程助手直接通过 DBX 查询你的数据库，并在 DBX 中打开结果。这意味着你可以在 IDE 中用自然语言和 AI 对话，AI 自动调用 DBX 执行查询并返回结果。

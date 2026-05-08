@@ -1,11 +1,11 @@
 ---
 title: Schema Browser
-description: Explore database structure with a navigable tree view, search, and context menus.
+description: Tree view with search, pin, context menus, column comments, and connection colors.
 ---
 
-# Schema Browser
-
-The Schema Browser is the sidebar panel that lets you explore the structure of all your connected databases. It presents your database objects in a navigable tree and provides quick actions via context menus.
+<Callout type="info">
+Explore your database objects in a hierarchical tree with search, pin, column comments, and color-coded connections to tell dev from production at a glance.
+</Callout>
 
 ## Tree View
 
@@ -13,35 +13,35 @@ The browser organizes objects in a hierarchical tree:
 
 ```
 Connection
-  +-- Database
-        +-- Schema
-              +-- Tables
-              |     +-- Table
-              |           +-- Column (type, nullable, default)
-              +-- Views
+  └── Database
+        └── Schema
+              └── Tables / Views
+                    └── Columns (type, constraints, defaults)
 ```
 
-Expand any node to drill down into its children. Column entries display their data type and other attributes inline.
+Expand any node to drill down. Click a table name to open it in the Data Grid. Column entries display their data type and attributes inline.
 
 ## Search and Pin
 
-- **Search** -- Use the search field at the top of the sidebar to filter the tree. The filter applies across all connections and matches table names, view names, and column names.
-- **Pin** -- Pin frequently used tables or views to keep them at the top of the sidebar for quick access, regardless of how deep they are in the tree.
+- **Search** — Type in the search field to filter across all connections, matching table names, view names, and column names
+- **Pin** — Pin frequently used tables or views to the top of the sidebar for instant access, regardless of tree depth
 
 ## Context Menus
 
-Right-click any node in the tree to access context-specific actions. Examples include:
+Right-click any node for context-specific actions:
 
-- **Table** -- Open data, open structure, copy table name, drop table
-- **Column** -- Copy column name
-- **Connection** -- Refresh metadata, disconnect
-
-The available actions depend on the type of object selected.
+- **Table** — Open data, open structure, copy table name, drop table
+- **Column** — Copy column name
+- **Connection** — Refresh metadata, disconnect
 
 ## Column Comments
 
-If your database supports column comments (e.g., MySQL `COMMENT`, PostgreSQL `COMMENT ON COLUMN`), the Schema Browser displays them alongside each column. This makes it easy to understand the purpose of columns without leaving the sidebar.
+If your database supports column comments (`COMMENT`), the Schema Browser displays them alongside each column, making it easy to understand column purposes without leaving the sidebar.
 
 ## Connection Colors
 
-Each connection can be assigned a color. The color is displayed as a visual indicator in the tree and in tabs, helping you distinguish between environments (for example, green for development and red for production) at a glance.
+<Callout type="info">
+Assign colors to connections — green for dev, red for production — to tell them apart at a glance and avoid accidental operations on the wrong environment.
+</Callout>
+
+Colors appear next to connection names in the sidebar and in tabs, especially useful when working with multiple connections.

@@ -11,7 +11,9 @@ export type DatabaseType =
   | "elasticsearch"
   | "doris"
   | "starrocks"
-  | "redshift";
+  | "redshift"
+  | "dameng"
+  | "gaussdb";
 
 export interface ConnectionConfig {
   id: string;
@@ -170,5 +172,11 @@ export interface QueryTab {
     tableName: string;
     columns: ColumnInfo[];
     primaryKeys: string[];
+  };
+  queryAnalysis?: {
+    schema?: string;
+    tableName: string;
+    selectStar: boolean;
+    columns: string[];
   };
 }

@@ -166,6 +166,24 @@ volumes:
 - [pnpm](https://pnpm.io/)
 - [Rust](https://www.rust-lang.org/tools/install) >= 1.77
 
+#### 系统依赖
+
+**macOS：**
+
+```bash
+brew install unixodbc
+```
+
+**Linux (Ubuntu/Debian)：**
+
+```bash
+sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev unixodbc-dev
+```
+
+**Windows：**
+
+无需额外安装（ODBC 已内置于 Windows）。
+
 ### 开发
 
 ```bash

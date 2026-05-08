@@ -35,6 +35,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())?;
@@ -108,6 +109,7 @@ pub fn run() {
             commands::query::cancel_query,
             commands::query::execute_batch,
             commands::query::execute_script,
+            commands::query::execute_in_transaction,
             commands::sql_file::preview_sql_file,
             commands::sql_file::execute_sql_file,
             commands::sql_file::cancel_sql_file_execution,

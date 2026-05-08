@@ -20,6 +20,7 @@ import {
 import type { SqlCompletionColumn, SqlCompletionTable } from "@/lib/sqlCompletion";
 import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
+import { isSchemaAware } from "@/lib/databaseCapabilities";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 
@@ -129,11 +130,21 @@ export const useConnectionStore = defineStore("connection", () => {
       doris: "Doris",
       starrocks: "StarRocks",
       redshift: "Redshift",
+      dameng: "DM (Dameng)",
+      gaussdb: "GaussDB",
     };
+
+    const profile = config.driver_profile || config.db_type;
+    let dbType = config.db_type;
+    if ((profile === "gaussdb" || profile === "opengauss") && dbType === "postgres") {
+      dbType = "gaussdb" as ConnectionConfig["db_type"];
+    }
+
     return {
       ...config,
-      driver_profile: config.driver_profile || config.db_type,
-      driver_label: config.driver_label || labelMap[config.driver_profile || config.db_type] || config.db_type,
+      db_type: dbType,
+      driver_profile: profile,
+      driver_label: config.driver_label || labelMap[profile] || config.db_type,
       url_params: config.url_params || "",
       oracle_connect_method: config.oracle_connect_method || "service_name",
     };
@@ -253,6 +264,28 @@ export const useConnectionStore = defineStore("connection", () => {
     rebuildTreeNodes();
     connectedIds.value.delete(config.id);
     invalidateCompletionCache(config.id);
+  }
+
+  async function setDefaultDatabase(connectionId: string, database: string) {
+    const config = getConfig(connectionId);
+    if (!config || config.database === database) return;
+    await updateConnection({
+      ...config,
+      database,
+    });
+  }
+
+  async function clearDefaultDatabase(connectionId: string) {
+    const config = getConfig(connectionId);
+    if (!config || !config.database) return;
+    await updateConnection({
+      ...config,
+      database: undefined,
+    });
+  }
+
+  function isDefaultDatabase(connectionId: string, database: string): boolean {
+    return getConfig(connectionId)?.database === database && database !== "";
   }
 
   async function connect(config: ConnectionConfig) {
@@ -653,8 +686,7 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   function isSchemaAwareDatabase(connectionId: string): boolean {
-    const dbType = getConfig(connectionId)?.db_type;
-    return dbType === "postgres" || dbType === "sqlserver" || dbType === "oracle";
+    return isSchemaAware(getConfig(connectionId)?.db_type);
   }
 
   async function listCompletionTables(connectionId: string, database: string): Promise<SqlCompletionTable[]> {
@@ -669,12 +701,16 @@ export const useConnectionStore = defineStore("connection", () => {
       const schemas = await api.listSchemas(connectionId, database);
       const tableGroups = await Promise.all(
         schemas.map(async (schema) => {
-          const tables = await api.listTables(connectionId, database, schema);
-          return tables.map((table) => ({
-            name: table.name,
-            schema,
-            type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
-          }));
+          try {
+            const tables = await api.listTables(connectionId, database, schema);
+            return tables.map((table) => ({
+              name: table.name,
+              schema,
+              type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
+            }));
+          } catch {
+            return [];
+          }
         }),
       );
       completionTablesCache.value[cacheKey] = tableGroups.flat();
@@ -922,6 +958,9 @@ export const useConnectionStore = defineStore("connection", () => {
     addConnection,
     addEphemeralConnection,
     updateConnection,
+    setDefaultDatabase,
+    clearDefaultDatabase,
+    isDefaultDatabase,
     removeConnection,
     editingConnectionId,
     startEditing,

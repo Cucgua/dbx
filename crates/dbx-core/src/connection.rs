@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::db;
 use crate::db::ssh_tunnel::TunnelManager;
-use crate::models::connection::{ConnectionConfig, DatabaseType};
+use crate::models::connection::{parse_mongo_first_host, ConnectionConfig, DatabaseType};
 use crate::query_cancel::RunningQueries;
 use crate::storage::Storage;
 
@@ -28,6 +28,8 @@ pub enum PoolKind {
     SqlServer(Arc<tokio::sync::Mutex<db::sqlserver::SqlServerClient>>),
     Oracle(Arc<tokio::sync::Mutex<db::oracle_driver::OracleClient>>),
     Elasticsearch(db::elasticsearch_driver::EsClient),
+    Dameng(Arc<std::sync::Mutex<db::dm_driver::DmClient>>),
+    Gaussdb(Arc<tokio::sync::Mutex<db::gaussdb_driver::GaussdbClient>>),
 }
 
 pub struct AppState {
@@ -60,7 +62,8 @@ impl AppState {
             return Ok(connection_id.to_string());
         }
 
-        let is_single_conn = matches!(db_type, Some(DatabaseType::Oracle));
+        let is_single_conn =
+            matches!(db_type, Some(DatabaseType::Oracle) | Some(DatabaseType::Dameng) | Some(DatabaseType::Gaussdb));
         let pool_key = if is_single_conn {
             connection_id.to_string()
         } else {
@@ -95,7 +98,10 @@ impl AppState {
 
         let mut db_config = config.clone();
         if let Some(db) = database {
-            if db_config.db_type != DatabaseType::Oracle {
+            if db_config.db_type != DatabaseType::Oracle
+                && db_config.db_type != DatabaseType::Dameng
+                && db_config.db_type != DatabaseType::Gaussdb
+            {
                 db_config.database = Some(db.to_string());
             }
         }
@@ -155,6 +161,28 @@ impl AppState {
                 db::elasticsearch_driver::test_connection(&client).await?;
                 PoolKind::Elasticsearch(client)
             }
+            DatabaseType::Dameng => {
+                let client = db::dm_driver::connect(
+                    &host,
+                    port,
+                    db_config.database.as_deref().unwrap_or(""),
+                    &db_config.username,
+                    &db_config.password,
+                )
+                .await?;
+                PoolKind::Dameng(Arc::new(std::sync::Mutex::new(client)))
+            }
+            DatabaseType::Gaussdb => {
+                let client = db::gaussdb_driver::connect(
+                    &host,
+                    port,
+                    db_config.database.as_deref().unwrap_or(""),
+                    &db_config.username,
+                    &db_config.password,
+                )
+                .await?;
+                PoolKind::Gaussdb(Arc::new(tokio::sync::Mutex::new(client)))
+            }
         };
 
         self.connections.lock().await.insert(pool_key.clone(), pool);
@@ -174,6 +202,17 @@ impl AppState {
             return Ok(("127.0.0.1".to_string(), local_port));
         }
 
+        let (remote_host, remote_port) = if config.db_type == DatabaseType::MongoDb {
+            config
+                .connection_string
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .and_then(parse_mongo_first_host)
+                .unwrap_or_else(|| (config.host.clone(), config.port))
+        } else {
+            (config.host.clone(), config.port)
+        };
+
         let local_port = self
             .tunnels
             .start_tunnel(
@@ -184,8 +223,8 @@ impl AppState {
                 &config.ssh_password,
                 &config.ssh_key_path,
                 &config.ssh_key_passphrase,
-                &config.host,
-                config.port,
+                &remote_host,
+                remote_port,
                 config.ssh_expose_lan,
             )
             .await?;
@@ -198,7 +237,12 @@ impl AppState {
             let configs = self.configs.lock().await;
             configs
                 .get(connection_id)
-                .map(|c| c.db_type == DatabaseType::Oracle || c.db_type == DatabaseType::Elasticsearch)
+                .map(|c| {
+                    c.db_type == DatabaseType::Oracle
+                        || c.db_type == DatabaseType::Elasticsearch
+                        || c.db_type == DatabaseType::Dameng
+                        || c.db_type == DatabaseType::Gaussdb
+                })
                 .unwrap_or(false)
         };
         let pool_key = if is_single_conn {

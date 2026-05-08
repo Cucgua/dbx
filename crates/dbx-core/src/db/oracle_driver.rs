@@ -1,7 +1,7 @@
 use log;
 use oracle as oracle_oci;
 use oracle_oci::sql_type::OracleType as OciOracleType;
-use oracle_rs::{Config, Connection as ThinConnection};
+use rust_oracle::{Config, Connection as ThinConnection};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -189,16 +189,16 @@ where
     .map_err(|e| e.to_string())?
 }
 
-fn value_to_json_thin(val: &oracle_rs::Value) -> serde_json::Value {
+fn value_to_json_thin(val: &rust_oracle::Value) -> serde_json::Value {
     match val {
-        oracle_rs::Value::Null => serde_json::Value::Null,
-        oracle_rs::Value::String(s) => serde_json::Value::String(s.clone()),
-        oracle_rs::Value::Integer(n) => serde_json::Value::Number((*n).into()),
-        oracle_rs::Value::Float(f) => {
+        rust_oracle::Value::Null => serde_json::Value::Null,
+        rust_oracle::Value::String(s) => serde_json::Value::String(s.clone()),
+        rust_oracle::Value::Integer(n) => serde_json::Value::Number((*n).into()),
+        rust_oracle::Value::Float(f) => {
             serde_json::Number::from_f64(*f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
         }
-        oracle_rs::Value::Boolean(b) => serde_json::Value::Bool(*b),
-        oracle_rs::Value::Json(v) => v.clone(),
+        rust_oracle::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        rust_oracle::Value::Json(v) => v.clone(),
         _ => serde_json::Value::String(format!("{val:?}")),
     }
 }
@@ -252,31 +252,56 @@ fn oci_query_strings(conn: &oracle_oci::Connection, sql: &str) -> Result<Vec<Str
     Ok(values)
 }
 
+const ORACLE_USER_FILTER_SQL: &str = "SELECT username FROM all_users \
+     WHERE oracle_maintained = 'N' \
+     OR NOT EXISTS (SELECT 1 FROM all_users WHERE oracle_maintained IS NOT NULL) \
+     ORDER BY username";
+
+const ORACLE_USER_FALLBACK_SQL: &str = "SELECT username FROM all_users \
+     WHERE username NOT IN (\
+       'SYS','SYSTEM','SYSMAN','DBSNMP','SYSBACKUP','SYSDG','SYSKM','OUTLN',\
+       'AUDSYS','LBACSYS','DVF','DVSYS','APPQOSSYS','CTXSYS','MDSYS','MDDATA',\
+       'ORDSYS','ORDDATA','ORDPLUGINS','XDB','ANONYMOUS','DIP','EXFSYS',\
+       'GSMADMIN_INTERNAL','GSMCATUSER','GSMUSER','OJVMSYS','OLAPSYS',\
+       'ORACLE_OCM','SI_INFORMTN_SCHEMA','WMSYS','XS$NULL','DBSFWUSER',\
+       'REMOTE_SCHEDULER_AGENT','PDBADMIN','DGPDB_INT','OPS$ORACLE',\
+       'GGSYS','FLOWS_FILES','APEX_PUBLIC_USER'\
+     ) ORDER BY username";
+
+async fn query_oracle_usernames_thin(conn: &ThinConnection) -> Result<Vec<String>, String> {
+    let result = match conn.query(ORACLE_USER_FILTER_SQL, &[]).await {
+        Ok(result) => result,
+        Err(_) => conn.query(ORACLE_USER_FALLBACK_SQL, &[]).await.map_err(|e| {
+            log::error!("[oracle] list_databases failed: {e}");
+            e.to_string()
+        })?,
+    };
+
+    Ok(result.rows.iter().map(|row| row.get_string(0).unwrap_or("").to_string()).collect())
+}
+
+fn query_oracle_usernames_oci(conn: &oracle_oci::Connection) -> Result<Vec<String>, String> {
+    match oci_query_strings(conn, ORACLE_USER_FILTER_SQL) {
+        Ok(names) => Ok(names),
+        Err(_) => oci_query_strings(conn, ORACLE_USER_FALLBACK_SQL).map_err(|e| {
+            log::error!("[oracle-oci] list_databases failed: {e}");
+            e
+        }),
+    }
+}
+
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
-    let sql = "SELECT username FROM all_users ORDER BY username";
     log::debug!("[oracle] list_databases: querying all_users");
     let names = match conn {
-        OracleClient::Thin(conn) => {
-            let result = conn.query(sql, &[]).await.map_err(|e| {
-                log::error!("[oracle] list_databases failed: {e}");
-                e.to_string()
-            })?;
-            result.rows.iter().map(|row| row.get_string(0).unwrap_or("").to_string()).collect()
-        }
-        OracleClient::Oci(conn) => run_oci(conn, move |conn| oci_query_strings(conn, sql)).await?,
+        OracleClient::Thin(conn) => query_oracle_usernames_thin(conn).await?,
+        OracleClient::Oci(conn) => run_oci(conn, query_oracle_usernames_oci).await?,
     };
     Ok(names.into_iter().map(|name| DatabaseInfo { name }).collect())
 }
 
 pub async fn list_schemas(conn: &OracleClient) -> Result<Vec<String>, String> {
-    let sql = "SELECT username FROM all_users ORDER BY username";
-    match conn {
-        OracleClient::Thin(conn) => {
-            let result = conn.query(sql, &[]).await.map_err(|e| e.to_string())?;
-            Ok(result.rows.iter().map(|row| row.get_string(0).unwrap_or("").to_string()).collect())
-        }
-        OracleClient::Oci(conn) => run_oci(conn, move |conn| oci_query_strings(conn, sql)).await,
-    }
+    let dbs = list_databases(conn).await?;
+    Ok(dbs.into_iter().map(|d| d.name).collect())
 }
 
 pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableInfo>, String> {
@@ -300,6 +325,7 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
                 .map(|row| TableInfo {
                     name: row.get_string(0).unwrap_or("").to_string(),
                     table_type: row.get_string(1).unwrap_or("TABLE").to_string(),
+                    comment: None,
                 })
                 .collect())
         }
@@ -309,7 +335,11 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
                 let mut tables = Vec::new();
                 for row in rows {
                     let row = row.map_err(|e| e.to_string())?;
-                    tables.push(TableInfo { name: oci_string(&row, 0), table_type: oci_string(&row, 1) });
+                    tables.push(TableInfo {
+                        name: oci_string(&row, 0),
+                        table_type: oci_string(&row, 1),
+                        comment: None,
+                    });
                 }
                 Ok(tables)
             })
@@ -459,7 +489,7 @@ pub async fn list_indexes(conn: &OracleClient, schema: &str, table: &str) -> Res
     }
 }
 
-fn index_from_thin_row(row: &oracle_rs::Row) -> IndexInfo {
+fn index_from_thin_row(row: &rust_oracle::Row) -> IndexInfo {
     let cols_str = row.get_string(1).unwrap_or("");
     IndexInfo {
         name: row.get_string(0).unwrap_or("").to_string(),
@@ -518,7 +548,7 @@ pub async fn list_foreign_keys(conn: &OracleClient, schema: &str, table: &str) -
     }
 }
 
-fn foreign_key_from_thin_row(row: &oracle_rs::Row) -> ForeignKeyInfo {
+fn foreign_key_from_thin_row(row: &rust_oracle::Row) -> ForeignKeyInfo {
     ForeignKeyInfo {
         name: row.get_string(0).unwrap_or("").to_string(),
         column: row.get_string(1).unwrap_or("").to_string(),
@@ -564,7 +594,7 @@ pub async fn list_triggers(conn: &OracleClient, schema: &str, table: &str) -> Re
     }
 }
 
-fn trigger_from_thin_row(row: &oracle_rs::Row) -> TriggerInfo {
+fn trigger_from_thin_row(row: &rust_oracle::Row) -> TriggerInfo {
     TriggerInfo {
         name: row.get_string(0).unwrap_or("").to_string(),
         event: row.get_string(1).unwrap_or("").to_string(),

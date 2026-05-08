@@ -6,6 +6,7 @@ import {
   Loader2,
   Square,
   Database,
+  Check,
   Table2,
   AlignLeft,
   GitBranch,
@@ -21,6 +22,7 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import { useSchemaOptions } from "@/composables/useSchemaOptions";
 import { connectionIconType } from "@/lib/connectionPresentation";
+import { isDefaultDatabase } from "@/lib/defaultDatabase";
 import { connectionDisplayName } from "@/lib/tabPresentation";
 import type { QueryTab, ConnectionConfig } from "@/types/database";
 
@@ -40,6 +42,8 @@ const emit = defineEmits<{
   changeConnection: [connectionId: string];
   changeDatabase: [database: string];
   changeSchema: [schema: string | undefined];
+  setDefaultDatabase: [];
+  clearDefaultDatabase: [];
 }>();
 
 const { t } = useI18n();
@@ -66,6 +70,8 @@ const activeSchemaOptions = computed(() => {
   if (!connection) return [];
   return getSchemaOptionsForDb(connection.id, props.activeTab.database);
 });
+
+const isActiveDatabaseDefault = computed(() => isDefaultDatabase(props.activeConnection, activeDatabaseValue.value));
 
 function databaseDisplayName(database: string): string {
   const connection = props.activeConnection;
@@ -181,7 +187,7 @@ function databaseDisplayName(database: string): string {
           </SelectContent>
         </Select>
       </div>
-      <div class="flex items-center gap-1">
+      <div v-if="activeConnection?.db_type !== 'elasticsearch'" class="flex items-center gap-1">
         <Database class="h-3.5 w-3.5 shrink-0" />
         <Select
           :model-value="activeDatabaseValue"
@@ -210,6 +216,16 @@ function databaseDisplayName(database: string): string {
             </SelectItem>
           </SelectContent>
         </Select>
+        <Button
+          v-if="activeDatabaseValue"
+          variant="ghost"
+          size="sm"
+          class="h-6 px-2 text-[11px]"
+          @click="isActiveDatabaseDefault ? emit('clearDefaultDatabase') : emit('setDefaultDatabase')"
+        >
+          <Check v-if="isActiveDatabaseDefault" class="h-3 w-3" />
+          {{ isActiveDatabaseDefault ? t("editor.defaultDatabase") : t("editor.setDefaultDatabase") }}
+        </Button>
       </div>
       <div v-if="showSchemaSelector" class="flex items-center gap-1">
         <Layers class="h-3.5 w-3.5 shrink-0" />

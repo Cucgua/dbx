@@ -1,22 +1,20 @@
 ---
 title: Database Export
-description: Generate SQL dump files with table definitions and row data.
+description: Export database structure and data as SQL dump with batched INSERT and configurable row limits.
 ---
 
-# Database Export
-
-Database Export generates a SQL dump of your database, including table definitions (DDL) and row data. The output is a `.sql` file that can be used to recreate the database or transfer it to another environment.
+<Callout type="info">
+One-click database export: DDL + data as batched INSERT statements. Configurable row limits for dev/test datasets.
+</Callout>
 
 ## What Gets Exported
 
-The export includes:
-
-- **DDL (Data Definition Language)** -- `CREATE TABLE` statements for all tables, including columns, types, defaults, constraints, and indexes.
-- **Data** -- `INSERT` statements for all rows in each table.
+- **DDL** — `CREATE TABLE` statements with columns, types, defaults, constraints, and indexes
+- **Data** — Row data as batched `INSERT` statements
 
 ## Batched INSERT Statements
 
-To keep the export file manageable and compatible with database import tools, row data is written as batched `INSERT` statements. Instead of one `INSERT` per row, multiple rows are grouped into a single statement:
+Multiple rows are grouped into a single statement for smaller file size and faster imports:
 
 ```sql
 INSERT INTO users (id, name, email) VALUES
@@ -25,19 +23,33 @@ INSERT INTO users (id, name, email) VALUES
   (3, 'Carol', 'carol@example.com');
 ```
 
-This reduces file size and improves import performance.
-
 ## Configurable Row Limit
 
-You can set a maximum number of rows to export per table. This is useful when you need a representative sample of data rather than a full dump, or when working with very large tables where a complete export would be impractical.
+Set a maximum number of rows to export per table. Useful for:
 
-Set the row limit to `0` or leave it blank to export all rows.
+- Exporting structure with sample data only
+- Working with very large tables where full export is impractical
+- Creating lightweight dev/test datasets
+
+Set to `0` or leave blank to export all rows.
 
 ## Usage
 
-1. Select the connection and database to export.
-2. Configure the row limit (optional).
-3. Choose the output file location.
-4. Start the export.
-
-The generated `.sql` file can be executed in DBX using the [SQL File Execution](/docs/sql-file) feature, or in any compatible database client.
+<Steps>
+  <Step>
+    ### Select Database
+    Choose the connection and database to export.
+  </Step>
+  <Step>
+    ### Configure Options
+    Set the row limit (optional).
+  </Step>
+  <Step>
+    ### Choose Output Location
+    Select where to save the export file.
+  </Step>
+  <Step>
+    ### Start Export
+    The generated `.sql` file can be re-imported using the [SQL File Execution](/en/docs/sql-file) feature.
+  </Step>
+</Steps>

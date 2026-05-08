@@ -12,6 +12,7 @@ import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
 import type { TransferProgress, TransferMode } from "@/lib/api";
 import type { DatabaseType } from "@/types/database";
+import { TRANSFER_SQL_TYPES, isSchemaAware } from "@/lib/databaseCapabilities";
 import { nextTransferTerminalState } from "@/lib/transferProgressState";
 import { ArrowRightLeft, Check, X, Loader2, Square, CheckSquare } from "lucide-vue-next";
 
@@ -25,9 +26,7 @@ const props = defineProps<{
 
 const store = useConnectionStore();
 
-const SQL_TYPES: DatabaseType[] = ["mysql", "postgres", "sqlite", "sqlserver", "oracle", "clickhouse", "duckdb"];
-
-const sqlConnections = computed(() => store.connections.filter((c) => SQL_TYPES.includes(c.db_type)));
+const sqlConnections = computed(() => store.connections.filter((c) => TRANSFER_SQL_TYPES.has(c.db_type)));
 
 // Source state
 const sourceConnectionId = ref("");
@@ -121,8 +120,7 @@ async function loadTables() {
   loadingTables.value = true;
   try {
     const config = store.getConfig(sourceConnectionId.value);
-    const needsSchema =
-      config?.db_type === "postgres" || config?.db_type === "sqlserver" || config?.db_type === "oracle";
+    const needsSchema = isSchemaAware(config?.db_type);
     if (needsSchema) {
       const schemas = await api.listSchemas(sourceConnectionId.value, sourceDatabase.value);
       sourceSchema.value = schemas.includes("public") ? "public" : (schemas[0] ?? "");
@@ -209,8 +207,7 @@ async function startTransfer() {
 
   // Auto-detect target schema
   const targetConfig = store.getConfig(targetConnectionId.value);
-  const targetNeedsSchema =
-    targetConfig?.db_type === "postgres" || targetConfig?.db_type === "sqlserver" || targetConfig?.db_type === "oracle";
+  const targetNeedsSchema = isSchemaAware(targetConfig?.db_type);
   if (targetNeedsSchema && !targetSchema.value) {
     try {
       const schemas = await api.listSchemas(targetConnectionId.value, targetDatabase.value);

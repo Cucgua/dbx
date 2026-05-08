@@ -7,7 +7,9 @@ import { formatSqlText, type SqlFormatDialect } from "@/lib/sqlFormatter";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { buildSqlCompletionItemsFromContext, getSqlCompletionContext } from "@/lib/sqlCompletion";
+import { extractIdentifierAt, isSqlKeyword, matchTable } from "@/lib/sqlNavigation";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
+import type { SqlCompletionColumn } from "@/lib/sqlCompletion";
 
 const props = defineProps<{
   modelValue: string;
@@ -24,6 +26,9 @@ const emit = defineEmits<{
   cursorChange: [pos: number];
   formatError: [message: string];
   execute: [sql: string];
+  clickTable: [tableName: string];
+  clickColumn: [columns: Array<{ name: string; table: string; schema?: string }>, error?: string | undefined];
+  closeColumnPanel: [];
 }>();
 
 const editorRef = ref<HTMLDivElement>();
@@ -35,6 +40,11 @@ const MAX_FONT_SIZE = 24;
 let editorViewModule: typeof import("@codemirror/view") | null = null;
 let fontThemeComp: import("@codemirror/state").Compartment | null = null;
 let codeMirrorTheme: import("@codemirror/state").Compartment | null = null;
+
+// Completion cache
+let cachedTables: Array<{ name: string; schema?: string; type?: "table" | "view" }> = [];
+// Persistent column cache keyed by "schema.table" or "table"
+const cachedColumnsByTable = new Map<string, SqlCompletionColumn[]>();
 
 function setFontSize(size: number) {
   const next = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size));
@@ -104,49 +114,91 @@ async function formatCurrentSql() {
 async function provideSqlCompletions(currentState: import("@codemirror/state").EditorState, position: number) {
   if (!props.connectionId || !props.database) return null;
 
-  const completionContext = getSqlCompletionContext(currentState.doc.toString(), position);
-  const tables = await connectionStore.listCompletionTables(props.connectionId, props.database);
-  const columnsByTable = new Map<string, Awaited<ReturnType<typeof connectionStore.listCompletionColumns>>>();
+  try {
+    const fullDoc = currentState.doc.toString();
+    const completionContext = getSqlCompletionContext(fullDoc, position);
+    const tables = await connectionStore.listCompletionTables(props.connectionId, props.database);
 
-  if (completionContext.suggestColumns) {
-    const relatedTables = completionContext.qualifier
-      ? completionContext.referencedTables.filter(
-          (table) => table.alias === completionContext.qualifier || table.name === completionContext.qualifier,
-        )
-      : completionContext.referencedTables;
+    // Collect referenced tables — enrich with schema from cached tables list
+    let refs = completionContext.referencedTables.map((rt) => {
+      // If no schema, look it up in the cached tables
+      if (!rt.schema) {
+        const cached = tables.find((t) => t.name.toLowerCase() === rt.name.toLowerCase());
+        if (cached && cached.schema) {
+          return { ...rt, schema: cached.schema };
+        }
+      }
+      return rt;
+    });
+
+    // If no referenced tables but qualifier exists, infer table from tables list
+    if (refs.length === 0 && completionContext.qualifier) {
+      const q = completionContext.qualifier.toLowerCase();
+      const matched = tables.filter((t) => t.name.toLowerCase() === q || t.name.toLowerCase().endsWith("." + q));
+      refs = matched.map((t) => ({ name: t.name, schema: t.schema }));
+    }
 
     await Promise.all(
-      relatedTables.map(async (table) => {
-        const cacheKey = table.schema ? `${table.schema}.${table.name}` : table.name;
-        if (columnsByTable.has(cacheKey)) return;
-        const columns = await connectionStore.listCompletionColumns(
-          props.connectionId!,
-          props.database!,
-          table.name,
-          table.schema,
-        );
-        columnsByTable.set(cacheKey, columns);
+      refs.map(async (refTable) => {
+        const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
+        if (cachedColumnsByTable.has(cacheKey)) {
+          return;
+        }
+        try {
+          const columns = await connectionStore.listCompletionColumns(
+            props.connectionId!,
+            props.database!,
+            refTable.name,
+            refTable.schema,
+          );
+          cachedColumnsByTable.set(cacheKey, columns);
+        } catch (e) {
+          console.error(`[DBX] Failed to load columns for ${cacheKey}:`, e);
+        }
       }),
     );
+
+    // Build columnsByTable from persistent cache — only include columns for referenced tables
+    const columnsByTable = new Map<string, SqlCompletionColumn[]>();
+    for (const refTable of refs) {
+      const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
+      const cached = cachedColumnsByTable.get(cacheKey);
+      if (cached) {
+        columnsByTable.set(cacheKey, cached);
+      }
+    }
+
+    const items = buildSqlCompletionItemsFromContext(completionContext, {
+      tables,
+      columnsByTable,
+    });
+
+    if (items.length === 0) return null;
+
+    return {
+      from: position - completionContext.prefix.length,
+      options: items.map((item) => ({
+        label: item.label,
+        type: item.type === "keyword" ? "keyword" : item.type === "table" ? "class" : "property",
+        detail: item.detail,
+        boost: item.boost,
+      })),
+      validFor: /^[\w$]*$/,
+    };
+  } catch {
+    return null;
   }
+}
 
-  const items = buildSqlCompletionItemsFromContext(completionContext, {
-    tables,
-    columnsByTable,
-  });
-
-  if (items.length === 0) return null;
-
-  return {
-    from: position - completionContext.prefix.length,
-    options: items.map((item) => ({
-      label: item.label,
-      type: item.type === "keyword" ? "keyword" : item.type === "table" ? "class" : "property",
-      detail: item.detail,
-      boost: item.boost,
-    })),
-    validFor: /^[\w$]*$/,
-  };
+async function refreshCompletionCache() {
+  if (!props.connectionId || !props.database) return;
+  try {
+    cachedTables = await connectionStore.listCompletionTables(props.connectionId, props.database);
+  } catch {
+    cachedTables = [];
+  }
+  // Clear column cache when connection/database changes
+  cachedColumnsByTable.clear();
 }
 
 onMounted(async () => {
@@ -260,11 +312,139 @@ onMounted(async () => {
           else if (event.deltaY > 0) zoomOut();
           return true;
         },
+        mousedown: (event: MouseEvent) => {
+          // Click without modifier -> close column panel
+          if (!event.metaKey && !event.ctrlKey) {
+            if (event.button === 0) {
+              emit("closeColumnPanel");
+            }
+            return false;
+          }
+          // Only handle Ctrl/Cmd + left click
+          if (event.button !== 0) return false;
+
+          const currentView = view.value;
+          if (!currentView || !props.connectionId || !props.database) {
+            return false;
+          }
+
+          // Use posAtCoords for accurate click position
+          const coords = { x: event.clientX, y: event.clientY };
+          const pos = currentView.posAtCoords(coords);
+          if (pos == null) {
+            return false;
+          }
+
+          const doc = currentView.state.doc.toString();
+          const identifier = extractIdentifierAt(doc, pos);
+          if (!identifier) {
+            return false;
+          }
+          if (isSqlKeyword(identifier)) {
+            return false;
+          }
+
+          // Prevent default, resolve async
+          event.preventDefault();
+          setTimeout(async () => {
+            try {
+              // Ensure table cache is populated
+              if (cachedTables.length === 0) {
+                cachedTables = await connectionStore.listCompletionTables(props.connectionId!, props.database!);
+              }
+
+              // 1. Check if it's a table name
+              const matchedTable = matchTable(identifier, cachedTables);
+              if (matchedTable) {
+                emit(
+                  "clickTable",
+                  matchedTable.schema ? `${matchedTable.schema}.${matchedTable.name}` : matchedTable.name,
+                );
+                return;
+              }
+
+              // 2. Parse SQL at click position to get referenced tables
+              const context = getSqlCompletionContext(doc, pos);
+              let referencedTables = context.referencedTables;
+              // Enrich referenced tables with schema from cachedTables
+              referencedTables = referencedTables.map((rt) => {
+                const cached = cachedTables.find((ct) => ct.name.toLowerCase() === rt.name.toLowerCase());
+                if (cached && cached.schema && !rt.schema) {
+                  return { ...rt, schema: cached.schema };
+                }
+                return rt;
+              });
+
+              // Check if identifier has a qualifier (e.g., c.card_name)
+              const qualifierMatch = /^(.+)\.(.+)$/.exec(identifier);
+              const qualifier = qualifierMatch ? qualifierMatch[1] : null;
+              const colName = qualifierMatch ? qualifierMatch[2] : identifier;
+              const colLower = colName.toLowerCase();
+
+              if (referencedTables.length === 0) {
+                return;
+              }
+              // 3. Fetch columns — if qualifier, only check matching table; otherwise check all
+              const tablesToCheck = qualifier
+                ? referencedTables.filter(
+                    (rt) =>
+                      rt.alias?.toLowerCase() === qualifier.toLowerCase() ||
+                      rt.name.toLowerCase() === qualifier.toLowerCase(),
+                  )
+                : referencedTables;
+
+              if (tablesToCheck.length === 0 && qualifier) {
+                return;
+              }
+
+              const matchedCols: Array<{ name: string; table: string; schema?: string }> = [];
+
+              for (const refTable of tablesToCheck) {
+                const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
+
+                // Use persistent column cache; fetch only if missing
+                let cols = cachedColumnsByTable.get(cacheKey);
+                if (!cols) {
+                  try {
+                    cols = await connectionStore.listCompletionColumns(
+                      props.connectionId!,
+                      props.database!,
+                      refTable.name,
+                      refTable.schema,
+                    );
+                    cachedColumnsByTable.set(cacheKey, cols);
+                  } catch {
+                    continue;
+                  }
+                }
+                for (const col of cols) {
+                  if (col.name.toLowerCase() === colLower) {
+                    matchedCols.push({
+                      name: col.name,
+                      table: refTable.name,
+                      schema: col.schema || refTable.schema,
+                    });
+                  }
+                }
+              }
+
+              if (matchedCols.length > 0) {
+                emit("clickColumn", matchedCols);
+              }
+            } catch (e) {
+              console.error("[DBX] Ctrl+click error:", e);
+            }
+          }, 0);
+          return true;
+        },
       }),
     ],
   });
 
   view.value = new EditorView({ state, parent: editorRef.value });
+
+  // Fetch completion data
+  refreshCompletionCache();
 });
 
 watch(
@@ -285,7 +465,21 @@ watch(
   },
 );
 
-// Reactively apply editor settings changes (theme, font family, font size)
+watch(
+  () => props.connectionId,
+  () => {
+    refreshCompletionCache();
+  },
+);
+
+watch(
+  () => props.database,
+  () => {
+    refreshCompletionCache();
+  },
+);
+
+// Reactively apply editor settings changes
 watch(
   () => settingsStore.editorSettings,
   async (ss) => {

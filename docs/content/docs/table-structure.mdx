@@ -1,48 +1,43 @@
 ---
 title: Table Structure Editor
-description: Visually modify table schemas -- add, edit, and delete columns and indexes.
+description: Visually manage columns and indexes without writing DDL. Preview ALTER TABLE statements before applying.
 ---
 
-# Table Structure Editor
-
-The Table Structure Editor provides a visual interface for modifying table schemas. Instead of writing `ALTER TABLE` statements by hand, you can add, modify, and delete columns and indexes through a form-based UI.
+<Callout type="info">
+Edit table structure visually — no `ALTER TABLE` by hand. All changes are previewed as SQL before execution.
+</Callout>
 
 ## Column Editor
 
-The column editor displays all columns of the selected table in an editable list. For each column, you can modify:
+Manage columns through a visual interface:
 
-- **Name** -- Rename the column
-- **Type** -- Change the data type
-- **Nullable** -- Toggle whether the column allows NULL values
-- **Default** -- Set or change the default value
-- **Comment** -- Add or update the column comment (on supported engines)
+- **Add column** — Set name, type, nullable, default, and comment
+- **Modify column** — Rename, change type, adjust defaults
+- **Delete column** — Mark for removal
 
-You can also:
-
-- **Add a column** -- Append a new column definition to the table
-- **Delete a column** -- Remove an existing column from the table
+All changes are staged locally until you confirm.
 
 ## Index Management
 
-Below the column list, the index section lets you manage table indexes:
+Manage indexes in the same interface:
 
-- View existing indexes and their columns
-- Create new indexes (unique, non-unique)
-- Remove existing indexes
+- Create new indexes (unique, non-unique) with selected columns
+- Modify existing index configurations
+- Remove indexes
 
 ## SQL Preview
 
-Before applying any structural changes, DBX generates and displays the corresponding SQL statements (`ALTER TABLE ADD COLUMN`, `ALTER TABLE MODIFY COLUMN`, `DROP COLUMN`, `CREATE INDEX`, etc.). You can review the exact SQL that will be executed and confirm or cancel.
+<Callout type="info">
+Before applying, DBX shows the exact `ALTER TABLE` statements — `ADD COLUMN`, `MODIFY COLUMN`, `DROP COLUMN`, `CREATE INDEX`, etc. Review and confirm before committing.
+</Callout>
 
 ## Database Support
 
-The Table Structure Editor supports the following database engines:
-
 | Engine | Support |
 |---|---|
-| MySQL | Full support |
-| PostgreSQL | Full support |
-| SQLite | Full support |
-| SQL Server | Full support |
+| MySQL | Full |
+| PostgreSQL | Full |
+| SQLite | Full |
+| SQL Server | Full |
 
-Behavior adapts to the capabilities and syntax of each engine. For example, SQLite's limited `ALTER TABLE` support is handled transparently by DBX.
+Behavior adapts to the capabilities of each engine. For example, SQLite's limited `ALTER TABLE` support is handled transparently by DBX.

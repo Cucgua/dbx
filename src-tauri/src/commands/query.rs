@@ -74,3 +74,21 @@ pub async fn execute_script(
     )
     .await
 }
+
+#[tauri::command]
+pub async fn execute_in_transaction(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    database: String,
+    statements: Vec<String>,
+    schema: Option<String>,
+) -> Result<db::QueryResult, String> {
+    dbx_core::query::execute_statements_in_transaction(
+        &state,
+        &connection_id,
+        &database,
+        &statements,
+        schema.as_deref(),
+    )
+    .await
+}

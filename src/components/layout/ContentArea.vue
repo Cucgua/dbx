@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from "vue";
+import { computed, ref, defineAsyncComponent } from "vue";
 import { useI18n } from "vue-i18n";
-import { Loader2, Square, Bot, Table2, GitBranch, BarChart3 } from "lucide-vue-next";
+import { Loader2, Square, Bot, Table2, GitBranch, BarChart3, RefreshCcw, Save, RotateCcw } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import QueryEditor from "@/components/editor/QueryEditor.vue";
 import DataGrid from "@/components/grid/DataGrid.vue";
 import RedisKeyBrowser from "@/components/redis/RedisKeyBrowser.vue";
 import MongoDocBrowser from "@/components/mongo/MongoDocBrowser.vue";
+import ColumnInfoPanel from "@/components/editor/ColumnInfoPanel.vue";
+import type { ColumnInfo } from "@/components/editor/ColumnInfoPanel.vue";
 const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
 const QueryChart = defineAsyncComponent(() => import("@/components/chart/QueryChart.vue"));
 import { useQueryStore } from "@/stores/queryStore";
@@ -38,13 +40,21 @@ const emit = defineEmits<{
   editorCursorChange: [pos: number];
   formatError: [];
   reload: [];
-  paginate: [offset: number, limit: number, whereInput?: string];
-  sort: [column: string, direction: "asc" | "desc" | null, whereInput?: string];
+  paginate: [offset: number, limit: number, orderBy?: string];
+  sort: [column: string, direction: "asc" | "desc" | null];
   executeSql: [sql: string];
+  clickTable: [tableName: string];
 }>();
 
 const { t } = useI18n();
 const queryStore = useQueryStore();
+
+// Column info panel state
+const showColumnInfo = ref(false);
+const columnInfoColumns = ref<ColumnInfo[]>([]);
+const columnInfoLoading = ref(false);
+const columnInfoError = ref<string | undefined>(undefined);
+const dataGridRef = ref<InstanceType<typeof DataGrid>>();
 
 const activeSqlFormatDialect = computed<SqlFormatDialect>(() => {
   switch (props.activeConnection?.db_type) {
@@ -70,6 +80,79 @@ const hasNumericData = computed(() => {
   if (!r || r.rows.length === 0) return false;
   return r.columns.some((_, idx) => r.rows.some((row) => typeof row[idx] === "number"));
 });
+
+// Column info panel handlers
+async function onHandleClickColumn(
+  matchedCols: Array<{ name: string; table: string; schema?: string }>,
+  errorMsg?: string,
+) {
+  if (!props.activeTab.connectionId || !props.activeTab.database) return;
+
+  // If error or no columns, silently ignore — don't show the panel
+  if (errorMsg || matchedCols.length === 0) return;
+
+  columnInfoLoading.value = true;
+  columnInfoError.value = undefined;
+
+  try {
+    // Fetch full column details from API
+    const apiModule = await import("@/lib/api");
+    const results: ColumnInfo[] = [];
+
+    for (const matchedCol of matchedCols) {
+      const querySchema = matchedCol.schema || props.activeTab.database || "";
+      try {
+        const fullColumns = await apiModule.getColumns(
+          props.activeTab.connectionId,
+          props.activeTab.database,
+          querySchema,
+          matchedCol.table,
+        );
+        for (const col of fullColumns) {
+          if (col.name === matchedCol.name) {
+            results.push({
+              name: col.name,
+              table: matchedCol.table,
+              dataType: col.data_type,
+              isNullable: col.is_nullable,
+              columnDefault: col.column_default,
+              isPrimaryKey: col.is_primary_key,
+              comment: col.comment,
+              extra: col.extra,
+            });
+          }
+        }
+      } catch {
+        // Skip tables that fail
+      }
+    }
+
+    columnInfoColumns.value = results;
+  } catch (e: any) {
+    // Silently ignore errors
+    console.error("[DBX] Failed to fetch column info:", e);
+    return;
+  } finally {
+    columnInfoLoading.value = false;
+    showColumnInfo.value = true;
+  }
+}
+
+function closeColumnInfo() {
+  showColumnInfo.value = false;
+  columnInfoColumns.value = [];
+  columnInfoError.value = undefined;
+}
+
+function onHandleClickTable(tableName: string) {
+  emit("clickTable", tableName);
+}
+
+function onHandleCloseColumnPanel() {
+  showColumnInfo.value = false;
+  columnInfoColumns.value = [];
+  columnInfoError.value = undefined;
+}
 </script>
 
 <template>
@@ -78,7 +161,7 @@ const hasNumericData = computed(() => {
     <template v-if="activeTab.mode === 'query'">
       <Splitpanes horizontal class="flex-1">
         <Pane :size="40" :min-size="15">
-          <div class="h-full flex flex-col">
+          <div class="h-full flex flex-col relative">
             <QueryEditor
               class="flex-1"
               :model-value="activeTab.sql"
@@ -92,6 +175,16 @@ const hasNumericData = computed(() => {
               @cursor-change="emit('editorCursorChange', $event)"
               @format-error="emit('formatError')"
               @execute="emit('execute')"
+              @click-table="onHandleClickTable"
+              @click-column="onHandleClickColumn"
+              @close-column-panel="onHandleCloseColumnPanel"
+            />
+            <ColumnInfoPanel
+              v-if="showColumnInfo"
+              :columns="columnInfoColumns"
+              :loading="columnInfoLoading"
+              :error="columnInfoError"
+              @close="closeColumnInfo"
             />
           </div>
         </Pane>
@@ -175,6 +268,17 @@ const hasNumericData = computed(() => {
                 :result="activeTab.result"
                 :sql="activeTab.lastExecutedSql || activeTab.sql"
                 :loading="activeTab.isExecuting"
+                :editable="!!activeTab.queryAnalysis"
+                :database-type="activeConnection?.db_type"
+                :connection-id="activeTab.connectionId"
+                :database="activeTab.database"
+                :table-meta="activeTab.tableMeta"
+                :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
+                @reload="emit('reload')"
+                @paginate="
+                  (offset: number, limit: number, orderBy?: string) => emit('paginate', offset, limit, orderBy)
+                "
+                @sort="(column: string, direction: 'asc' | 'desc' | null) => emit('sort', column, direction)"
               />
               <div
                 v-if="activeTab.result?.columns.includes('Error')"
@@ -230,12 +334,46 @@ const hasNumericData = computed(() => {
             {{ databaseDisplayNameForTab(activeTab.connectionId, activeTab.database) }}
             <template v-if="activeTab.tableMeta?.schema"> &middot; {{ activeTab.tableMeta.schema }}</template>
           </span>
-          <span v-if="activeTab.tableMeta" class="ml-auto text-muted-foreground">
-            {{ activeTab.tableMeta.columns.length }} {{ t("tree.columns") }}
+          <span v-if="activeTab.tableMeta" class="ml-auto flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-5 text-xs px-1.5"
+              :disabled="dataGridRef?.isSaving"
+              @click="dataGridRef?.onToolbarRefresh()"
+            >
+              <Loader2 v-if="activeTab.isExecuting" class="w-3 h-3 mr-1 animate-spin" />
+              <RefreshCcw v-else class="w-3 h-3 mr-1" />
+              {{ t("grid.refresh") }}
+            </Button>
+            <template v-if="dataGridRef?.useTransaction">
+              <Button
+                :variant="dataGridRef?.transactionActive ? 'default' : 'secondary'"
+                size="sm"
+                class="h-5 text-xs px-1.5"
+                :disabled="!dataGridRef?.transactionActive || dataGridRef?.isSaving"
+                @click="dataGridRef?.onToolbarCommit()"
+              >
+                <Loader2 v-if="dataGridRef?.isSaving" class="w-3 h-3 mr-1 animate-spin" />
+                <Save v-else class="w-3 h-3 mr-1" />
+                {{ t("grid.commit") }}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="h-5 text-xs px-1.5"
+                :disabled="!dataGridRef?.transactionActive"
+                @click="dataGridRef?.onToolbarRollback()"
+              >
+                <RotateCcw class="w-3 h-3 mr-1" />
+                {{ t("grid.rollback") }}
+              </Button>
+            </template>
           </span>
         </div>
         <DataGrid
           v-if="activeTab.result"
+          ref="dataGridRef"
           class="flex-1 min-h-0"
           :key="activeTab.id"
           :result="activeTab.result"
@@ -248,13 +386,8 @@ const hasNumericData = computed(() => {
           :table-meta="activeTab.tableMeta"
           :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
           @reload="emit('reload')"
-          @paginate="
-            (offset: number, limit: number, whereInput?: string) => emit('paginate', offset, limit, whereInput)
-          "
-          @sort="
-            (column: string, direction: 'asc' | 'desc' | null, whereInput?: string) =>
-              emit('sort', column, direction, whereInput)
-          "
+          @paginate="(offset: number, limit: number, orderBy?: string) => emit('paginate', offset, limit, orderBy)"
+          @sort="(column: string, direction: 'asc' | 'desc' | null) => emit('sort', column, direction)"
         />
         <div
           v-else-if="activeTab.isExecuting"

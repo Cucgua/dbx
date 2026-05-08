@@ -51,8 +51,11 @@ import {
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useToast } from "@/composables/useToast";
+import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import type { DatabaseType, QueryResult, TreeNode, TreeNodeType } from "@/types/database";
 import * as api from "@/lib/api";
+import { uuid } from "@/lib/utils";
+import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import {
   DATABASE_EXPORT_PAGE_SIZE,
   DATABASE_EXPORT_ROW_LIMIT,
@@ -61,6 +64,18 @@ import {
   type ExportedTableSql,
 } from "@/lib/databaseExport";
 import { qualifiedTableName as buildQualifiedTableName, quoteTableIdentifier } from "@/lib/tableSelectSql";
+import {
+  SQL_FILE_UNSUPPORTED_TYPES,
+  DIAGRAM_SUPPORTED_TYPES,
+  DATABASE_SEARCH_SUPPORTED_TYPES,
+  TABLE_IMPORT_SUPPORTED_TYPES,
+  TABLE_STRUCTURE_SUPPORTED_TYPES,
+  FIELD_LINEAGE_SUPPORTED_TYPES,
+  TREE_SCHEMA_TYPES,
+  PG_LIKE_STRUCTURE_TYPES,
+  isSchemaAware,
+  usesFetchFirst,
+} from "@/lib/databaseCapabilities";
 import { treeNodeRowAction } from "@/lib/treeNodeClick";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
@@ -68,12 +83,14 @@ import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import ConnectionErrorIndicator from "@/components/connection/ConnectionErrorIndicator.vue";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const { toast } = useToast();
+const { getDatabaseOptions } = useDatabaseOptions();
 
 const props = defineProps<{
   node: TreeNode;
@@ -86,32 +103,6 @@ const emit = defineEmits<{
   "rename-started": [];
 }>();
 
-const sqlFileUnsupportedTypes = new Set(["redis", "mongodb", "elasticsearch"]);
-const diagramSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
-const databaseSearchSupportedTypes = new Set([
-  "mysql",
-  "postgres",
-  "sqlite",
-  "sqlserver",
-  "oracle",
-  "redshift",
-  "duckdb",
-  "clickhouse",
-]);
-const tableImportSupportedTypes = new Set([
-  "mysql",
-  "postgres",
-  "sqlite",
-  "duckdb",
-  "clickhouse",
-  "sqlserver",
-  "oracle",
-  "doris",
-  "starrocks",
-  "redshift",
-]);
-const tableStructureSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver"]);
-const fieldLineageSupportedTypes = new Set(["mysql", "postgres", "sqlite", "sqlserver", "oracle", "redshift"]);
 const isExportingDatabase = ref(false);
 
 function currentDatabaseType(): DatabaseType | undefined {
@@ -120,10 +111,6 @@ function currentDatabaseType(): DatabaseType | undefined {
 
 function quoteIdent(name: string): string {
   return quoteTableIdentifier(currentDatabaseType(), name);
-}
-
-function isSchemaAwareDbType(dbType?: DatabaseType): boolean {
-  return dbType === "postgres" || dbType === "oracle" || dbType === "sqlserver";
 }
 
 function qualifiedTableName(tableName: string, schema?: string): string {
@@ -232,7 +219,7 @@ async function toggle() {
       queryStore.updateSql(tab, node.label);
     } else if (node.type === "database" && node.connectionId && node.database) {
       const config = connectionStore.getConfig(node.connectionId);
-      if (config?.db_type === "postgres" || config?.db_type === "sqlserver") {
+      if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
         await connectionStore.loadSchemas(node.connectionId, node.database);
       } else {
         await connectionStore.loadTables(node.connectionId, node.database);
@@ -277,7 +264,7 @@ async function openData() {
     if (!config) throw new Error("Connection config not found");
 
     const qualifiedName =
-      (config.db_type === "postgres" || config.db_type === "oracle" || config.db_type === "sqlserver") && node.schema
+      isSchemaAware(config.db_type) && node.schema
         ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
         : quoteIdent(node.label);
 
@@ -286,7 +273,7 @@ async function openData() {
     const pks = columns.filter((c) => c.is_primary_key).map((c) => c.name);
     const order = pks.length ? ` ORDER BY ${pks.map((pk) => `${quoteIdent(pk)} ASC`).join(", ")}` : "";
     let sql: string;
-    if (config.db_type === "oracle") {
+    if (usesFetchFirst(config.db_type)) {
       sql = `SELECT * FROM ${qualifiedName}${order} FETCH FIRST 100 ROWS ONLY`;
     } else if (config.db_type === "sqlserver") {
       sql = `SELECT TOP 100 * FROM ${qualifiedName}${order}`;
@@ -313,9 +300,36 @@ async function newQuery() {
   try {
     await connectionStore.ensureConnected(node.connectionId);
     connectionStore.activeConnectionId = node.connectionId;
-    queryStore.createTab(node.connectionId, node.database || "", undefined, "query");
+    if (node.database) {
+      queryStore.createTab(node.connectionId, node.database, undefined, "query");
+      return;
+    }
+    const connection = connectionStore.getConfig(node.connectionId);
+    if (!connection) return;
+    const options = await getDatabaseOptions(node.connectionId);
+    queryStore.createTab(node.connectionId, resolveDefaultDatabase(connection, options), undefined, "query");
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function setNodeAsDefaultDatabase() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  try {
+    await connectionStore.setDefaultDatabase(node.connectionId, node.database);
+  } catch (e: any) {
+    toast(t("connection.saveFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function clearNodeDefaultDatabase() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  try {
+    await connectionStore.clearDefaultDatabase(node.connectionId);
+  } catch (e: any) {
+    toast(t("connection.saveFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
@@ -348,6 +362,15 @@ function copyName() {
   navigator.clipboard.writeText(props.node.label);
 }
 
+async function duplicateConnection() {
+  const connId = props.node.connectionId;
+  if (!connId) return;
+  const config = connectionStore.getConfig(connId);
+  if (!config) return;
+  const newConfig = { ...config, id: uuid(), name: `${config.name} (Copy)` };
+  await connectionStore.addConnection(newConfig);
+}
+
 // --- Table Management Operations ---
 const showDropTableConfirm = ref(false);
 const showEmptyTableConfirm = ref(false);
@@ -368,7 +391,7 @@ const canCreateTable = computed(() => {
     (props.node.type === "database" || props.node.type === "schema") &&
     !!props.node.database &&
     !!config &&
-    tableStructureSupportedTypes.has(config.db_type)
+    TABLE_STRUCTURE_SUPPORTED_TYPES.has(config.db_type)
   );
 });
 
@@ -458,11 +481,11 @@ async function confirmDuplicateStructure() {
     let sql: string;
     if (dbType === "mysql") {
       sql = `CREATE TABLE ${target} LIKE ${source};`;
-    } else if (dbType === "postgres" || dbType === "redshift") {
+    } else if (dbType && PG_LIKE_STRUCTURE_TYPES.has(dbType)) {
       sql = `CREATE TABLE ${target} (LIKE ${source} INCLUDING ALL);`;
     } else if (dbType === "sqlserver") {
       sql = `SELECT TOP 0 * INTO ${target} FROM ${source};`;
-    } else if (dbType === "oracle") {
+    } else if (usesFetchFirst(dbType)) {
       sql = `CREATE TABLE ${target} AS SELECT * FROM ${source} WHERE 1=0`;
     } else {
       sql = `CREATE TABLE ${target} AS SELECT * FROM ${source} WHERE 0;`;
@@ -504,7 +527,7 @@ async function collectDatabaseExportTables(): Promise<Array<{ schema?: string; n
     }));
   }
 
-  if (isSchemaAwareDbType(config?.db_type)) {
+  if (isSchemaAware(config?.db_type)) {
     const schemas = await api.listSchemas(node.connectionId, node.database);
     const groups = await Promise.all(
       schemas.map(async (schema) => {
@@ -653,7 +676,7 @@ async function exportData(format: "csv" | "json" | "sql") {
   try {
     await connectionStore.ensureConnected(node.connectionId);
     const qualifiedName =
-      (config.db_type === "postgres" || config.db_type === "oracle" || config.db_type === "sqlserver") && node.schema
+      isSchemaAware(config.db_type) && node.schema
         ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
         : quoteIdent(node.label);
     const result = await api.executeQuery(node.connectionId, node.database, `SELECT * FROM ${qualifiedName}`);
@@ -800,26 +823,29 @@ const canExpand = !leafTypes.has(props.node.type);
 const canPin = computed(() => pinnableTypes.has(props.node.type));
 const canOpenSqlFileExecution = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!config && !sqlFileUnsupportedTypes.has(config.db_type);
+  return !!config && !SQL_FILE_UNSUPPORTED_TYPES.has(config.db_type);
 });
 const canOpenDiagram = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!props.node.database && !!config && diagramSupportedTypes.has(config.db_type);
+  return !!props.node.database && !!config && DIAGRAM_SUPPORTED_TYPES.has(config.db_type);
 });
 const canOpenDatabaseSearch = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!props.node.database && !!config && databaseSearchSupportedTypes.has(config.db_type);
+  return !!props.node.database && !!config && DATABASE_SEARCH_SUPPORTED_TYPES.has(config.db_type);
 });
 const canOpenTableImport = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
-    props.node.type === "table" && !!props.node.database && !!config && tableImportSupportedTypes.has(config.db_type)
+    props.node.type === "table" && !!props.node.database && !!config && TABLE_IMPORT_SUPPORTED_TYPES.has(config.db_type)
   );
 });
 const canOpenStructureEditor = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
-    props.node.type === "table" && !!props.node.database && !!config && tableStructureSupportedTypes.has(config.db_type)
+    props.node.type === "table" &&
+    !!props.node.database &&
+    !!config &&
+    TABLE_STRUCTURE_SUPPORTED_TYPES.has(config.db_type)
   );
 });
 const canOpenFieldLineage = computed(() => {
@@ -829,10 +855,17 @@ const canOpenFieldLineage = computed(() => {
     !!props.node.database &&
     !!props.node.tableName &&
     !!config &&
-    fieldLineageSupportedTypes.has(config.db_type)
+    FIELD_LINEAGE_SUPPORTED_TYPES.has(config.db_type)
   );
 });
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));
+const isNodeDefaultDatabase = computed(
+  () =>
+    (props.node.type === "database" || props.node.type === "redis-db" || props.node.type === "mongo-db") &&
+    !!props.node.connectionId &&
+    !!props.node.database &&
+    connectionStore.isDefaultDatabase(props.node.connectionId, props.node.database),
+);
 const hasTypeMenu = computed(() => {
   const t = props.node.type;
   return (
@@ -1062,6 +1095,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             @vue:mounted="($event: any) => $event.el.focus()"
           />
           <span v-else class="min-w-0 flex-1 truncate">{{ isGroupLabel(node) ? t(node.label) : node.label }}</span>
+          <Badge v-if="isNodeDefaultDatabase" variant="secondary" class="h-4 px-1.5 text-[10px]">
+            {{ t("editor.defaultDatabase") }}
+          </Badge>
           <span v-if="columnComment" class="truncate text-muted-foreground/60 text-[10px] max-w-[40%]">{{
             columnComment
           }}</span>
@@ -1160,6 +1196,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem @click="editConnection">
           <Pencil class="w-4 h-4" /> {{ t("contextMenu.editConnection") }}
         </ContextMenuItem>
+        <ContextMenuItem @click="duplicateConnection">
+          <CopyPlus class="w-4 h-4" /> {{ t("contextMenu.duplicateConnection") }}
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem class="text-destructive" @click="deleteConnection">
           <Trash2 class="w-4 h-4" /> {{ t("contextMenu.deleteConnection") }}
@@ -1179,6 +1218,12 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       <template v-if="node.type === 'database' || node.type === 'schema'">
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="node.type === 'database' && !isNodeDefaultDatabase" @click="setNodeAsDefaultDatabase">
+          <Database class="w-4 h-4" /> {{ t("contextMenu.setDefaultDatabase") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="node.type === 'database' && isNodeDefaultDatabase" @click="clearNodeDefaultDatabase">
+          <Database class="w-4 h-4" /> {{ t("contextMenu.clearDefaultDatabase") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canCreateTable" @click="createTable">
           <Plus class="w-4 h-4" /> {{ t("contextMenu.createTable") }}
@@ -1206,6 +1251,18 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
           <Loader2 v-if="isExportingDatabase" class="w-4 h-4 animate-spin" />
           <Download v-else class="w-4 h-4" />
           {{ t("contextMenu.exportDatabase") }}
+        </ContextMenuItem>
+      </template>
+
+      <template v-if="node.type === 'redis-db' || node.type === 'mongo-db'">
+        <ContextMenuItem @click="newQuery">
+          <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="!isNodeDefaultDatabase" @click="setNodeAsDefaultDatabase">
+          <Database class="w-4 h-4" /> {{ t("contextMenu.setDefaultDatabase") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="isNodeDefaultDatabase" @click="clearNodeDefaultDatabase">
+          <Database class="w-4 h-4" /> {{ t("contextMenu.clearDefaultDatabase") }}
         </ContextMenuItem>
       </template>
 
@@ -1273,8 +1330,10 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         </ContextMenuItem>
       </template>
 
-      <ContextMenuSeparator v-if="hasTypeMenu" />
-      <ContextMenuItem @click="copyName"> <Copy class="w-4 h-4" /> {{ t("contextMenu.copyName") }} </ContextMenuItem>
+      <template v-if="node.type !== 'connection'">
+        <ContextMenuSeparator v-if="hasTypeMenu" />
+        <ContextMenuItem @click="copyName"> <Copy class="w-4 h-4" /> {{ t("contextMenu.copyName") }} </ContextMenuItem>
+      </template>
     </ContextMenuContent>
   </ContextMenu>
 

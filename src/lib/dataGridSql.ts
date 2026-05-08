@@ -33,7 +33,7 @@ export function buildDataGridSaveStatements(options: DataGridSaveStatementOption
     const sets = changes
       .map(
         ([columnIndex, value]) =>
-          `${quoteIdent(options.databaseType, options.columns[columnIndex])} = ${formatGridSqlLiteral(value)}`,
+          `${quoteIdent(options.databaseType, options.columns[columnIndex])} = ${formatGridSqlLiteral(value, options.databaseType)}`,
       )
       .join(", ");
     const where = buildPrimaryKeyWhere(options.databaseType, options.tableMeta.primaryKeys, options.columns, row);
@@ -49,20 +49,21 @@ export function buildDataGridSaveStatements(options: DataGridSaveStatementOption
 
   for (const row of options.newRows) {
     const columns = options.columns.map((column) => quoteIdent(options.databaseType, column)).join(", ");
-    const values = row.map(formatGridSqlLiteral).join(", ");
+    const values = row.map((v) => formatGridSqlLiteral(v, options.databaseType)).join(", ");
     statements.push(`INSERT INTO ${table} (${columns}) VALUES (${values});`);
   }
 
   return statements;
 }
 
-export function formatGridSqlLiteral(value: GridCellValue): string {
+export function formatGridSqlLiteral(value: GridCellValue, databaseType?: DatabaseType): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   const text = String(value);
-  if (text === "") return "''";
-  return `'${text.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
+  if (text === "") return databaseType === "sqlserver" ? "N''" : "''";
+  const escaped = `'${text.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
+  return databaseType === "sqlserver" ? `N${escaped}` : escaped;
 }
 
 function buildPrimaryKeyWhere(
@@ -74,7 +75,7 @@ function buildPrimaryKeyWhere(
   return primaryKeys
     .map((primaryKey) => {
       const value = row[columns.indexOf(primaryKey)];
-      return `${quoteIdent(databaseType, primaryKey)} = ${formatGridSqlLiteral(value)}`;
+      return `${quoteIdent(databaseType, primaryKey)} = ${formatGridSqlLiteral(value, databaseType)}`;
     })
     .join(" AND ");
 }

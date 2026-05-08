@@ -85,10 +85,10 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
 
     if upper_type == "JSON" {
         if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
-            return v;
+            return serde_json::Value::String(v.to_string());
         }
         if let Ok(v) = row.try_get::<String, _>(idx) {
-            return serde_json::from_str::<serde_json::Value>(&v).unwrap_or(serde_json::Value::String(v));
+            return serde_json::Value::String(v);
         }
         return serde_json::Value::Null;
     }
@@ -130,8 +130,8 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
 
     row.try_get::<String, _>(idx)
         .map(serde_json::Value::String)
-        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| serde_json::Value::Number(v.into())))
-        .or_else(|_| row.try_get::<u64, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<i64, _>(idx).map(super::safe_i64_to_json))
+        .or_else(|_| row.try_get::<u64, _>(idx).map(super::safe_u64_to_json))
         .or_else(|_| {
             row.try_get::<f64, _>(idx).map(|v| {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
@@ -185,7 +185,7 @@ pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, Strin
 
 pub async fn list_tables(pool: &MySqlPool, database: &str) -> Result<Vec<TableInfo>, String> {
     let sql = format!(
-        "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
+        "SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
         quote_value(database),
     );
     let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
@@ -195,6 +195,7 @@ pub async fn list_tables(pool: &MySqlPool, database: &str) -> Result<Vec<TableIn
         .map(|row| TableInfo {
             name: get_str_by_name(row, "TABLE_NAME"),
             table_type: get_str_by_name(row, "TABLE_TYPE"),
+            comment: row.try_get::<String, _>("TABLE_COMMENT").ok().filter(|s| !s.is_empty()),
         })
         .collect())
 }

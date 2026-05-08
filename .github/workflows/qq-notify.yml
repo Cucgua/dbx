@@ -1,0 +1,57 @@
+name: QQ Notify
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened, closed]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build message
+        id: msg
+        run: |
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            TITLE="${{ github.event.issue.title }}"
+            URL="${{ github.event.issue.html_url }}"
+            USER="${{ github.event.issue.user.login }}"
+            MSG="📋 新 Issue: ${TITLE}\n提交者: ${USER}\n${URL}"
+          elif [ "${{ github.event.action }}" = "opened" ]; then
+            TITLE="${{ github.event.pull_request.title }}"
+            URL="${{ github.event.pull_request.html_url }}"
+            USER="${{ github.event.pull_request.user.login }}"
+            MSG="🔀 新 PR: ${TITLE}\n提交者: ${USER}\n${URL}"
+          elif [ "${{ github.event.action }}" = "closed" ] && [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            TITLE="${{ github.event.pull_request.title }}"
+            URL="${{ github.event.pull_request.html_url }}"
+            USER="${{ github.event.pull_request.merged_by.login }}"
+            MSG="✅ PR 已合并: ${TITLE}\n合并者: ${USER}\n${URL}"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "msg<<$EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$MSG" >> "$GITHUB_OUTPUT"
+          echo "$EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Send to QQ group
+        if: steps.msg.outputs.skip != 'true'
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          ASTRBOT_API_KEY: ${{ secrets.ASTRBOT_API_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          MSG=$(echo '${{ steps.msg.outputs.msg }}' | jq -Rs .)
+          ssh "root@${HOST}" "curl -s -X POST http://localhost:6185/api/v1/im/message \
+            -H 'Authorization: Bearer ${ASTRBOT_API_KEY}' \
+            -H 'Content-Type: application/json' \
+            -d '{\"umo\": \"default:GroupMessage:1087880322\", \"message\": ${MSG}}'"

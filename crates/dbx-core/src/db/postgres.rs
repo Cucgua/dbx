@@ -33,10 +33,10 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
 
     if upper == "JSON" || upper == "JSONB" {
         if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
-            return v;
+            return serde_json::Value::String(v.to_string());
         }
         if let Ok(v) = row.try_get::<String, _>(idx) {
-            return serde_json::from_str::<serde_json::Value>(&v).unwrap_or(serde_json::Value::String(v));
+            return serde_json::Value::String(v);
         }
         return serde_json::Value::Null;
     }
@@ -72,7 +72,7 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
 
     row.try_get::<String, _>(idx)
         .map(serde_json::Value::String)
-        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<i64, _>(idx).map(super::safe_i64_to_json))
         .or_else(|_| row.try_get::<i32, _>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| row.try_get::<i16, _>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| {
@@ -162,8 +162,11 @@ pub async fn list_databases(pool: &PgPool) -> Result<Vec<DatabaseInfo>, String> 
 
 pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, String> {
     let rows: Vec<PgRow> = sqlx::query(
-        "SELECT table_name, table_type FROM information_schema.tables \
-         WHERE table_schema = $1 ORDER BY table_name",
+        "SELECT t.table_name, t.table_type, obj_description(c.oid) AS table_comment \
+         FROM information_schema.tables t \
+         LEFT JOIN pg_catalog.pg_class c ON c.relname = t.table_name \
+         LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.table_schema \
+         WHERE t.table_schema = $1 ORDER BY t.table_name",
     )
     .bind(schema)
     .fetch_all(pool)
@@ -175,6 +178,7 @@ pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, 
         .map(|row| TableInfo {
             name: row.get::<String, _>("table_name"),
             table_type: row.get::<String, _>("table_type"),
+            comment: row.get::<Option<String>, _>("table_comment").filter(|s| !s.is_empty()),
         })
         .collect())
 }

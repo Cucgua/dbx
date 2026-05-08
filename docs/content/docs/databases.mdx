@@ -1,11 +1,11 @@
 ---
 title: Database Support
-description: DBX supports 25+ database engines through native Rust drivers.
+description: 25+ database engines through native Rust drivers, no JDBC dependency.
 ---
 
-# Database Support
-
-DBX supports 25+ database engines through native Rust drivers.
+<Callout type="info">
+Native Rust drivers, no JDBC dependency. MySQL and PostgreSQL compatible databases work out of the box.
+</Callout>
 
 ## Fully Supported
 
@@ -22,10 +22,12 @@ DBX supports 25+ database engines through native Rust drivers.
 | Oracle | oracle-rs | TNS, 12c+ |
 | Oracle OCI (11g) | oracle | OCI / Oracle Client |
 | Elasticsearch | HTTP client | REST |
+| DM (Dameng) | odbc-api | ODBC |
+| GaussDB | rust-gaussdb | GaussDB |
 
 ## MySQL Compatible
 
-These databases use MySQL protocol and work with the MySQL driver:
+These databases use MySQL protocol and work with the MySQL driver out of the box:
 
 | Database | Default Port |
 |---|---|
@@ -42,15 +44,43 @@ These databases use MySQL protocol and work with the MySQL driver:
 
 These databases use PostgreSQL protocol and work with the PostgreSQL driver:
 
-| Database | Default Port | Notes |
-|---|---|---|
-| openGauss | 5432 | |
-| GaussDB | 5432 | |
-| KingBase | 54321 | |
-| Vastbase | 5432 | |
-| Redshift | 5439 | |
-| CockroachDB | 26257 | |
-| DM (Dameng) | 5236 | Requires PG compatibility mode |
+| Database | Default Port |
+|---|---|
+| openGauss | 5432 |
+| KingBase | 54321 |
+| Vastbase | 5432 |
+| Redshift | 5439 |
+| CockroachDB | 26257 |
 
-> **DM (Dameng) Note:**
-> DM database requires PG compatibility mode to be enabled. Set `COMPATIBLE_MODE=7` in `dm.ini` and restart the service.
+## ODBC Databases
+
+DM (Dameng) connects through ODBC, which requires an ODBC driver installed on your system.
+
+### DM (Dameng)
+
+DM8 connects via the DM ODBC driver. Default port: **5236**, default user: **SYSDBA**.
+
+<Tabs groupId="dm-platform" items={['Linux', 'Windows', 'macOS']}>
+  <Tab value="Linux">
+    ```bash
+    # Install unixODBC
+    sudo apt install unixodbc
+
+    # Install DM8 (includes ODBC driver)
+    # Download from https://eco.dameng.com/download/
+
+    # Register the driver in /etc/odbcinst.ini
+    sudo tee -a /etc/odbcinst.ini << 'EOF'
+    [DM8 ODBC DRIVER]
+    Description = DM8 ODBC Driver
+    Driver = /opt/dmdbms/bin/libdodbc.so
+    EOF
+    ```
+  </Tab>
+  <Tab value="Windows">
+    The DM8 installer automatically registers the ODBC driver. No manual configuration needed.
+  </Tab>
+  <Tab value="macOS">
+    DM does not provide a native macOS ODBC driver. For development/testing, DM is best accessed from Linux.
+  </Tab>
+</Tabs>

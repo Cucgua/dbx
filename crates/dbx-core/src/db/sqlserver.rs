@@ -62,7 +62,7 @@ fn row_to_json(row: &tiberius::Row) -> Vec<serde_json::Value> {
             } else if let Some(v) = row.try_get::<i32, _>(i).ok().flatten() {
                 serde_json::Value::Number(v.into())
             } else if let Some(v) = row.try_get::<i64, _>(i).ok().flatten() {
-                serde_json::Value::Number(v.into())
+                super::safe_i64_to_json(v)
             } else if let Some(v) = row.try_get::<f64, _>(i).ok().flatten() {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
             } else if let Some(v) = row.try_get::<bool, _>(i).ok().flatten() {
@@ -106,6 +106,7 @@ pub async fn list_tables(client: &mut SqlServerClient, schema: &str) -> Result<V
         .map(|row| TableInfo {
             name: row.get::<&str, _>(0).unwrap_or("").to_string(),
             table_type: row.get::<&str, _>(1).unwrap_or("BASE TABLE").to_string(),
+            comment: None,
         })
         .collect())
 }
@@ -129,10 +130,26 @@ pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str
         .iter()
         .map(|row| {
             let base = row.get::<&str, _>(1).unwrap_or("").to_string();
-            let max_len = row.get::<i32, _>(7);
-            let dt_prec = row.get::<i32, _>(8);
-            let num_prec = row.get::<i32, _>(5);
-            let num_scale = row.get::<i32, _>(6);
+            let max_len = row
+                .try_get::<i32, _>(7)
+                .ok()
+                .flatten()
+                .or_else(|| row.try_get::<i16, _>(7).ok().flatten().map(|v| v as i32));
+            let dt_prec = row
+                .try_get::<i32, _>(8)
+                .ok()
+                .flatten()
+                .or_else(|| row.try_get::<i16, _>(8).ok().flatten().map(|v| v as i32));
+            let num_prec = row
+                .try_get::<i32, _>(5)
+                .ok()
+                .flatten()
+                .or_else(|| row.try_get::<i16, _>(5).ok().flatten().map(|v| v as i32));
+            let num_scale = row
+                .try_get::<i32, _>(6)
+                .ok()
+                .flatten()
+                .or_else(|| row.try_get::<i16, _>(6).ok().flatten().map(|v| v as i32));
             let data_type = match base.to_lowercase().as_str() {
                 "varchar" => match max_len {
                     Some(-1) => "varchar(max)".to_string(),

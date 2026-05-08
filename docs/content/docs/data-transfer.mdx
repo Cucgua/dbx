@@ -1,23 +1,34 @@
 ---
 title: Data Transfer
-description: Move data between database connections, even across different database engines.
+description: Cross-engine data migration with automatic type mapping. MySQL to PostgreSQL, SQLite to SQL Server.
 ---
 
-# Data Transfer
+<Callout type="info">
+Cross-engine data migration with automatic type mapping and syntax adaptation. MySQL to PostgreSQL, SQLite to SQL Server — it just works.
+</Callout>
 
-Data Transfer moves data between two database connections, even when they use different database engines. This is useful for migrating data, populating a development environment, or consolidating data from multiple sources.
+## Use Cases
 
-## Setting Up a Transfer
+- **Cross-engine migration** — MySQL → PostgreSQL, SQLite → SQL Server
+- **Environment sync** — Pull production data into your dev environment
+- **Data consolidation** — Merge data from multiple sources into one database
 
-1. Select the **source** connection and database.
-2. Select the **target** connection and database.
-3. Choose the tables you want to transfer.
+## Workflow
 
-You can transfer all tables at once or pick a subset. DBX handles the necessary type mapping between different database engines automatically.
-
-## Cross-Engine Support
-
-Data Transfer works across different database engines. For example, you can transfer data from MySQL to PostgreSQL, or from SQLite to SQL Server. DBX translates data types and adapts insert statements as needed for the target engine.
+<Steps>
+  <Step>
+    ### Select Source and Target
+    Choose the **source** and **target** connections. They can be different database engines.
+  </Step>
+  <Step>
+    ### Choose Tables
+    Transfer all tables at once, or pick a subset.
+  </Step>
+  <Step>
+    ### Start Transfer
+    Click "Start Transfer". DBX handles type mapping and syntax differences automatically.
+  </Step>
+</Steps>
 
 ## Progress Tracking
 
@@ -27,8 +38,10 @@ During the transfer, a progress indicator shows:
 - How many rows have been transferred so far
 - The overall progress across all selected tables
 
-This lets you monitor long-running transfers without guessing how much work remains.
-
 ## Error Handling
 
-If an error occurs during transfer (for example, a type incompatibility or a constraint violation), DBX reports the error with details about which table and row caused the problem. The transfer can be reviewed and retried after correcting the issue.
+If an error occurs during transfer (type incompatibility, constraint violation, etc.), DBX:
+
+- Logs the error with details about which table caused the problem
+- Continues transferring other tables without stopping the entire job
+- Shows a summary of all errors after the transfer completes

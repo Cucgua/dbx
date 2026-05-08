@@ -135,14 +135,13 @@ const driverProfiles: Record<
   oceanbase: { type: "mysql", port: 2881, user: "root", label: "OceanBase", icon: "oceanbase" },
   goldendb: { type: "mysql", port: 3306, user: "root", label: "GoldenDB", icon: "goldendb" },
   opengauss: {
-    type: "postgres",
+    type: "gaussdb",
     port: 5432,
     user: "gaussdb",
     label: "openGauss",
     icon: "opengauss",
-    urlParams: "sslmode=disable",
   },
-  gaussdb: { type: "postgres", port: 5432, user: "gaussdb", label: "GaussDB", icon: "gaussdb" },
+  gaussdb: { type: "gaussdb", port: 5432, user: "gaussdb", label: "GaussDB", icon: "gaussdb" },
   kingbase: { type: "postgres", port: 54321, user: "system", label: "KingBase", icon: "kingbase" },
   vastbase: { type: "postgres", port: 5432, user: "vastbase", label: "Vastbase", icon: "vastbase" },
   doris: { type: "mysql", port: 9030, user: "root", label: "Doris", icon: "doris", urlParams: "" },
@@ -170,7 +169,7 @@ const driverProfiles: Record<
     label: "CockroachDB",
     icon: "cockroachdb",
   },
-  dm: { type: "postgres", port: 5236, user: "SYSDBA", label: "DM (Dameng)", icon: "dm" },
+  dm: { type: "dameng", port: 5236, user: "SYSDBA", label: "DM (Dameng)", icon: "dm" },
   tdengine: { type: "mysql", port: 6030, user: "root", label: "TDengine", icon: "tdengine" },
   custom_mysql: {
     type: "mysql",
@@ -338,9 +337,8 @@ const dbOptions = [
   { value: "oracle_oci", label: "Oracle OCI (11g)" },
   { value: "elasticsearch", label: "Elasticsearch" },
   { value: "mariadb", label: "MariaDB" },
-];
-
-const mysqlCompat = [
+  { value: "dm", label: "DM (Dameng)" },
+  { value: "gaussdb", label: "GaussDB" },
   { value: "tidb", label: "TiDB" },
   { value: "oceanbase", label: "OceanBase" },
   { value: "goldendb", label: "GoldenDB" },
@@ -348,25 +346,16 @@ const mysqlCompat = [
   { value: "selectdb", label: "SelectDB" },
   { value: "starrocks", label: "StarRocks" },
   { value: "tdengine", label: "TDengine" },
-  { value: "custom_mysql", label: "Custom" },
-];
-
-const pgCompat = [
   { value: "opengauss", label: "openGauss" },
-  { value: "gaussdb", label: "GaussDB" },
   { value: "kingbase", label: "KingBase" },
   { value: "vastbase", label: "Vastbase" },
-  { value: "dm", label: "DM (Dameng)" },
   { value: "redshift", label: "Redshift" },
   { value: "cockroachdb", label: "CockroachDB" },
-  { value: "custom_postgres", label: "Custom" },
+  { value: "custom_mysql", label: "Custom (MySQL)" },
+  { value: "custom_postgres", label: "Custom (PostgreSQL)" },
 ];
 
-const dbCategories = computed<DbCategory[]>(() => [
-  { key: "mainstream", title: t("connection.mainstream"), options: dbOptions },
-  { key: "mysql", title: `MySQL ${t("connection.compatible")}`, options: mysqlCompat },
-  { key: "postgres", title: `PostgreSQL ${t("connection.compatible")}`, options: pgCompat },
-]);
+const dbCategories = computed<DbCategory[]>(() => [{ key: "all", title: "", options: dbOptions }]);
 
 const filteredDbCategories = computed<DbCategory[]>(() => {
   const keyword = dbSearchQuery.value.trim().toLowerCase();
@@ -937,6 +926,13 @@ async function browseDbFilePath() {
                     <span />
                     <p class="col-span-3 text-xs text-muted-foreground">
                       {{ t("connection.dmCompatHint") }}
+                      <a
+                        href="https://eco.dameng.com/download/"
+                        target="_blank"
+                        class="underline text-primary hover:text-primary/80"
+                      >
+                        {{ t("connection.dmDownload") }}
+                      </a>
                     </p>
                   </div>
 

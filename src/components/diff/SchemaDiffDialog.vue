@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useConnectionStore } from "@/stores/connectionStore";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
+import { isSchemaAware } from "@/lib/databaseCapabilities";
 import { diffColumns, diffIndexes, diffTables, generateSyncSql, type TableDiff } from "@/lib/schemaDiff";
 import { useToast } from "@/composables/useToast";
 import { Loader2, Copy, Play, GitCompareArrows } from "lucide-vue-next";
@@ -72,11 +73,7 @@ async function loadDatabases(connectionId: string, side: "source" | "target") {
 
 async function resolveSchema(connectionId: string, database: string): Promise<string> {
   const config = store.getConfig(connectionId);
-  const needsSchema =
-    config?.db_type === "postgres" ||
-    config?.db_type === "sqlserver" ||
-    config?.db_type === "oracle" ||
-    config?.db_type === "redshift";
+  const needsSchema = isSchemaAware(config?.db_type);
   if (needsSchema) {
     const schemas = await api.listSchemas(connectionId, database);
     return schemas.includes("public") ? "public" : (schemas[0] ?? "");
