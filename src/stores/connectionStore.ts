@@ -361,7 +361,11 @@ export const useConnectionStore = defineStore("connection", () => {
     node.isLoading = true;
     try {
       await ensureConnected(connectionId);
-      const databases = await api.listDatabases(connectionId);
+      let databases = await api.listDatabases(connectionId);
+      const config = getConfig(connectionId);
+      if (config?.database) {
+        databases = databases.filter((db) => db.name === config.database);
+      }
       setChildren(
         node,
         databases.map((db) => ({
