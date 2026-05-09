@@ -5,6 +5,7 @@ use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub type SqlServerClient = Client<Compat<TcpStream>>;
@@ -317,13 +318,8 @@ pub async fn list_triggers(
 
 pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("EXEC")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("TABLE")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "EXEC", "WITH", "TABLE"]) {
         let mut stream = client.query(sql, &[]).await.map_err(|e| e.to_string())?;
         let columns_meta = stream
             .columns()

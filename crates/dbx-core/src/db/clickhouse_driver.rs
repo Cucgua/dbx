@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::time::Instant;
 
 use super::{connection_timeout, with_connection_timeout};
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, QueryResult, TableInfo};
 
 pub struct ChClient {
@@ -148,14 +149,8 @@ pub async fn get_columns(client: &ChClient, database: &str, table: &str) -> Resu
 
 pub async fn execute_query(client: &ChClient, database: &str, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("DESCRIBE")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH"]) {
         let result = ch_query(client, sql, Some(database)).await?;
         let columns: Vec<String> = result.meta.iter().map(|c| c.name.clone()).collect();
         Ok(QueryResult {

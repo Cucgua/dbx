@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::connection::{AppState, PoolKind};
 use crate::db;
-use crate::sql::split_sql_statements;
+use crate::sql::{split_sql_statements, starts_with_executable_sql_keyword};
 
 pub const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_ROWS: usize = 10000;
@@ -13,15 +13,8 @@ pub const QUERY_CANCELED: &str = "Query canceled";
 
 pub fn duckdb_execute(con: &duckdb::Connection, sql: &str) -> Result<db::QueryResult, String> {
     let start = std::time::Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("DESCRIBE")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("PRAGMA")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH", "PRAGMA"]) {
         let mut stmt = con.prepare(sql).map_err(|e| e.to_string())?;
         let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
         let stmt_ref = rows.as_ref().ok_or("DuckDB statement unavailable")?;

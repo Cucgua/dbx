@@ -4,6 +4,7 @@ use sqlx::{Column, Executor, Row};
 use std::time::{Duration, Instant};
 
 use super::file_validator::validate_file_path;
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub async fn connect_path(path: &str) -> Result<SqlitePool, String> {
@@ -162,13 +163,8 @@ pub async fn list_triggers(pool: &SqlitePool, _schema: &str, table: &str) -> Res
 
 pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("PRAGMA")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "PRAGMA", "EXPLAIN", "WITH"]) {
         let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
         let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
 

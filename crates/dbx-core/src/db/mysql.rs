@@ -5,6 +5,7 @@ use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
 
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 fn quote_value(s: &str) -> String {
@@ -249,13 +250,8 @@ pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Resul
 
 pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("DESCRIBE")
-        || trimmed.starts_with("EXPLAIN")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN"]) {
         if bare {
             let mut stream = sqlx::raw_sql(sql).fetch(&*pool);
             let mut columns: Vec<String> = vec![];

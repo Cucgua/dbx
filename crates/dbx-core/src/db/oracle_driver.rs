@@ -3,6 +3,7 @@ use rust_oracle::{Config, Connection};
 use std::time::Instant;
 
 use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub type OracleClient = Connection;
@@ -265,14 +266,7 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
     let sql = rewrite_fetch_first(sql);
     let sql = sql.as_ref();
 
-    let trimmed = sql.to_uppercase();
-
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("DESCRIBE")
-        || trimmed.starts_with("EXPLAIN")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN"]) {
         let result = conn.query(sql, &[]).await.map_err(|e| {
             log::error!("[oracle] execute_query SELECT failed: {e}");
             e.to_string()

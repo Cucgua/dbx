@@ -7,6 +7,7 @@ use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
 
 use super::file_validator::validate_file_path;
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 fn pg_temporal_to_json_value(row: &PgRow, idx: usize) -> Option<serde_json::Value> {
@@ -257,14 +258,8 @@ pub async fn get_columns(pool: &PgPool, schema: &str, table: &str) -> Result<Vec
 
 pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("TABLE")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "TABLE"]) {
         let mut stream = sqlx::query(sql).persistent(false).fetch(pool);
         let mut columns: Vec<String> = vec![];
         let mut column_types: Vec<String> = vec![];
@@ -323,14 +318,8 @@ pub async fn execute_query_with_schema(pool: &PgPool, schema: &str, sql: &str) -
     sqlx::query(&set_path).execute(&mut *conn).await.map_err(|e| e.to_string())?;
 
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("TABLE")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "TABLE"]) {
         let mut stream = sqlx::query(sql).persistent(false).fetch(&mut *conn);
         let mut columns: Vec<String> = vec![];
         let mut column_types: Vec<String> = vec![];

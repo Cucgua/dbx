@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 use super::CONNECTION_TIMEOUT_SECS;
@@ -245,13 +246,8 @@ pub async fn list_triggers(client: &mut GaussdbClient, schema: &str, table: &str
 pub async fn execute_query(client: &mut GaussdbClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
-    let trimmed = sql.to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("EXPLAIN")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "WITH", "SHOW", "EXPLAIN"]) {
         let rows = client.client.query(sql, &[]).await.map_err(|e| e.to_string())?;
 
         let columns: Vec<String> = if let Some(first) = rows.first() {
