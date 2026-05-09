@@ -6,7 +6,7 @@ on:
   pull_request_target:
     types: [opened, closed]
   release:
-    types: [published]
+    types: [published, released]
 
 jobs:
   notify:
