@@ -183,10 +183,14 @@ pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
 }
 
 pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, String> {
-    let rows: Vec<MySqlRow> = sqlx::raw_sql("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows: Vec<MySqlRow> = sqlx::raw_sql(
+        "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA \
+         WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
+         ORDER BY SCHEMA_NAME",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(|row| DatabaseInfo { name: get_str(row, 0) }).collect())
 }

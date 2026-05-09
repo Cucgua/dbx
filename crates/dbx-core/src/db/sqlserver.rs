@@ -75,7 +75,17 @@ fn row_to_json(row: &tiberius::Row) -> Vec<serde_json::Value> {
 }
 
 pub async fn list_databases(client: &mut SqlServerClient) -> Result<Vec<DatabaseInfo>, String> {
-    let stream = client.query("SELECT name FROM sys.databases ORDER BY name", &[]).await.map_err(|e| e.to_string())?;
+    let stream = client
+        .query(
+            "SELECT name \
+             FROM sys.databases \
+             WHERE database_id > 4 \
+               AND state = 0 \
+             ORDER BY name",
+            &[],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
     let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows.iter().map(|row| DatabaseInfo { name: row.get::<&str, _>(0).unwrap_or("").to_string() }).collect())
 }
@@ -83,9 +93,16 @@ pub async fn list_databases(client: &mut SqlServerClient) -> Result<Vec<Database
 pub async fn list_schemas(client: &mut SqlServerClient) -> Result<Vec<String>, String> {
     let stream = client
         .query(
-            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA \
-         WHERE SCHEMA_NAME NOT IN ('guest','INFORMATION_SCHEMA','sys') \
-         ORDER BY SCHEMA_NAME",
+            "SELECT s.name \
+         FROM sys.schemas s \
+         WHERE s.name NOT IN ('guest','INFORMATION_SCHEMA','sys') \
+           AND EXISTS ( \
+             SELECT 1 FROM sys.objects o \
+             WHERE o.schema_id = s.schema_id \
+               AND o.type IN ('U','V') \
+               AND o.is_ms_shipped = 0 \
+           ) \
+         ORDER BY CASE WHEN s.name = 'dbo' THEN 0 ELSE 1 END, s.name",
             &[],
         )
         .await
@@ -96,7 +113,13 @@ pub async fn list_schemas(client: &mut SqlServerClient) -> Result<Vec<String>, S
 
 pub async fn list_tables(client: &mut SqlServerClient, schema: &str) -> Result<Vec<TableInfo>, String> {
     let sql = format!(
-        "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{}' ORDER BY TABLE_NAME",
+        "SELECT o.name, CASE WHEN o.type = 'V' THEN 'VIEW' ELSE 'BASE TABLE' END \
+         FROM sys.objects o \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         WHERE s.name = '{}' \
+           AND o.type IN ('U','V') \
+           AND o.is_ms_shipped = 0 \
+         ORDER BY o.name",
         schema.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;

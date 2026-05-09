@@ -220,7 +220,9 @@ async function toggle() {
       queryStore.updateSql(tab, node.label);
     } else if (node.type === "database" && node.connectionId && node.database) {
       const config = connectionStore.getConfig(node.connectionId);
-      if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
+      if (config?.db_type === "sqlserver") {
+        await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database);
+      } else if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
         await connectionStore.loadSchemas(node.connectionId, node.database);
       } else {
         await connectionStore.loadTables(node.connectionId, node.database);
@@ -443,6 +445,18 @@ function dropTable() {
   showDropTableConfirm.value = true;
 }
 
+async function refreshTableList(node: TreeNode) {
+  if (!node.connectionId || !node.database) return;
+  const config = connectionStore.getConfig(node.connectionId);
+  if (config?.db_type === "sqlserver" && node.schema?.toLowerCase() === "dbo") {
+    await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database, { force: true });
+  } else if (node.schema) {
+    await connectionStore.loadTables(node.connectionId, node.database, node.schema, { force: true });
+  } else {
+    await connectionStore.loadTables(node.connectionId, node.database, undefined, { force: true });
+  }
+}
+
 async function confirmDropTable() {
   const node = props.node;
   if (!node.connectionId || !node.database) return;
@@ -450,11 +464,7 @@ async function confirmDropTable() {
     await connectionStore.ensureConnected(node.connectionId);
     await api.executeQuery(node.connectionId, node.database, buildDropTableSql(), node.schema);
     toast(t("contextMenu.dropTableSuccess", { name: node.label }), 3000);
-    if (node.schema) {
-      await connectionStore.loadTables(node.connectionId, node.database, node.schema, { force: true });
-    } else {
-      await connectionStore.loadTables(node.connectionId, node.database, undefined, { force: true });
-    }
+    await refreshTableList(node);
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -556,7 +566,12 @@ async function confirmCreateSchema() {
     const sql = `CREATE SCHEMA ${quoteIdent(name)};`;
     await api.executeQuery(node.connectionId, node.database, sql);
     toast(t("contextMenu.createSchemaSuccess", { name }), 3000);
-    await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
+    const config = connectionStore.getConfig(node.connectionId);
+    if (config?.db_type === "sqlserver") {
+      await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database, { force: true });
+    } else {
+      await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
+    }
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -573,7 +588,12 @@ async function confirmDropSchema() {
     await connectionStore.ensureConnected(node.connectionId);
     await api.executeQuery(node.connectionId, node.database, buildDropSchemaSql());
     toast(t("contextMenu.dropSchemaSuccess", { name: node.label }), 3000);
-    await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
+    const config = connectionStore.getConfig(node.connectionId);
+    if (config?.db_type === "sqlserver") {
+      await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database, { force: true });
+    } else {
+      await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
+    }
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -608,11 +628,7 @@ async function confirmDuplicateStructure() {
     }
     await api.executeQuery(node.connectionId, node.database, sql, node.schema);
     toast(t("contextMenu.duplicateStructureSuccess", { name: newName }), 3000);
-    if (node.schema) {
-      await connectionStore.loadTables(node.connectionId, node.database, node.schema, { force: true });
-    } else {
-      await connectionStore.loadTables(node.connectionId, node.database, undefined, { force: true });
-    }
+    await refreshTableList(node);
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }

@@ -53,7 +53,11 @@ fn normalize_database(database: &str) -> &str {
 
 pub async fn list_databases(client: &mut GaussdbClient) -> Result<Vec<DatabaseInfo>, String> {
     let rows = client
-        .query_single_column("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+        .query_single_column(
+            "SELECT datname FROM pg_database \
+             WHERE datistemplate = false AND datallowconn = true \
+             ORDER BY datname",
+        )
         .await?;
     Ok(rows.into_iter().map(|name| DatabaseInfo { name }).collect())
 }

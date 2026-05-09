@@ -153,10 +153,14 @@ fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
 }
 
 pub async fn list_databases(pool: &PgPool) -> Result<Vec<DatabaseInfo>, String> {
-    let rows: Vec<PgRow> = sqlx::query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows: Vec<PgRow> = sqlx::query(
+        "SELECT datname FROM pg_database \
+         WHERE datistemplate = false AND datallowconn = true \
+         ORDER BY datname",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(|row| DatabaseInfo { name: row.get::<String, _>("datname") }).collect())
 }

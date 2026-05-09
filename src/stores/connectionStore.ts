@@ -22,6 +22,7 @@ import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isSchemaAware, TREE_SCHEMA_TYPES } from "@/lib/databaseCapabilities";
 import { buildDatabaseTreeNodes } from "@/lib/databaseTree";
+import { buildSqlServerDatabaseTreeNodes, SQLSERVER_DEFAULT_SCHEMA } from "@/lib/sqlServerTree";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 
@@ -536,6 +537,30 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
+  async function loadSqlServerDatabaseObjects(connectionId: string, database: string, options?: LoadTreeOptions) {
+    const nodeId = `${connectionId}:${database}`;
+    const node = findNode(treeNodes.value, nodeId);
+    if (!node) return;
+    if (useCachedChildren(node, options)) return;
+    const cacheKey = schemaCacheKey(connectionId, database, "sqlserver-objects");
+    if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
+    node.isLoading = true;
+    try {
+      await ensureConnected(connectionId);
+      const [schemas, defaultSchemaTables] = await Promise.all([
+        api.listSchemas(connectionId, database),
+        api.listTables(connectionId, database, SQLSERVER_DEFAULT_SCHEMA),
+      ]);
+      const children = buildSqlServerDatabaseTreeNodes(connectionId, database, schemas, defaultSchemaTables);
+      setChildren(node, children);
+      await savePersistedTreeChildren(cacheKey, children);
+      node.isExpanded = true;
+    } finally {
+      node.isLoading = false;
+    }
+  }
+
   async function loadTables(connectionId: string, database: string, schema?: string, options?: LoadTreeOptions) {
     const nodeId = schema ? `${connectionId}:${database}:${schema}` : `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
@@ -762,7 +787,9 @@ export const useConnectionStore = defineStore("connection", () => {
       await loadMongoCollections(node.connectionId, node.database);
     } else if (node.type === "database" && node.connectionId && node.database) {
       const config = getConfig(node.connectionId);
-      if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
+      if (config?.db_type === "sqlserver") {
+        await loadSqlServerDatabaseObjects(node.connectionId, node.database, options);
+      } else if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
         await loadSchemas(node.connectionId, node.database, options);
       } else {
         await loadTables(node.connectionId, node.database, undefined, options);
@@ -1112,6 +1139,7 @@ export const useConnectionStore = defineStore("connection", () => {
     loadMongoDatabases,
     loadMongoCollections,
     loadSchemas,
+    loadSqlServerDatabaseObjects,
     loadTables,
     loadTableGroups,
     loadColumns,
