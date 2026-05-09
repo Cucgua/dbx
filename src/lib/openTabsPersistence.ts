@@ -7,6 +7,7 @@ export interface SavedOpenTab {
   database: string;
   schema?: string;
   sql: string;
+  savedSqlId?: string;
   pinned?: boolean;
   mode?: QueryTab["mode"];
   tableMeta?: QueryTab["tableMeta"];
@@ -25,6 +26,7 @@ export function serializeOpenTabs(tabs: QueryTab[]): SavedOpenTab[] {
     database: tab.database,
     schema: tab.schema,
     sql: tab.sql,
+    savedSqlId: tab.savedSqlId,
     pinned: tab.pinned,
     mode: tab.mode,
     tableMeta: tab.tableMeta,

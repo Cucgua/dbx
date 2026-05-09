@@ -91,6 +91,11 @@ function databaseDisplayName(database: string): string {
             :variant="activeTab.isExecuting ? 'destructive' : 'ghost'"
             size="icon"
             class="h-6 w-6"
+            :class="
+              activeTab.isExecuting
+                ? ''
+                : 'bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200'
+            "
             :disabled="
               activeTab.isCancelling || activeTab.isExplaining || (!activeTab.isExecuting && !executableSql.trim())
             "
@@ -111,6 +116,11 @@ function databaseDisplayName(database: string): string {
             :variant="activeTab.isExplaining ? 'destructive' : 'ghost'"
             size="icon"
             class="h-6 w-6"
+            :class="
+              activeTab.isExplaining
+                ? ''
+                : 'text-violet-600 hover:bg-violet-500/10 hover:text-violet-700 dark:text-violet-300 dark:hover:text-violet-200'
+            "
             :disabled="activeTab.isExecuting || (!activeTab.isExplaining && !executableSql.trim())"
             @click="activeTab.isExplaining ? emit('cancel') : emit('explain')"
           >
@@ -127,7 +137,7 @@ function databaseDisplayName(database: string): string {
           <Button
             variant="ghost"
             size="icon"
-            class="h-6 w-6"
+            class="h-6 w-6 text-amber-600 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-300 dark:hover:text-amber-200"
             :disabled="activeTab.isExecuting || activeTab.isExplaining || !activeTab.sql.trim()"
             @click="emit('formatSql')"
           >
@@ -141,7 +151,7 @@ function databaseDisplayName(database: string): string {
           <Button
             variant="ghost"
             size="icon"
-            class="h-6 w-6"
+            class="h-6 w-6 text-blue-600 hover:bg-blue-500/10 hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
             :disabled="!activeTab.sql.trim()"
             @click="emit('saveSql')"
           >
@@ -152,7 +162,12 @@ function databaseDisplayName(database: string): string {
       </Tooltip>
       <Tooltip>
         <TooltipTrigger as-child>
-          <Button variant="ghost" size="icon" class="h-6 w-6" @click="emit('openSql')">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6 text-sky-600 hover:bg-sky-500/10 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+            @click="emit('openSql')"
+          >
             <FolderOpen class="h-3.5 w-3.5" />
           </Button>
         </TooltipTrigger>

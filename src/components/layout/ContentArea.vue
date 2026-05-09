@@ -77,6 +77,8 @@ const editorDialect = computed<"mysql" | "postgres" | "sqlserver">(() => {
   return "mysql";
 });
 
+const shortcutModifier = computed(() => (navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl"));
+
 const hasNumericData = computed(() => {
   const r = props.activeTab.result;
   if (!r || r.rows.length === 0) return false;
@@ -313,9 +315,10 @@ function onHandleCloseColumnPanel() {
               </div>
               <div
                 v-else-if="!activeTab.result"
-                class="flex-1 min-h-0 flex items-center justify-center text-muted-foreground text-sm"
+                class="flex-1 min-h-0 flex flex-col items-center justify-center gap-1 text-muted-foreground text-sm"
               >
-                {{ t("editor.pressToExecute") }}
+                <div>{{ t("editor.pressToExecute", { mod: shortcutModifier }) }}</div>
+                <div>{{ t("editor.pressToSaveSql", { mod: shortcutModifier }) }}</div>
               </div>
             </template>
           </div>

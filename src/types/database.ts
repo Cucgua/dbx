@@ -107,6 +107,9 @@ export type TreeNodeType =
   | "group-indexes"
   | "group-fkeys"
   | "group-triggers"
+  | "saved-sql-root"
+  | "saved-sql-folder"
+  | "saved-sql-file"
   | "column"
   | "index"
   | "fkey"
@@ -142,6 +145,8 @@ export interface TreeNode {
   database?: string;
   schema?: string;
   tableName?: string;
+  savedSqlId?: string;
+  savedSqlFolderId?: string;
   meta?: ColumnInfo | IndexInfo | ForeignKeyInfo | TriggerInfo;
 }
 
@@ -152,6 +157,7 @@ export interface QueryTab {
   database: string;
   schema?: string;
   sql: string;
+  savedSqlId?: string;
   lastExecutedSql?: string;
   resultBaseSql?: string;
   resultSortedSql?: string;

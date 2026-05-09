@@ -16,6 +16,7 @@ import LoginPage from "@/components/auth/LoginPage.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useSavedSqlStore } from "@/stores/savedSqlStore";
 import { useToast } from "@/composables/useToast";
 import { useTheme } from "@/composables/useTheme";
 import { useAppUpdater } from "@/composables/useAppUpdater";
@@ -35,11 +36,16 @@ import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isCloseTabShortcut, isExecuteSqlShortcut } from "@/lib/keyboardShortcuts";
 import { isPreviewTab } from "@/lib/tabPresentation";
 import { SQL_FILE_UNSUPPORTED_TYPES } from "@/lib/databaseCapabilities";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const settingsStore = useSettingsStore();
+const savedSqlStore = useSavedSqlStore();
 const { message: toastMessage, visible: toastVisible, toast } = useToast();
 const { isDark, applyTheme, toggleTheme } = useTheme();
 const {
@@ -75,6 +81,10 @@ const selectedSql = ref("");
 const cursorPos = ref(0);
 const formatSqlRequestId = ref(0);
 const activeOutputView = ref<"result" | "explain" | "chart">("result");
+const showSaveSqlDialog = ref(false);
+const saveSqlName = ref("");
+const saveSqlFolderId = ref("");
+const ROOT_SAVED_SQL_FOLDER = "__root__";
 
 const activeTab = computed(() => queryStore.tabs.find((t) => t.id === queryStore.activeTabId));
 
@@ -114,6 +124,10 @@ const connectionStats = computed(() => ({
   types: new Set(connectionStore.connections.map((c) => c.driver_profile || c.db_type)).size,
 }));
 const recentConnections = computed(() => connectionStore.connections.slice(0, 5));
+const saveSqlFolders = computed(() => {
+  const tab = activeTab.value;
+  return tab ? savedSqlStore.listFolders(tab.connectionId) : [];
+});
 
 watch(
   () => queryStore.activeTabId,
@@ -142,32 +156,56 @@ function formatActiveSql() {
   formatSqlRequestId.value++;
 }
 
-async function saveSqlToFile() {
+function defaultSavedSqlName(title: string) {
+  const trimmed = title.trim() || "Query";
+  return trimmed.endsWith(".sql") ? trimmed : `${trimmed}.sql`;
+}
+
+function openSaveSqlDialog() {
   const tab = activeTab.value;
   if (!tab || !tab.sql.trim()) return;
+  const existing = tab.savedSqlId ? savedSqlStore.getFile(tab.savedSqlId) : undefined;
+  if (existing) {
+    const updated = savedSqlStore.saveFile({
+      id: existing.id,
+      connectionId: tab.connectionId,
+      folderId: existing.folderId,
+      name: existing.name,
+      database: tab.database,
+      schema: tab.schema,
+      sql: tab.sql,
+    });
+    queryStore.linkSavedSql(tab.id, updated.id, updated.name);
+    connectionStore.refreshSavedSqlTree(tab.connectionId);
+    toast(t("savedSql.saved"), 2000);
+    return;
+  }
+
+  saveSqlName.value = defaultSavedSqlName(tab.title);
+  saveSqlFolderId.value = ROOT_SAVED_SQL_FOLDER;
+  showSaveSqlDialog.value = true;
+}
+
+function confirmSaveSqlToLibrary() {
+  const tab = activeTab.value;
+  const name = saveSqlName.value.trim();
+  if (!tab || !tab.sql.trim() || !name) return;
   try {
-    if (isTauriRuntime()) {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await save({
-        defaultPath: `${tab.title}.sql`,
-        filters: [{ name: "SQL", extensions: ["sql"] }],
-      });
-      if (path) {
-        await writeTextFile(path, tab.sql);
-        toast(t("toolbar.sqlSaved"), 2000);
-      }
-    } else {
-      const blob = new Blob([tab.sql], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${tab.title}.sql`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
+    const saved = savedSqlStore.saveFile({
+      id: tab.savedSqlId,
+      connectionId: tab.connectionId,
+      folderId: saveSqlFolderId.value === ROOT_SAVED_SQL_FOLDER ? undefined : saveSqlFolderId.value,
+      name: defaultSavedSqlName(name),
+      database: tab.database,
+      schema: tab.schema,
+      sql: tab.sql,
+    });
+    queryStore.linkSavedSql(tab.id, saved.id, saved.name);
+    connectionStore.refreshSavedSqlTree(tab.connectionId);
+    showSaveSqlDialog.value = false;
+    toast(t("savedSql.saved"), 2000);
   } catch (e: any) {
-    toast(t("toolbar.sqlSaveFailed", { message: e?.message || String(e) }), 5000);
+    toast(t("savedSql.saveFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
@@ -332,6 +370,19 @@ function handleKeydown(e: KeyboardEvent) {
   }
   if (
     activeTab.value?.mode === "query" &&
+    !showSaveSqlDialog.value &&
+    !e.isComposing &&
+    !e.altKey &&
+    (e.metaKey || e.ctrlKey) &&
+    e.key.toLowerCase() === "s"
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    openSaveSqlDialog();
+    return;
+  }
+  if (
+    activeTab.value?.mode === "query" &&
     isExecuteSqlShortcut(e) &&
     e.target instanceof Element &&
     e.target.closest("[data-query-editor-root]")
@@ -480,7 +531,7 @@ onUnmounted(() => {
                   @cancel="cancelActiveExecution()"
                   @explain="tryExplain()"
                   @format-sql="formatActiveSql"
-                  @save-sql="saveSqlToFile"
+                  @save-sql="openSaveSqlDialog"
                   @open-sql="openSqlFile"
                   @change-connection="changeActiveConnection"
                   @change-database="changeActiveDatabase"
@@ -608,6 +659,38 @@ onUnmounted(() => {
           </div>
         </Transition>
       </div>
+
+      <Dialog v-model:open="showSaveSqlDialog">
+        <DialogContent class="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>{{ t("savedSql.saveToLibrary") }}</DialogTitle>
+          </DialogHeader>
+          <div class="space-y-3">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">{{ t("savedSql.fileName") }}</label>
+              <Input v-model="saveSqlName" @keydown.enter.prevent="confirmSaveSqlToLibrary" />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">{{ t("savedSql.folder") }}</label>
+              <Select v-model="saveSqlFolderId">
+                <SelectTrigger class="h-8 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectItem :value="ROOT_SAVED_SQL_FOLDER">{{ t("savedSql.rootFolder") }}</SelectItem>
+                  <SelectItem v-for="folder in saveSqlFolders" :key="folder.id" :value="folder.id">
+                    {{ folder.name }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" @click="showSaveSqlDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+            <Button :disabled="!saveSqlName.trim()" @click="confirmSaveSqlToLibrary">{{ t("savedSql.save") }}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </TooltipProvider>
   </div>
 </template>

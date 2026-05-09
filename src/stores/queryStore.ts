@@ -11,6 +11,7 @@ import { restoreOpenTabsState, serializeOpenTabs } from "@/lib/openTabsPersisten
 import * as api from "@/lib/api";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
+import type { SavedSqlFile } from "@/stores/savedSqlStore";
 
 const STORAGE_KEY = "dbx-open-tabs";
 const ACTIVE_TAB_KEY = "dbx-active-tab";
@@ -109,6 +110,39 @@ export const useQueryStore = defineStore("query", () => {
       tab.resultSortedSql = undefined;
       tab.resultBaseSql = undefined;
     }
+  }
+
+  function linkSavedSql(id: string, savedSqlId: string, title?: string) {
+    const tab = tabs.value.find((t) => t.id === id);
+    if (!tab) return;
+    tab.savedSqlId = savedSqlId;
+    if (title) tab.title = title;
+  }
+
+  function openSavedSql(file: SavedSqlFile) {
+    const existing = tabs.value.find((tab) => tab.savedSqlId === file.id);
+    if (existing) {
+      activeTabId.value = existing.id;
+      return existing.id;
+    }
+
+    const id = uuid();
+    const tab: QueryTab = {
+      id,
+      title: file.name,
+      connectionId: file.connectionId,
+      database: file.database,
+      schema: file.schema,
+      sql: file.sql,
+      savedSqlId: file.id,
+      isExecuting: false,
+      isCancelling: false,
+      isExplaining: false,
+      mode: "query",
+    };
+    tabs.value.push(tab);
+    activeTabId.value = id;
+    return id;
   }
 
   function togglePinnedTab(id: string) {
@@ -426,6 +460,8 @@ export const useQueryStore = defineStore("query", () => {
     closeOtherTabs,
     closeAllTabs,
     updateSql,
+    linkSavedSql,
+    openSavedSql,
     togglePinnedTab,
     updateDatabase,
     updateSchema,

@@ -37,6 +37,7 @@ import {
   Scissors,
   CopyPlus,
   Plus,
+  FileText,
 } from "lucide-vue-next";
 import {
   ContextMenu,
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui/context-menu";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
+import { useSavedSqlStore } from "@/stores/savedSqlStore";
 import { useToast } from "@/composables/useToast";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import type { DatabaseType, QueryResult, TreeNode, TreeNodeType } from "@/types/database";
@@ -90,6 +92,7 @@ import { Input } from "@/components/ui/input";
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
+const savedSqlStore = useSavedSqlStore();
 const { toast } = useToast();
 const { getDatabaseOptions } = useDatabaseOptions();
 
@@ -150,6 +153,12 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: Link, colorClass: "text-blue-400" };
     case "group-triggers":
       return { icon: Zap, colorClass: "text-orange-400" };
+    case "saved-sql-root":
+      return { icon: FolderOpen, colorClass: "text-blue-500" };
+    case "saved-sql-folder":
+      return { icon: node.isExpanded ? FolderOpen : FolderClosed, colorClass: "text-blue-400" };
+    case "saved-sql-file":
+      return { icon: FileText, colorClass: "text-blue-300" };
     case "index":
       return { icon: Key, colorClass: "text-amber-400" };
     case "fkey":
@@ -167,8 +176,23 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
   }
 }
 
-const leafTypes: Set<TreeNodeType> = new Set(["column", "index", "fkey", "trigger", "redis-db", "mongo-collection"]);
-const groupTypes: Set<TreeNodeType> = new Set(["group-columns", "group-indexes", "group-fkeys", "group-triggers"]);
+const leafTypes: Set<TreeNodeType> = new Set([
+  "column",
+  "index",
+  "fkey",
+  "trigger",
+  "redis-db",
+  "mongo-collection",
+  "saved-sql-file",
+]);
+const groupTypes: Set<TreeNodeType> = new Set([
+  "group-columns",
+  "group-indexes",
+  "group-fkeys",
+  "group-triggers",
+  "saved-sql-root",
+  "saved-sql-folder",
+]);
 const pinnableTypes: Set<TreeNodeType> = new Set([
   "connection-group",
   "database",
@@ -194,10 +218,19 @@ async function toggle() {
     return;
   }
 
+  if (node.type === "saved-sql-root" || node.type === "saved-sql-folder") {
+    node.isExpanded = !node.isExpanded;
+    return;
+  }
+
+  const showSavedSqlWhileLoading =
+    node.type === "connection" && !node.isExpanded && node.children?.some((child) => child.type === "saved-sql-root");
+
   if (node.isExpanded) {
     node.isExpanded = false;
     return;
   }
+  if (showSavedSqlWhileLoading) node.isExpanded = true;
 
   try {
     if (node.type === "connection" && node.connectionId) {
@@ -250,9 +283,20 @@ function onClick() {
   const action = treeNodeRowAction(node.type, canExpand);
   if (action === "open-data") {
     openData();
+  } else if (node.type === "saved-sql-file") {
+    openSavedSqlFile();
   } else if (action === "toggle") {
     toggle();
   }
+}
+
+function openSavedSqlFile() {
+  const id = props.node.savedSqlId;
+  if (!id) return;
+  const file = savedSqlStore.getFile(id);
+  if (!file) return;
+  queryStore.openSavedSql(file);
+  connectionStore.activeConnectionId = file.connectionId;
 }
 
 async function openData() {
@@ -1019,6 +1063,9 @@ const hasTypeMenu = computed(() => {
     t === "table" ||
     t === "view" ||
     t === "column" ||
+    t === "saved-sql-root" ||
+    t === "saved-sql-folder" ||
+    t === "saved-sql-file" ||
     isGroupLabel(props.node)
   );
 });
@@ -1148,6 +1195,70 @@ const currentGroupId = computed(() => {
   }
   return null;
 });
+
+// --- Saved SQL Library ---
+const showSavedSqlNameDialog = ref(false);
+const savedSqlNameMode = ref<"folder-create" | "folder-rename" | "file-rename" | null>(null);
+const savedSqlNameInput = ref("");
+const showDeleteSavedSqlFileConfirm = ref(false);
+const showDeleteSavedSqlFolderConfirm = ref(false);
+
+function openCreateSavedSqlFolder() {
+  savedSqlNameMode.value = "folder-create";
+  savedSqlNameInput.value = t("savedSql.newFolderDefault");
+  showSavedSqlNameDialog.value = true;
+}
+
+function openRenameSavedSqlFolder() {
+  savedSqlNameMode.value = "folder-rename";
+  savedSqlNameInput.value = props.node.label;
+  showSavedSqlNameDialog.value = true;
+}
+
+function openRenameSavedSqlFile() {
+  savedSqlNameMode.value = "file-rename";
+  savedSqlNameInput.value = props.node.label.replace(/\.sql$/i, "");
+  showSavedSqlNameDialog.value = true;
+}
+
+function confirmSavedSqlName() {
+  const name = savedSqlNameInput.value.trim();
+  if (!name || !props.node.connectionId || !savedSqlNameMode.value) return;
+
+  if (savedSqlNameMode.value === "folder-create") {
+    savedSqlStore.createFolder(props.node.connectionId, name);
+  } else if (savedSqlNameMode.value === "folder-rename" && props.node.savedSqlFolderId) {
+    savedSqlStore.renameFolder(props.node.savedSqlFolderId, name);
+  } else if (savedSqlNameMode.value === "file-rename" && props.node.savedSqlId) {
+    savedSqlStore.renameFile(props.node.savedSqlId, name.endsWith(".sql") ? name : `${name}.sql`);
+  }
+
+  connectionStore.refreshSavedSqlTree(props.node.connectionId);
+  showSavedSqlNameDialog.value = false;
+  savedSqlNameMode.value = null;
+}
+
+function deleteSavedSqlFile() {
+  showDeleteSavedSqlFileConfirm.value = true;
+}
+
+function confirmDeleteSavedSqlFile() {
+  if (!props.node.savedSqlId) return;
+  savedSqlStore.deleteFile(props.node.savedSqlId);
+  connectionStore.refreshSavedSqlTree(props.node.connectionId);
+  showDeleteSavedSqlFileConfirm.value = false;
+}
+
+function deleteSavedSqlFolder() {
+  showDeleteSavedSqlFolderConfirm.value = true;
+}
+
+function confirmDeleteSavedSqlFolder() {
+  if (!props.node.savedSqlFolderId) return;
+  savedSqlStore.deleteFolder(props.node.savedSqlFolderId);
+  connectionStore.refreshSavedSqlTree(props.node.connectionId);
+  showDeleteSavedSqlFolderConfirm.value = false;
+}
 
 // --- Drag and Drop ---
 import { useDragSort } from "@/composables/useDragSort";
@@ -1498,8 +1609,33 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </template>
 
       <template v-if="isGroupLabel(node)">
-        <ContextMenuItem @click="refresh">
+        <ContextMenuItem v-if="node.type === 'saved-sql-root'" @click="openCreateSavedSqlFolder">
+          <FolderPlus class="w-4 h-4" /> {{ t("savedSql.newFolder") }}
+        </ContextMenuItem>
+        <template v-if="node.type === 'saved-sql-folder'">
+          <ContextMenuItem @click="openRenameSavedSqlFolder">
+            <Pencil class="w-4 h-4" /> {{ t("savedSql.renameFolder") }}
+          </ContextMenuItem>
+          <ContextMenuItem class="text-destructive" @click="deleteSavedSqlFolder">
+            <Trash2 class="w-4 h-4" /> {{ t("savedSql.deleteFolder") }}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+        </template>
+        <ContextMenuItem v-if="node.type !== 'saved-sql-root' && node.type !== 'saved-sql-folder'" @click="refresh">
           <RefreshCw class="w-4 h-4" /> {{ t("contextMenu.refreshChildren") }}
+        </ContextMenuItem>
+      </template>
+
+      <template v-if="node.type === 'saved-sql-file'">
+        <ContextMenuItem @click="openSavedSqlFile">
+          <FileText class="w-4 h-4" /> {{ t("savedSql.open") }}
+        </ContextMenuItem>
+        <ContextMenuItem @click="openRenameSavedSqlFile">
+          <Pencil class="w-4 h-4" /> {{ t("savedSql.renameFile") }}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem class="text-destructive" @click="deleteSavedSqlFile">
+          <Trash2 class="w-4 h-4" /> {{ t("savedSql.deleteFile") }}
         </ContextMenuItem>
       </template>
 
@@ -1562,6 +1698,61 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       <DialogFooter>
         <Button variant="outline" @click="showDeleteGroupConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
         <Button variant="destructive" @click="confirmDeleteGroup">{{ t("connectionGroup.deleteGroup") }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="showSavedSqlNameDialog">
+    <DialogContent class="sm:max-w-[380px]">
+      <DialogHeader>
+        <DialogTitle>
+          {{
+            savedSqlNameMode === "folder-create"
+              ? t("savedSql.newFolder")
+              : savedSqlNameMode === "folder-rename"
+                ? t("savedSql.renameFolder")
+                : t("savedSql.renameFile")
+          }}
+        </DialogTitle>
+      </DialogHeader>
+      <Input v-model="savedSqlNameInput" @keydown.enter.prevent="confirmSavedSqlName" />
+      <DialogFooter>
+        <Button variant="outline" @click="showSavedSqlNameDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="!savedSqlNameInput.trim()" @click="confirmSavedSqlName">{{
+          t("dangerDialog.confirm")
+        }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="showDeleteSavedSqlFileConfirm">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("savedSql.deleteFile") }}</DialogTitle>
+      </DialogHeader>
+      <p class="text-sm text-muted-foreground">
+        {{ t("savedSql.deleteFileConfirm", { name: node.label }) }}
+      </p>
+      <DialogFooter>
+        <Button variant="outline" @click="showDeleteSavedSqlFileConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button variant="destructive" @click="confirmDeleteSavedSqlFile">{{ t("savedSql.deleteFile") }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="showDeleteSavedSqlFolderConfirm">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("savedSql.deleteFolder") }}</DialogTitle>
+      </DialogHeader>
+      <p class="text-sm text-muted-foreground">
+        {{ t("savedSql.deleteFolderConfirm", { name: node.label }) }}
+      </p>
+      <DialogFooter>
+        <Button variant="outline" @click="showDeleteSavedSqlFolderConfirm = false">{{
+          t("dangerDialog.cancel")
+        }}</Button>
+        <Button variant="destructive" @click="confirmDeleteSavedSqlFolder">{{ t("savedSql.deleteFolder") }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>

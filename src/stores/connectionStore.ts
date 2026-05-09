@@ -23,6 +23,7 @@ import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isSchemaAware, TREE_SCHEMA_TYPES } from "@/lib/databaseCapabilities";
 import { buildDatabaseTreeNodes } from "@/lib/databaseTree";
 import { buildSqlServerDatabaseTreeNodes, SQLSERVER_DEFAULT_SCHEMA } from "@/lib/sqlServerTree";
+import { useSavedSqlStore } from "@/stores/savedSqlStore";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 
@@ -204,6 +205,73 @@ export const useConnectionStore = defineStore("connection", () => {
     loadedTreeNodeChildrenIds.value.add(parent.id);
   }
 
+  function buildSavedSqlRootNode(connectionId: string, existingRoot?: TreeNode): TreeNode {
+    const savedSqlStore = useSavedSqlStore();
+    const existingById = new Map<string, TreeNode>();
+    const collectExisting = (node?: TreeNode) => {
+      if (!node) return;
+      existingById.set(node.id, node);
+      node.children?.forEach(collectExisting);
+    };
+    collectExisting(existingRoot);
+
+    const fileNode = (file: ReturnType<typeof savedSqlStore.listFiles>[number]): TreeNode => ({
+      id: `${connectionId}:__saved_sql:file:${file.id}`,
+      label: file.name,
+      type: "saved-sql-file",
+      connectionId,
+      database: file.database,
+      schema: file.schema,
+      savedSqlId: file.id,
+    });
+
+    const folderNodes = savedSqlStore.listFolders(connectionId).map((folder) => {
+      const id = `${connectionId}:__saved_sql:folder:${folder.id}`;
+      const existing = existingById.get(id);
+      return {
+        id,
+        label: folder.name,
+        type: "saved-sql-folder" as const,
+        connectionId,
+        savedSqlFolderId: folder.id,
+        isExpanded: existing?.isExpanded ?? true,
+        children: savedSqlStore.listFiles(connectionId, folder.id).map(fileNode),
+      };
+    });
+
+    const rootId = `${connectionId}:__saved_sql`;
+    return {
+      id: rootId,
+      label: "tree.savedSql",
+      type: "saved-sql-root",
+      connectionId,
+      isExpanded: existingRoot?.isExpanded ?? true,
+      children: [...folderNodes, ...savedSqlStore.listFiles(connectionId).map(fileNode)],
+    };
+  }
+
+  function withSavedSqlRoot(connectionId: string, children: TreeNode[], existingConnectionNode?: TreeNode): TreeNode[] {
+    const existingRoot = existingConnectionNode?.children?.find((child) => child.type === "saved-sql-root");
+    const nonSavedChildren = children.filter((child) => child.type !== "saved-sql-root");
+    return [buildSavedSqlRootNode(connectionId, existingRoot), ...nonSavedChildren];
+  }
+
+  function refreshSavedSqlTree(connectionId?: string) {
+    const refresh = (nodes: TreeNode[]) => {
+      for (const node of nodes) {
+        if (node.type === "connection" && node.connectionId && (!connectionId || node.connectionId === connectionId)) {
+          node.children = withSavedSqlRoot(
+            node.connectionId,
+            (node.children || []).filter((child) => child.type !== "saved-sql-root"),
+            node,
+          );
+        }
+        if (node.children) refresh(node.children);
+      }
+    };
+    refresh(treeNodes.value);
+  }
+
   function schemaCacheKey(...parts: string[]): string {
     return parts.map((part) => encodeURIComponent(part)).join(":");
   }
@@ -211,7 +279,10 @@ export const useConnectionStore = defineStore("connection", () => {
   async function loadPersistedTreeChildren(node: TreeNode, cacheKey: string): Promise<boolean> {
     const children = await api.loadSchemaCache<TreeNode[]>(cacheKey).catch(() => null);
     if (!children) return false;
-    setChildren(node, children);
+    setChildren(
+      node,
+      node.type === "connection" && node.connectionId ? withSavedSqlRoot(node.connectionId, children, node) : children,
+    );
     node.isExpanded = true;
     return true;
   }
@@ -427,7 +498,7 @@ export const useConnectionStore = defineStore("connection", () => {
     try {
       await ensureConnected(connectionId);
       const databases = await api.listDatabases(connectionId);
-      const children = buildDatabaseTreeNodes(connectionId, databases);
+      const children = withSavedSqlRoot(connectionId, buildDatabaseTreeNodes(connectionId, databases), node);
       setChildren(node, children);
       await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;
@@ -446,15 +517,19 @@ export const useConnectionStore = defineStore("connection", () => {
       const dbs = await api.redisListDatabases(connectionId);
       setChildren(
         node,
-        dbs.map((db) => ({
-          id: `${connectionId}:db${db}`,
-          label: `db${db}`,
-          type: "redis-db" as const,
+        withSavedSqlRoot(
           connectionId,
-          database: String(db),
-          isExpanded: false,
-          children: [],
-        })),
+          dbs.map((db) => ({
+            id: `${connectionId}:db${db}`,
+            label: `db${db}`,
+            type: "redis-db" as const,
+            connectionId,
+            database: String(db),
+            isExpanded: false,
+            children: [],
+          })),
+          node,
+        ),
       );
       node.isExpanded = true;
     } finally {
@@ -472,15 +547,19 @@ export const useConnectionStore = defineStore("connection", () => {
       const dbs = await api.mongoListDatabases(connectionId);
       setChildren(
         node,
-        dbs.map((db) => ({
-          id: `${connectionId}:${db}`,
-          label: db,
-          type: "mongo-db" as const,
+        withSavedSqlRoot(
           connectionId,
-          database: db,
-          isExpanded: false,
-          children: [],
-        })),
+          dbs.map((db) => ({
+            id: `${connectionId}:${db}`,
+            label: db,
+            type: "mongo-db" as const,
+            connectionId,
+            database: db,
+            isExpanded: false,
+            children: [],
+          })),
+          node,
+        ),
       );
       node.isExpanded = true;
     } finally {
@@ -936,7 +1015,15 @@ export const useConnectionStore = defineStore("connection", () => {
           return { ...node, children: mergeState(node.children || []) };
         }
         if (existing && node.type === "connection") {
-          return { ...existing, label: node.label, pinned: node.pinned };
+          return {
+            ...existing,
+            label: node.label,
+            pinned: node.pinned,
+            children: withSavedSqlRoot(node.connectionId!, existing.children || [], existing),
+          };
+        }
+        if (node.type === "connection" && node.connectionId) {
+          return { ...node, children: withSavedSqlRoot(node.connectionId, node.children || []) };
         }
         return node;
       });
@@ -1113,6 +1200,7 @@ export const useConnectionStore = defineStore("connection", () => {
     activeConnectionId,
     treeNodes,
     refreshAllTree,
+    refreshSavedSqlTree,
     refreshTreeNode,
     connectedIds,
     connectionErrors,
