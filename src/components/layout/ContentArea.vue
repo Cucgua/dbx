@@ -39,7 +39,7 @@ const emit = defineEmits<{
   editorSelectionChange: [value: string];
   editorCursorChange: [pos: number];
   formatError: [];
-  reload: [sql?: string, whereInput?: string];
+  reload: [sql?: string, searchText?: string, whereInput?: string, orderBy?: string];
   paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
   sort: [column: string, columnIndex: number, direction: "asc" | "desc" | null, whereInput?: string];
   executeSql: [sql: string];
@@ -275,7 +275,10 @@ function onHandleCloseColumnPanel() {
                 :database="activeTab.database"
                 :table-meta="activeTab.tableMeta"
                 :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
-                @reload="(sql?: string, whereInput?: string) => emit('reload', sql, whereInput)"
+                @reload="
+                  (sql?: string, searchText?: string, whereInput?: string, orderBy?: string) =>
+                    emit('reload', sql, searchText, whereInput, orderBy)
+                "
                 @paginate="
                   (offset: number, limit: number, whereInput?: string, orderBy?: string) =>
                     emit('paginate', offset, limit, whereInput, orderBy)
@@ -368,7 +371,10 @@ function onHandleCloseColumnPanel() {
           :database="activeTab.database"
           :table-meta="activeTab.tableMeta"
           :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
-          @reload="(sql?: string, whereInput?: string) => emit('reload', sql, whereInput)"
+          @reload="
+            (sql?: string, searchText?: string, whereInput?: string, orderBy?: string) =>
+              emit('reload', sql, searchText, whereInput, orderBy)
+          "
           @paginate="
             (offset: number, limit: number, whereInput?: string, orderBy?: string) =>
               emit('paginate', offset, limit, whereInput, orderBy)
