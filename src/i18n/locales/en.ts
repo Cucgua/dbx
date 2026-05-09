@@ -737,6 +737,8 @@ export default {
     executeMode: "Execute Mode (Cmd+Enter)",
     executeModeAll: "Execute all SQL",
     executeModeCurrent: "Execute statement at cursor",
+    wordWrap: "Word wrap",
+    wordWrapDescription: "Wrap long SQL lines within the editor width",
     preview: "Live Preview",
     aboutDescription: "An open-source, lightweight database management tool.",
     community: "Community",

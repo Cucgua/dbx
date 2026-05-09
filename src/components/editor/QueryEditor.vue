@@ -15,7 +15,7 @@ const props = defineProps<{
   modelValue: string;
   connectionId?: string;
   database?: string;
-  dialect?: "mysql" | "postgres";
+  dialect?: "mysql" | "postgres" | "sqlserver";
   formatDialect?: SqlFormatDialect;
   formatRequestId?: number;
 }>();
@@ -40,6 +40,7 @@ const MAX_FONT_SIZE = 24;
 let editorViewModule: typeof import("@codemirror/view") | null = null;
 let fontThemeComp: import("@codemirror/state").Compartment | null = null;
 let codeMirrorTheme: import("@codemirror/state").Compartment | null = null;
+let wordWrapComp: import("@codemirror/state").Compartment | null = null;
 
 // Completion cache
 let cachedTables: Array<{ name: string; schema?: string; type?: "table" | "view" }> = [];
@@ -206,8 +207,8 @@ onMounted(async () => {
 
   const [
     { EditorView, keymap },
-    { EditorState, Compartment },
-    { sql, MySQL, PostgreSQL, SQLDialect },
+    { EditorState, Compartment, Prec },
+    { sql, MSSQL, MySQL, PostgreSQL, SQLDialect },
     { basicSetup },
     { autocompletion, startCompletion },
     { indentWithTab },
@@ -222,10 +223,11 @@ onMounted(async () => {
   editorViewModule = { EditorView, keymap } as typeof import("@codemirror/view");
   fontThemeComp = new Compartment();
   codeMirrorTheme = new Compartment();
+  wordWrapComp = new Compartment();
 
   const ss = settingsStore.editorSettings;
 
-  const baseDialect = props.dialect === "postgres" ? PostgreSQL : MySQL;
+  const baseDialect = props.dialect === "postgres" ? PostgreSQL : props.dialect === "sqlserver" ? MSSQL : MySQL;
   const extraKeywords =
     "PIVOT UNPIVOT EXCLUDE REPLACE QUALIFY ASOF POSITIONAL ANTI SEMI SAMPLE TABLESAMPLE STRUCT MAP LIST ARRAY LAMBDA UNNEST LATERAL FILTER RECURSIVE SUMMARIZE PRAGMA READ_CSV READ_PARQUET READ_JSON DESCRIBE SHOW COPY EXPORT IMPORT";
   const dialect = SQLDialect.define({
@@ -283,8 +285,9 @@ onMounted(async () => {
         override: [async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos)],
       }),
       codeMirrorTheme.of(theme),
-      keymap.of([indentWithTab]),
+      Prec.highest(keymap.of([indentWithTab])),
       runKeymap,
+      wordWrapComp.of(ss.wordWrap ? EditorView.lineWrapping : []),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           emit("update:modelValue", update.state.doc.toString());
@@ -486,11 +489,12 @@ watch(
 watch(
   () => settingsStore.editorSettings,
   async (ss) => {
-    if (!view.value || !codeMirrorTheme || !fontThemeComp || !editorViewModule) return;
+    if (!view.value || !codeMirrorTheme || !fontThemeComp || !wordWrapComp || !editorViewModule) return;
     const themeExt = await loadEditorTheme(ss.theme);
     view.value.dispatch({
       effects: [
         codeMirrorTheme.reconfigure(themeExt),
+        wordWrapComp.reconfigure(ss.wordWrap ? editorViewModule.EditorView.lineWrapping : []),
         fontThemeComp.reconfigure(
           editorFontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily, {
             fixedHeight: true,

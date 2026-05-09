@@ -30,6 +30,7 @@ const editFontFamily = ref(settingsStore.editorSettings.fontFamily);
 const editFontSize = ref(settingsStore.editorSettings.fontSize);
 const editTheme = ref(settingsStore.editorSettings.theme);
 const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
+const editWordWrap = ref(settingsStore.editorSettings.wordWrap);
 
 // Sync from store when dialog opens
 watch(
@@ -40,6 +41,7 @@ watch(
       editFontSize.value = settingsStore.editorSettings.fontSize;
       editTheme.value = settingsStore.editorSettings.theme;
       editExecuteMode.value = settingsStore.editorSettings.executeMode;
+      editWordWrap.value = settingsStore.editorSettings.wordWrap;
     }
   },
 );
@@ -49,7 +51,8 @@ function hasChanges(): boolean {
     editFontFamily.value !== settingsStore.editorSettings.fontFamily ||
     editFontSize.value !== settingsStore.editorSettings.fontSize ||
     editTheme.value !== settingsStore.editorSettings.theme ||
-    editExecuteMode.value !== settingsStore.editorSettings.executeMode
+    editExecuteMode.value !== settingsStore.editorSettings.executeMode ||
+    editWordWrap.value !== settingsStore.editorSettings.wordWrap
   );
 }
 
@@ -59,6 +62,7 @@ function applySettings() {
     fontSize: editFontSize.value,
     theme: editTheme.value,
     executeMode: editExecuteMode.value,
+    wordWrap: editWordWrap.value,
   });
   emit("update:open", false);
 }
@@ -68,6 +72,7 @@ function resetDefaults() {
   editFontSize.value = DEFAULT_EDITOR_SETTINGS.fontSize;
   editTheme.value = DEFAULT_EDITOR_SETTINGS.theme;
   editExecuteMode.value = DEFAULT_EDITOR_SETTINGS.executeMode;
+  editWordWrap.value = DEFAULT_EDITOR_SETTINGS.wordWrap;
 }
 
 function onExecuteModeChange(v: any) {
@@ -336,6 +341,16 @@ watch(
                 <SelectItem value="current">{{ t("settings.executeModeCurrent") }}</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          <Separator />
+
+          <div class="flex items-center justify-between gap-4">
+            <div class="space-y-1">
+              <Label>{{ t("settings.wordWrap") }}</Label>
+              <p class="text-xs text-muted-foreground">{{ t("settings.wordWrapDescription") }}</p>
+            </div>
+            <input v-model="editWordWrap" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
           </div>
 
           <Separator />

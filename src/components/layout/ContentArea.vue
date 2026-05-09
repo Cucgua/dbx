@@ -71,9 +71,11 @@ const activeSqlFormatDialect = computed<SqlFormatDialect>(() => {
   }
 });
 
-const editorDialect = computed<"mysql" | "postgres">(() =>
-  props.activeConnection?.db_type === "postgres" ? "postgres" : "mysql",
-);
+const editorDialect = computed<"mysql" | "postgres" | "sqlserver">(() => {
+  if (props.activeConnection?.db_type === "postgres") return "postgres";
+  if (props.activeConnection?.db_type === "sqlserver") return "sqlserver";
+  return "mysql";
+});
 
 const hasNumericData = computed(() => {
   const r = props.activeTab.result;

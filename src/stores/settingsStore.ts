@@ -45,6 +45,7 @@ export interface EditorSettings {
   fontSize: number;
   theme: EditorTheme;
   executeMode: "all" | "current";
+  wordWrap: boolean;
 }
 
 export const EDITOR_THEMES: { value: EditorTheme; label: string; dark: boolean }[] = [
@@ -74,6 +75,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   fontSize: 13,
   theme: "one-dark",
   executeMode: "all",
+  wordWrap: false,
 };
 
 export const STORAGE_KEY = "dbx-editor-settings";
@@ -90,6 +92,7 @@ function loadEditorSettings(): EditorSettings {
         fontSize: parsed.fontSize ?? DEFAULT_EDITOR_SETTINGS.fontSize,
         theme: parsed.theme ?? DEFAULT_EDITOR_SETTINGS.theme,
         executeMode: parsed.executeMode ?? DEFAULT_EDITOR_SETTINGS.executeMode,
+        wordWrap: parsed.wordWrap ?? DEFAULT_EDITOR_SETTINGS.wordWrap,
       };
     }
   } catch {
