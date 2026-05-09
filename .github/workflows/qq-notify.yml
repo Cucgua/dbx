@@ -56,12 +56,21 @@ jobs:
               tag = os.environ["RELEASE_TAG"]
               name = os.environ["RELEASE_NAME"]
               url = os.environ["RELEASE_URL"]
-              body = os.environ.get("RELEASE_BODY", "")[:500]
+              body = os.environ.get("RELEASE_BODY", "")[:800]
+
+              import re
+              body = re.sub(r'#{1,6}\s*', '', body)
+              body = re.sub(r'\*\*(.+?)\*\*', r'\1', body)
+              body = re.sub(r'\*(.+?)\*', r'\1', body)
+              body = re.sub(r'`(.+?)`', r'\1', body)
+              body = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', body)
+              body = re.sub(r'\n{3,}', '\n\n', body)
+              body = body.strip()
+
               msg = "\n".join([
                   "━━━━━━━━━━━━━━━",
                   f"🚀 新版本发布  {tag}",
                   "━━━━━━━━━━━━━━━",
-                  f"{name}",
                   "",
                   body,
                   "",
