@@ -35,6 +35,7 @@ import {
   Filter,
   FileDown,
   SquareDashed,
+  Check,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -2295,7 +2296,7 @@ defineExpose({
                             <PopoverContent
                               align="start"
                               side="bottom"
-                              class="w-[520px] max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-2xl ring-0 dark:border-slate-200 dark:bg-white dark:text-slate-900"
+                              class="w-[420px] max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-2xl ring-0 dark:border-slate-200 dark:bg-white dark:text-slate-900"
                               @click.stop
                               @keydown.stop
                             >
@@ -2328,7 +2329,7 @@ defineExpose({
                                   "
                                   @click="toggleAllLocalFilterOptions"
                                 >
-                                  <Check v-if="localFilterAllVisibleSelected" class="h-3 w-3" />
+                                  <Check v-if="localFilterAllVisibleSelected" class="h-3.5 w-3.5 stroke-[3]" />
                                 </button>
                                 <span>{{ t("grid.value") }}</span>
                                 <span class="text-right">{{ t("grid.count") }}</span>
@@ -2349,7 +2350,10 @@ defineExpose({
                                         : 'border-slate-300 bg-white text-slate-700'
                                     "
                                   >
-                                    <Check v-if="localFilterDraft?.values.has(option.key)" class="h-3 w-3" />
+                                    <Check
+                                      v-if="localFilterDraft?.values.has(option.key)"
+                                      class="h-3.5 w-3.5 stroke-[3]"
+                                    />
                                   </span>
                                   <span
                                     class="truncate font-mono"
@@ -2398,7 +2402,7 @@ defineExpose({
                                   </Button>
                                   <Button
                                     size="sm"
-                                    class="h-7 bg-blue-600 px-2 text-xs text-white hover:bg-blue-700 dark:bg-blue-600 dark:text-white dark:hover:bg-blue-700"
+                                    class="h-7 bg-slate-950 px-2 text-xs text-white hover:bg-slate-800 dark:bg-slate-950 dark:text-white dark:hover:bg-slate-800"
                                     @click="applyLocalFilter"
                                   >
                                     {{ t("grid.applyFilter") }}
