@@ -185,6 +185,32 @@ article pre .line {
   padding-right: 1.1rem;
 }
 
+article figure.shiki {
+  border-color: color-mix(in srgb, var(--color-fd-border) 74%, transparent);
+  border-radius: 9px;
+  background: #0b1220 !important;
+  margin: 0.85rem 0 1.05rem;
+  box-shadow: 0 12px 28px color-mix(in srgb, black 12%, transparent);
+}
+
+article figure.shiki [role='region'] {
+  padding-top: 0.7rem;
+  padding-bottom: 0.7rem;
+}
+
+article figure.shiki pre {
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
+article figure.shiki pre code {
+  line-height: 1.58;
+}
+
 article :not(pre) > code {
   border: 1px solid var(--dbx-line);
   border-radius: 6px;
@@ -212,16 +238,22 @@ article a.flex.rounded-lg:hover {
   box-shadow: 0 12px 34px color-mix(in srgb, var(--dbx-blue) 12%, transparent);
 }
 
-article [role='tablist'] {
-  border: 1px solid var(--dbx-line);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--color-fd-muted) 68%, transparent);
-  padding: 3px;
+article [role='tablist'].not-prose {
+  border: 0;
+  border-bottom: 1px solid var(--dbx-line);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 1rem;
 }
 
-article [role='tab'] {
-  border-radius: 7px;
+article [role='tablist'].not-prose [role='tab'] {
+  border-radius: 0;
   font-weight: 620;
+}
+
+article [role='tablist'].not-prose [role='tab'][data-state='active'] {
+  background: transparent;
+  box-shadow: none;
 }
 
 article [role='tabpanel'] {
