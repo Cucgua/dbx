@@ -7,58 +7,26 @@ import { canCancelQueryExecution } from "@/lib/queryExecutionState";
 import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
 import { analyzeEditableQuery, allPrimaryKeysPresent } from "@/lib/sqlAnalysis";
+import { restoreOpenTabsState, serializeOpenTabs } from "@/lib/openTabsPersistence";
 import * as api from "@/lib/api";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-
-interface SavedTab {
-  id: string;
-  title: string;
-  connectionId: string;
-  database: string;
-  sql: string;
-  pinned?: boolean;
-  mode: "data" | "query" | "redis" | "mongo";
-  tableMeta?: QueryTab["tableMeta"];
-}
 
 const STORAGE_KEY = "dbx-open-tabs";
 const ACTIVE_TAB_KEY = "dbx-active-tab";
 
 function saveTabs(tabs: QueryTab[], activeTabId: string | null) {
   try {
-    const saved: SavedTab[] = tabs.map((t) => ({
-      id: t.id,
-      title: t.title,
-      connectionId: t.connectionId,
-      database: t.database,
-      sql: t.sql,
-      pinned: t.pinned,
-      mode: t.mode,
-      tableMeta: t.tableMeta,
-    }));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeOpenTabs(tabs)));
     localStorage.setItem(ACTIVE_TAB_KEY, activeTabId || "");
   } catch {}
 }
 
 function loadSavedTabs(): { tabs: QueryTab[]; activeTabId: string | null } {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { tabs: [], activeTabId: null };
-    const saved: SavedTab[] = JSON.parse(raw);
-    const filtered = isTauriRuntime() ? saved.filter((s) => s.mode === "query") : saved;
-    const tabs: QueryTab[] = filtered.map((s) => ({
-      ...s,
-      isExecuting: false,
-      isCancelling: false,
-      isExplaining: false,
-    }));
-    const activeTabId = localStorage.getItem(ACTIVE_TAB_KEY) || null;
-    return {
-      tabs,
-      activeTabId: tabs.some((t) => t.id === activeTabId) ? activeTabId : tabs[0]?.id || null,
-    };
+    return restoreOpenTabsState(localStorage.getItem(STORAGE_KEY), localStorage.getItem(ACTIVE_TAB_KEY), {
+      queryOnly: isTauriRuntime(),
+    });
   } catch {
     return { tabs: [], activeTabId: null };
   }
@@ -70,7 +38,7 @@ export const useQueryStore = defineStore("query", () => {
   const activeTabId = ref<string | null>(restored.activeTabId);
   const MAX_CACHED_RESULTS = 10;
 
-  watch([tabs, activeTabId], () => saveTabs(tabs.value, activeTabId.value), { deep: true });
+  watch([tabs, activeTabId], () => saveTabs(tabs.value, activeTabId.value), { deep: true, flush: "sync" });
 
   function findTabByTitle(connectionId: string, database: string, title: string) {
     return tabs.value.find((t) => t.connectionId === connectionId && t.database === database && t.title === title);
