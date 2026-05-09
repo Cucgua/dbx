@@ -69,8 +69,32 @@ export async function addConnection(config: Omit<ConnectionConfig, "id">): Promi
   const id = randomUUID();
   const db = openDb();
 
-  const sanitized = { ...config, id, password: "" };
-  const configJson = JSON.stringify(sanitized);
+  const full = {
+    id,
+    name: config.name,
+    db_type: config.db_type,
+    driver_profile: config.driver_profile ?? config.db_type,
+    driver_label: null,
+    url_params: config.url_params ?? "",
+    host: config.host,
+    port: config.port,
+    username: config.username,
+    password: "",
+    database: config.database ?? null,
+    color: null,
+    ssh_enabled: config.ssh_enabled ?? false,
+    ssh_host: "",
+    ssh_port: 22,
+    ssh_user: "",
+    ssh_password: "",
+    ssh_key_path: "",
+    ssh_key_passphrase: "",
+    ssh_expose_lan: false,
+    ssl: config.ssl ?? false,
+    sysdba: false,
+    connection_string: null,
+  };
+  const configJson = JSON.stringify(full);
 
   const insert = db.transaction(() => {
     db.prepare("INSERT INTO connections (id, config_json) VALUES (?, ?)").run(id, configJson);
