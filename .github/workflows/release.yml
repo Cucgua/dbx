@@ -121,6 +121,31 @@ jobs:
           prerelease: false
           args: --target ${{ matrix.target }}
 
+      - name: Upload Windows portable ZIP
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${env:GITHUB_REF_NAME}".TrimStart("v")
+          $portableRoot = "portable"
+          $portableDir = Join-Path $portableRoot "DBX_${version}_x64"
+          $zipName = "DBX_${version}_x64-portable.zip"
+          $exePath = "target/${{ matrix.target }}/release/dbx.exe"
+
+          if (!(Test-Path $exePath)) {
+            Write-Error "Missing Windows executable: $exePath"
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item $exePath (Join-Path $portableDir "DBX.exe") -Force
+          Copy-Item "LICENSE" (Join-Path $portableDir "LICENSE") -Force
+          Copy-Item "README.md" (Join-Path $portableDir "README.md") -Force
+
+          Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $zipName -Force
+          gh release upload "${env:GITHUB_REF_NAME}" $zipName --repo "${env:GITHUB_REPOSITORY}" --clobber
+
   publish:
     needs: [build, docker-manifest]
     runs-on: ubuntu-latest
