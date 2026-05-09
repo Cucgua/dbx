@@ -1816,13 +1816,6 @@ defineExpose({
               <span v-if="hasActiveFilter" class="text-xs text-muted-foreground shrink-0 px-1">
                 {{ displayItems.length }}/{{ totalFilterableRowCount }}
               </span>
-              <span
-                v-if="transactionActive"
-                class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1 shrink-0 px-1"
-              >
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                {{ t("grid.transactionActive") }}
-              </span>
             </div>
 
             <template v-if="canUseWhereSearch">
@@ -1966,6 +1959,13 @@ defineExpose({
             >
               <Plus class="w-3 h-3 mr-1" /> {{ t("grid.addRow") }}
             </Button>
+            <span
+              v-if="transactionActive"
+              class="flex shrink-0 items-center gap-1 px-1 text-xs text-emerald-600 dark:text-emerald-400"
+            >
+              <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              {{ t("grid.transactionActive") }}
+            </span>
             <Button
               v-if="useTransaction"
               :variant="transactionActive ? 'default' : 'secondary'"
