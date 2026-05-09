@@ -1834,8 +1834,8 @@ defineExpose({
                   autocapitalize="off"
                   autocorrect="off"
                   spellcheck="false"
-                  class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
-                  placeholder="id > 100"
+                  class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60"
+                  placeholder="condition..."
                   @keydown="onWhereFilterKeydown"
                   @click="updateWhereSuggestionPosition"
                   @blur="dismissWhereSuggestions"
@@ -1885,8 +1885,8 @@ defineExpose({
                   autocapitalize="off"
                   autocorrect="off"
                   spellcheck="false"
-                  class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
-                  placeholder="column desc"
+                  class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60"
+                  placeholder="columns..."
                   @keydown="onOrderByKeydown"
                   @click="updateOrderBySuggestionPosition"
                   @blur="dismissOrderBySuggestions"
@@ -1949,7 +1949,7 @@ defineExpose({
               <SelectTrigger class="h-6 w-28 px-2 text-xs">
                 <SelectValue :placeholder="t('grid.filterRows')" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper">
                 <SelectItem value="all">{{ t("grid.filterAllRows") }}</SelectItem>
                 <SelectItem value="changed">{{ t("grid.filterChangedRows") }}</SelectItem>
                 <SelectItem value="edited">{{ t("grid.statusEdited") }}</SelectItem>
@@ -1994,8 +1994,8 @@ defineExpose({
           <div class="flex-1 flex min-h-0 overflow-hidden">
             <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
               <!-- Sticky header -->
-              <div ref="headerRef" class="shrink-0 bg-muted z-10 border-b border-border overflow-hidden">
-                <div class="flex text-xs font-medium" :style="{ width: 'var(--total-w)' }">
+              <div ref="headerRef" class="shrink-0 bg-muted/60 z-10 border-y border-border overflow-hidden">
+                <div class="flex text-xs font-semibold text-foreground" :style="{ width: 'var(--total-w)' }">
                   <div
                     class="shrink-0 px-2 py-1.5 border-r border-border text-center text-muted-foreground select-none"
                     :style="{ width: 'var(--row-num-w)' }"
@@ -2005,7 +2005,7 @@ defineExpose({
                   <Tooltip v-for="(col, colIdx) in result.columns" :key="`${col}-${colIdx}`">
                     <TooltipTrigger as-child>
                       <div
-                        class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/50 select-none relative overflow-hidden"
+                        class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/60 select-none relative overflow-hidden"
                         :style="{ width: `var(--col-w-${colIdx})` }"
                         @click="toggleSort(col, colIdx)"
                       >

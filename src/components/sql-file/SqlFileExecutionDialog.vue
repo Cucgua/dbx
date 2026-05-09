@@ -336,7 +336,7 @@ watch(open, (value) => {
 
 <template>
   <Dialog :open="open" @update:open="handleOpenChange">
-    <DialogScrollContent class="sm:max-w-[620px]" :trap-focus="false" @interact-outside.prevent>
+    <DialogScrollContent class="sm:max-w-[620px] min-w-0 overflow-hidden" :trap-focus="false" @interact-outside.prevent>
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <FileCode class="w-4 h-4" />
@@ -344,8 +344,8 @@ watch(open, (value) => {
         </DialogTitle>
       </DialogHeader>
 
-      <div class="grid gap-4 py-3">
-        <div class="space-y-3">
+      <div class="grid min-w-0 gap-4 py-3">
+        <div class="min-w-0 space-y-3">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             {{ t("sqlFile.file") }}
           </div>
@@ -370,7 +370,7 @@ watch(open, (value) => {
             </Button>
           </div>
 
-          <div v-if="preview" class="border rounded-md overflow-hidden">
+          <div v-if="preview" class="min-w-0 max-w-full border rounded-md overflow-hidden">
             <div class="flex items-center justify-between gap-3 px-3 py-2 text-xs border-b bg-muted/40">
               <div class="min-w-0 flex items-center gap-2">
                 <FileCode class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -378,13 +378,13 @@ watch(open, (value) => {
               </div>
               <span class="text-muted-foreground shrink-0">{{ formatBytes(preview.sizeBytes) }}</span>
             </div>
-            <pre class="max-h-40 overflow-auto p-3 text-xs font-mono whitespace-pre-wrap bg-muted/15">{{
+            <pre class="max-h-40 max-w-full overflow-auto p-3 text-xs font-mono whitespace-pre bg-muted/15">{{
               preview.preview
             }}</pre>
           </div>
         </div>
 
-        <div class="space-y-3">
+        <div class="min-w-0 space-y-3">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             {{ t("sqlFile.target") }}
           </div>
@@ -437,7 +437,7 @@ watch(open, (value) => {
           </div>
         </div>
 
-        <div class="space-y-2.5">
+        <div class="min-w-0 space-y-2.5">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             {{ t("sqlFile.options") }}
           </div>
@@ -454,7 +454,7 @@ watch(open, (value) => {
           </button>
         </div>
 
-        <div v-if="running || terminalStatus !== 'idle' || progress" class="space-y-3">
+        <div v-if="running || terminalStatus !== 'idle' || progress" class="min-w-0 space-y-3">
           <div class="flex items-center justify-between gap-3 text-xs">
             <div class="flex items-center gap-1.5 min-w-0" :class="statusTone">
               <component :is="statusIcon" class="w-3.5 h-3.5 shrink-0" :class="{ 'animate-spin': running }" />
@@ -508,14 +508,16 @@ watch(open, (value) => {
 
           <div v-if="progress?.statementSummary" class="space-y-1">
             <Label class="text-xs">{{ t("sqlFile.currentStatement") }}</Label>
-            <div class="border rounded-md p-2 text-xs font-mono bg-muted/15 max-h-20 overflow-auto whitespace-pre-wrap">
+            <div
+              class="max-h-20 max-w-full overflow-auto rounded-md border bg-muted/15 p-2 text-xs font-mono whitespace-pre"
+            >
               {{ progress.statementSummary }}
             </div>
           </div>
 
           <div
             v-if="progress?.error || terminalError"
-            class="border rounded-md p-2 text-xs text-destructive bg-destructive/5"
+            class="max-w-full overflow-auto rounded-md border bg-destructive/5 p-2 text-xs text-destructive whitespace-pre-wrap"
           >
             {{ progress?.error || terminalError }}
           </div>
