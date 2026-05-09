@@ -40,6 +40,7 @@ export const useConnectionStore = defineStore("connection", () => {
   const connectedIds = ref<Set<string>>(new Set());
   const connectionErrors = ref<Record<string, string>>({});
   const editingConnectionId = ref<string | null>(null);
+  const newConnectionGroupId = ref<string | null>(null);
   const completionTablesCache = ref<Record<string, SqlCompletionTable[]>>({});
   const completionColumnsCache = ref<Record<string, ColumnInfo[]>>({});
   const transferSource = ref<{ connectionId: string; database: string } | null>(null);
@@ -84,6 +85,15 @@ export const useConnectionStore = defineStore("connection", () => {
 
   function stopEditing() {
     editingConnectionId.value = null;
+  }
+
+  function startCreatingConnectionInGroup(groupId: string) {
+    stopEditing();
+    newConnectionGroupId.value = groupId;
+  }
+
+  function stopCreatingConnectionInGroup() {
+    newConnectionGroupId.value = null;
   }
 
   function getConfig(connectionId: string) {
@@ -222,12 +232,13 @@ export const useConnectionStore = defineStore("connection", () => {
       nextConnections[existing] = normalized;
     } else {
       nextConnections.push(normalized);
-      sidebarLayout.value = appendConnectionToLayout(sidebarLayout.value, normalized.id);
+      sidebarLayout.value = appendConnectionToLayout(sidebarLayout.value, normalized.id, newConnectionGroupId.value);
     }
     await persistConnections(nextConnections);
     connections.value = nextConnections;
     rebuildTreeNodes();
     persistSidebarLayoutDebounced();
+    stopCreatingConnectionInGroup();
   }
 
   function invalidateCompletionCache(connectionId: string) {
@@ -1035,8 +1046,11 @@ export const useConnectionStore = defineStore("connection", () => {
     isDefaultDatabase,
     removeConnection,
     editingConnectionId,
+    newConnectionGroupId,
     startEditing,
     stopEditing,
+    startCreatingConnectionInGroup,
+    stopCreatingConnectionInGroup,
     connect,
     disconnect,
     ensureConnected,

@@ -71,9 +71,19 @@ watch(editConfig, (v) => {
 });
 
 watch(
+  () => connectionStore.newConnectionGroupId,
+  (v) => {
+    if (v) emit("update:showConnectionDialog", true);
+  },
+);
+
+watch(
   () => props.showConnectionDialog,
   (v) => {
-    if (!v) connectionStore.stopEditing();
+    if (!v) {
+      connectionStore.stopEditing();
+      connectionStore.stopCreatingConnectionInGroup();
+    }
   },
 );
 </script>

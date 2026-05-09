@@ -281,6 +281,21 @@ export function removeConnectionFromSidebarLayout(layout: SidebarLayout, connect
   return { ...layout, order: removeConnectionFromLayout(layout.order, connectionId) };
 }
 
-export function appendConnectionToLayout(layout: SidebarLayout, connectionId: string): SidebarLayout {
+export function appendConnectionToLayout(
+  layout: SidebarLayout,
+  connectionId: string,
+  groupId?: string | null,
+): SidebarLayout {
+  if (groupId && layout.groups.some((group) => group.id === groupId)) {
+    return {
+      ...layout,
+      groups: layout.groups.map((group) => (group.id === groupId ? { ...group, collapsed: false } : group)),
+      order: layout.order.map((entry) =>
+        entry.type === "group" && entry.id === groupId
+          ? { ...entry, connectionIds: [...entry.connectionIds, connectionId] }
+          : entry,
+      ),
+    };
+  }
   return { ...layout, order: [...layout.order, { type: "connection" as const, id: connectionId }] };
 }

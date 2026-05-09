@@ -1075,6 +1075,10 @@ function deleteConnectionGroup() {
   showDeleteGroupConfirm.value = true;
 }
 
+function newConnectionInGroup() {
+  connectionStore.startCreatingConnectionInGroup(props.node.id);
+}
+
 function confirmDeleteGroup() {
   connectionStore.deleteConnectionGroup(props.node.id);
   showDeleteGroupConfirm.value = false;
@@ -1325,6 +1329,10 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </template>
 
       <template v-if="node.type === 'connection-group'">
+        <ContextMenuItem @click="newConnectionInGroup">
+          <Plus class="w-4 h-4" /> {{ t("toolbar.newConnection") }}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
         <ContextMenuItem @click="startRenameGroup">
           <Pencil class="w-4 h-4" /> {{ t("connectionGroup.renameGroup") }}
         </ContextMenuItem>
