@@ -43,9 +43,10 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { isMac, showControls, isMaximized, minimize, toggleMaximize, close } = useWindowControls();
+const { isMac, isDesktop, showControls, isMaximized, minimize, toggleMaximize, close } = useWindowControls();
 
 function onToolbarDblClick(e: MouseEvent) {
+  if (isDesktop) return;
   const target = e.target as HTMLElement;
   if (target.closest("button, [role='button'], a")) return;
   toggleMaximize();
