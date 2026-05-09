@@ -2,6 +2,229 @@
 @import 'fumadocs-ui/css/ocean.css';
 @import 'fumadocs-ui/css/preset.css';
 
+:root {
+  --color-fd-background: hsl(210 58% 98.8%);
+  --color-fd-foreground: hsl(222 48% 9%);
+  --color-fd-muted: hsl(211 72% 95.5%);
+  --color-fd-muted-foreground: hsl(217 13% 41%);
+  --color-fd-popover: hsl(0 0% 100%);
+  --color-fd-popover-foreground: hsl(222 48% 9%);
+  --color-fd-card: hsl(0 0% 100%);
+  --color-fd-card-foreground: hsl(222 48% 9%);
+  --color-fd-border: hsl(213 42% 87%);
+  --color-fd-primary: hsl(217 88% 47%);
+  --color-fd-primary-foreground: hsl(0 0% 100%);
+  --color-fd-secondary: hsl(211 70% 96%);
+  --color-fd-secondary-foreground: hsl(222 38% 14%);
+  --color-fd-accent: hsl(213 72% 93%);
+  --color-fd-accent-foreground: hsl(222 42% 12%);
+  --color-fd-ring: hsl(217 85% 55%);
+  --dbx-surface: hsl(0 0% 100%);
+  --dbx-surface-soft: hsl(211 80% 97%);
+  --dbx-line: color-mix(in srgb, var(--color-fd-border) 82%, transparent);
+  --dbx-blue: #2563eb;
+  --dbx-sky: #0ea5e9;
+  --dbx-green: #0f9f6e;
+}
+
+.dark {
+  --color-fd-background: hsl(225 10% 7%);
+  --color-fd-foreground: hsl(220 14% 92%);
+  --color-fd-muted: hsl(225 8% 13%);
+  --color-fd-muted-foreground: hsl(220 9% 68%);
+  --color-fd-popover: hsl(225 10% 9%);
+  --color-fd-popover-foreground: hsl(220 14% 92%);
+  --color-fd-card: hsl(225 9% 10%);
+  --color-fd-card-foreground: hsl(220 14% 92%);
+  --color-fd-border: hsl(225 8% 22%);
+  --color-fd-primary: hsl(214 100% 78%);
+  --color-fd-primary-foreground: hsl(225 10% 7%);
+  --color-fd-secondary: hsl(225 8% 14%);
+  --color-fd-secondary-foreground: hsl(220 14% 90%);
+  --color-fd-accent: hsl(225 8% 18%);
+  --color-fd-accent-foreground: hsl(220 14% 94%);
+  --color-fd-ring: hsl(214 100% 75%);
+  --dbx-surface: hsl(225 9% 10%);
+  --dbx-surface-soft: hsl(225 8% 13%);
+  --dbx-line: color-mix(in srgb, var(--color-fd-border) 78%, transparent);
+  --dbx-blue: #60a5fa;
+  --dbx-sky: #38bdf8;
+  --dbx-green: #34d399;
+}
+
+html {
+  background: var(--color-fd-background);
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 18% -8%, color-mix(in srgb, var(--dbx-sky) 13%, transparent), transparent 340px),
+    radial-gradient(circle at 84% 2%, color-mix(in srgb, var(--dbx-blue) 10%, transparent), transparent 330px),
+    linear-gradient(180deg, color-mix(in srgb, var(--color-fd-muted) 58%, transparent), transparent 390px),
+    var(--color-fd-background);
+  text-rendering: optimizeLegibility;
+}
+
+.dark body {
+  background: var(--color-fd-background);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--dbx-blue) 22%, transparent);
+}
+
+article {
+  color: color-mix(in srgb, var(--color-fd-foreground) 92%, var(--color-fd-muted-foreground));
+}
+
+article h1 {
+  letter-spacing: 0;
+  line-height: 1.08;
+}
+
+article h2 {
+  border-top: 1px solid var(--dbx-line);
+  margin-top: 2.35rem;
+  padding-top: 1.35rem;
+  letter-spacing: 0;
+}
+
+article h3 {
+  letter-spacing: 0;
+}
+
+article p,
+article li {
+  line-height: 1.78;
+}
+
+article p {
+  color: color-mix(in srgb, var(--color-fd-foreground) 78%, var(--color-fd-muted-foreground));
+}
+
+article a:not([class]) {
+  color: var(--dbx-blue);
+  font-weight: 560;
+  text-decoration-color: color-mix(in srgb, var(--dbx-blue) 34%, transparent);
+  text-underline-offset: 3px;
+}
+
+article a:not([class]):hover {
+  text-decoration-color: var(--dbx-blue);
+}
+
+article img {
+  border: 1px solid var(--dbx-line);
+  border-radius: 10px;
+  box-shadow: 0 18px 54px color-mix(in srgb, black 12%, transparent);
+}
+
+article table {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--dbx-line);
+  border-radius: 9px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--dbx-surface);
+  font-size: 0.925rem;
+}
+
+article thead {
+  background: var(--dbx-surface-soft);
+}
+
+article th {
+  color: color-mix(in srgb, var(--color-fd-foreground) 86%, var(--color-fd-muted-foreground));
+  font-weight: 680;
+}
+
+article th,
+article td {
+  border-bottom: 1px solid var(--dbx-line);
+  padding: 0.78rem 0.92rem;
+}
+
+article tr:last-child td {
+  border-bottom: 0;
+}
+
+article pre {
+  border: 1px solid color-mix(in srgb, var(--color-fd-border) 70%, transparent);
+  border-radius: 10px;
+  background: #0b1220 !important;
+  box-shadow: 0 18px 42px color-mix(in srgb, black 14%, transparent);
+}
+
+article :not(pre) > code {
+  border: 1px solid var(--dbx-line);
+  border-radius: 6px;
+  padding: 0.12rem 0.34rem;
+  background: color-mix(in srgb, var(--color-fd-muted) 72%, transparent);
+  color: color-mix(in srgb, var(--color-fd-foreground) 88%, var(--dbx-blue));
+  font-size: 0.88em;
+}
+
+article a.block.rounded-xl,
+article a.flex.rounded-lg {
+  border-color: var(--dbx-line);
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--dbx-sky) 4%, var(--dbx-surface)), var(--dbx-surface)),
+    var(--dbx-surface);
+  box-shadow: 0 1px 2px color-mix(in srgb, black 4%, transparent);
+}
+
+article a.block.rounded-xl:hover,
+article a.flex.rounded-lg:hover {
+  border-color: color-mix(in srgb, var(--dbx-blue) 42%, var(--dbx-line));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--dbx-sky) 9%, var(--dbx-surface)), var(--dbx-surface));
+  box-shadow: 0 12px 34px color-mix(in srgb, var(--dbx-blue) 12%, transparent);
+}
+
+article [role='tablist'] {
+  border: 1px solid var(--dbx-line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-fd-muted) 68%, transparent);
+  padding: 3px;
+}
+
+article [role='tab'] {
+  border-radius: 7px;
+  font-weight: 620;
+}
+
+article [role='tabpanel'] {
+  border-color: var(--dbx-line);
+}
+
+article div[class*='border'] {
+  border-color: var(--dbx-line);
+}
+
+aside a[href*='/docs/'][class*='rounded-lg'][data-active='true'],
+aside a[href*='/docs/'][class*='rounded-lg'][aria-current='page'] {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--dbx-blue) 18%, var(--color-fd-accent)),
+    color-mix(in srgb, var(--dbx-sky) 10%, var(--color-fd-accent))
+  );
+  color: var(--color-fd-foreground);
+  font-weight: 650;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
 .landing {
   --landing-max: 1180px;
   --landing-panel: color-mix(in srgb, var(--color-fd-card) 82%, transparent);
@@ -9,11 +232,14 @@
   --landing-line: color-mix(in srgb, var(--color-fd-border) 86%, transparent);
   --landing-soft: color-mix(in srgb, var(--color-fd-muted) 54%, transparent);
   --landing-blue: #2563eb;
+  --landing-sky: #0ea5e9;
   --landing-green: #0f9f6e;
   min-height: 100vh;
   color: var(--color-fd-foreground);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--color-fd-muted) 28%, transparent), transparent 420px),
+    radial-gradient(circle at 14% 6%, color-mix(in srgb, var(--landing-sky) 12%, transparent), transparent 330px),
+    radial-gradient(circle at 86% 4%, color-mix(in srgb, var(--landing-blue) 10%, transparent), transparent 360px),
+    linear-gradient(180deg, color-mix(in srgb, var(--color-fd-muted) 38%, transparent), transparent 440px),
     var(--color-fd-background);
 }
 
