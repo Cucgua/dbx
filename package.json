@@ -57,6 +57,7 @@
   },
   "devDependencies": {
     "@oxfmt/binding-darwin-arm64": "0.47.0",
+    "@oxlint/binding-darwin-arm64": "1.62.0",
     "@tailwindcss/vite": "^4.2.4",
     "@tauri-apps/cli": "^2.11.0",
     "@types/node": "^25.6.0",

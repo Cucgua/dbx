@@ -308,7 +308,7 @@ function isInColumnContext(beforeCursor: string): boolean {
   for (let i = lastWords.length - 1; i >= Math.max(0, lastWords.length - 3); i--) {
     const word = lastWords[i]?.toLowerCase().replace(/[^a-z0-9.]/g, "") ?? "";
     // Operators that indicate column context
-    if (/^[=<>!\+\-\*\/(,]$/.test(word)) return true;
+    if (/^[=<>!+\-*/(,]$/.test(word)) return true;
     // Keywords that directly precede column expressions
     if (["where", "on", "having", "set", "and", "or", "not", "is", "like", "in", "between", "select"].includes(word)) {
       return true;

@@ -8,6 +8,7 @@ import EditorSettingsDialog from "@/components/editor/EditorSettingsDialog.vue";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 const DataTransferDialog = defineAsyncComponent(() => import("@/components/transfer/DataTransferDialog.vue"));
 const SchemaDiffDialog = defineAsyncComponent(() => import("@/components/diff/SchemaDiffDialog.vue"));
+const DataCompareDialog = defineAsyncComponent(() => import("@/components/diff/DataCompareDialog.vue"));
 const SqlFileExecutionDialog = defineAsyncComponent(() => import("@/components/sql-file/SqlFileExecutionDialog.vue"));
 const SchemaDiagramDialog = defineAsyncComponent(() => import("@/components/diagram/SchemaDiagramDialog.vue"));
 const TableImportDialog = defineAsyncComponent(() => import("@/components/import/TableImportDialog.vue"));
@@ -113,6 +114,14 @@ watch(
     v-model:open="dialogs.showSchemaDiffDialog.value"
     :prefill-connection-id="dialogs.schemaDiffPrefillConnectionId.value"
     :prefill-database="dialogs.schemaDiffPrefillDatabase.value"
+    :prefill-schema="dialogs.schemaDiffPrefillSchema.value"
+  />
+  <DataCompareDialog
+    v-model:open="dialogs.showDataCompareDialog.value"
+    :prefill-connection-id="dialogs.dataComparePrefillConnectionId.value"
+    :prefill-database="dialogs.dataComparePrefillDatabase.value"
+    :prefill-schema="dialogs.dataComparePrefillSchema.value"
+    :prefill-table="dialogs.dataComparePrefillTable.value"
   />
   <SqlFileExecutionDialog
     v-model:open="dialogs.showSqlFileDialog.value"

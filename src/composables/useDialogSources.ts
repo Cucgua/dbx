@@ -6,6 +6,7 @@ import type { SidebarLayout } from "@/types/database";
 
 const showTransferDialog = ref(false);
 const showSchemaDiffDialog = ref(false);
+const showDataCompareDialog = ref(false);
 const showSqlFileDialog = ref(false);
 const showDiagramDialog = ref(false);
 const showTableImportDialog = ref(false);
@@ -23,6 +24,11 @@ const transferPrefillConnectionId = ref("");
 const transferPrefillDatabase = ref("");
 const schemaDiffPrefillConnectionId = ref("");
 const schemaDiffPrefillDatabase = ref("");
+const schemaDiffPrefillSchema = ref("");
+const dataComparePrefillConnectionId = ref("");
+const dataComparePrefillDatabase = ref("");
+const dataComparePrefillSchema = ref("");
+const dataComparePrefillTable = ref("");
 const sqlFilePrefillConnectionId = ref("");
 const sqlFilePrefillDatabase = ref("");
 const diagramPrefillConnectionId = ref("");
@@ -75,8 +81,23 @@ export function useDialogSources() {
         if (v) {
           schemaDiffPrefillConnectionId.value = v.connectionId;
           schemaDiffPrefillDatabase.value = v.database;
+          schemaDiffPrefillSchema.value = v.schema ?? "";
           showSchemaDiffDialog.value = true;
           connectionStore.schemaDiffSource = null;
+        }
+      },
+    );
+
+    watch(
+      () => connectionStore.dataCompareSource,
+      (v) => {
+        if (v) {
+          dataComparePrefillConnectionId.value = v.connectionId;
+          dataComparePrefillDatabase.value = v.database;
+          dataComparePrefillSchema.value = v.schema ?? "";
+          dataComparePrefillTable.value = v.tableName ?? "";
+          showDataCompareDialog.value = true;
+          connectionStore.dataCompareSource = null;
         }
       },
     );
@@ -221,6 +242,7 @@ export function useDialogSources() {
   return {
     showTransferDialog,
     showSchemaDiffDialog,
+    showDataCompareDialog,
     showSqlFileDialog,
     showDiagramDialog,
     showTableImportDialog,
@@ -237,6 +259,11 @@ export function useDialogSources() {
     transferPrefillDatabase,
     schemaDiffPrefillConnectionId,
     schemaDiffPrefillDatabase,
+    schemaDiffPrefillSchema,
+    dataComparePrefillConnectionId,
+    dataComparePrefillDatabase,
+    dataComparePrefillSchema,
+    dataComparePrefillTable,
     sqlFilePrefillConnectionId,
     sqlFilePrefillDatabase,
     diagramPrefillConnectionId,

@@ -882,6 +882,18 @@ function openSchemaDiff() {
     connectionStore.schemaDiffSource = {
       connectionId: props.node.connectionId,
       database: props.node.database ?? "",
+      schema: props.node.schema,
+    };
+  }
+}
+
+function openDataCompare() {
+  if (props.node.connectionId) {
+    connectionStore.dataCompareSource = {
+      connectionId: props.node.connectionId,
+      database: props.node.database ?? "",
+      schema: props.node.schema,
+      tableName: props.node.type === "table" ? props.node.label : undefined,
     };
   }
 }
@@ -1393,6 +1405,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem @click="openSchemaDiff">
           <ArrowRightLeft class="w-4 h-4" /> {{ t("diff.title") }}
         </ContextMenuItem>
+        <ContextMenuItem @click="openDataCompare">
+          <ArrowRightLeft class="w-4 h-4" /> {{ t("dataCompare.title") }}
+        </ContextMenuItem>
         <ContextMenuItem :disabled="isExportingDatabase" @click="exportDatabase">
           <Loader2 v-if="isExportingDatabase" class="w-4 h-4 animate-spin" />
           <Download v-else class="w-4 h-4" />
@@ -1436,6 +1451,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenTableImport" @click="openTableImport">
           <FileUp class="w-4 h-4" /> {{ t("contextMenu.importData") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="isTableNotView" @click="openDataCompare">
+          <ArrowRightLeft class="w-4 h-4" /> {{ t("dataCompare.title") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub>

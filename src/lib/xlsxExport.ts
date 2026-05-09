@@ -37,8 +37,12 @@ function crc32(data: Uint8Array): number {
 }
 
 function escapeXml(value: string): string {
-  return value
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "")
+  return [...value]
+    .filter((char) => {
+      const code = char.charCodeAt(0);
+      return code === 9 || code === 10 || code === 13 || code >= 32;
+    })
+    .join("")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -66,7 +70,12 @@ function sheetRange(columnCount: number, rowCount: number): string {
 }
 
 function normalizeSheetName(value?: string): string {
-  const name = (value || "Sheet1").replace(/[\[\]:*?/\\]/g, " ").trim() || "Sheet1";
+  const invalidChars = new Set(["[", "]", ":", "*", "?", "/", "\\"]);
+  const name =
+    [...(value || "Sheet1")]
+      .map((char) => (invalidChars.has(char) ? " " : char))
+      .join("")
+      .trim() || "Sheet1";
   return name.slice(0, 31);
 }
 
