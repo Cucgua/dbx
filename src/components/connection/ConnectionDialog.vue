@@ -157,7 +157,7 @@ const driverProfiles: Record<
     icon: "starrocks",
     urlParams: "",
   },
-  redshift: { type: "postgres", port: 5439, user: "awsuser", label: "Redshift", icon: "redshift" },
+  redshift: { type: "redshift", port: 5439, user: "awsuser", label: "Redshift", icon: "redshift" },
   cockroachdb: {
     type: "postgres",
     port: 26257,
@@ -272,6 +272,26 @@ watch(
     isEditing.value = !!v;
   },
 );
+
+const databaseLabel = computed(() =>
+  form.value.db_type === "oracle" ? t("connection.serviceName") : t("connection.database"),
+);
+
+const databasePlaceholder = computed(() => {
+  const fallback = defaultDatabaseForProfile();
+  if (!fallback) return t("connection.databasePlaceholder");
+  return t("connection.databasePlaceholderWithDefault", { database: fallback });
+});
+
+function defaultDatabaseForProfile() {
+  if (form.value.db_type === "redshift") return "dev";
+  if (form.value.db_type === "gaussdb") return "postgres";
+  if (selectedType.value === "cockroachdb") return "defaultdb";
+  if (form.value.db_type === "postgres") return "postgres";
+  if (form.value.db_type === "sqlserver") return "master";
+  if (form.value.db_type === "oracle") return "ORCL";
+  return "";
+}
 
 function onDbTypeChange(val: string) {
   customDriverName.value = "";
@@ -821,12 +841,8 @@ async function browseDbFilePath() {
                   </div>
 
                   <div class="grid grid-cols-4 items-center gap-4">
-                    <Label class="text-right">{{ t("connection.database") }}</Label>
-                    <Input
-                      v-model="form.database"
-                      class="col-span-3"
-                      :placeholder="t('connection.databasePlaceholder')"
-                    />
+                    <Label class="text-right">{{ databaseLabel }}</Label>
+                    <Input v-model="form.database" class="col-span-3" :placeholder="databasePlaceholder" />
                   </div>
 
                   <div v-if="selectedType === 'dm'" class="grid grid-cols-4 items-center gap-4">
@@ -852,14 +868,14 @@ async function browseDbFilePath() {
                   </div>
 
                   <div
-                    v-if="form.db_type === 'mysql' || form.db_type === 'postgres'"
+                    v-if="form.db_type === 'mysql' || form.db_type === 'postgres' || form.db_type === 'redshift'"
                     class="grid grid-cols-4 items-center gap-4"
                   >
                     <Label class="text-right">{{ t("connection.urlParams") }}</Label>
                     <Input
                       v-model="form.url_params"
                       class="col-span-3"
-                      :placeholder="form.db_type === 'postgres' ? 'sslmode=disable' : 'charset=utf8mb4'"
+                      :placeholder="form.db_type === 'mysql' ? 'charset=utf8mb4' : 'sslmode=disable'"
                     />
                   </div>
                 </template>

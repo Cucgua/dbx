@@ -75,6 +75,8 @@ export default {
     password: "Password",
     database: "Database",
     databasePlaceholder: "Optional",
+    databasePlaceholderWithDefault: "Optional, defaults to {database}",
+    serviceName: "Service/SID",
     driverName: "Driver Name",
     driverNamePlaceholder: "Vendor or environment name",
     urlParams: "URL Params",

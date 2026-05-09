@@ -74,6 +74,8 @@ export default {
     password: "密码",
     database: "数据库",
     databasePlaceholder: "可选",
+    databasePlaceholderWithDefault: "可选，默认 {database}",
+    serviceName: "服务名/SID",
     driverName: "驱动名称",
     driverNamePlaceholder: "厂商或环境名称",
     urlParams: "URL 参数",

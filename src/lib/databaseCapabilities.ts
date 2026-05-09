@@ -78,7 +78,7 @@ export const FIELD_LINEAGE_SUPPORTED_TYPES = new Set<DatabaseType>([
 
 export const FETCH_FIRST_TYPES = new Set<DatabaseType>(["oracle", "dameng"]);
 
-export const TREE_SCHEMA_TYPES = new Set<DatabaseType>(["postgres", "sqlserver", "gaussdb"]);
+export const TREE_SCHEMA_TYPES = new Set<DatabaseType>(["postgres", "redshift", "sqlserver", "gaussdb"]);
 
 export const PG_LIKE_STRUCTURE_TYPES = new Set<DatabaseType>(["postgres", "redshift", "gaussdb"]);
 

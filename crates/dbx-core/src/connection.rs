@@ -58,10 +58,7 @@ pub fn metadata_connection_config(config: &ConnectionConfig) -> ConnectionConfig
 pub fn database_connection_config(config: &ConnectionConfig, database: Option<&str>) -> ConnectionConfig {
     let mut db_config = if database.is_some() { config.clone() } else { metadata_connection_config(config) };
     if let Some(db) = database {
-        if db_config.db_type != DatabaseType::Oracle
-            && db_config.db_type != DatabaseType::Dameng
-            && db_config.db_type != DatabaseType::Gaussdb
-        {
+        if db_config.db_type != DatabaseType::Oracle && db_config.db_type != DatabaseType::Dameng {
             db_config.database = Some(db.to_string());
         }
     }
@@ -90,8 +87,7 @@ impl AppState {
             return Ok(connection_id.to_string());
         }
 
-        let is_single_conn =
-            matches!(db_type, Some(DatabaseType::Oracle) | Some(DatabaseType::Dameng) | Some(DatabaseType::Gaussdb));
+        let is_single_conn = matches!(db_type, Some(DatabaseType::Oracle) | Some(DatabaseType::Dameng));
         let pool_key = if is_single_conn {
             connection_id.to_string()
         } else {
@@ -207,7 +203,7 @@ impl AppState {
                 let client = db::gaussdb_driver::connect(
                     &host,
                     port,
-                    db_config.database.as_deref().unwrap_or(""),
+                    db_config.effective_database().unwrap_or("postgres"),
                     &db_config.username,
                     &db_config.password,
                 )
@@ -272,7 +268,6 @@ impl AppState {
                     c.db_type == DatabaseType::Oracle
                         || c.db_type == DatabaseType::Elasticsearch
                         || c.db_type == DatabaseType::Dameng
-                        || c.db_type == DatabaseType::Gaussdb
                 })
                 .unwrap_or(false)
         };
@@ -377,5 +372,25 @@ mod tests {
         let scoped = database_connection_config(&config, Some("analytics"));
 
         assert_eq!(scoped.database.as_deref(), Some("analytics"));
+    }
+
+    #[test]
+    fn gaussdb_database_connection_keeps_requested_database() {
+        let mut config = mysql_config(Some("postgres"));
+        config.db_type = DatabaseType::Gaussdb;
+
+        let scoped = database_connection_config(&config, Some("analytics"));
+
+        assert_eq!(scoped.database.as_deref(), Some("analytics"));
+    }
+
+    #[test]
+    fn oracle_database_connection_ignores_requested_database() {
+        let mut config = mysql_config(Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+
+        let scoped = database_connection_config(&config, Some("analytics"));
+
+        assert_eq!(scoped.database.as_deref(), Some("ORCL"));
     }
 }

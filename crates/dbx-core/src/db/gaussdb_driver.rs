@@ -30,6 +30,7 @@ impl GaussdbClient {
 }
 
 pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &str) -> Result<GaussdbClient, String> {
+    let database = normalize_database(database);
     let dsn = format!("host={host} port={port} user={user} password={pass} dbname={database}");
 
     let result = tokio::time::timeout(std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS), async {
@@ -39,6 +40,15 @@ pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &s
     .map_err(|_| format!("GaussDB connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?;
 
     result.map(|client| GaussdbClient { client })
+}
+
+fn normalize_database(database: &str) -> &str {
+    let database = database.trim();
+    if database.is_empty() {
+        "postgres"
+    } else {
+        database
+    }
 }
 
 pub async fn list_databases(client: &mut GaussdbClient) -> Result<Vec<DatabaseInfo>, String> {
@@ -274,5 +284,21 @@ pub async fn execute_query(client: &mut GaussdbClient, sql: &str) -> Result<Quer
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_database;
+
+    #[test]
+    fn normalize_database_defaults_blank_to_postgres() {
+        assert_eq!(normalize_database(""), "postgres");
+        assert_eq!(normalize_database("   "), "postgres");
+    }
+
+    #[test]
+    fn normalize_database_keeps_explicit_database() {
+        assert_eq!(normalize_database("app"), "app");
     }
 }

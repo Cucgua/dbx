@@ -138,6 +138,8 @@ export const useConnectionStore = defineStore("connection", () => {
     let dbType = config.db_type;
     if ((profile === "gaussdb" || profile === "opengauss") && dbType === "postgres") {
       dbType = "gaussdb" as ConnectionConfig["db_type"];
+    } else if (profile === "redshift" && dbType === "postgres") {
+      dbType = "redshift" as ConnectionConfig["db_type"];
     }
 
     return {

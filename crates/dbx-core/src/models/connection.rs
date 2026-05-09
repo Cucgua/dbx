@@ -75,6 +75,26 @@ pub enum DatabaseType {
 }
 
 impl ConnectionConfig {
+    pub fn effective_database(&self) -> Option<&str> {
+        self.database
+            .as_deref()
+            .map(str::trim)
+            .filter(|database| !database.is_empty())
+            .or_else(|| self.default_database())
+    }
+
+    fn default_database(&self) -> Option<&'static str> {
+        match self.db_type {
+            DatabaseType::Postgres => match self.driver_profile.as_deref() {
+                Some("cockroachdb") => Some("defaultdb"),
+                _ => Some("postgres"),
+            },
+            DatabaseType::Redshift => Some("dev"),
+            DatabaseType::Gaussdb => Some("postgres"),
+            _ => None,
+        }
+    }
+
     pub fn needs_bare_mysql(&self) -> bool {
         matches!(self.db_type, DatabaseType::Doris | DatabaseType::StarRocks)
             || self
@@ -94,12 +114,7 @@ impl ConnectionConfig {
 
     pub fn redacted_connection_url_with_host(&self, host: &str, port: u16) -> String {
         let host = bracket_ipv6(host);
-        let db_part = self
-            .database
-            .as_deref()
-            .filter(|d| !d.is_empty())
-            .map(|d| format!("/{}", encode_url_part(d)))
-            .unwrap_or_default();
+        let db_part = self.effective_database().map(|d| format!("/{}", encode_url_part(d))).unwrap_or_default();
         let params = self.normalized_url_params();
 
         match self.db_type {
@@ -148,12 +163,7 @@ impl ConnectionConfig {
 
     pub fn connection_url_with_host(&self, host: &str, port: u16) -> String {
         let host = bracket_ipv6(host);
-        let db_part = self
-            .database
-            .as_deref()
-            .filter(|d| !d.is_empty())
-            .map(|d| format!("/{}", encode_url_part(d)))
-            .unwrap_or_default();
+        let db_part = self.effective_database().map(|d| format!("/{}", encode_url_part(d))).unwrap_or_default();
         let username = encode_url_part(&self.username);
         let password = encode_url_part(&self.password);
         let params = self.normalized_url_params();
@@ -411,6 +421,47 @@ mod tests {
         config.url_params = Some("sslmode=disable".to_string());
 
         assert_eq!(config.connection_url(), "postgres://postgres:secret@10.1.2.3:2883/test?sslmode=disable");
+    }
+
+    #[test]
+    fn postgres_url_defaults_to_postgres_database_when_omitted() {
+        let mut config = mysql_config("root", "secret", None);
+        config.db_type = DatabaseType::Postgres;
+
+        assert_eq!(config.connection_url(), "postgres://root:secret@10.1.2.3:2883/postgres");
+    }
+
+    #[test]
+    fn postgres_url_defaults_to_postgres_database_when_empty() {
+        let mut config = mysql_config("root", "secret", Some(""));
+        config.db_type = DatabaseType::Postgres;
+
+        assert_eq!(config.connection_url(), "postgres://root:secret@10.1.2.3:2883/postgres");
+    }
+
+    #[test]
+    fn redshift_url_defaults_to_dev_database_when_empty() {
+        let mut config = mysql_config("awsuser", "secret", Some(""));
+        config.db_type = DatabaseType::Redshift;
+
+        assert_eq!(config.connection_url(), "postgres://awsuser:secret@10.1.2.3:2883/dev");
+    }
+
+    #[test]
+    fn cockroachdb_url_defaults_to_defaultdb_database() {
+        let mut config = mysql_config("root", "secret", None);
+        config.db_type = DatabaseType::Postgres;
+        config.driver_profile = Some("cockroachdb".to_string());
+
+        assert_eq!(config.connection_url(), "postgres://root:secret@10.1.2.3:2883/defaultdb");
+    }
+
+    #[test]
+    fn gaussdb_url_defaults_to_postgres_database() {
+        let mut config = mysql_config("gaussdb", "secret", None);
+        config.db_type = DatabaseType::Gaussdb;
+
+        assert_eq!(config.connection_url(), "gaussdb://gaussdb:secret@10.1.2.3:2883/postgres");
     }
 
     #[test]
