@@ -47,7 +47,7 @@ watch(
   <div v-if="queryStore.tabs.length > 0" class="relative h-9 flex items-stretch border-b bg-muted shrink-0">
     <button
       v-if="canScrollLeft"
-      class="absolute left-0 z-10 h-full px-1 bg-linear-to-r from-background via-background/80 to-transparent text-muted-foreground hover:text-foreground"
+      class="absolute left-0 z-10 h-full pl-1 pr-6 bg-linear-to-r from-background from-40% to-transparent text-muted-foreground hover:text-foreground"
       :aria-label="t('tabs.scrollLeft')"
       @click="scrollTabs('left')"
     >
@@ -139,7 +139,7 @@ watch(
     </div>
     <button
       v-if="canScrollRight"
-      class="absolute right-0 z-10 h-full px-1 bg-linear-to-l from-background via-background/80 to-transparent text-muted-foreground hover:text-foreground"
+      class="absolute right-0 z-10 h-full pr-1 pl-6 bg-linear-to-l from-background from-40% to-transparent text-muted-foreground hover:text-foreground"
       :aria-label="t('tabs.scrollRight')"
       @click="scrollTabs('right')"
     >
