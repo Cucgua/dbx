@@ -468,6 +468,23 @@ async fn exec_tx_mysql_inner(
     statements: &[String],
     start: std::time::Instant,
 ) -> Result<db::QueryResult, String> {
+    let statements = statements.to_vec();
+    tokio::task::spawn_blocking(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to start MySQL transaction runtime: {}", e))?
+            .block_on(exec_tx_mysql_raw_inner(pool, statements, start))
+    })
+    .await
+    .map_err(|e| format!("MySQL transaction task failed: {}", e))?
+}
+
+async fn exec_tx_mysql_raw_inner(
+    pool: sqlx::mysql::MySqlPool,
+    statements: Vec<String>,
+    start: std::time::Instant,
+) -> Result<db::QueryResult, String> {
     let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
     sqlx::raw_sql("START TRANSACTION")
         .execute(&mut *conn)

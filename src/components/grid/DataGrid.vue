@@ -34,6 +34,7 @@ import {
   Pencil,
   Filter,
   FileDown,
+  SquareDashed,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -2315,7 +2316,7 @@ defineExpose({
         </div>
       </ContextMenuTrigger>
 
-      <ContextMenuContent class="w-64">
+      <ContextMenuContent class="w-max max-w-[min(80vw,20rem)]">
         <template v-if="contextColumn">
           <ContextMenuItem @click="applyContextSort('asc')">
             <ArrowUp class="w-3.5 h-3.5 mr-2" /> {{ t("grid.sortAscending") }}
@@ -2328,7 +2329,7 @@ defineExpose({
           </ContextMenuItem>
           <ContextMenuSub v-if="canUseWhereSearch">
             <ContextMenuSubTrigger> <Filter class="w-3.5 h-3.5 mr-2" /> {{ t("grid.filter") }} </ContextMenuSubTrigger>
-            <ContextMenuSubContent class="w-56">
+            <ContextMenuSubContent class="w-max max-w-[min(80vw,18rem)]">
               <ContextMenuItem @click="applyContextFilter('equals')">{{ t("grid.filterByValue") }}</ContextMenuItem>
               <ContextMenuItem @click="applyContextFilter('not-equals')">
                 {{ t("grid.filterExcludeValue") }}
@@ -2345,7 +2346,7 @@ defineExpose({
         </template>
         <ContextMenuSub>
           <ContextMenuSubTrigger> <Copy class="w-3.5 h-3.5 mr-2" /> {{ t("grid.copy") }} </ContextMenuSubTrigger>
-          <ContextMenuSubContent class="w-56">
+          <ContextMenuSubContent class="w-max max-w-[min(80vw,18rem)]">
             <ContextMenuItem v-if="contextColumn" @click="copyCell">{{ t("grid.copyCell") }}</ContextMenuItem>
             <ContextMenuItem @click="copyRow">{{ t("grid.copyRow") }}</ContextMenuItem>
             <ContextMenuItem @click="copyRowAsInsert">{{ t("grid.copyRowInsert") }}</ContextMenuItem>
@@ -2356,8 +2357,10 @@ defineExpose({
           <Rows3 class="w-3.5 h-3.5 mr-2" /> {{ t("grid.transpose") }}
         </ContextMenuItem>
         <ContextMenuSub v-if="hasCellSelection">
-          <ContextMenuSubTrigger>{{ t("grid.selection") }}</ContextMenuSubTrigger>
-          <ContextMenuSubContent class="w-60">
+          <ContextMenuSubTrigger>
+            <SquareDashed class="w-3.5 h-3.5 mr-2" /> {{ t("grid.selection") }}
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent class="w-max max-w-[min(80vw,20rem)]">
             <ContextMenuItem @click="copySelectionTsv">{{ t("grid.copySelectionTsv") }}</ContextMenuItem>
             <ContextMenuItem @click="copySelectionCsv">{{ t("grid.copySelectionCsv") }}</ContextMenuItem>
             <ContextMenuItem @click="copySelectionJson">{{ t("grid.copySelectionJson") }}</ContextMenuItem>
@@ -2378,7 +2381,7 @@ defineExpose({
         </template>
         <ContextMenuSub>
           <ContextMenuSubTrigger> <FileDown class="w-3.5 h-3.5 mr-2" /> {{ t("grid.export") }} </ContextMenuSubTrigger>
-          <ContextMenuSubContent class="w-44">
+          <ContextMenuSubContent class="w-max max-w-[min(80vw,16rem)]">
             <ContextMenuItem @click="exportCsv">{{ t("grid.exportCsv") }}</ContextMenuItem>
             <ContextMenuItem @click="exportJson">{{ t("grid.exportJson") }}</ContextMenuItem>
             <ContextMenuItem @click="exportMarkdown">{{ t("grid.exportMarkdown") }}</ContextMenuItem>
