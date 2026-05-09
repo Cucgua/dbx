@@ -8,6 +8,9 @@ import type {
   TriggerInfo,
   QueryResult,
   SidebarLayout,
+  SavedSqlFile,
+  SavedSqlFolder,
+  SavedSqlLibrary,
 } from "@/types/database";
 import type { AiConfig } from "@/stores/settingsStore";
 import type {
@@ -86,6 +89,26 @@ export async function saveConnections(configs: ConnectionConfig[]): Promise<void
 
 export async function loadConnections(): Promise<ConnectionConfig[]> {
   return get("/api/connection/list");
+}
+
+export async function loadSavedSqlLibrary(): Promise<SavedSqlLibrary> {
+  return get("/api/saved-sql");
+}
+
+export async function saveSavedSqlFolder(folder: SavedSqlFolder): Promise<SavedSqlFolder> {
+  return post("/api/saved-sql/folders", folder);
+}
+
+export async function deleteSavedSqlFolder(id: string): Promise<void> {
+  return del(`/api/saved-sql/folders/${encodeURIComponent(id)}`);
+}
+
+export async function saveSavedSqlFile(file: SavedSqlFile): Promise<SavedSqlFile> {
+  return post("/api/saved-sql", file);
+}
+
+export async function deleteSavedSqlFile(id: string): Promise<void> {
+  return del(`/api/saved-sql/${encodeURIComponent(id)}`);
 }
 
 // ---------------------------------------------------------------------------

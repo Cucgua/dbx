@@ -9,6 +9,9 @@ import type {
   ForeignKeyInfo,
   TriggerInfo,
   QueryResult,
+  SavedSqlFile,
+  SavedSqlFolder,
+  SavedSqlLibrary,
 } from "@/types/database";
 import type { AiConfig } from "@/stores/settingsStore";
 
@@ -239,6 +242,26 @@ export async function saveConnections(configs: ConnectionConfig[]): Promise<void
 
 export async function loadConnections(): Promise<ConnectionConfig[]> {
   return invoke("load_connections");
+}
+
+export async function loadSavedSqlLibrary(): Promise<SavedSqlLibrary> {
+  return invoke("load_saved_sql_library");
+}
+
+export async function saveSavedSqlFolder(folder: SavedSqlFolder): Promise<SavedSqlFolder> {
+  return invoke("save_saved_sql_folder", { folder });
+}
+
+export async function deleteSavedSqlFolder(id: string): Promise<void> {
+  return invoke("delete_saved_sql_folder", { id });
+}
+
+export async function saveSavedSqlFile(file: SavedSqlFile): Promise<SavedSqlFile> {
+  return invoke("save_saved_sql_file", { file });
+}
+
+export async function deleteSavedSqlFile(id: string): Promise<void> {
+  return invoke("delete_saved_sql_file", { id });
 }
 
 export async function saveSidebarLayout(layout: import("@/types/database").SidebarLayout): Promise<void> {

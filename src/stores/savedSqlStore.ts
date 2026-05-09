@@ -1,28 +1,10 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { uuid } from "@/lib/utils";
+import * as api from "@/lib/api";
+import type { SavedSqlFile, SavedSqlFolder, SavedSqlLibrary } from "@/types/database";
 
-const STORAGE_KEY = "dbx-saved-sql-library";
-
-export interface SavedSqlFolder {
-  id: string;
-  connectionId: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface SavedSqlFile {
-  id: string;
-  connectionId: string;
-  folderId?: string;
-  name: string;
-  database: string;
-  schema?: string;
-  sql: string;
-  createdAt: string;
-  updatedAt: string;
-}
+const LEGACY_STORAGE_KEY = "dbx-saved-sql-library";
 
 interface SavedSqlState {
   folders: SavedSqlFolder[];
@@ -33,9 +15,9 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function loadState(): SavedSqlState {
+function loadLegacyState(): SavedSqlState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return { folders: [], files: [] };
     const parsed = JSON.parse(raw) as Partial<SavedSqlState>;
     return {
@@ -48,16 +30,36 @@ function loadState(): SavedSqlState {
 }
 
 export const useSavedSqlStore = defineStore("savedSql", () => {
-  const initial = loadState();
-  const folders = ref<SavedSqlFolder[]>(initial.folders);
-  const files = ref<SavedSqlFile[]>(initial.files);
+  const folders = ref<SavedSqlFolder[]>([]);
+  const files = ref<SavedSqlFile[]>([]);
+  const isLoaded = ref(false);
 
   const version = computed(
     () => `${folders.value.length}:${files.value.length}:${files.value.map((f) => f.updatedAt).join("|")}`,
   );
 
-  function persist() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ folders: folders.value, files: files.value }));
+  function applyLibrary(library: SavedSqlLibrary) {
+    folders.value = library.folders;
+    files.value = library.files;
+  }
+
+  async function migrateLegacyLocalStorage() {
+    const legacy = loadLegacyState();
+    if (legacy.folders.length === 0 && legacy.files.length === 0) return;
+
+    for (const folder of legacy.folders) {
+      await api.saveSavedSqlFolder(folder);
+    }
+    for (const file of legacy.files) {
+      await api.saveSavedSqlFile(file);
+    }
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  }
+
+  async function initFromStorage() {
+    await migrateLegacyLocalStorage();
+    applyLibrary(await api.loadSavedSqlLibrary());
+    isLoaded.value = true;
   }
 
   function listFolders(connectionId: string) {
@@ -76,7 +78,7 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
     return files.value.find((file) => file.id === id);
   }
 
-  function createFolder(connectionId: string, name: string) {
+  async function createFolder(connectionId: string, name: string) {
     const timestamp = nowIso();
     const folder: SavedSqlFolder = {
       id: uuid(),
@@ -85,26 +87,25 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    folders.value = [...folders.value, folder];
-    persist();
-    return folder;
+    const saved = await api.saveSavedSqlFolder(folder);
+    folders.value = [...folders.value.filter((item) => item.id !== saved.id), saved];
+    return saved;
   }
 
-  function renameFolder(id: string, name: string) {
-    const timestamp = nowIso();
-    folders.value = folders.value.map((folder) =>
-      folder.id === id ? { ...folder, name, updatedAt: timestamp } : folder,
-    );
-    persist();
+  async function renameFolder(id: string, name: string) {
+    const existing = folders.value.find((folder) => folder.id === id);
+    if (!existing) return;
+    const saved = await api.saveSavedSqlFolder({ ...existing, name, updatedAt: nowIso() });
+    folders.value = folders.value.map((folder) => (folder.id === id ? saved : folder));
   }
 
-  function deleteFolder(id: string) {
+  async function deleteFolder(id: string) {
+    await api.deleteSavedSqlFolder(id);
     folders.value = folders.value.filter((folder) => folder.id !== id);
     files.value = files.value.filter((file) => file.folderId !== id);
-    persist();
   }
 
-  function saveFile(input: {
+  async function saveFile(input: {
     id?: string;
     connectionId: string;
     folderId?: string;
@@ -114,10 +115,9 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
     sql: string;
   }) {
     const timestamp = nowIso();
-    if (input.id) {
-      const existing = getFile(input.id);
-      if (existing) {
-        const updated: SavedSqlFile = {
+    const existing = input.id ? getFile(input.id) : undefined;
+    const file: SavedSqlFile = existing
+      ? {
           ...existing,
           folderId: input.folderId || undefined,
           name: input.name,
@@ -125,44 +125,41 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
           schema: input.schema,
           sql: input.sql,
           updatedAt: timestamp,
+        }
+      : {
+          id: uuid(),
+          connectionId: input.connectionId,
+          folderId: input.folderId || undefined,
+          name: input.name,
+          database: input.database,
+          schema: input.schema,
+          sql: input.sql,
+          createdAt: timestamp,
+          updatedAt: timestamp,
         };
-        files.value = files.value.map((file) => (file.id === input.id ? updated : file));
-        persist();
-        return updated;
-      }
-    }
-
-    const file: SavedSqlFile = {
-      id: uuid(),
-      connectionId: input.connectionId,
-      folderId: input.folderId || undefined,
-      name: input.name,
-      database: input.database,
-      schema: input.schema,
-      sql: input.sql,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    files.value = [...files.value, file];
-    persist();
-    return file;
+    const saved = await api.saveSavedSqlFile(file);
+    files.value = [...files.value.filter((item) => item.id !== saved.id), saved];
+    return saved;
   }
 
-  function renameFile(id: string, name: string) {
-    const timestamp = nowIso();
-    files.value = files.value.map((file) => (file.id === id ? { ...file, name, updatedAt: timestamp } : file));
-    persist();
+  async function renameFile(id: string, name: string) {
+    const existing = getFile(id);
+    if (!existing) return;
+    const saved = await api.saveSavedSqlFile({ ...existing, name, updatedAt: nowIso() });
+    files.value = files.value.map((file) => (file.id === id ? saved : file));
   }
 
-  function deleteFile(id: string) {
+  async function deleteFile(id: string) {
+    await api.deleteSavedSqlFile(id);
     files.value = files.value.filter((file) => file.id !== id);
-    persist();
   }
 
   return {
     folders,
     files,
+    isLoaded,
     version,
+    initFromStorage,
     listFolders,
     listFiles,
     getFile,

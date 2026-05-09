@@ -124,6 +124,14 @@ async fn main() {
         .route("/history", get(routes::history::load_history).delete(routes::history::clear_history))
         .route("/history/save", post(routes::history::save_history))
         .route("/history/{id}", delete(routes::history::delete_history_entry))
+        // Saved SQL
+        .route(
+            "/saved-sql",
+            get(routes::saved_sql::load_saved_sql_library).post(routes::saved_sql::save_saved_sql_file),
+        )
+        .route("/saved-sql/{id}", delete(routes::saved_sql::delete_saved_sql_file))
+        .route("/saved-sql/folders", post(routes::saved_sql::save_saved_sql_folder))
+        .route("/saved-sql/folders/{id}", delete(routes::saved_sql::delete_saved_sql_folder))
         // AI
         .route("/ai/config", post(routes::ai::save_ai_config).get(routes::ai::load_ai_config))
         .route("/ai/conversation", post(routes::ai::save_ai_conversation))

@@ -161,12 +161,12 @@ function defaultSavedSqlName(title: string) {
   return trimmed.endsWith(".sql") ? trimmed : `${trimmed}.sql`;
 }
 
-function openSaveSqlDialog() {
+async function openSaveSqlDialog() {
   const tab = activeTab.value;
   if (!tab || !tab.sql.trim()) return;
   const existing = tab.savedSqlId ? savedSqlStore.getFile(tab.savedSqlId) : undefined;
   if (existing) {
-    const updated = savedSqlStore.saveFile({
+    const updated = await savedSqlStore.saveFile({
       id: existing.id,
       connectionId: tab.connectionId,
       folderId: existing.folderId,
@@ -186,12 +186,12 @@ function openSaveSqlDialog() {
   showSaveSqlDialog.value = true;
 }
 
-function confirmSaveSqlToLibrary() {
+async function confirmSaveSqlToLibrary() {
   const tab = activeTab.value;
   const name = saveSqlName.value.trim();
   if (!tab || !tab.sql.trim() || !name) return;
   try {
-    const saved = savedSqlStore.saveFile({
+    const saved = await savedSqlStore.saveFile({
       id: tab.savedSqlId,
       connectionId: tab.connectionId,
       folderId: saveSqlFolderId.value === ROOT_SAVED_SQL_FOLDER ? undefined : saveSqlFolderId.value,
@@ -378,7 +378,7 @@ function handleKeydown(e: KeyboardEvent) {
   ) {
     e.preventDefault();
     e.stopPropagation();
-    openSaveSqlDialog();
+    void openSaveSqlDialog();
     return;
   }
   if (
@@ -402,8 +402,9 @@ function onLoginSuccess() {
 }
 
 function initApp() {
-  connectionStore
-    .initFromDisk()
+  savedSqlStore
+    .initFromStorage()
+    .then(() => connectionStore.initFromDisk())
     .then(() => {
       reconnectRestoredTabs();
     })
@@ -531,7 +532,7 @@ onUnmounted(() => {
                   @cancel="cancelActiveExecution()"
                   @explain="tryExplain()"
                   @format-sql="formatActiveSql"
-                  @save-sql="openSaveSqlDialog"
+                  @save-sql="void openSaveSqlDialog()"
                   @open-sql="openSqlFile"
                   @change-connection="changeActiveConnection"
                   @change-database="changeActiveDatabase"

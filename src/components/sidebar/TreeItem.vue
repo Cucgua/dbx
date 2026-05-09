@@ -1221,16 +1221,16 @@ function openRenameSavedSqlFile() {
   showSavedSqlNameDialog.value = true;
 }
 
-function confirmSavedSqlName() {
+async function confirmSavedSqlName() {
   const name = savedSqlNameInput.value.trim();
   if (!name || !props.node.connectionId || !savedSqlNameMode.value) return;
 
   if (savedSqlNameMode.value === "folder-create") {
-    savedSqlStore.createFolder(props.node.connectionId, name);
+    await savedSqlStore.createFolder(props.node.connectionId, name);
   } else if (savedSqlNameMode.value === "folder-rename" && props.node.savedSqlFolderId) {
-    savedSqlStore.renameFolder(props.node.savedSqlFolderId, name);
+    await savedSqlStore.renameFolder(props.node.savedSqlFolderId, name);
   } else if (savedSqlNameMode.value === "file-rename" && props.node.savedSqlId) {
-    savedSqlStore.renameFile(props.node.savedSqlId, name.endsWith(".sql") ? name : `${name}.sql`);
+    await savedSqlStore.renameFile(props.node.savedSqlId, name.endsWith(".sql") ? name : `${name}.sql`);
   }
 
   connectionStore.refreshSavedSqlTree(props.node.connectionId);
@@ -1242,9 +1242,9 @@ function deleteSavedSqlFile() {
   showDeleteSavedSqlFileConfirm.value = true;
 }
 
-function confirmDeleteSavedSqlFile() {
+async function confirmDeleteSavedSqlFile() {
   if (!props.node.savedSqlId) return;
-  savedSqlStore.deleteFile(props.node.savedSqlId);
+  await savedSqlStore.deleteFile(props.node.savedSqlId);
   connectionStore.refreshSavedSqlTree(props.node.connectionId);
   showDeleteSavedSqlFileConfirm.value = false;
 }
@@ -1253,9 +1253,9 @@ function deleteSavedSqlFolder() {
   showDeleteSavedSqlFolderConfirm.value = true;
 }
 
-function confirmDeleteSavedSqlFolder() {
+async function confirmDeleteSavedSqlFolder() {
   if (!props.node.savedSqlFolderId) return;
-  savedSqlStore.deleteFolder(props.node.savedSqlFolderId);
+  await savedSqlStore.deleteFolder(props.node.savedSqlFolderId);
   connectionStore.refreshSavedSqlTree(props.node.connectionId);
   showDeleteSavedSqlFolderConfirm.value = false;
 }

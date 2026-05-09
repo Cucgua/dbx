@@ -6,6 +6,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use crate::ai::{AiChatMessage, AiConfig, AiConversation};
 use crate::history::HistoryEntry;
 use crate::models::connection::ConnectionConfig;
+use crate::saved_sql::{SavedSqlFile, SavedSqlFolder, SavedSqlLibrary};
 
 pub struct Storage {
     db: SqlitePool,
@@ -57,6 +58,24 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         cache_key TEXT PRIMARY KEY,
         payload_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
+    )",
+    "CREATE TABLE IF NOT EXISTS saved_sql_folders (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+    )",
+    "CREATE TABLE IF NOT EXISTS saved_sql_files (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        folder_id TEXT,
+        name TEXT NOT NULL DEFAULT '',
+        database_name TEXT NOT NULL DEFAULT '',
+        schema_name TEXT,
+        sql_text TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
     )",
 ];
 
@@ -378,6 +397,159 @@ impl Storage {
             configs.push(config);
         }
         Ok(configs)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Saved SQL Library
+// ---------------------------------------------------------------------------
+
+#[derive(sqlx::FromRow)]
+struct SavedSqlFolderRow {
+    id: String,
+    connection_id: String,
+    name: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct SavedSqlFileRow {
+    id: String,
+    connection_id: String,
+    folder_id: Option<String>,
+    name: String,
+    database_name: String,
+    schema_name: Option<String>,
+    sql_text: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<SavedSqlFolderRow> for SavedSqlFolder {
+    fn from(row: SavedSqlFolderRow) -> Self {
+        Self {
+            id: row.id,
+            connection_id: row.connection_id,
+            name: row.name,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+impl From<SavedSqlFileRow> for SavedSqlFile {
+    fn from(row: SavedSqlFileRow) -> Self {
+        Self {
+            id: row.id,
+            connection_id: row.connection_id,
+            folder_id: row.folder_id,
+            name: row.name,
+            database: row.database_name,
+            schema: row.schema_name,
+            sql: row.sql_text,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+impl Storage {
+    pub async fn load_saved_sql_library(&self) -> Result<SavedSqlLibrary, String> {
+        let folder_rows: Vec<SavedSqlFolderRow> = sqlx::query_as(
+            "SELECT id, connection_id, name, created_at, updated_at \
+             FROM saved_sql_folders ORDER BY connection_id, name COLLATE NOCASE",
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let file_rows: Vec<SavedSqlFileRow> = sqlx::query_as(
+            "SELECT id, connection_id, folder_id, name, database_name, schema_name, sql_text, created_at, updated_at \
+             FROM saved_sql_files ORDER BY connection_id, folder_id, name COLLATE NOCASE",
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(SavedSqlLibrary {
+            folders: folder_rows.into_iter().map(Into::into).collect(),
+            files: file_rows.into_iter().map(Into::into).collect(),
+        })
+    }
+
+    pub async fn save_saved_sql_folder(&self, folder: &SavedSqlFolder) -> Result<(), String> {
+        sqlx::query(
+            "INSERT INTO saved_sql_folders (id, connection_id, name, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET \
+             connection_id = excluded.connection_id, \
+             name = excluded.name, \
+             updated_at = excluded.updated_at",
+        )
+        .bind(&folder.id)
+        .bind(&folder.connection_id)
+        .bind(&folder.name)
+        .bind(&folder.created_at)
+        .bind(&folder.updated_at)
+        .execute(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_saved_sql_folder(&self, id: &str) -> Result<(), String> {
+        let mut tx = self.db.begin().await.map_err(|e| e.to_string())?;
+        sqlx::query("DELETE FROM saved_sql_files WHERE folder_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        sqlx::query("DELETE FROM saved_sql_folders WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn save_saved_sql_file(&self, file: &SavedSqlFile) -> Result<(), String> {
+        sqlx::query(
+            "INSERT INTO saved_sql_files \
+             (id, connection_id, folder_id, name, database_name, schema_name, sql_text, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET \
+             connection_id = excluded.connection_id, \
+             folder_id = excluded.folder_id, \
+             name = excluded.name, \
+             database_name = excluded.database_name, \
+             schema_name = excluded.schema_name, \
+             sql_text = excluded.sql_text, \
+             updated_at = excluded.updated_at",
+        )
+        .bind(&file.id)
+        .bind(&file.connection_id)
+        .bind(&file.folder_id)
+        .bind(&file.name)
+        .bind(&file.database)
+        .bind(&file.schema)
+        .bind(&file.sql)
+        .bind(&file.created_at)
+        .bind(&file.updated_at)
+        .execute(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_saved_sql_file(&self, id: &str) -> Result<(), String> {
+        sqlx::query("DELETE FROM saved_sql_files WHERE id = ?")
+            .bind(id)
+            .execute(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 

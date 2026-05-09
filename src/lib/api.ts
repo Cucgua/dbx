@@ -36,6 +36,11 @@ export const connectDb = forward("connectDb");
 export const disconnectDb = forward("disconnectDb");
 export const saveConnections = forward("saveConnections");
 export const loadConnections = forward("loadConnections");
+export const loadSavedSqlLibrary = forward("loadSavedSqlLibrary");
+export const saveSavedSqlFolder = forward("saveSavedSqlFolder");
+export const deleteSavedSqlFolder = forward("deleteSavedSqlFolder");
+export const saveSavedSqlFile = forward("saveSavedSqlFile");
+export const deleteSavedSqlFile = forward("deleteSavedSqlFile");
 
 // Schema
 export const listDatabases = forward("listDatabases");

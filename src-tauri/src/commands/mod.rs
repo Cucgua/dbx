@@ -8,6 +8,7 @@ pub mod mongo_cmd;
 pub mod query;
 pub mod query_cancel;
 pub mod redis_cmd;
+pub mod saved_sql;
 pub mod schema;
 pub mod schema_cache;
 pub mod sql_file;

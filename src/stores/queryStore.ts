@@ -11,7 +11,7 @@ import { restoreOpenTabsState, serializeOpenTabs } from "@/lib/openTabsPersisten
 import * as api from "@/lib/api";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import type { SavedSqlFile } from "@/stores/savedSqlStore";
+import type { SavedSqlFile } from "@/types/database";
 
 const STORAGE_KEY = "dbx-open-tabs";
 const ACTIVE_TAB_KEY = "dbx-active-tab";

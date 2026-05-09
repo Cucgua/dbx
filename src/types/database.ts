@@ -188,3 +188,28 @@ export interface QueryTab {
     columns: string[];
   };
 }
+
+export interface SavedSqlFolder {
+  id: string;
+  connectionId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedSqlFile {
+  id: string;
+  connectionId: string;
+  folderId?: string;
+  name: string;
+  database: string;
+  schema?: string;
+  sql: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedSqlLibrary {
+  folders: SavedSqlFolder[];
+  files: SavedSqlFile[];
+}

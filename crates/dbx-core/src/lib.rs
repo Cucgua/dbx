@@ -8,6 +8,7 @@ pub mod mongo_ops;
 pub mod query;
 pub mod query_cancel;
 pub mod redis_ops;
+pub mod saved_sql;
 pub mod schema;
 pub mod sql;
 pub mod storage;
