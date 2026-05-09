@@ -39,6 +39,14 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             commands::mcp_bridge::start(app_handle, state);
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_decorations(false);
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -16,6 +16,8 @@ import {
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import WindowControls from "@/components/layout/WindowControls.vue";
+import { useWindowControls } from "@/composables/useWindowControls";
 
 defineProps<{
   isDark: boolean;
@@ -41,10 +43,22 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { isMac, showControls, isMaximized, minimize, toggleMaximize, close } = useWindowControls();
+
+function onToolbarDblClick(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (target.closest("button, [role='button'], a")) return;
+  toggleMaximize();
+}
 </script>
 
 <template>
-  <div class="h-10 flex items-center gap-1 px-2 border-b bg-muted/30 shrink-0">
+  <div
+    class="h-8 flex items-center gap-1 px-2 border-b bg-muted/30 shrink-0"
+    :class="{ 'pl-17.5': isMac }"
+    data-tauri-drag-region
+    @dblclick="onToolbarDblClick"
+  >
     <Button variant="ghost" size="sm" class="h-7 px-2 text-xs gap-1" @click="emit('new-connection')">
       <DatabaseZap class="h-3.5 w-3.5" />
       {{ t("toolbar.newConnection") }}
@@ -83,7 +97,7 @@ const { t } = useI18n();
       {{ t("sqlFile.title") }}
     </Button>
 
-    <div class="flex-1" />
+    <div class="flex-1" data-tauri-drag-region />
 
     <Tooltip>
       <TooltipTrigger as-child>
@@ -165,5 +179,13 @@ const { t } = useI18n();
       </TooltipTrigger>
       <TooltipContent>{{ t("settings.title") }}</TooltipContent>
     </Tooltip>
+
+    <WindowControls
+      v-if="showControls"
+      :is-maximized="isMaximized"
+      @minimize="minimize"
+      @toggle-maximize="toggleMaximize"
+      @close="close"
+    />
   </div>
 </template>
