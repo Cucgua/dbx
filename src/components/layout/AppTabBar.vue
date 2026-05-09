@@ -60,7 +60,7 @@ watch(
       @scroll="updateScrollButtons"
     >
       <ContextMenu v-for="tab in queryStore.tabs" :key="tab.id">
-        <ContextMenuTrigger as-child>
+        <ContextMenuTrigger class="h-full">
           <Tooltip>
             <TooltipTrigger as-child>
               <div
