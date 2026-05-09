@@ -355,7 +355,7 @@ watch(
             </div>
           </div>
 
-          <DialogFooter class="gap-2 sm:gap-0">
+          <DialogFooter class="border-t-0 bg-transparent gap-2 sm:gap-0">
             <Button variant="outline" @click="resetDefaults">
               {{ t("settings.resetDefaults") }}
             </Button>
@@ -398,7 +398,7 @@ watch(
               {{ passwordMessage }}
             </p>
           </div>
-          <DialogFooter>
+          <DialogFooter class="border-t-0 bg-transparent">
             <Button variant="outline" @click="emit('update:open', false)">
               {{ t("common.close") }}
             </Button>
@@ -439,7 +439,7 @@ watch(
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter class="border-t-0 bg-transparent">
             <Button variant="outline" @click="emit('update:open', false)">
               {{ t("common.close") }}
             </Button>
