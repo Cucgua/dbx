@@ -53,6 +53,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
@@ -237,6 +238,158 @@ const orderByInput = ref("");
 const hasOrderByInput = computed(() => orderByInput.value.trim().length > 0);
 const whereFilterInput = ref("");
 const hasWhereFilterInput = computed(() => whereFilterInput.value.trim().length > 0);
+
+type LocalColumnFilterDraft = {
+  columnIndex: number;
+  values: Set<string>;
+};
+
+const localColumnFilters = ref<Record<number, Set<string>>>({});
+const localFilterOpenColumn = ref<number | null>(null);
+const localFilterSearch = ref("");
+const localFilterDraft = ref<LocalColumnFilterDraft | null>(null);
+
+function localFilterKey(value: CellValue): string {
+  if (value === null) return "__dbx_null__";
+  if (typeof value === "boolean") return `bool:${value}`;
+  if (typeof value === "number") return `num:${value}`;
+  return `str:${String(value)}`;
+}
+
+function localFilterLabel(value: CellValue): string {
+  return value === null ? "NULL" : formatCell(value);
+}
+
+function localFilterActive(colIdx: number): boolean {
+  return !!localColumnFilters.value[colIdx]?.size;
+}
+
+const localFilterCount = computed(() => Object.values(localColumnFilters.value).filter((values) => values.size).length);
+const hasLocalColumnFilters = computed(() => localFilterCount.value > 0);
+
+function rowMatchesLocalColumnFilters(data: CellValue[]): boolean {
+  const activeEntries = Object.entries(localColumnFilters.value).filter(([, selected]) => selected.size > 0);
+  if (activeEntries.length === 0) return true;
+  return activeEntries.every(([columnIndex, selected]) =>
+    selected.has(localFilterKey(data[Number(columnIndex)] ?? null)),
+  );
+}
+
+const localFilteredRows = computed(() => {
+  const rows = props.result.rows.map((row, sourceIndex) => ({ row, sourceIndex }));
+  if (!hasLocalColumnFilters.value) return rows;
+  return rows.filter(({ row, sourceIndex }) => rowMatchesLocalColumnFilters(rowDataWithChanges(row, sourceIndex)));
+});
+
+function buildLocalFilterOptions(columnIndex: number) {
+  const byKey = new Map<string, { key: string; label: string; count: number; value: CellValue }>();
+  const addValue = (value: CellValue) => {
+    const key = localFilterKey(value);
+    const current = byKey.get(key);
+    if (current) {
+      current.count += 1;
+    } else {
+      byKey.set(key, { key, label: localFilterLabel(value), count: 1, value });
+    }
+  };
+
+  for (const [sourceIndex, row] of props.result.rows.entries()) {
+    addValue(rowDataWithChanges(row, sourceIndex)[columnIndex] ?? null);
+  }
+  for (const row of newRows.value) {
+    addValue(row[columnIndex] ?? null);
+  }
+
+  return [...byKey.values()].sort((a, b) => {
+    if (a.value === null && b.value !== null) return -1;
+    if (a.value !== null && b.value === null) return 1;
+    return a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" });
+  });
+}
+
+const localFilterAllOptions = computed(() => {
+  const columnIndex = localFilterDraft.value?.columnIndex;
+  if (columnIndex === undefined) return [];
+  return buildLocalFilterOptions(columnIndex);
+});
+
+const localFilterOptions = computed(() => {
+  const query = localFilterSearch.value.trim().toLowerCase();
+  return localFilterAllOptions.value
+    .filter((option) => !query || option.label.toLowerCase().includes(query))
+    .slice(0, 500);
+});
+
+const localFilterAllVisibleSelected = computed(() => {
+  const draft = localFilterDraft.value;
+  if (!draft || localFilterOptions.value.length === 0) return false;
+  return localFilterOptions.value.every((option) => draft.values.has(option.key));
+});
+
+function openLocalFilter(colIdx: number) {
+  localFilterSearch.value = "";
+  const allKeys = buildLocalFilterOptions(colIdx).map((option) => option.key);
+  localFilterDraft.value = {
+    columnIndex: colIdx,
+    values: new Set(localColumnFilters.value[colIdx] ?? allKeys),
+  };
+  localFilterOpenColumn.value = colIdx;
+}
+
+function closeLocalFilter() {
+  localFilterOpenColumn.value = null;
+  localFilterDraft.value = null;
+  localFilterSearch.value = "";
+}
+
+function toggleLocalFilterValue(key: string) {
+  const draft = localFilterDraft.value;
+  if (!draft) return;
+  const next = new Set(draft.values);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  localFilterDraft.value = { ...draft, values: next };
+}
+
+function toggleAllLocalFilterOptions() {
+  const draft = localFilterDraft.value;
+  if (!draft) return;
+  const visibleKeys = localFilterOptions.value.map((option) => option.key);
+  const next = new Set(draft.values);
+  if (localFilterAllVisibleSelected.value) {
+    visibleKeys.forEach((key) => next.delete(key));
+  } else {
+    visibleKeys.forEach((key) => next.add(key));
+  }
+  localFilterDraft.value = { ...draft, values: next };
+}
+
+function applyLocalFilter() {
+  const draft = localFilterDraft.value;
+  if (!draft) return;
+  const allKeys = new Set(localFilterAllOptions.value.map((option) => option.key));
+  const next = { ...localColumnFilters.value };
+  if (draft.values.size === 0 || draft.values.size === allKeys.size) {
+    delete next[draft.columnIndex];
+  } else {
+    next[draft.columnIndex] = new Set(draft.values);
+  }
+  localColumnFilters.value = next;
+  closeLocalFilter();
+  resetGridVerticalScroll();
+}
+
+function clearLocalFilter(colIdx?: number) {
+  if (colIdx === undefined) {
+    localColumnFilters.value = {};
+  } else {
+    const next = { ...localColumnFilters.value };
+    delete next[colIdx];
+    localColumnFilters.value = next;
+  }
+  closeLocalFilter();
+  resetGridVerticalScroll();
+}
 
 function updateSuggestionPosition() {
   nextTick(() => {
@@ -667,6 +820,13 @@ const columnVars = computed(() => {
 
 initColumnWidths();
 watch(() => props.result.columns.length, initColumnWidths);
+watch(
+  () => props.result,
+  () => {
+    localColumnFilters.value = {};
+    closeLocalFilter();
+  },
+);
 
 // --- Pagination ---
 const pageSize = ref(100);
@@ -773,7 +933,7 @@ function onToolbarRollback() {
 }
 
 const sortedRows = computed(() => {
-  let rows = props.result.rows.map((row, sourceIndex) => ({ row, sourceIndex }));
+  let rows = localFilteredRows.value;
   if (clientSearchText.value) {
     const q = clientSearchText.value.toLowerCase();
     rows = rows.filter(({ row, sourceIndex }) => {
@@ -811,6 +971,7 @@ const displayItems = computed<RowItem[]>(() => {
     return { id: sourceIndex, sourceIndex, data, isNew: false, isDeleted, isDirtyCol, status };
   });
   newRows.value.forEach((row, i) => {
+    if (!rowMatchesLocalColumnFilters(row)) return;
     items.push({
       id: -(i + 1),
       newIndex: i,
@@ -824,7 +985,9 @@ const displayItems = computed<RowItem[]>(() => {
   return items.filter((item) => matchesRowStatusFilter(item.status, rowStatusFilter.value));
 });
 const hasVisibleRows = computed(() => displayItems.value.length > 0);
-const hasActiveFilter = computed(() => !!clientSearchText.value || rowStatusFilter.value !== "all");
+const hasActiveFilter = computed(
+  () => !!clientSearchText.value || rowStatusFilter.value !== "all" || hasLocalColumnFilters.value,
+);
 const totalFilterableRowCount = computed(() => props.result.rows.length + newRows.value.length);
 const emptyTitle = computed(() => (hasActiveFilter.value ? t("grid.noFilteredRows") : t("grid.noRows")));
 const emptyDescription = computed(() =>
@@ -1888,6 +2051,17 @@ defineExpose({
               <span v-if="hasActiveFilter" class="text-xs text-muted-foreground shrink-0 px-1">
                 {{ displayItems.length }}/{{ totalFilterableRowCount }}
               </span>
+              <button
+                v-if="hasLocalColumnFilters"
+                type="button"
+                class="flex shrink-0 items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15"
+                :title="t('grid.clearLocalFilters')"
+                @click="clearLocalFilter()"
+              >
+                <Filter class="h-3 w-3" />
+                {{ localFilterCount }}
+                <X class="h-3 w-3" />
+              </button>
             </div>
 
             <template v-if="canUseWhereSearch">
@@ -2077,24 +2251,162 @@ defineExpose({
                   <Tooltip v-for="(col, colIdx) in result.columns" :key="`${col}-${colIdx}`">
                     <TooltipTrigger as-child>
                       <div
-                        class="shrink-0 px-3 py-1.5 border-r border-border whitespace-nowrap cursor-pointer hover:bg-accent/60 select-none relative overflow-hidden"
+                        class="shrink-0 px-2 py-1.5 border-r border-border whitespace-nowrap hover:bg-accent/60 select-none relative overflow-hidden"
                         :style="{ width: `var(--col-w-${colIdx})` }"
-                        @click="toggleSort(col, colIdx)"
                       >
-                        <span class="flex min-w-0 items-center gap-1 overflow-hidden group">
-                          <span class="min-w-0 truncate">{{ col }}</span>
-                          <ArrowUp
-                            v-if="sortCol === col && sortColIndex === colIdx && sortDir === 'asc'"
-                            class="h-3 w-3 shrink-0"
-                          />
-                          <ArrowDown
-                            v-else-if="sortCol === col && sortColIndex === colIdx && sortDir === 'desc'"
-                            class="h-3 w-3 shrink-0"
-                          />
-                          <ArrowUpDown
-                            v-else
-                            class="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-30 transition-opacity"
-                          />
+                        <span class="flex min-w-0 items-center gap-1 overflow-hidden">
+                          <span class="min-w-0 flex-1 truncate cursor-pointer" @click="toggleSort(col, colIdx)">{{
+                            col
+                          }}</span>
+                          <button
+                            type="button"
+                            class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                            :class="
+                              sortCol === col && sortColIndex === colIdx ? 'text-primary opacity-100' : 'opacity-80'
+                            "
+                            :title="t('grid.sort')"
+                            @click.stop="toggleSort(col, colIdx)"
+                          >
+                            <ArrowUp
+                              v-if="sortCol === col && sortColIndex === colIdx && sortDir === 'asc'"
+                              class="h-3 w-3 shrink-0"
+                            />
+                            <ArrowDown
+                              v-else-if="sortCol === col && sortColIndex === colIdx && sortDir === 'desc'"
+                              class="h-3 w-3 shrink-0"
+                            />
+                            <ArrowUpDown v-else class="h-3 w-3 shrink-0" />
+                          </button>
+                          <Popover
+                            :open="localFilterOpenColumn === colIdx"
+                            @update:open="(value: boolean) => (value ? openLocalFilter(colIdx) : closeLocalFilter())"
+                          >
+                            <PopoverTrigger as-child>
+                              <button
+                                type="button"
+                                class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                                :class="localFilterActive(colIdx) ? 'text-primary opacity-100' : 'opacity-80'"
+                                :title="t('grid.localFilter')"
+                                @click.stop
+                              >
+                                <Filter class="h-3.5 w-3.5" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              align="start"
+                              side="bottom"
+                              class="w-[520px] max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-2xl ring-0 dark:border-slate-200 dark:bg-white dark:text-slate-900"
+                              @click.stop
+                              @keydown.stop
+                            >
+                              <div
+                                class="border-b border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-900"
+                              >
+                                {{ t("grid.localFilterFor", { column: col }) }}
+                              </div>
+                              <div class="flex items-center gap-2 border-b border-slate-200 px-3 py-2">
+                                <Search class="h-4 w-4 shrink-0 text-slate-400" />
+                                <input
+                                  v-model="localFilterSearch"
+                                  autocapitalize="off"
+                                  autocorrect="off"
+                                  spellcheck="false"
+                                  class="h-8 min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                                  :placeholder="t('grid.searchValues')"
+                                />
+                              </div>
+                              <div
+                                class="grid grid-cols-[2rem_minmax(0,1fr)_4rem] border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-500"
+                              >
+                                <button
+                                  type="button"
+                                  class="flex h-5 w-5 items-center justify-center rounded border"
+                                  :class="
+                                    localFilterAllVisibleSelected
+                                      ? 'border-blue-600 bg-blue-600 text-white'
+                                      : 'border-slate-300 bg-white text-slate-700'
+                                  "
+                                  @click="toggleAllLocalFilterOptions"
+                                >
+                                  <Check v-if="localFilterAllVisibleSelected" class="h-3 w-3" />
+                                </button>
+                                <span>{{ t("grid.value") }}</span>
+                                <span class="text-right">{{ t("grid.count") }}</span>
+                              </div>
+                              <div class="max-h-72 overflow-auto py-1">
+                                <button
+                                  v-for="option in localFilterOptions"
+                                  :key="option.key"
+                                  type="button"
+                                  class="grid w-full grid-cols-[2rem_minmax(0,1fr)_4rem] items-center px-3 py-1.5 text-left text-sm text-slate-900 hover:bg-sky-50"
+                                  @click="toggleLocalFilterValue(option.key)"
+                                >
+                                  <span
+                                    class="flex h-5 w-5 items-center justify-center rounded border"
+                                    :class="
+                                      localFilterDraft?.values.has(option.key)
+                                        ? 'border-blue-600 bg-blue-600 text-white'
+                                        : 'border-slate-300 bg-white text-slate-700'
+                                    "
+                                  >
+                                    <Check v-if="localFilterDraft?.values.has(option.key)" class="h-3 w-3" />
+                                  </span>
+                                  <span
+                                    class="truncate font-mono"
+                                    :class="{ 'italic text-slate-500': option.value === null }"
+                                  >
+                                    {{ option.label }}
+                                  </span>
+                                  <span class="text-right tabular-nums text-slate-500">{{ option.count }}</span>
+                                </button>
+                                <div
+                                  v-if="localFilterAllOptions.length > localFilterOptions.length"
+                                  class="px-3 py-1 text-center text-[11px] text-slate-500"
+                                >
+                                  {{
+                                    t("grid.moreValues", {
+                                      count: localFilterAllOptions.length - localFilterOptions.length,
+                                    })
+                                  }}
+                                </div>
+                                <div
+                                  v-if="localFilterOptions.length === 0"
+                                  class="px-3 py-8 text-center text-sm text-slate-500"
+                                >
+                                  {{ t("grid.noSearchResults") }}
+                                </div>
+                              </div>
+                              <div
+                                class="flex items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2"
+                              >
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  class="h-7 px-2 text-xs text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-700 dark:hover:bg-slate-100 dark:hover:text-slate-900"
+                                  @click="clearLocalFilter(colIdx)"
+                                >
+                                  {{ t("grid.clearFilter") }}
+                                </Button>
+                                <div class="flex items-center gap-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    class="h-7 border-slate-300 bg-white px-2 text-xs text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-300 dark:bg-white dark:text-slate-700 dark:hover:bg-slate-100 dark:hover:text-slate-900"
+                                    @click="closeLocalFilter"
+                                  >
+                                    {{ t("dangerDialog.cancel") }}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    class="h-7 bg-blue-600 px-2 text-xs text-white hover:bg-blue-700 dark:bg-blue-600 dark:text-white dark:hover:bg-blue-700"
+                                    @click="applyLocalFilter"
+                                  >
+                                    {{ t("grid.applyFilter") }}
+                                  </Button>
+                                </div>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
                         </span>
                         <div
                           class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
