@@ -1,122 +1,130 @@
 ---
 title: AI 助手
-description: 内置 AI 助手，自然语言转 SQL、查询优化、错误修复，支持 Claude/OpenAI/自定义端点。
+description: 配置 AI 供应商后，在 DBX 中生成 SQL、解释查询、优化语句并辅助修复错误。
 ---
 
-<Callout type="info">
-内置 AI 助手，无需额外安装插件。自然语言描述需求，AI 帮你生成 SQL、优化查询、修复错误。
+AI 助手用于辅助 SQL 工作。它会结合当前连接的数据库元数据理解表结构和字段，再根据你的描述生成 SQL、解释查询、给出优化建议或帮助修复错误。
+
+<Callout type="warn">
+AI 生成的 SQL 不会自动执行。请在执行前检查表名、字段名、筛选条件和影响范围，尤其是在生产环境连接上。
 </Callout>
 
-DBX 内置 AI 助手，深度集成数据库元数据，能根据你的表结构和字段生成精准的 SQL。
-
-![DBX AI 助手](/screenshot-ai.jpg)
-
-## 设置
+## 配置
 
 <Steps>
   <Step>
     ### 打开设置
-    点击工具栏的 **设置** 图标。
+
+    进入 DBX 设置页，找到 AI 相关配置。
   </Step>
   <Step>
-    ### 选择 AI 供应商
-    进入 **AI 设置**，选择供应商。
+    ### 选择供应商
+
+    选择 Anthropic、OpenAI 或兼容 OpenAI API 的自定义端点。
   </Step>
   <Step>
-    ### 输入 API Key
-    填入你的 API Key（如使用自定义端点，还需填入端点 URL）。
+    ### 填写凭据
+
+    输入 API Key。使用自定义端点时，还需要填写接口地址和模型名称。
   </Step>
   <Step>
-    ### 选择模型并开始使用
-    选择一个模型，完成设置。回到编辑器即可使用 AI 功能。
+    ### 保存并测试
+
+    保存配置后回到编辑器，尝试用自然语言生成一条简单查询。
   </Step>
 </Steps>
 
-## 核心功能
+<Callout type="info">
+如果没有配置 API Key，AI 功能应向用户提示需要先完成设置，而不是静默失败。
+</Callout>
 
-### 自然语言转 SQL
+## 常见用法
 
-用自然语言描述你的查询需求，AI 助手根据数据库结构生成对应的 SQL：
+### 生成 SQL
 
-> **你说：** "查看最近 10 个订单金额最高的客户"
->
-> **AI 生成：**
-> ```sql
-> SELECT c.name, SUM(o.amount) AS total_amount
-> FROM customers c
-> JOIN orders o ON c.id = o.customer_id
-> WHERE o.created_at >= NOW() - INTERVAL 30 DAY
-> GROUP BY c.id, c.name
-> ORDER BY total_amount DESC
-> LIMIT 10;
-> ```
+用自然语言描述目标，AI 会结合当前连接的元数据生成查询：
 
-AI 会自动识别你当前连接的数据库中的表名和字段名，不会生成不存在的表或字段。
+> 查看最近 30 天订单金额最高的 10 个客户
+
+可能生成：
+
+```sql
+SELECT c.name, SUM(o.amount) AS total_amount
+FROM customers c
+JOIN orders o ON c.id = o.customer_id
+WHERE o.created_at >= NOW() - INTERVAL 30 DAY
+GROUP BY c.id, c.name
+ORDER BY total_amount DESC
+LIMIT 10;
+```
+
+生成后建议检查：
+
+- 是否使用了正确的表和字段
+- 时间范围是否符合预期
+- 聚合和排序逻辑是否正确
+- 是否需要限制返回行数
 
 ### 解释 SQL
 
-选中一段复杂的 SQL 查询，AI 会逐步解释它的逻辑：
+选中一段 SQL 后，可以让 AI 解释它的结构：
 
 - 每个子查询的作用
-- JOIN 条件的含义
-- WHERE 过滤条件的业务意义
-- 聚合函数和分组逻辑
+- `JOIN` 条件如何关联表
+- `WHERE` 条件过滤了什么
+- 聚合、分组和排序的意义
+
+这适合阅读历史查询、接手报表 SQL 或理解复杂视图。
 
 ### 优化 SQL
 
-AI 会分析查询的潜在性能问题，给出优化建议：
+AI 可以根据 SQL 和表结构给出优化方向，例如：
 
-- 是否缺少索引
-- 是否可以减少全表扫描
-- 子查询是否可以改写为 JOIN
-- 是否存在不必要的排序或去重
+- 是否可能发生全表扫描
+- 是否缺少合适索引
+- 子查询是否可以改写为 `JOIN`
+- 排序、去重或聚合是否可以减少
+
+<Callout type="info">
+AI 的优化建议是参考信息。真正的性能判断仍应结合数据库的执行计划、数据量和索引情况。
+</Callout>
 
 ### 修复错误
 
-查询执行失败时，点击 **AI 修复**，AI 会根据错误信息和 SQL 内容自动生成修正版本。常见场景包括：
+当 SQL 执行失败时，可以把错误信息和当前 SQL 交给 AI 辅助分析。常见修复包括：
 
-- 语法错误修正
-- 字段名或表名拼写错误
-- 缺少 GROUP BY 字段
+- 语法错误
+- 表名或字段名拼写错误
+- `GROUP BY` 字段缺失
 - 类型不匹配
+- 不同数据库方言之间的语法差异
 
 ## 支持的供应商
 
-<Tabs groupId="ai-provider" items={['Anthropic (Claude)', 'OpenAI', '自定义端点']}>
-  <Tab value="Anthropic (Claude)">
-    | 模型 | 说明 |
-    |---|---|
-    | Claude 4 Opus | 最强模型，复杂查询推荐 |
-    | Claude 4 Sonnet | 速度与质量平衡 |
-    | Claude 3.5 Haiku | 最快响应 |
-
-    在 AI 设置中选择 **Anthropic**，填入 API Key 即可。
+<Tabs groupId="ai-provider" items={['Anthropic', 'OpenAI', '自定义端点']}>
+  <Tab value="Anthropic">
+    适合使用 Claude 系列模型。填写 API Key 后，在模型输入框中选择或填写你要使用的模型。
   </Tab>
   <Tab value="OpenAI">
-    | 模型 | 说明 |
-    |---|---|
-    | GPT-4o | 最新旗舰模型 |
-    | GPT-4o-mini | 轻量快速 |
-    | o3-mini | 推理增强 |
-
-    在 AI 设置中选择 **OpenAI**，填入 API Key 即可。
+    适合使用 OpenAI 模型。填写 API Key 后，在模型输入框中选择或填写你要使用的模型。
   </Tab>
   <Tab value="自定义端点">
-    任何兼容 OpenAI Chat Completions API 的端点都可以使用，例如：
+    适合兼容 OpenAI Chat Completions API 的服务，例如本地模型服务、企业网关或第三方模型平台。
 
-    - **Ollama** — 本地运行开源模型
-    - **LM Studio** — 本地模型管理
-    - **Azure OpenAI** — 企业级部署
-    - **DeepSeek / Qwen** — 国产大模型
+    需要配置：
 
-    在 AI 设置中选择 **自定义端点**，填入端点 URL 和 API Key。
+    - Endpoint URL
+    - API Key
+    - Model
   </Tab>
 </Tabs>
 
-## 更强大的 AI 体验
+## 隐私与安全
 
-<Callout type="info">
-想让 AI 助手不只是生成 SQL，还能直接执行查询、浏览数据？试试 [MCP 集成](/cn/docs/mcp)。
-</Callout>
+AI 请求通常会包含你的问题、相关 SQL、错误信息，以及必要的表结构上下文。使用前请确认：
 
-MCP 集成让 Claude Code、Cursor 等 AI 编程助手直接通过 DBX 查询你的数据库，并在 DBX 中打开结果。这意味着你可以在 IDE 中用自然语言和 AI 对话，AI 自动调用 DBX 执行查询并返回结果。
+- 当前供应商是否允许发送这些信息
+- 是否包含敏感字段名、业务规则或样例数据
+- 团队是否对第三方模型调用有合规要求
+
+如果希望 AI 直接通过工具查询数据库，可以继续阅读 [MCP 集成](/cn/docs/mcp)。

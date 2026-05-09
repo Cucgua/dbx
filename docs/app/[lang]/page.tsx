@@ -1,201 +1,155 @@
 import Link from 'next/link';
 import {
-  Database,
-  Zap,
-  Shield,
-  Bot,
   ArrowRight,
-  GitCompare,
-  Table,
-  Search,
+  Bot,
+  CheckCircle2,
+  Database,
   FileCode,
-  Import,
+  GitCompare,
   Network,
+  Search,
+  Shield,
+  Table,
   Terminal,
+  Zap,
 } from 'lucide-react';
 
-const stats = {
+const languages = ['MySQL', 'PostgreSQL', 'SQLite', 'Redis', 'MongoDB', 'DuckDB', 'ClickHouse', 'SQL Server', 'Oracle'];
+
+const metrics = {
   en: [
-    { value: '15 MB', label: 'Install Size' },
-    { value: '25+', label: 'Databases' },
-    { value: 'Desktop + Docker', label: 'Deployment' },
-    { value: 'Built-in AI', label: 'Assistant' },
+    { value: '~15 MB', label: 'desktop installer' },
+    { value: '25+', label: 'database engines' },
+    { value: '2 modes', label: 'desktop and Docker' },
   ],
   cn: [
-    { value: '15 MB', label: '安装体积' },
-    { value: '25+', label: '支持数据库' },
-    { value: '桌面 + Docker', label: '部署方式' },
-    { value: '内置 AI', label: '智能助手' },
+    { value: '~15 MB', label: '桌面安装包' },
+    { value: '25+', label: '数据库引擎' },
+    { value: '2 种模式', label: '桌面与 Docker' },
   ],
 };
 
-const features = {
+const workflows = {
   en: [
     {
       icon: Terminal,
-      title: 'Query Editor',
-      desc: 'CodeMirror 6-powered SQL editor with syntax highlighting, smart autocomplete, and query history.',
+      title: 'Write and run SQL',
+      desc: 'A CodeMirror 6 editor with metadata-aware completion, formatting, history, and selected SQL execution.',
       href: '/en/docs/query-editor',
     },
     {
       icon: Table,
-      title: 'Data Grid',
-      desc: 'Browse and edit data with virtual scrolling. Inline editing with SQL preview before saving.',
+      title: 'Browse and edit data',
+      desc: 'Virtualized grids, inline editing, WHERE/ORDER BY controls, SQL preview, and export tools.',
       href: '/en/docs/data-grid',
     },
     {
       icon: Search,
-      title: 'Schema Browser',
-      desc: 'Tree view with search, pin, context menus, and column comments. Color-coded connections.',
+      title: 'Explore schemas',
+      desc: 'Navigate databases, schemas, tables, columns, indexes, foreign keys, and triggers from a focused sidebar.',
       href: '/en/docs/schema-browser',
     },
     {
       icon: GitCompare,
-      title: 'Schema Diff & Sync',
-      desc: 'Compare schemas across databases and generate sync SQL. Dev vs Production in one click.',
+      title: 'Compare and migrate',
+      desc: 'Schema diff, table import, database export, SQL file execution, and cross-engine data transfer.',
       href: '/en/docs/schema-diff',
-    },
-    {
-      icon: Bot,
-      title: 'AI Assistant + MCP',
-      desc: 'Natural language to SQL, query optimization, error fixing. Let Claude/Cursor query your databases via MCP.',
-      href: '/en/docs/ai-assistant',
-    },
-    {
-      icon: Import,
-      title: 'Data Transfer',
-      desc: 'Move data across database engines — MySQL to PostgreSQL, SQLite to SQL Server, and more.',
-      href: '/en/docs/data-transfer',
-    },
-    {
-      icon: Network,
-      title: 'Field Lineage',
-      desc: 'Trace column relationships across foreign keys, views, and query history with confidence levels.',
-      href: '/en/docs/field-lineage',
-    },
-    {
-      icon: FileCode,
-      title: 'Import & Export',
-      desc: 'Import CSV/JSON/Excel, export SQL dumps, run .sql files with smart statement splitting.',
-      href: '/en/docs/table-import',
     },
   ],
   cn: [
     {
       icon: Terminal,
-      title: '查询编辑器',
-      desc: '基于 CodeMirror 6 的 SQL 编辑器，支持语法高亮、智能补全、JOIN 建议和查询历史。',
+      title: '编写与执行 SQL',
+      desc: 'CodeMirror 6 编辑器，支持元数据补全、格式化、查询历史和选中 SQL 执行。',
       href: '/cn/docs/query-editor',
     },
     {
       icon: Table,
-      title: '数据表格',
-      desc: '虚拟滚动浏览大数据量。行内编辑，保存前可预览将要执行的 SQL 语句。',
+      title: '浏览与编辑数据',
+      desc: '虚拟滚动表格、行内编辑、WHERE/ORDER BY 控制、SQL 预览和导出工具。',
       href: '/cn/docs/data-grid',
     },
     {
       icon: Search,
-      title: '结构浏览',
-      desc: '树形视图，支持搜索、置顶、右键菜单、字段注释显示和连接颜色标记。',
+      title: '浏览数据库结构',
+      desc: '在侧边栏中查看数据库、Schema、表、字段、索引、外键和触发器。',
       href: '/cn/docs/schema-browser',
     },
     {
       icon: GitCompare,
-      title: 'Schema 对比与同步',
-      desc: '跨数据库结构对比，自动生成同步 SQL。开发环境 vs 生产环境，一键搞定。',
+      title: '对比与迁移',
+      desc: 'Schema 对比、表导入、数据库导出、SQL 文件执行和跨引擎数据传输。',
       href: '/cn/docs/schema-diff',
-    },
-    {
-      icon: Bot,
-      title: 'AI 助手 + MCP',
-      desc: '自然语言转 SQL、查询优化、错误修复。通过 MCP 让 Claude/Cursor 直接查询你的数据库。',
-      href: '/cn/docs/ai-assistant',
-    },
-    {
-      icon: Import,
-      title: '数据传输',
-      desc: '跨引擎数据迁移 — MySQL 到 PostgreSQL、SQLite 到 SQL Server，自动处理类型映射。',
-      href: '/cn/docs/data-transfer',
-    },
-    {
-      icon: Network,
-      title: '字段血缘',
-      desc: '追踪外键、视图、查询历史中的字段关联关系，标注置信度，数据治理必备。',
-      href: '/cn/docs/field-lineage',
-    },
-    {
-      icon: FileCode,
-      title: '导入与导出',
-      desc: '导入 CSV/JSON/Excel，导出 SQL 文件，执行 .sql 脚本，智能语句分割。',
-      href: '/cn/docs/table-import',
     },
   ],
 };
 
-const databases = [
-  'MySQL', 'PostgreSQL', 'SQLite', 'Redis', 'MongoDB',
-  'DuckDB', 'ClickHouse', 'SQL Server', 'Oracle', 'Elasticsearch',
-  'MariaDB', 'TiDB', 'OceanBase', 'CockroachDB', 'StarRocks',
-  'Doris', 'DM', 'GaussDB', 'Redshift', 'TDengine',
-];
-
-const comparison = {
-  en: {
-    title: 'Why DBX?',
-    headers: ['', 'DBX', 'DBeaver', 'Navicat', 'TablePlus'],
-    rows: [
-      ['Install Size', '~15 MB', '~300 MB', '~200 MB', '~80 MB'],
-      ['Price', 'Free (AGPL)', 'Free / $230', '$180+', '$99+'],
-      ['Database Support', '25+', '80+', '15+', '20+'],
-      ['Built-in AI', 'Yes', 'No', 'Yes', 'No'],
-      ['MCP Integration', 'Yes', 'No', 'No', 'No'],
-      ['Docker Self-Host', 'Yes', 'No', 'No', 'No'],
-      ['Field Lineage', 'Yes', 'No', 'No', 'No'],
-    ],
-  },
-  cn: {
-    title: '为什么选择 DBX？',
-    headers: ['', 'DBX', 'DBeaver', 'Navicat', 'TablePlus'],
-    rows: [
-      ['安装体积', '~15 MB', '~300 MB', '~200 MB', '~80 MB'],
-      ['价格', '免费 (AGPL)', '免费 / $230', '$180+', '$99+'],
-      ['数据库支持', '25+', '80+', '15+', '20+'],
-      ['内置 AI', '有', '无', '有', '无'],
-      ['MCP 集成', '有', '无', '无', '无'],
-      ['Docker 自托管', '有', '无', '无', '无'],
-      ['字段血缘', '有', '无', '无', '无'],
-    ],
-  },
+const capabilities = {
+  en: [
+    { icon: Database, label: 'Native Rust drivers, no JDBC runtime' },
+    { icon: Shield, label: 'SSH tunnels, encrypted config export, destructive action guards' },
+    { icon: Bot, label: 'AI assistant plus MCP server for Claude Code, Cursor, and agents' },
+    { icon: Network, label: 'ER diagrams, schema diff, and field lineage for deeper analysis' },
+    { icon: FileCode, label: 'CSV, Excel, SQL files, full exports, and cross-engine transfer' },
+    { icon: Zap, label: 'Desktop app and self-hosted web deployment from the same project' },
+  ],
+  cn: [
+    { icon: Database, label: 'Rust 原生驱动，不依赖 JDBC 运行时' },
+    { icon: Shield, label: 'SSH 隧道、加密配置导出、危险操作确认' },
+    { icon: Bot, label: '内置 AI 助手，以及面向 Claude Code、Cursor 的 MCP Server' },
+    { icon: Network, label: 'ER 图、Schema 对比、字段血缘，覆盖更深层分析场景' },
+    { icon: FileCode, label: 'CSV、Excel、SQL 文件、完整导出和跨引擎传输' },
+    { icon: Zap, label: '桌面应用与自托管 Web 部署来自同一个项目' },
+  ],
 };
 
 const i18nText = {
   en: {
-    heroTitle: '25+ Databases.',
-    heroTitle2: 'One 15 MB App.',
-    heroSubtitle: 'Open-source database management tool with built-in AI assistant. Desktop & Docker self-hosting, powered by Tauri 2 and Rust.',
-    ctaDownload: 'Download',
-    ctaDocs: 'Read the Docs',
-    featuresTitle: 'Everything You Need',
-    featuresSubtitle: 'A complete toolkit for database management, from daily queries to cross-engine migration.',
-    dbTitle: 'Supported Databases',
-    dbSubtitle: 'Native Rust drivers, no JDBC. MySQL/PostgreSQL compatible databases work out of the box.',
-    andMore: 'and more...',
-    footerCta: 'Ready to try?',
-    footerCtaSub: 'Download DBX or deploy with Docker in seconds.',
+    navDocs: 'Docs',
+    navCommunity: 'Community',
+    lang: '中文',
+    eyebrow: 'Open-source database workspace',
+    heroTitle: 'A focused database client for daily work.',
+    heroSubtitle:
+      'DBX brings connections, SQL editing, data grids, schema tools, AI assistance, and self-hosted access into one lightweight product.',
+    download: 'Download DBX',
+    readDocs: 'Read the docs',
+    installLabel: 'Install on macOS',
+    installCommand: 'brew install --cask t8y2/tap/dbx',
+    docsStart: 'Start here',
+    docsStartDesc: 'Install DBX, create your first connection, and learn the main workflow.',
+    workflowsTitle: 'Core workflows',
+    workflowsDesc: 'The docs are organized around what you actually do in a database client.',
+    supportTitle: 'Database coverage',
+    supportDesc: 'SQL, NoSQL, embedded databases, and popular MySQL/PostgreSQL-compatible engines.',
+    capabilitiesTitle: 'Built for real database work',
+    footerTitle: 'Ready to try DBX?',
+    footerDesc: 'Use the desktop app for local work, or deploy the Docker version for browser-based access.',
+    release: 'Latest release',
+    docker: 'Docker setup',
   },
   cn: {
-    heroTitle: '25+ 数据库',
-    heroTitle2: '一个 15 MB 的应用',
-    heroSubtitle: '开源数据库管理工具，内置 AI 助手。桌面应用 + Docker 自托管，基于 Tauri 2 和 Rust 构建。',
-    ctaDownload: '下载',
-    ctaDocs: '查看文档',
-    featuresTitle: '功能一览',
-    featuresSubtitle: '从日常查询到跨引擎迁移，一站式数据库管理工具。',
-    dbTitle: '支持的数据库',
-    dbSubtitle: 'Rust 原生驱动，无 JDBC。MySQL / PostgreSQL 兼容数据库开箱即用。',
-    andMore: '更多...',
-    footerCta: '准备好了吗？',
-    footerCtaSub: '下载 DBX 或用 Docker 秒级部署。',
+    navDocs: '文档',
+    navCommunity: '社区',
+    lang: 'English',
+    eyebrow: '开源数据库工作台',
+    heroTitle: '专注日常工作的数据库客户端。',
+    heroSubtitle: 'DBX 将连接管理、SQL 编辑、数据表格、结构工具、AI 助手和自托管访问放进一个轻量产品里。',
+    download: '下载 DBX',
+    readDocs: '查看文档',
+    installLabel: 'macOS 安装',
+    installCommand: 'brew install --cask t8y2/tap/dbx',
+    docsStart: '从这里开始',
+    docsStartDesc: '安装 DBX、创建第一个连接，并了解主要工作流。',
+    workflowsTitle: '核心工作流',
+    workflowsDesc: '文档围绕数据库客户端里的真实任务组织，而不是堆功能清单。',
+    supportTitle: '数据库覆盖',
+    supportDesc: '覆盖 SQL、NoSQL、嵌入式数据库，以及常见 MySQL/PostgreSQL 兼容数据库。',
+    capabilitiesTitle: '面向真实数据库工作的能力',
+    footerTitle: '准备试试 DBX？',
+    footerDesc: '本地工作使用桌面版，需要浏览器访问时部署 Docker 版。',
+    release: '最新版本',
+    docker: 'Docker 部署',
   },
 };
 
@@ -207,13 +161,12 @@ export default async function LandingPage({
   const { lang } = await params;
   const l = lang === 'cn' ? 'cn' : 'en';
   const t = i18nText[l];
-  const feat = features[l];
-  const stat = stats[l];
-  const comp = comparison[l];
+  const workflowItems = workflows[l];
+  const capabilityItems = capabilities[l];
+  const metricItems = metrics[l];
 
   return (
     <main className="landing">
-      {/* Navbar */}
       <nav className="landing-nav">
         <div className="landing-nav-inner">
           <Link href={`/${l}`} className="landing-logo">
@@ -221,152 +174,126 @@ export default async function LandingPage({
             <span>DBX</span>
           </Link>
           <div className="landing-nav-links">
-            <Link href={`/${l}/docs/what-is-dbx`}>{l === 'cn' ? '文档' : 'Docs'}</Link>
-            <Link href="https://github.com/t8y2/dbx" target="_blank">GitHub</Link>
-            <Link href="https://discord.gg/W7NyVDRt6a" target="_blank">Discord</Link>
+            <Link href={`/${l}/docs/what-is-dbx`}>{t.navDocs}</Link>
+            <Link href="https://github.com/t8y2/dbx" target="_blank">
+              GitHub
+            </Link>
             <Link href={l === 'cn' ? '/en' : '/cn'} className="landing-lang-switch">
-              {l === 'cn' ? 'EN' : '中文'}
+              {t.lang}
             </Link>
           </div>
         </div>
       </nav>
 
-      {/* Hero */}
       <section className="landing-hero">
-        <div className="landing-hero-content">
-          <h1 className="landing-hero-title">
-            <span className="landing-gradient">{t.heroTitle}</span>
-            <br />
-            {t.heroTitle2}
-          </h1>
-          <p className="landing-hero-sub">{t.heroSubtitle}</p>
+        <div className="landing-hero-copy">
+          <div className="landing-eyebrow">{t.eyebrow}</div>
+          <h1>{t.heroTitle}</h1>
+          <p>{t.heroSubtitle}</p>
           <div className="landing-hero-cta">
-            <Link href="https://github.com/t8y2/dbx/releases" className="landing-btn-primary">
-              {t.ctaDownload} <ArrowRight size={16} />
+            <Link href="https://github.com/t8y2/dbx/releases/latest" className="landing-btn-primary">
+              {t.download}
+              <ArrowRight size={16} />
             </Link>
-            <Link href={`/${l}/docs/what-is-dbx`} className="landing-btn-secondary">
-              {t.ctaDocs}
+            <Link href={`/${l}/docs/getting-started`} className="landing-btn-secondary">
+              {t.readDocs}
             </Link>
           </div>
+          <div className="landing-install">
+            <span>{t.installLabel}</span>
+            <code>{t.installCommand}</code>
+          </div>
         </div>
-        <div className="landing-hero-image">
-          <img src="/screenshot-dark.png" alt="DBX Screenshot" />
+        <div className="landing-product">
+          <div className="landing-window-bar">
+            <span />
+            <span />
+            <span />
+          </div>
+          <img src="/screenshot-dark.png" alt="DBX product screenshot" />
         </div>
       </section>
 
-      {/* Stats */}
-      <section className="landing-stats">
-        {stat.map((s) => (
-          <div key={s.label} className="landing-stat">
-            <div className="landing-stat-value">{s.value}</div>
-            <div className="landing-stat-label">{s.label}</div>
+      <section className="landing-metrics">
+        {metricItems.map((item) => (
+          <div key={item.label}>
+            <strong>{item.value}</strong>
+            <span>{item.label}</span>
           </div>
         ))}
       </section>
 
-      {/* Features */}
+      <section className="landing-doc-start">
+        <div>
+          <h2>{t.docsStart}</h2>
+          <p>{t.docsStartDesc}</p>
+        </div>
+        <Link href={`/${l}/docs/getting-started`} className="landing-inline-link">
+          {t.readDocs}
+          <ArrowRight size={15} />
+        </Link>
+      </section>
+
       <section className="landing-section">
-        <h2 className="landing-section-title">{t.featuresTitle}</h2>
-        <p className="landing-section-sub">{t.featuresSubtitle}</p>
-        <div className="landing-features-grid">
-          {feat.map((f) => (
-            <Link key={f.title} href={f.href} className="landing-feature-card">
-              <div className="landing-feature-icon">
-                <f.icon size={24} />
-              </div>
-              <h3>{f.title}</h3>
-              <p>{f.desc}</p>
+        <div className="landing-section-heading">
+          <h2>{t.workflowsTitle}</h2>
+          <p>{t.workflowsDesc}</p>
+        </div>
+        <div className="landing-workflow-grid">
+          {workflowItems.map((item) => (
+            <Link key={item.title} href={item.href} className="landing-workflow-card">
+              <item.icon size={20} />
+              <h3>{item.title}</h3>
+              <p>{item.desc}</p>
+              <span>
+                {t.readDocs}
+                <ArrowRight size={14} />
+              </span>
             </Link>
           ))}
         </div>
       </section>
 
-      {/* Database Logos */}
+      <section className="landing-section landing-support">
+        <div className="landing-section-heading">
+          <h2>{t.supportTitle}</h2>
+          <p>{t.supportDesc}</p>
+        </div>
+        <div className="landing-db-list">
+          {languages.map((db) => (
+            <span key={db}>
+              <CheckCircle2 size={14} />
+              {db}
+            </span>
+          ))}
+          <span>+ more</span>
+        </div>
+      </section>
+
       <section className="landing-section">
-        <h2 className="landing-section-title">{t.dbTitle}</h2>
-        <p className="landing-section-sub">{t.dbSubtitle}</p>
-        <div className="landing-db-grid">
-          {databases.map((db) => (
-            <div key={db} className="landing-db-badge">
-              <Database size={16} />
-              <span>{db}</span>
+        <div className="landing-section-heading">
+          <h2>{t.capabilitiesTitle}</h2>
+        </div>
+        <div className="landing-capability-grid">
+          {capabilityItems.map((item) => (
+            <div key={item.label} className="landing-capability">
+              <item.icon size={18} />
+              <span>{item.label}</span>
             </div>
           ))}
-          <div className="landing-db-badge landing-db-more">
-            <span>{t.andMore}</span>
-          </div>
         </div>
       </section>
 
-      {/* Comparison */}
-      <section className="landing-section">
-        <h2 className="landing-section-title">{comp.title}</h2>
-        <div className="landing-comparison">
-          <table>
-            <thead>
-              <tr>
-                {comp.headers.map((h, i) => (
-                  <th key={i} className={i === 1 ? 'landing-highlight-col' : ''}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {comp.rows.map((row, ri) => (
-                <tr key={ri}>
-                  {row.map((cell, ci) => (
-                    <td key={ci} className={ci === 1 ? 'landing-highlight-col' : ''}>
-                      {cell}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <section className="landing-final">
+        <div>
+          <h2>{t.footerTitle}</h2>
+          <p>{t.footerDesc}</p>
+        </div>
+        <div className="landing-final-actions">
+          <Link href="https://github.com/t8y2/dbx/releases/latest">{t.release}</Link>
+          <Link href={`/${l}/docs/getting-started#docker`}>{t.docker}</Link>
         </div>
       </section>
-
-      {/* Screenshots */}
-      <section className="landing-section">
-        <div className="landing-screenshots">
-          <div className="landing-screenshot-item">
-            <img src="/screenshot-light.png" alt="DBX Light Mode" />
-          </div>
-          <div className="landing-screenshot-item">
-            <img src="/screenshot-er.png" alt="DBX ER Diagram" />
-          </div>
-        </div>
-      </section>
-
-      {/* Footer CTA */}
-      <section className="landing-footer-cta">
-        <h2>{t.footerCta}</h2>
-        <p>{t.footerCtaSub}</p>
-        <div className="landing-hero-cta">
-          <Link href="https://github.com/t8y2/dbx/releases" className="landing-btn-primary">
-            {t.ctaDownload} <ArrowRight size={16} />
-          </Link>
-          <Link href={`/${l}/docs/getting-started`} className="landing-btn-secondary">
-            {t.ctaDocs}
-          </Link>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="landing-footer">
-        <div className="landing-footer-inner">
-          <div className="landing-footer-brand">
-            <img src="/logo.png" alt="DBX" width={20} height={20} />
-            <span>DBX</span>
-          </div>
-          <div className="landing-footer-links">
-            <Link href="https://github.com/t8y2/dbx" target="_blank">GitHub</Link>
-            <Link href="https://discord.gg/W7NyVDRt6a" target="_blank">Discord</Link>
-            <Link href="https://github.com/t8y2/dbx/blob/main/LICENSE" target="_blank">AGPL-3.0</Link>
-          </div>
-        </div>
-      </footer>
     </main>
   );
 }

@@ -1,122 +1,130 @@
 ---
 title: AI Assistant
-description: Built-in AI assistant for natural language to SQL, query optimization, error fixing. Supports Claude, OpenAI, and custom endpoints.
+description: Configure an AI provider to generate SQL, explain queries, suggest optimizations, and help fix errors in DBX.
 ---
 
-<Callout type="info">
-Built-in AI assistant — no plugins needed. Describe what you want in plain language, and AI generates SQL, optimizes queries, and fixes errors.
+The AI assistant helps with SQL work. It uses metadata from the active connection to understand tables and columns, then helps generate SQL, explain queries, suggest optimizations, or diagnose errors.
+
+<Callout type="warn">
+AI-generated SQL is not executed automatically. Review table names, columns, filters, and affected rows before running it, especially on production connections.
 </Callout>
 
-DBX's AI assistant is deeply integrated with your database metadata. It knows your tables, columns, and relationships, so the SQL it generates actually works with your schema.
-
-![DBX AI Assistant](/screenshot-ai.jpg)
-
-## Setup
+## Configuration
 
 <Steps>
   <Step>
     ### Open Settings
-    Click the **Settings** icon in the toolbar.
+
+    Open DBX settings and find the AI configuration section.
   </Step>
   <Step>
-    ### Choose AI Provider
-    Go to **AI Settings** and select your provider.
+    ### Choose a Provider
+
+    Select Anthropic, OpenAI, or a custom endpoint compatible with the OpenAI API.
   </Step>
   <Step>
-    ### Enter API Key
-    Enter your API key (and endpoint URL for custom providers).
+    ### Enter Credentials
+
+    Enter your API key. For custom endpoints, also enter the endpoint URL and model name.
   </Step>
   <Step>
-    ### Select a Model
-    Pick a model and you're ready to go.
+    ### Save and Test
+
+    Save the configuration, return to the editor, and try generating a simple query from natural language.
   </Step>
 </Steps>
 
-## Core Features
+<Callout type="info">
+When no API key is configured, AI features should prompt the user to complete setup instead of failing silently.
+</Callout>
 
-### Natural Language to SQL
+## Common Uses
 
-Describe what you want to query in plain language. The AI generates SQL based on your actual database schema:
+### Generate SQL
 
-> **You say:** "Show me the top 10 customers by total order amount in the last month"
->
-> **AI generates:**
-> ```sql
-> SELECT c.name, SUM(o.amount) AS total_amount
-> FROM customers c
-> JOIN orders o ON c.id = o.customer_id
-> WHERE o.created_at >= NOW() - INTERVAL 30 DAY
-> GROUP BY c.id, c.name
-> ORDER BY total_amount DESC
-> LIMIT 10;
-> ```
+Describe the result you want, and the assistant generates SQL using metadata from the current connection:
 
-The AI auto-detects tables and columns in your connected database — it won't generate references to tables or columns that don't exist.
+> Show the top 10 customers by order amount in the last 30 days
+
+Example output:
+
+```sql
+SELECT c.name, SUM(o.amount) AS total_amount
+FROM customers c
+JOIN orders o ON c.id = o.customer_id
+WHERE o.created_at >= NOW() - INTERVAL 30 DAY
+GROUP BY c.id, c.name
+ORDER BY total_amount DESC
+LIMIT 10;
+```
+
+Before running generated SQL, check:
+
+- Whether the tables and columns are correct
+- Whether the time range matches your intent
+- Whether aggregation and ordering are correct
+- Whether the result should be limited
 
 ### Explain SQL
 
-Select a complex SQL query and ask the AI to explain it. It breaks down:
+Select SQL and ask the assistant to explain its structure:
 
 - What each subquery does
-- The purpose of JOIN conditions
-- What the WHERE clause filters
-- How aggregation and grouping work
+- How `JOIN` conditions connect tables
+- What the `WHERE` clause filters
+- How aggregation, grouping, and sorting work
+
+This is useful for reading legacy queries, reports, or complex views.
 
 ### Optimize SQL
 
-The AI analyzes your query for potential performance issues and suggests improvements:
+The assistant can suggest optimization directions, such as:
 
+- Possible full table scans
 - Missing indexes
-- Full table scans that could be avoided
-- Subqueries that could be rewritten as JOINs
-- Unnecessary sorting or deduplication
+- Subqueries that may be rewritten as `JOIN`
+- Sorting, deduplication, or aggregation that could be reduced
+
+<Callout type="info">
+AI optimization suggestions are advisory. Confirm performance with the database execution plan, data volume, and index design.
+</Callout>
 
 ### Fix Errors
 
-When a query fails, click **Fix with AI**. The AI reads the error message and your SQL, then generates a corrected version. Common fixes include:
+When SQL fails, send the error and query to the assistant for diagnosis. Common fixes include:
 
-- Syntax error corrections
+- Syntax errors
 - Misspelled table or column names
-- Missing GROUP BY columns
+- Missing `GROUP BY` columns
 - Type mismatches
+- Dialect differences between database engines
 
 ## Supported Providers
 
-<Tabs groupId="ai-provider" items={['Anthropic (Claude)', 'OpenAI', 'Custom Endpoint']}>
-  <Tab value="Anthropic (Claude)">
-    | Model | Best For |
-    |---|---|
-    | Claude 4 Opus | Complex queries, highest quality |
-    | Claude 4 Sonnet | Balance of speed and quality |
-    | Claude 3.5 Haiku | Fastest responses |
-
-    Select **Anthropic** in AI Settings and enter your API key.
+<Tabs groupId="ai-provider" items={['Anthropic', 'OpenAI', 'Custom Endpoint']}>
+  <Tab value="Anthropic">
+    Use this for Claude models. Enter your API key, then choose or type the model you want to use.
   </Tab>
   <Tab value="OpenAI">
-    | Model | Best For |
-    |---|---|
-    | GPT-4o | Latest flagship model |
-    | GPT-4o-mini | Lightweight and fast |
-    | o3-mini | Enhanced reasoning |
-
-    Select **OpenAI** in AI Settings and enter your API key.
+    Use this for OpenAI models. Enter your API key, then choose or type the model you want to use.
   </Tab>
   <Tab value="Custom Endpoint">
-    Any endpoint that implements the OpenAI Chat Completions API works, including:
+    Use this for services compatible with the OpenAI Chat Completions API, such as local model servers, enterprise gateways, or third-party model platforms.
 
-    - **Ollama** — Run open-source models locally
-    - **LM Studio** — Local model management
-    - **Azure OpenAI** — Enterprise deployment
-    - **DeepSeek / Qwen** — Additional model providers
+    Configure:
 
-    Select **Custom Endpoint** in AI Settings and enter the endpoint URL and API key.
+    - Endpoint URL
+    - API key
+    - Model
   </Tab>
 </Tabs>
 
-## Beyond Built-in AI
+## Privacy and Security
 
-<Callout type="info">
-Want AI to not just generate SQL, but actually execute queries and browse results? Try the [MCP integration](/en/docs/mcp).
-</Callout>
+AI requests may include your prompt, SQL, error messages, and the schema context needed to answer. Before using an external provider, confirm:
 
-MCP integration lets AI coding agents like Claude Code and Cursor query your databases directly through DBX and open results in the DBX UI. You can have a natural language conversation with AI in your IDE, and it automatically calls DBX to run queries and return results.
+- Whether sending this information is allowed
+- Whether it includes sensitive field names, business logic, or sample data
+- Whether your team has compliance rules for third-party model calls
+
+If you want AI agents to query databases through tools, continue with [MCP Integration](/en/docs/mcp).

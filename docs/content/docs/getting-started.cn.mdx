@@ -1,53 +1,76 @@
 ---
 title: 快速开始
-description: 安装 DBX 并创建你的第一个数据库连接。
+description: 安装 DBX、创建第一个连接，并了解桌面版、Docker 版和源码运行方式。
 ---
 
-## 安装
+本页帮助你完成三件事：
+
+1. 安装 DBX 或启动 Docker 版本
+2. 创建第一个数据库连接
+3. 在需要参与开发时从源码运行项目
+
+## 选择安装方式
 
 <Tabs groupId="platform" items={['macOS', 'Windows', 'Linux', 'Docker']}>
   <Tab value="macOS">
-    **Homebrew（推荐）：**
+    使用 Homebrew 安装：
 
     ```bash
     brew install --cask t8y2/tap/dbx
     ```
 
-    更新：
+    更新到最新版本：
+
     ```bash
     brew upgrade --cask t8y2/tap/dbx
     ```
 
-    也可以从 [Releases](https://github.com/t8y2/dbx/releases) 页面下载 `.dmg` 安装包。
+    也可以从 [GitHub Releases](https://github.com/t8y2/dbx/releases) 下载 `.dmg` 安装包。
   </Tab>
   <Tab value="Windows">
-    **Scoop（推荐）：**
+    使用 Scoop 安装：
 
     ```bash
     scoop bucket add dbx https://github.com/t8y2/scoop-bucket
     scoop install dbx
     ```
 
-    更新：
+    更新到最新版本：
+
     ```bash
     scoop update dbx
     ```
 
-    也可以从 [Releases](https://github.com/t8y2/dbx/releases) 页面下载 `.msi` 安装包。
+    也可以从 [GitHub Releases](https://github.com/t8y2/dbx/releases) 下载 `.msi` 安装包。
   </Tab>
   <Tab value="Linux">
-    从 [Releases](https://github.com/t8y2/dbx/releases) 页面下载对应的安装包（`.deb` / `.AppImage`）。
-  </Tab>
-  <Tab value="Docker">
-    通过 Docker 部署 DBX，适合团队共享和服务器环境：
+    从 [GitHub Releases](https://github.com/t8y2/dbx/releases) 下载对应的安装包：
+
+    | 格式 | 适用场景 |
+    |---|---|
+    | `.deb` | Debian、Ubuntu 及其衍生发行版 |
+    | `.AppImage` | 通用 Linux 桌面环境 |
+
+    如果使用 `.AppImage`，首次运行前可能需要添加执行权限：
 
     ```bash
-    docker run -d --name dbx -p 4224:4224 -v dbx-data:/app/data t8y2/dbx
+    chmod +x DBX*.AppImage
+    ```
+  </Tab>
+  <Tab value="Docker">
+    Docker 版本适合部署在服务器上，通过浏览器访问 DBX：
+
+    ```bash
+    docker run -d \
+      --name dbx \
+      -p 4224:4224 \
+      -v dbx-data:/app/data \
+      t8y2/dbx
     ```
 
-    部署后通过浏览器访问 `http://localhost:4224` 即可使用。
+    启动后访问 `http://localhost:4224`。
 
-    **Docker Compose：**
+    使用 Docker Compose：
 
     ```yaml
     services:
@@ -65,34 +88,70 @@ description: 安装 DBX 并创建你的第一个数据库连接。
   </Tab>
 </Tabs>
 
+<Callout type="info">
+桌面版更适合个人本机使用；Docker 版更适合服务器、自托管和浏览器访问。两者的核心功能保持一致，但部署和数据存储位置不同。
+</Callout>
+
 ## 创建第一个连接
 
 <Steps>
   <Step>
-    ### 新建连接
-    点击工具栏的 **新建连接** 按钮。
+    ### 打开新建连接
+
+    在侧边栏或工具栏中点击 **新建连接**。
   </Step>
   <Step>
     ### 选择数据库类型
-    选择你要连接的数据库类型（MySQL、PostgreSQL、SQLite 等）。
+
+    选择 MySQL、PostgreSQL、SQLite、Redis、MongoDB 等数据库类型。
   </Step>
   <Step>
     ### 填写连接信息
-    填写主机、端口、用户名、密码。可选设置**默认数据库**，连接后自动切换到指定数据库。如需通过跳板机连接，可启用 [SSH 隧道](/cn/docs/ssh-tunnel)。
+
+    填写主机、端口、用户名和密码。对于 PostgreSQL、MySQL 等数据库，可以设置默认数据库，连接后自动进入指定数据库。
   </Step>
   <Step>
-    ### 测试并保存
-    点击 **测试** 验证连接是否正常，然后点击 **保存并连接**。
+    ### 测试连接
+
+    点击 **测试** 验证网络、账号和权限是否正常。如果数据库在内网或跳板机后面，可以启用 [SSH 隧道](/cn/docs/ssh-tunnel)。
+  </Step>
+  <Step>
+    ### 保存并连接
+
+    测试通过后点击 **保存并连接**。连接会出现在侧边栏中，之后可以直接打开。
   </Step>
 </Steps>
 
 <Callout type="info">
-连接密码存储在系统钥匙串中（macOS Keychain / Windows 凭据管理器 / Linux Secret Service），不会明文保存在配置文件中。
+连接配置保存在本机应用数据目录的 SQLite 数据库中。密码、SSH 密码、SSH 密钥密码和连接字符串会从普通连接 JSON 中拆出，单独存放在 `connection_secrets` 表。
 </Callout>
 
-## 开发环境搭建
+## 连接后可以做什么
 
-如果你想从源码运行 DBX，请参考以下步骤。
+<Cards>
+  <Card title="写 SQL" href="/cn/docs/query-editor">
+    打开查询编辑器，使用补全、格式化、选中执行和查询历史。
+  </Card>
+  <Card title="看数据" href="/cn/docs/data-grid">
+    打开表数据，使用过滤、排序、行内编辑和 SQL 预览。
+  </Card>
+  <Card title="看结构" href="/cn/docs/schema-browser">
+    从侧边栏浏览库、Schema、表、字段、索引和外键。
+  </Card>
+</Cards>
+
+## 常见连接问题
+
+| 现象 | 检查项 |
+|---|---|
+| 连接超时 | 主机地址、端口、防火墙、安全组、VPN 或内网访问权限 |
+| 认证失败 | 用户名、密码、认证方式、账号是否允许远程登录 |
+| 能连接但看不到表 | 默认数据库、Schema 权限、账号是否有读取元数据的权限 |
+| 内网数据库无法访问 | 配置 SSH 隧道，或确认 Docker 部署所在机器能访问目标数据库 |
+
+## 从源码运行
+
+如果你想参与开发或本地调试 DBX，可以从源码运行。
 
 ### 环境要求
 
@@ -114,11 +173,11 @@ description: 安装 DBX 并创建你的第一个数据库连接。
     ```
   </Tab>
   <Tab value="Windows">
-    无需额外安装（ODBC 已内置于 Windows）。
+    Windows 已内置 ODBC，通常不需要额外安装系统依赖。
   </Tab>
 </Tabs>
 
-### 运行
+### 启动开发环境
 
 ```bash
 git clone https://github.com/t8y2/dbx.git
@@ -127,10 +186,10 @@ pnpm install
 pnpm dev:tauri
 ```
 
-### 构建
+### 构建桌面安装包
 
 ```bash
 pnpm tauri build
 ```
 
-安装包输出在 `src-tauri/target/release/bundle/` 目录。
+构建产物会输出到 `src-tauri/target/release/bundle/`。

@@ -1,49 +1,74 @@
 ---
 title: Table Import
-description: Import CSV, TSV, JSON, and Excel files into database tables with automatic column mapping.
+description: Import CSV, TSV, JSON, or Excel files into a table with reviewed column mapping and import mode.
 ---
 
-<Callout type="info">
-Import CSV, TSV, JSON, and Excel files with automatic column name matching. Choose between append and truncate modes.
-</Callout>
+Table Import writes a local file into a selected database table. Use it for one-off test data, operational data backfills, or moving data out of spreadsheet tools.
 
-## Supported Formats
+## Supported Files
 
-| Format | Extensions |
+| Format | Details |
 |---|---|
-| CSV | `.csv` |
-| TSV | `.tsv` |
-| JSON | `.json` |
-| Excel | `.xlsx`, `.xls` |
+| CSV | Comma-separated text for general data exchange |
+| TSV | Tab-separated text, useful when values contain commas |
+| JSON | JSON arrays exported from APIs or scripts |
+| Excel | `.xlsx` or `.xls` files |
 
 ## Import Workflow
 
 <Steps>
   <Step>
-    ### Select Target Table
-    Right-click the target table and select "Import Data".
+    ### Select the Target Table
+
+    Right-click the target table in the sidebar and choose **Import Data**.
   </Step>
   <Step>
-    ### Choose File
-    Select the file to import.
+    ### Choose a File
+
+    Select a CSV, TSV, JSON, or Excel file.
   </Step>
   <Step>
     ### Review Column Mapping
-    DBX auto-maps file columns to table columns by name. Adjust mappings manually if names don't match. Unmapped columns are skipped.
+
+    DBX tries to match file columns to table columns by name. Check primary keys, required fields, dates, and numeric values.
   </Step>
   <Step>
-    ### Select Mode and Import
-    Choose the import mode and click "Start Import".
+    ### Choose Import Mode
+
+    Select append or truncate-then-import. Truncate mode removes existing target data first.
+  </Step>
+  <Step>
+    ### Run and Inspect
+
+    After import, check inserted rows, failures, and the resulting table data.
   </Step>
 </Steps>
 
 ## Import Modes
 
-| Mode | Behavior |
-|---|---|
-| **Append** | Insert rows alongside existing data |
-| **Truncate then import** | Delete all existing rows first, then insert |
+| Mode | Behavior | Best For |
+|---|---|---|
+| Append | Keep existing data and insert new rows | Backfills and sample data |
+| Truncate then import | Remove existing rows first, then insert file data | Rebuilding test tables or replacing temporary data |
 
 <Callout type="warn">
-Truncate mode permanently removes all existing data in the target table. Make sure this is the intended behavior.
+Truncate-then-import deletes existing rows from the target table. Confirm backups and impact before using it on production data.
 </Callout>
+
+## Before Importing
+
+- Confirm whether the first row contains column names
+- Check file encoding
+- Verify date, number, and boolean formats
+- Ensure required fields have values
+- Check for primary key and unique index conflicts
+- Import parent tables before child tables when foreign keys are involved
+
+## Troubleshooting
+
+| Symptom | Possible Cause |
+|---|---|
+| Some columns are skipped | File column names do not match table columns, or the mapping was disabled |
+| Import fails | Required value missing, type mismatch, primary key conflict, or unique constraint conflict |
+| Text is garbled | File encoding does not match parser settings |
+| Dates are wrong | Date format is not recognized by the target database |

@@ -1,43 +1,51 @@
 ---
 title: Field Lineage
-description: Trace column relationships across foreign keys, views, and query history. Essential for data governance.
+description: Trace where columns come from, how they are referenced, and which relationships may exist.
 ---
 
-<Callout type="info">
-Most database tools don't have this. DBX automatically traces column relationships from foreign keys, views, and query history, with confidence levels — essential for understanding how data flows through your schema.
-</Callout>
+Field Lineage helps answer a common question: where does a column's data come from, and what might depend on it? Use it to understand complex schemas, inspect impact, and read legacy structures.
 
-## Why Field Lineage?
+## What It Helps With
 
-- **Data governance** — Understand where each column's data comes from and ensure data quality
-- **Impact analysis** — Before changing a table structure, see which downstream views or queries are affected
-- **Onboarding** — Quickly understand relationships across tables in a complex database
+- Before changing a column, see which tables, views, or queries may depend on it
+- Understand relationships in an unfamiliar database
+- Trace where report fields may originate
+- Discover possible relationships that are not declared as foreign keys
 
 ## Relationship Sources
 
-DBX discovers column relationships from multiple sources, each with a different confidence level:
+| Source | Confidence | Details |
+|---|---|---|
+| Foreign keys | High | Constraints declared in the database |
+| Views | High | Field mappings analyzed from view definitions |
+| Query history | Medium | Relationships inferred from executed SQL, including `JOIN` and `WHERE` usage |
+| Same-name columns | Low to medium | Possible relationships inferred from similar column names |
 
-### Foreign Key Relationships (Certain)
+<Callout type="info">
+Field Lineage is an analysis aid, not a strongly governed lineage platform. For critical decisions, confirm results with database constraints, view definitions, and application code.
+</Callout>
 
-Relationships defined by foreign key constraints. For example, `orders.user_id → users.id`. These are authoritative and the most reliable source.
+## Navigation
 
-### View References (Likely)
+- Search by table or column name
+- Filter relationships by confidence
+- Click a table or column to open data or structure views
+- Start from one column and inspect upstream or downstream relationships
 
-DBX analyzes view definitions to trace which columns in the view map back to columns in the underlying tables.
+## Recommendations
 
-### Query History References
+- Treat foreign key and view relationships as the strongest signals
+- Review query-history and same-name inferences carefully
+- Before changing a column, combine lineage with schema diff and application code search
+- For important business fields, add database constraints or documentation comments where possible
 
-DBX analyzes your local query history to identify columns that are frequently joined or referenced together in `JOIN` and `WHERE` clauses.
+## Related Features
 
-### Same-Name Column Detection
-
-Columns that share the same name across different tables (e.g., `user_id` appearing in multiple tables) are flagged as potential relationships.
-
-## Searching and Filtering
-
-- **Search** — Filter relationships by table name or column name
-- **Confidence filter** — Show only relationships at a specific confidence level (certain, likely, or all)
-
-## Click-Through Navigation
-
-Click any related table or column in the lineage view to navigate directly to it in the Data Grid or Schema Browser.
+<Cards>
+  <Card title="Schema Browser" href="/en/docs/schema-browser">
+    Inspect tables, columns, foreign keys, and comments.
+  </Card>
+  <Card title="Schema Diff" href="/en/docs/schema-diff">
+    Compare structure differences across environments.
+  </Card>
+</Cards>

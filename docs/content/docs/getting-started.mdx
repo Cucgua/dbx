@@ -1,53 +1,76 @@
 ---
 title: Getting Started
-description: Install DBX and create your first database connection.
+description: Install DBX, create your first connection, and understand the desktop, Docker, and source-based workflows.
 ---
 
-## Install
+This guide gets you through three steps:
+
+1. Install DBX or start the Docker version
+2. Create your first database connection
+3. Run the project from source when you want to contribute or debug locally
+
+## Choose an Install Method
 
 <Tabs groupId="platform" items={['macOS', 'Windows', 'Linux', 'Docker']}>
   <Tab value="macOS">
-    **Homebrew (recommended):**
+    Install with Homebrew:
 
     ```bash
     brew install --cask t8y2/tap/dbx
     ```
 
-    Update:
+    Upgrade to the latest version:
+
     ```bash
     brew upgrade --cask t8y2/tap/dbx
     ```
 
-    You can also download the `.dmg` installer from the [Releases](https://github.com/t8y2/dbx/releases) page.
+    You can also download the `.dmg` installer from [GitHub Releases](https://github.com/t8y2/dbx/releases).
   </Tab>
   <Tab value="Windows">
-    **Scoop (recommended):**
+    Install with Scoop:
 
     ```bash
     scoop bucket add dbx https://github.com/t8y2/scoop-bucket
     scoop install dbx
     ```
 
-    Update:
+    Upgrade to the latest version:
+
     ```bash
     scoop update dbx
     ```
 
-    You can also download the `.msi` installer from the [Releases](https://github.com/t8y2/dbx/releases) page.
+    You can also download the `.msi` installer from [GitHub Releases](https://github.com/t8y2/dbx/releases).
   </Tab>
   <Tab value="Linux">
-    Download the appropriate package (`.deb` / `.AppImage`) from the [Releases](https://github.com/t8y2/dbx/releases) page.
-  </Tab>
-  <Tab value="Docker">
-    Run DBX as a self-hosted web application using Docker:
+    Download the right package from [GitHub Releases](https://github.com/t8y2/dbx/releases):
+
+    | Format | Best For |
+    |---|---|
+    | `.deb` | Debian, Ubuntu, and related distributions |
+    | `.AppImage` | General Linux desktop environments |
+
+    For `.AppImage`, you may need to make the file executable first:
 
     ```bash
-    docker run -d --name dbx -p 4224:4224 -v dbx-data:/app/data t8y2/dbx
+    chmod +x DBX*.AppImage
+    ```
+  </Tab>
+  <Tab value="Docker">
+    Use Docker when you want to host DBX on a server and access it from a browser:
+
+    ```bash
+    docker run -d \
+      --name dbx \
+      -p 4224:4224 \
+      -v dbx-data:/app/data \
+      t8y2/dbx
     ```
 
-    Then open `http://localhost:4224` in your browser.
+    Open `http://localhost:4224` after the container starts.
 
-    **Docker Compose:**
+    Docker Compose:
 
     ```yaml
     services:
@@ -65,34 +88,70 @@ description: Install DBX and create your first database connection.
   </Tab>
 </Tabs>
 
+<Callout type="info">
+Use the desktop app for personal local work. Use Docker for server-hosted or browser-based access. The core product is the same, but deployment and data storage differ.
+</Callout>
+
 ## Create Your First Connection
 
 <Steps>
   <Step>
-    ### New Connection
-    Click the **New Connection** button in the toolbar.
+    ### Open New Connection
+
+    Click **New Connection** from the sidebar or toolbar.
   </Step>
   <Step>
-    ### Select Database Type
-    Choose the database engine you want to connect to (MySQL, PostgreSQL, SQLite, etc.).
+    ### Choose a Database Type
+
+    Select MySQL, PostgreSQL, SQLite, Redis, MongoDB, or another supported engine.
   </Step>
   <Step>
     ### Enter Connection Details
-    Fill in host, port, username, and password. Optionally set a **default database** to connect to a specific database automatically. For databases behind a firewall, enable the [SSH Tunnel](/en/docs/ssh-tunnel).
+
+    Fill in host, port, username, and password. For engines such as PostgreSQL and MySQL, you can set a default database so DBX opens it automatically after connecting.
   </Step>
   <Step>
-    ### Test and Save
-    Click **Test** to verify the connection, then click **Save & Connect**.
+    ### Test the Connection
+
+    Click **Test** to verify network access, credentials, and permissions. If the database is behind a private network or bastion host, configure an [SSH Tunnel](/en/docs/ssh-tunnel).
+  </Step>
+  <Step>
+    ### Save and Connect
+
+    When the test succeeds, click **Save & Connect**. The connection appears in the sidebar for future use.
   </Step>
 </Steps>
 
 <Callout type="info">
-Connection passwords are stored in your system keyring (macOS Keychain / Windows Credential Manager / Linux Secret Service), never as plain text in config files.
+Connection configuration is stored in a local SQLite database under the app data directory. Passwords, SSH passwords, SSH key passphrases, and connection strings are removed from the normal connection JSON and stored separately in the `connection_secrets` table.
 </Callout>
 
-## Development Setup
+## What to Try Next
 
-To run DBX from source:
+<Cards>
+  <Card title="Write SQL" href="/en/docs/query-editor">
+    Open the query editor and use completion, formatting, selected execution, and query history.
+  </Card>
+  <Card title="Browse Data" href="/en/docs/data-grid">
+    Open table data and use filtering, sorting, inline editing, and SQL preview.
+  </Card>
+  <Card title="Explore Schema" href="/en/docs/schema-browser">
+    Browse databases, schemas, tables, columns, indexes, and foreign keys from the sidebar.
+  </Card>
+</Cards>
+
+## Common Connection Issues
+
+| Symptom | Check |
+|---|---|
+| Connection timeout | Host, port, firewall, security group, VPN, or private network access |
+| Authentication failed | Username, password, auth method, and whether the account allows remote login |
+| Connected but no tables are visible | Default database, schema permissions, and metadata read permissions |
+| Private database is unreachable | Configure an SSH tunnel, or make sure the Docker host can reach the database |
+
+## Run From Source
+
+Use the source workflow when you want to contribute or debug DBX locally.
 
 ### Prerequisites
 
@@ -114,11 +173,11 @@ To run DBX from source:
     ```
   </Tab>
   <Tab value="Windows">
-    No additional dependencies required (ODBC is built into Windows).
+    Windows includes ODBC support, so additional system dependencies are usually not required.
   </Tab>
 </Tabs>
 
-### Run
+### Start the Development App
 
 ```bash
 git clone https://github.com/t8y2/dbx.git
@@ -127,10 +186,10 @@ pnpm install
 pnpm dev:tauri
 ```
 
-### Build
+### Build the Desktop App
 
 ```bash
 pnpm tauri build
 ```
 
-The installer will be in `src-tauri/target/release/bundle/`.
+Build artifacts are written to `src-tauri/target/release/bundle/`.
