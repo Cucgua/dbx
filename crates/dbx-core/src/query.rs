@@ -469,21 +469,21 @@ async fn exec_tx_mysql_inner(
     start: std::time::Instant,
 ) -> Result<db::QueryResult, String> {
     let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
-    sqlx::query("START TRANSACTION")
+    sqlx::raw_sql("START TRANSACTION")
         .execute(&mut *conn)
         .await
         .map_err(|e| format!("Failed to begin transaction: {}", e))?;
     let mut total_affected: u64 = 0;
     for (i, sql) in statements.iter().enumerate() {
-        match sqlx::query(sql).execute(&mut *conn).await {
+        match sqlx::raw_sql(sql).execute(&mut *conn).await {
             Ok(r) => total_affected += r.rows_affected(),
             Err(e) => {
-                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                let _ = sqlx::raw_sql("ROLLBACK").execute(&mut *conn).await;
                 return Err(format!("Statement {} failed: {}", i + 1, e));
             }
         }
     }
-    sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| format!("COMMIT failed: {}", e))?;
+    sqlx::raw_sql("COMMIT").execute(&mut *conn).await.map_err(|e| format!("COMMIT failed: {}", e))?;
     Ok(db::QueryResult {
         columns: vec![],
         rows: vec![],
