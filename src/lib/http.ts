@@ -498,6 +498,39 @@ export async function redisSetRemove(connectionId: string, db: number, keyRaw: s
   return post("/api/redis/set-remove", { connectionId, db, keyRaw, member });
 }
 
+export async function redisZadd(
+  connectionId: string,
+  db: number,
+  keyRaw: string,
+  member: string,
+  score: number,
+): Promise<void> {
+  return post("/api/redis/zadd", { connectionId, db, keyRaw, member, score });
+}
+
+export async function redisZrem(connectionId: string, db: number, keyRaw: string, member: string): Promise<void> {
+  return post("/api/redis/zrem", { connectionId, db, keyRaw, member });
+}
+
+export async function redisSetTtl(connectionId: string, db: number, keyRaw: string, ttl: number): Promise<void> {
+  return post("/api/redis/set-ttl", { connectionId, db, keyRaw, ttl });
+}
+
+export async function redisDeleteKeys(connectionId: string, db: number, keyRaws: string[]): Promise<number> {
+  return post("/api/redis/delete-keys", { connectionId, db, keyRaws });
+}
+
+export async function redisLoadMore(
+  connectionId: string,
+  db: number,
+  keyRaw: string,
+  keyType: string,
+  cursor: number,
+  count: number,
+): Promise<RedisValue> {
+  return post("/api/redis/load-more", { connectionId, db, keyRaw, keyType, cursor, count });
+}
+
 // ---------------------------------------------------------------------------
 // MongoDB
 // ---------------------------------------------------------------------------

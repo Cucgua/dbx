@@ -9,6 +9,8 @@ export interface RedisKeyTreeLeafNode {
   db: number;
   keyType: string;
   ttl: number;
+  size: number;
+  valuePreview: string;
   pathSegments: string[];
 }
 
@@ -67,6 +69,8 @@ export function buildRedisKeyTree(keys: RedisKeyInfo[], db: number): RedisKeyTre
         db,
         keyType: key.key_type,
         ttl: key.ttl,
+        size: key.size,
+        valuePreview: key.value_preview,
         pathSegments,
       });
       continue;
@@ -101,6 +105,8 @@ export function buildRedisKeyTree(keys: RedisKeyInfo[], db: number): RedisKeyTre
       db,
       keyType: key.key_type,
       ttl: key.ttl,
+      size: key.size,
+      valuePreview: key.value_preview,
       pathSegments,
     });
   }

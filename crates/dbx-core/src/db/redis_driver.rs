@@ -3,6 +3,7 @@ use redis::{FromRedisValue, Value as RedisRawValue};
 use serde::{Deserialize, Serialize};
 
 const STREAM_ENTRY_LIMIT: usize = 100;
+const COLLECTION_PAGE_SIZE: usize = 200;
 const DEFAULT_REDIS_DATABASES: u32 = 16;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,6 +12,8 @@ pub struct RedisKeyInfo {
     pub key_raw: String,
     pub key_type: String,
     pub ttl: i64,
+    pub size: u64,
+    pub value_preview: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +30,8 @@ pub struct RedisValue {
     pub ttl: i64,
     pub value_is_binary: bool,
     pub value: serde_json::Value,
+    pub total: Option<u64>,
+    pub scan_cursor: Option<u64>,
 }
 
 pub async fn connect(url: &str) -> Result<redis::aio::MultiplexedConnection, String> {
@@ -117,11 +122,15 @@ pub async fn scan_keys_page(
 
         let ttl: i64 = redis::cmd("TTL").arg(key).query_async(con).await.unwrap_or(-1);
 
+        let (size, value_preview) = fetch_key_preview(con, key, &key_type).await;
+
         result.push(RedisKeyInfo {
             key_display: redis_key_bytes_to_display(key),
             key_raw: redis_key_bytes_to_raw(key),
             key_type,
             ttl,
+            size,
+            value_preview,
         });
     }
     Ok(RedisScanResult { cursor: next_cursor, keys: result })
@@ -132,38 +141,40 @@ pub async fn get_value(con: &mut redis::aio::MultiplexedConnection, key: &[u8]) 
 
     let ttl: i64 = redis::cmd("TTL").arg(key).query_async(con).await.unwrap_or(-1);
 
-    let (value, value_is_binary) = match key_type.as_str() {
+    let (value, value_is_binary, total, scan_cursor) = match key_type.as_str() {
         "string" => {
             let v: RedisRawValue = redis::cmd("GET").arg(key).query_async(con).await.map_err(|e| e.to_string())?;
             let value_is_binary = redis_value_contains_binary(&v);
-            (redis_raw_to_json(v), value_is_binary)
+            (redis_raw_to_json(v), value_is_binary, None, None)
         }
         "list" => {
+            let len: u64 = redis::cmd("LLEN").arg(key).query_async(con).await.unwrap_or(0);
+            let end = (COLLECTION_PAGE_SIZE as i64) - 1;
             let v: RedisRawValue =
-                redis::cmd("LRANGE").arg(key).arg(0).arg(-1).query_async(con).await.map_err(|e| e.to_string())?;
-            (redis_array_to_json(v), false)
+                redis::cmd("LRANGE").arg(key).arg(0).arg(end).query_async(con).await.map_err(|e| e.to_string())?;
+            let cursor = if len > COLLECTION_PAGE_SIZE as u64 { Some(COLLECTION_PAGE_SIZE as u64) } else { None };
+            (redis_array_to_json(v), false, Some(len), cursor)
         }
         "set" => {
-            let v: RedisRawValue = redis::cmd("SMEMBERS").arg(key).query_async(con).await.map_err(|e| e.to_string())?;
-            (redis_array_to_json(v), false)
+            let len: u64 = redis::cmd("SCARD").arg(key).query_async(con).await.unwrap_or(0);
+            let (next_cursor, items) = sscan_page_raw(con, key, 0, COLLECTION_PAGE_SIZE).await?;
+            let cursor = if next_cursor > 0 { Some(next_cursor) } else { None };
+            (serde_json::Value::Array(items), false, Some(len), cursor)
         }
         "zset" => {
-            let v: RedisRawValue = redis::cmd("ZRANGE")
-                .arg(key)
-                .arg(0)
-                .arg(-1)
-                .arg("WITHSCORES")
-                .query_async(con)
-                .await
-                .map_err(|e| e.to_string())?;
-            (parse_zset_entries(v), false)
+            let len: u64 = redis::cmd("ZCARD").arg(key).query_async(con).await.unwrap_or(0);
+            let (next_cursor, items) = zscan_page_raw(con, key, 0, COLLECTION_PAGE_SIZE).await?;
+            let cursor = if next_cursor > 0 { Some(next_cursor) } else { None };
+            (serde_json::Value::Array(items), false, Some(len), cursor)
         }
         "hash" => {
-            let v: RedisRawValue = redis::cmd("HGETALL").arg(key).query_async(con).await.map_err(|e| e.to_string())?;
-            (parse_hash_entries(v), false)
+            let len: u64 = redis::cmd("HLEN").arg(key).query_async(con).await.unwrap_or(0);
+            let (next_cursor, items) = hscan_page_raw(con, key, 0, COLLECTION_PAGE_SIZE).await?;
+            let cursor = if next_cursor > 0 { Some(next_cursor) } else { None };
+            (serde_json::Value::Array(items), false, Some(len), cursor)
         }
-        "stream" => (get_stream_entries(con, key).await?, false),
-        _ => (serde_json::Value::Null, false),
+        "stream" => (get_stream_entries(con, key).await?, false, None, None),
+        _ => (serde_json::Value::Null, false, None, None),
     };
 
     Ok(RedisValue {
@@ -173,7 +184,92 @@ pub async fn get_value(con: &mut redis::aio::MultiplexedConnection, key: &[u8]) 
         ttl,
         value_is_binary,
         value,
+        total,
+        scan_cursor,
     })
+}
+
+async fn fetch_key_preview(con: &mut redis::aio::MultiplexedConnection, key: &[u8], key_type: &str) -> (u64, String) {
+    match key_type {
+        "string" => {
+            let len: u64 = redis::cmd("STRLEN").arg(key).query_async(con).await.unwrap_or(0);
+            let v: Option<String> = redis::cmd("GETRANGE").arg(key).arg(0).arg(199).query_async(con).await.ok();
+            (len, v.unwrap_or_default())
+        }
+        "list" => {
+            let len: u64 = redis::cmd("LLEN").arg(key).query_async(con).await.unwrap_or(0);
+            let items: Vec<String> =
+                redis::cmd("LRANGE").arg(key).arg(0).arg(2).query_async(con).await.unwrap_or_default();
+            let preview = format!("[{}]", items.join(", "));
+            (len, preview)
+        }
+        "set" => {
+            let len: u64 = redis::cmd("SCARD").arg(key).query_async(con).await.unwrap_or(0);
+            let raw: RedisRawValue = redis::cmd("SSCAN")
+                .arg(key)
+                .arg(0)
+                .arg("COUNT")
+                .arg(3)
+                .query_async(con)
+                .await
+                .unwrap_or(RedisRawValue::Nil);
+            let members = parse_scan_members(raw).map(|(_, items)| items).unwrap_or_default();
+            let parts: Vec<String> = members.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).take(3).collect();
+            let preview = format!("{{{}}}", parts.join(", "));
+            (len, preview)
+        }
+        "hash" => {
+            let len: u64 = redis::cmd("HLEN").arg(key).query_async(con).await.unwrap_or(0);
+            let raw: RedisRawValue = redis::cmd("HSCAN")
+                .arg(key)
+                .arg(0)
+                .arg("COUNT")
+                .arg(3)
+                .query_async(con)
+                .await
+                .unwrap_or(RedisRawValue::Nil);
+            let pairs = parse_scan_pairs(raw, "hash").map(|(_, items)| items).unwrap_or_default();
+            let parts: Vec<String> = pairs
+                .iter()
+                .take(3)
+                .filter_map(|v| {
+                    let f = v.get("field")?.as_str()?;
+                    let val = v.get("value")?.as_str()?;
+                    Some(format!("{f}:{val}"))
+                })
+                .collect();
+            let preview = format!("[{}]", parts.join(", "));
+            (len, preview)
+        }
+        "zset" => {
+            let len: u64 = redis::cmd("ZCARD").arg(key).query_async(con).await.unwrap_or(0);
+            let raw: RedisRawValue = redis::cmd("ZSCAN")
+                .arg(key)
+                .arg(0)
+                .arg("COUNT")
+                .arg(3)
+                .query_async(con)
+                .await
+                .unwrap_or(RedisRawValue::Nil);
+            let pairs = parse_scan_pairs(raw, "zset").map(|(_, items)| items).unwrap_or_default();
+            let parts: Vec<String> = pairs
+                .iter()
+                .take(3)
+                .filter_map(|v| {
+                    let m = v.get("member")?.as_str()?;
+                    let s = v.get("score")?.as_str()?;
+                    Some(format!("{m}:{s}"))
+                })
+                .collect();
+            let preview = format!("{{{}}}", parts.join(", "));
+            (len, preview)
+        }
+        "stream" => {
+            let len: u64 = redis::cmd("XLEN").arg(key).query_async(con).await.unwrap_or(0);
+            (len, format!("{len} entries"))
+        }
+        _ => (0, String::new()),
+    }
 }
 
 async fn get_stream_entries(
@@ -216,44 +312,6 @@ fn parse_scan_keys(raw: RedisRawValue) -> Result<(u64, Vec<Vec<u8>>), String> {
     }
 
     Ok((cursor, parsed))
-}
-
-fn parse_hash_entries(raw: RedisRawValue) -> serde_json::Value {
-    let RedisRawValue::Array(entries) = raw else {
-        return serde_json::Value::Null;
-    };
-
-    let mut map = serde_json::Map::new();
-    let mut iter = entries.into_iter();
-    while let Some(field) = iter.next() {
-        let Some(value) = iter.next() else {
-            break;
-        };
-        let field = redis_value_to_string(field).unwrap_or_default();
-        map.insert(field, redis_raw_to_json(value));
-    }
-
-    serde_json::Value::Object(map)
-}
-
-fn parse_zset_entries(raw: RedisRawValue) -> serde_json::Value {
-    let RedisRawValue::Array(entries) = raw else {
-        return serde_json::Value::Null;
-    };
-
-    let mut rows = Vec::new();
-    let mut iter = entries.into_iter();
-    while let Some(member) = iter.next() {
-        let Some(score) = iter.next() else {
-            break;
-        };
-        rows.push(serde_json::json!({
-            "member": redis_value_to_string(member).unwrap_or_default(),
-            "score": redis_value_to_string(score).unwrap_or_default(),
-        }));
-    }
-
-    serde_json::Value::Array(rows)
 }
 
 fn parse_stream_entries(raw: RedisRawValue) -> serde_json::Value {
@@ -420,6 +478,190 @@ pub async fn set_add(con: &mut redis::aio::MultiplexedConnection, key: &[u8], me
 
 pub async fn set_remove(con: &mut redis::aio::MultiplexedConnection, key: &[u8], member: &str) -> Result<(), String> {
     redis::cmd("SREM").arg(key).arg(member).query_async::<()>(con).await.map_err(|e| e.to_string())
+}
+
+pub async fn zadd(
+    con: &mut redis::aio::MultiplexedConnection,
+    key: &[u8],
+    member: &str,
+    score: f64,
+) -> Result<(), String> {
+    redis::cmd("ZADD").arg(key).arg(score).arg(member).query_async::<()>(con).await.map_err(|e| e.to_string())
+}
+
+pub async fn zrem(con: &mut redis::aio::MultiplexedConnection, key: &[u8], member: &str) -> Result<(), String> {
+    redis::cmd("ZREM").arg(key).arg(member).query_async::<()>(con).await.map_err(|e| e.to_string())
+}
+
+pub async fn set_ttl(con: &mut redis::aio::MultiplexedConnection, key: &[u8], ttl: i64) -> Result<(), String> {
+    if ttl > 0 {
+        redis::cmd("EXPIRE").arg(key).arg(ttl).query_async::<()>(con).await.map_err(|e| e.to_string())
+    } else {
+        redis::cmd("PERSIST").arg(key).query_async::<()>(con).await.map_err(|e| e.to_string())
+    }
+}
+
+pub async fn delete_keys(con: &mut redis::aio::MultiplexedConnection, keys: &[Vec<u8>]) -> Result<u64, String> {
+    let mut cmd = redis::cmd("DEL");
+    for key in keys {
+        cmd.arg(key.as_slice());
+    }
+    cmd.query_async(con).await.map_err(|e| e.to_string())
+}
+
+pub async fn load_more_collection(
+    con: &mut redis::aio::MultiplexedConnection,
+    key: &[u8],
+    key_type: &str,
+    cursor: u64,
+    count: usize,
+) -> Result<RedisValue, String> {
+    let (value, next_cursor) = match key_type {
+        "list" => {
+            let start = cursor as i64;
+            let end = start + count as i64 - 1;
+            let v: RedisRawValue =
+                redis::cmd("LRANGE").arg(key).arg(start).arg(end).query_async(con).await.map_err(|e| e.to_string())?;
+            let len: u64 = redis::cmd("LLEN").arg(key).query_async(con).await.unwrap_or(0);
+            let next = cursor + count as u64;
+            let cursor = if next < len { Some(next) } else { None };
+            (redis_array_to_json(v), cursor)
+        }
+        "set" => {
+            let (next, items) = sscan_page_raw(con, key, cursor, count).await?;
+            let cursor = if next > 0 { Some(next) } else { None };
+            (serde_json::Value::Array(items), cursor)
+        }
+        "zset" => {
+            let (next, items) = zscan_page_raw(con, key, cursor, count).await?;
+            let cursor = if next > 0 { Some(next) } else { None };
+            (serde_json::Value::Array(items), cursor)
+        }
+        "hash" => {
+            let (next, items) = hscan_page_raw(con, key, cursor, count).await?;
+            let cursor = if next > 0 { Some(next) } else { None };
+            (serde_json::Value::Array(items), cursor)
+        }
+        _ => return Err(format!("Pagination not supported for type: {key_type}")),
+    };
+
+    Ok(RedisValue {
+        key_display: redis_key_bytes_to_display(key),
+        key_raw: redis_key_bytes_to_raw(key),
+        key_type: key_type.to_string(),
+        ttl: -1,
+        value_is_binary: false,
+        value,
+        total: None,
+        scan_cursor: next_cursor,
+    })
+}
+
+async fn hscan_page_raw(
+    con: &mut redis::aio::MultiplexedConnection,
+    key: &[u8],
+    cursor: u64,
+    count: usize,
+) -> Result<(u64, Vec<serde_json::Value>), String> {
+    let raw: RedisRawValue = redis::cmd("HSCAN")
+        .arg(key)
+        .arg(cursor)
+        .arg("COUNT")
+        .arg(count)
+        .query_async(con)
+        .await
+        .map_err(|e| e.to_string())?;
+    parse_scan_pairs(raw, "hash")
+}
+
+async fn sscan_page_raw(
+    con: &mut redis::aio::MultiplexedConnection,
+    key: &[u8],
+    cursor: u64,
+    count: usize,
+) -> Result<(u64, Vec<serde_json::Value>), String> {
+    let raw: RedisRawValue = redis::cmd("SSCAN")
+        .arg(key)
+        .arg(cursor)
+        .arg("COUNT")
+        .arg(count)
+        .query_async(con)
+        .await
+        .map_err(|e| e.to_string())?;
+    parse_scan_members(raw)
+}
+
+async fn zscan_page_raw(
+    con: &mut redis::aio::MultiplexedConnection,
+    key: &[u8],
+    cursor: u64,
+    count: usize,
+) -> Result<(u64, Vec<serde_json::Value>), String> {
+    let raw: RedisRawValue = redis::cmd("ZSCAN")
+        .arg(key)
+        .arg(cursor)
+        .arg("COUNT")
+        .arg(count)
+        .query_async(con)
+        .await
+        .map_err(|e| e.to_string())?;
+    parse_scan_pairs(raw, "zset")
+}
+
+fn parse_scan_pairs(raw: RedisRawValue, kind: &str) -> Result<(u64, Vec<serde_json::Value>), String> {
+    let RedisRawValue::Array(parts) = raw else {
+        return Err("Invalid SCAN response".to_string());
+    };
+    if parts.len() != 2 {
+        return Err("Invalid SCAN response".to_string());
+    }
+
+    let cursor = redis_value_to_string(parts[0].clone())
+        .ok_or("Invalid cursor")?
+        .parse::<u64>()
+        .map_err(|_| "Invalid cursor".to_string())?;
+
+    let RedisRawValue::Array(entries) = &parts[1] else {
+        return Err("Invalid SCAN entries".to_string());
+    };
+
+    let mut items = Vec::new();
+    let mut iter = entries.iter();
+    while let Some(a) = iter.next() {
+        let Some(b) = iter.next() else { break };
+        let a_str = redis_value_to_string(a.clone()).unwrap_or_default();
+        let b_str = redis_value_to_string(b.clone()).unwrap_or_default();
+        if kind == "zset" {
+            items.push(serde_json::json!({"member": a_str, "score": b_str}));
+        } else {
+            items.push(serde_json::json!({"field": a_str, "value": b_str}));
+        }
+    }
+
+    Ok((cursor, items))
+}
+
+fn parse_scan_members(raw: RedisRawValue) -> Result<(u64, Vec<serde_json::Value>), String> {
+    let RedisRawValue::Array(parts) = raw else {
+        return Err("Invalid SCAN response".to_string());
+    };
+    if parts.len() != 2 {
+        return Err("Invalid SCAN response".to_string());
+    }
+
+    let cursor = redis_value_to_string(parts[0].clone())
+        .ok_or("Invalid cursor")?
+        .parse::<u64>()
+        .map_err(|_| "Invalid cursor".to_string())?;
+
+    let RedisRawValue::Array(entries) = &parts[1] else {
+        return Err("Invalid SCAN entries".to_string());
+    };
+
+    let items =
+        entries.iter().filter_map(|v| redis_value_to_string(v.clone())).map(|s| serde_json::Value::String(s)).collect();
+
+    Ok((cursor, items))
 }
 
 #[cfg(test)]

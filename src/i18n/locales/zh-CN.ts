@@ -538,7 +538,7 @@ export default {
     pattern: "匹配模式 (如 user:*)",
     keys: "{count} 个 key",
     loadingKeys: "正在加载 key...",
-    loadMoreKeys: "继续加载 key",
+    loadMoreKeys: "加载更多",
     items: "{count} 个元素",
     fields: "{count} 个字段",
     members: "{count} 个成员",

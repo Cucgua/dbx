@@ -264,3 +264,101 @@ pub async fn redis_set_remove_in_db_core(
         _ => Err("Not a Redis connection".to_string()),
     }
 }
+
+pub async fn redis_zadd_in_db_core(
+    state: &AppState,
+    connection_id: &str,
+    db: u32,
+    key_raw: &str,
+    member: &str,
+    score: f64,
+) -> Result<(), String> {
+    let connections = state.connections.lock().await;
+    match connections.get(connection_id).ok_or("Not found")? {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            let key = redis_driver::redis_key_raw_to_bytes(key_raw)?;
+            redis_driver::select_db(&mut con, db).await?;
+            redis_driver::zadd(&mut con, &key, member, score).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}
+
+pub async fn redis_zrem_in_db_core(
+    state: &AppState,
+    connection_id: &str,
+    db: u32,
+    key_raw: &str,
+    member: &str,
+) -> Result<(), String> {
+    let connections = state.connections.lock().await;
+    match connections.get(connection_id).ok_or("Not found")? {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            let key = redis_driver::redis_key_raw_to_bytes(key_raw)?;
+            redis_driver::select_db(&mut con, db).await?;
+            redis_driver::zrem(&mut con, &key, member).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}
+
+pub async fn redis_set_ttl_in_db_core(
+    state: &AppState,
+    connection_id: &str,
+    db: u32,
+    key_raw: &str,
+    ttl: i64,
+) -> Result<(), String> {
+    let connections = state.connections.lock().await;
+    match connections.get(connection_id).ok_or("Not found")? {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            let key = redis_driver::redis_key_raw_to_bytes(key_raw)?;
+            redis_driver::select_db(&mut con, db).await?;
+            redis_driver::set_ttl(&mut con, &key, ttl).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}
+
+pub async fn redis_delete_keys_in_db_core(
+    state: &AppState,
+    connection_id: &str,
+    db: u32,
+    key_raws: &[String],
+) -> Result<u64, String> {
+    let connections = state.connections.lock().await;
+    match connections.get(connection_id).ok_or("Not found")? {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            redis_driver::select_db(&mut con, db).await?;
+            let keys: Result<Vec<Vec<u8>>, String> =
+                key_raws.iter().map(|k| redis_driver::redis_key_raw_to_bytes(k)).collect();
+            redis_driver::delete_keys(&mut con, &keys?).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}
+
+pub async fn redis_load_more_in_db_core(
+    state: &AppState,
+    connection_id: &str,
+    db: u32,
+    key_raw: &str,
+    key_type: &str,
+    cursor: u64,
+    count: usize,
+) -> Result<redis_driver::RedisValue, String> {
+    let connections = state.connections.lock().await;
+    match connections.get(connection_id).ok_or("Not found")? {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            let key = redis_driver::redis_key_raw_to_bytes(key_raw)?;
+            redis_driver::select_db(&mut con, db).await?;
+            redis_driver::load_more_collection(&mut con, &key, key_type, cursor, count).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}

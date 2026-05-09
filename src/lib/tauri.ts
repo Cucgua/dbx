@@ -262,6 +262,8 @@ export interface RedisKeyInfo {
   key_raw: string;
   key_type: string;
   ttl: number;
+  size: number;
+  value_preview: string;
 }
 
 export interface RedisValue {
@@ -271,6 +273,8 @@ export interface RedisValue {
   ttl: number;
   value_is_binary: boolean;
   value: any;
+  total?: number;
+  scan_cursor?: number;
 }
 
 export interface RedisScanResult {
@@ -338,6 +342,39 @@ export async function redisSetAdd(connectionId: string, db: number, keyRaw: stri
 
 export async function redisSetRemove(connectionId: string, db: number, keyRaw: string, member: string): Promise<void> {
   return invoke("redis_set_remove", { connectionId, db, keyRaw, member });
+}
+
+export async function redisZadd(
+  connectionId: string,
+  db: number,
+  keyRaw: string,
+  member: string,
+  score: number,
+): Promise<void> {
+  return invoke("redis_zadd", { connectionId, db, keyRaw, member, score });
+}
+
+export async function redisZrem(connectionId: string, db: number, keyRaw: string, member: string): Promise<void> {
+  return invoke("redis_zrem", { connectionId, db, keyRaw, member });
+}
+
+export async function redisSetTtl(connectionId: string, db: number, keyRaw: string, ttl: number): Promise<void> {
+  return invoke("redis_set_ttl", { connectionId, db, keyRaw, ttl });
+}
+
+export async function redisDeleteKeys(connectionId: string, db: number, keyRaws: string[]): Promise<number> {
+  return invoke("redis_delete_keys", { connectionId, db, keyRaws });
+}
+
+export async function redisLoadMore(
+  connectionId: string,
+  db: number,
+  keyRaw: string,
+  keyType: string,
+  cursor: number,
+  count: number,
+): Promise<RedisValue> {
+  return invoke("redis_load_more", { connectionId, db, keyRaw, keyType, cursor, count });
 }
 
 // --- MongoDB ---
