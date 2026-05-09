@@ -335,10 +335,11 @@ async function clearNodeDefaultDatabase() {
 }
 
 async function refresh() {
-  const node = props.node;
-  node.isExpanded = false;
-  node.children = [];
-  await toggle();
+  try {
+    await connectionStore.refreshTreeNode(props.node);
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 const showDeleteConfirm = ref(false);

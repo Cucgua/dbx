@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import ConnectionTree from "@/components/sidebar/ConnectionTree.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useToast } from "@/composables/useToast";
 
 defineProps<{
   sidebarWidth: number;
@@ -18,6 +19,15 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
+const { toast } = useToast();
+
+async function refreshTree() {
+  try {
+    await connectionStore.refreshAllTree();
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
 </script>
 
 <template>
@@ -28,7 +38,7 @@ const connectionStore = useConnectionStore();
         <span class="flex-1" />
         <Tooltip>
           <TooltipTrigger as-child>
-            <Button variant="ghost" size="icon" class="h-5 w-5" @click="connectionStore.refreshAllTree()">
+            <Button variant="ghost" size="icon" class="h-5 w-5" @click="refreshTree">
               <RefreshCw class="h-3 w-3" />
             </Button>
           </TooltipTrigger>

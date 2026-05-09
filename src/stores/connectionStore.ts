@@ -20,7 +20,7 @@ import {
 import type { SqlCompletionColumn, SqlCompletionTable } from "@/lib/sqlCompletion";
 import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { isSchemaAware } from "@/lib/databaseCapabilities";
+import { isSchemaAware, TREE_SCHEMA_TYPES } from "@/lib/databaseCapabilities";
 import { buildDatabaseTreeNodes } from "@/lib/databaseTree";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
@@ -677,6 +677,67 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
+  function collectExpandedNodeIds(nodes: TreeNode[], ids = new Set<string>()): Set<string> {
+    for (const node of nodes) {
+      if (node.isExpanded) ids.add(node.id);
+      if (node.children) collectExpandedNodeIds(node.children, ids);
+    }
+    return ids;
+  }
+
+  async function loadTreeNodeChildren(node: TreeNode) {
+    if (node.type === "connection" && node.connectionId) {
+      const config = getConfig(node.connectionId);
+      if (config?.db_type === "redis") {
+        await loadRedisDatabases(node.connectionId);
+      } else if (config?.db_type === "mongodb" || config?.db_type === "elasticsearch") {
+        await loadMongoDatabases(node.connectionId);
+      } else {
+        await loadDatabases(node.connectionId);
+      }
+    } else if (node.type === "mongo-db" && node.connectionId && node.database) {
+      await loadMongoCollections(node.connectionId, node.database);
+    } else if (node.type === "database" && node.connectionId && node.database) {
+      const config = getConfig(node.connectionId);
+      if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
+        await loadSchemas(node.connectionId, node.database);
+      } else {
+        await loadTables(node.connectionId, node.database);
+      }
+    } else if (node.type === "schema" && node.connectionId && node.database && node.schema) {
+      await loadTables(node.connectionId, node.database, node.schema);
+    } else if ((node.type === "table" || node.type === "view") && node.connectionId && node.database) {
+      await loadTableGroups(node.connectionId, node.database, node.label, node.schema);
+    } else if (node.type === "group-columns" && node.connectionId && node.database && node.tableName) {
+      await loadColumns(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-indexes" && node.connectionId && node.database && node.tableName) {
+      await loadIndexes(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-fkeys" && node.connectionId && node.database && node.tableName) {
+      await loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-triggers" && node.connectionId && node.database && node.tableName) {
+      await loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
+    }
+  }
+
+  async function restoreExpandedChildren(node: TreeNode, expandedIds: Set<string>) {
+    if (!node.children) return;
+    for (const child of node.children) {
+      if (!expandedIds.has(child.id)) continue;
+      await loadTreeNodeChildren(child);
+      await restoreExpandedChildren(child, expandedIds);
+    }
+  }
+
+  async function refreshTreeNode(node: TreeNode) {
+    const expandedIds = collectExpandedNodeIds([node]);
+    expandedIds.add(node.id);
+    if (node.type !== "connection-group") {
+      node.children = [];
+    }
+    await loadTreeNodeChildren(node);
+    await restoreExpandedChildren(node, expandedIds);
+  }
+
   function isSchemaAwareDatabase(connectionId: string): boolean {
     return isSchemaAware(getConfig(connectionId)?.db_type);
   }
@@ -792,20 +853,21 @@ export const useConnectionStore = defineStore("connection", () => {
     persistSidebarLayoutDebounced();
   }
 
-  function refreshAllTree() {
-    const resetChildren = (nodes: TreeNode[]) => {
+  async function refreshAllTree() {
+    const expandedIds = collectExpandedNodeIds(treeNodes.value);
+    const refreshExpandedNodes = async (nodes: TreeNode[]) => {
       for (const node of nodes) {
         if (node.type === "connection-group") {
-          if (node.children) resetChildren(node.children);
+          if (node.children) await refreshExpandedNodes(node.children);
           continue;
         }
-        if (node.isExpanded) {
-          node.isExpanded = false;
-          node.children = [];
-        }
+        if (!expandedIds.has(node.id)) continue;
+        node.children = [];
+        await loadTreeNodeChildren(node);
+        await restoreExpandedChildren(node, expandedIds);
       }
     };
-    resetChildren(treeNodes.value);
+    await refreshExpandedNodes(treeNodes.value);
   }
 
   async function exportConnectionsToFile(passphrase: string) {
@@ -955,6 +1017,7 @@ export const useConnectionStore = defineStore("connection", () => {
     activeConnectionId,
     treeNodes,
     refreshAllTree,
+    refreshTreeNode,
     connectedIds,
     connectionErrors,
     setConnectionError,
