@@ -63,6 +63,7 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   ssh_key_path: "",
   ssh_key_passphrase: "",
   ssh_expose_lan: false,
+  ssh_connect_timeout_secs: 5,
   ssl: false,
   connection_string: undefined,
 });
@@ -245,6 +246,7 @@ watch(
         ssh_key_path: config.ssh_key_path || "",
         ssh_key_passphrase: config.ssh_key_passphrase || "",
         ssh_expose_lan: config.ssh_expose_lan || false,
+        ssh_connect_timeout_secs: config.ssh_connect_timeout_secs || 5,
         ssl: config.ssl || false,
         connection_string: config.connection_string,
       };
@@ -429,6 +431,8 @@ async function testConnection() {
 
 function connectionConfigForSubmit(id: string): ConnectionConfig {
   const config: ConnectionConfig = { ...form.value, id };
+  const sshTimeout = Number(config.ssh_connect_timeout_secs);
+  config.ssh_connect_timeout_secs = Number.isFinite(sshTimeout) && sshTimeout > 0 ? sshTimeout : 5;
   if (config.db_type === "mongodb" && !mongoUseUrl.value) {
     config.connection_string = undefined;
   }
@@ -964,6 +968,18 @@ async function browseDbFilePath() {
                     <input type="checkbox" v-model="form.ssh_expose_lan" class="mr-0" :disabled="!form.ssh_enabled" />
                     <span class="text-xs text-muted-foreground">{{ t("connection.sshExposeLan") }}</span>
                   </label>
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.sshConnectTimeout") }}</Label>
+                  <Input
+                    v-model.number="form.ssh_connect_timeout_secs"
+                    type="number"
+                    min="5"
+                    max="300"
+                    step="1"
+                    class="col-span-3"
+                    :disabled="!form.ssh_enabled"
+                  />
                 </div>
               </div>
             </TabsContent>

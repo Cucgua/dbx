@@ -115,6 +115,7 @@ export default {
     sshKeyPassphrasePlaceholder: "密钥未加密则留空",
     sshKeyPathBrowse: "浏览",
     sshExposeLan: "允许局域网访问隧道",
+    sshConnectTimeout: "SSH 超时时间（秒）",
     dmCompatHint: "需要在系统上安装达梦 DM8 ODBC 驱动程序。",
     dmDownload: "前往达梦官网下载",
     mongoLegacyHint:

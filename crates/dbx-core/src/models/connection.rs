@@ -35,6 +35,8 @@ pub struct ConnectionConfig {
     pub ssh_key_passphrase: String,
     #[serde(default)]
     pub ssh_expose_lan: bool,
+    #[serde(default = "default_ssh_connect_timeout_secs")]
+    pub ssh_connect_timeout_secs: u64,
     #[serde(default)]
     pub ssl: bool,
     #[serde(default)]
@@ -45,6 +47,10 @@ pub struct ConnectionConfig {
 
 fn default_ssh_port() -> u16 {
     22
+}
+
+pub fn default_ssh_connect_timeout_secs() -> u64 {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -75,6 +81,14 @@ pub enum DatabaseType {
 }
 
 impl ConnectionConfig {
+    pub fn effective_ssh_connect_timeout_secs(&self) -> u64 {
+        if self.ssh_connect_timeout_secs == 0 {
+            default_ssh_connect_timeout_secs()
+        } else {
+            self.ssh_connect_timeout_secs
+        }
+    }
+
     pub fn effective_database(&self) -> Option<&str> {
         self.database
             .as_deref()
@@ -346,7 +360,7 @@ fn bracket_ipv6(host: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionConfig, DatabaseType};
+    use super::{default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType};
 
     fn mysql_config(username: &str, password: &str, database: Option<&str>) -> ConnectionConfig {
         ConnectionConfig {
@@ -370,6 +384,7 @@ mod tests {
             ssh_key_path: String::new(),
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
+            ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
             ssl: false,
             sysdba: false,
             connection_string: None,
@@ -381,6 +396,32 @@ mod tests {
         config.db_type = DatabaseType::MongoDb;
         config.port = 17000;
         config
+    }
+
+    #[test]
+    fn ssh_connect_timeout_defaults_for_legacy_config() {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "id",
+            "name": "name",
+            "db_type": "mysql",
+            "host": "10.1.2.3",
+            "port": 3306,
+            "username": "root",
+            "password": "",
+            "database": null
+        }))
+        .unwrap();
+
+        assert_eq!(config.ssh_connect_timeout_secs, default_ssh_connect_timeout_secs());
+        assert_eq!(config.effective_ssh_connect_timeout_secs(), default_ssh_connect_timeout_secs());
+    }
+
+    #[test]
+    fn ssh_connect_timeout_zero_uses_default() {
+        let mut config = mysql_config("root", "", None);
+        config.ssh_connect_timeout_secs = 0;
+
+        assert_eq!(config.effective_ssh_connect_timeout_secs(), default_ssh_connect_timeout_secs());
     }
 
     #[test]

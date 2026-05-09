@@ -36,6 +36,7 @@ export interface ConnectionConfig {
   ssh_key_path?: string;
   ssh_key_passphrase?: string;
   ssh_expose_lan?: boolean;
+  ssh_connect_timeout_secs?: number;
   ssl?: boolean;
   sysdba?: boolean;
   connection_string?: string;

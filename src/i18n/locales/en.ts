@@ -116,6 +116,7 @@ export default {
     sshKeyPassphrasePlaceholder: "Leave empty if key is not encrypted",
     sshKeyPathBrowse: "Browse",
     sshExposeLan: "Expose tunnel to LAN",
+    sshConnectTimeout: "SSH Timeout (seconds)",
     dmCompatHint: "Requires DM8 ODBC driver installed on your system.",
     dmDownload: "Download from Dameng",
     mongoLegacyHint:

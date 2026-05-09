@@ -285,6 +285,7 @@ mod tests {
             ssh_key_path: String::new(),
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
+            ssh_connect_timeout_secs: crate::models::connection::default_ssh_connect_timeout_secs(),
             ssl: false,
             sysdba: false,
             connection_string: None,
