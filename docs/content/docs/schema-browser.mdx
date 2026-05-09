@@ -30,9 +30,11 @@ Expand any node to drill down. Click a table name to open it in the Data Grid. C
 
 Right-click any node for context-specific actions:
 
+- **Connection** — Refresh metadata, duplicate connection, disconnect
+- **Database** — Create database, drop database
+- **Schema** — Create schema, drop schema
 - **Table** — Open data, open structure, copy table name, drop table
 - **Column** — Copy column name
-- **Connection** — Refresh metadata, disconnect
 
 ## Column Comments
 
@@ -45,3 +47,12 @@ Assign colors to connections — green for dev, red for production — to tell t
 </Callout>
 
 Colors appear next to connection names in the sidebar and in tabs, especially useful when working with multiple connections.
+
+## Redis Browser
+
+The Redis browser provides a dedicated interface for browsing and managing Redis data:
+
+- **Table View** — Keys are displayed in a Navicat-style table layout for easier scanning and management
+- **Inline Editing** — Edit key values directly in the browser without switching to a separate editor
+- **Pagination** — Browse large keyspaces with built-in pagination, avoiding performance issues from loading all keys at once
+- **All Data Types** — Full support for String, Hash, List, Set, Sorted Set (ZSet), and Stream

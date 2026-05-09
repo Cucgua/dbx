@@ -29,15 +29,24 @@ Before saving, DBX shows a preview of the exact `UPDATE`, `INSERT`, or `DELETE` 
 
 This prevents accidental data modifications and gives you full visibility into what will change.
 
+## Cell Detail Panel
+
+Click a cell to open its detail panel on the right side. The panel provides:
+
+- **Value Editor** — Edit long text, JSON, or other complex values in a larger, more comfortable editor
+- **Set NULL** — Explicitly set a cell value to `NULL` with one click
+
 ## Sorting and Filtering
 
-- **Sort** — Click a column header to sort ascending or descending
+- **Sort** — Click a column header to sort ascending or descending. A sort hint icon appears when you hover over the column header
 - **Search** — Use the search bar to find text across all visible columns
 - **WHERE Filter** — Apply a custom `WHERE` clause for database-level filtering. More efficient than client-side search for large tables
+- **ORDER BY** — Use the dedicated `ORDER BY` input to control the sort order at the database level, independent of the WHERE filter
 
 ## Column Resize and Row Numbers
 
 - Drag column borders to resize columns
+- **Auto-fit** — Double-click a column border to automatically fit the column width based on header and data content
 - Row numbers are displayed in the leftmost column
 
 ## Export
@@ -47,3 +56,4 @@ This prevents accidental data modifications and gives you full visibility into w
 | CSV | Comma-separated values, compatible with Excel and spreadsheet tools |
 | JSON | Array of objects, suitable for use in code or APIs |
 | Markdown | Markdown table, useful for pasting into documentation or chat |
+| Copy as INSERT | Right-click selected rows to copy them as `INSERT` statements, ready to paste and execute in another database |

@@ -19,6 +19,7 @@ description: 基于 CodeMirror 6 的 SQL 编辑器，语法高亮、智能补全
 - **表名** — 当前数据库中的所有表和视图
 - **字段名** — 根据已输入的表名，自动补全对应的字段
 - **JOIN 补全** — 输入 `JOIN` 后，自动建议可关联的表及基于外键的关联条件
+- **APPLY 子句** — SQL Server 连接下，自动补全 `CROSS APPLY` 和 `OUTER APPLY`
 
 补全列表会随着输入内容实时过滤，按 `Tab` 或 `Enter` 即可确认选择。
 
