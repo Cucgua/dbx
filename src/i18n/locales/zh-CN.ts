@@ -98,7 +98,7 @@ export default {
     driverName: "驱动名称",
     driverNamePlaceholder: "厂商或环境名称",
     urlParams: "URL 参数",
-    connectionUrlPlaceholder: "postgresql://user:pass@host:5432/db?sslmode=require",
+    connectionUrlPlaceholder: "postgresql://user:pass{'@'}host:5432/db?sslmode=require",
     parseConnectionUrl: "解析连接 URL",
     parseConnectionUrlApplied: "已应用连接 URL",
     parseConnectionUrlFailed: "解析连接 URL 失败：{message}",

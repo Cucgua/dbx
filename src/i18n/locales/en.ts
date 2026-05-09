@@ -99,7 +99,7 @@ export default {
     driverName: "Driver Name",
     driverNamePlaceholder: "Vendor or environment name",
     urlParams: "URL Params",
-    connectionUrlPlaceholder: "postgresql://user:pass@host:5432/db?sslmode=require",
+    connectionUrlPlaceholder: "postgresql://user:pass{'@'}host:5432/db?sslmode=require",
     parseConnectionUrl: "Parse connection URL",
     parseConnectionUrlApplied: "Connection URL applied",
     parseConnectionUrlFailed: "Failed to parse connection URL: {message}",
