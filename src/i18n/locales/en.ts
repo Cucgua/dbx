@@ -725,6 +725,7 @@ export default {
     title: "Settings",
     editorTab: "Editor",
     securityTab: "Security",
+    aboutTab: "About",
     fontFamily: "Font Family",
     selectFont: "Select font...",
     fontSize: "Font Size",
@@ -736,5 +737,10 @@ export default {
     executeModeAll: "Execute all SQL",
     executeModeCurrent: "Execute statement at cursor",
     preview: "Live Preview",
+    aboutDescription: "An open-source, lightweight database management tool.",
+    community: "Community",
+    qqGroup: "QQ Group",
+    project: "Project",
+    openSource: "Open-source repository",
   },
 };

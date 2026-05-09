@@ -713,6 +713,7 @@ export default {
     title: "设置",
     editorTab: "编辑器",
     securityTab: "安全",
+    aboutTab: "关于我们",
     fontFamily: "字体",
     selectFont: "选择字体...",
     fontSize: "字号",
@@ -724,5 +725,10 @@ export default {
     executeModeAll: "执行全部 SQL",
     executeModeCurrent: "执行光标所在语句",
     preview: "实时预览",
+    aboutDescription: "开源、轻量的数据库管理工具。",
+    community: "社区",
+    qqGroup: "QQ 群",
+    project: "项目",
+    openSource: "开源仓库",
   },
 };

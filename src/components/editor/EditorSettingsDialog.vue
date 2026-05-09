@@ -247,6 +247,7 @@ watch(
         <TabsList class="w-full">
           <TabsTrigger value="editor" class="flex-1">{{ t("settings.editorTab") }}</TabsTrigger>
           <TabsTrigger v-if="isWeb" value="security" class="flex-1">{{ t("settings.securityTab") }}</TabsTrigger>
+          <TabsTrigger value="about" class="flex-1">{{ t("settings.aboutTab") }}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="editor" class="space-y-5 py-2">
@@ -406,6 +407,41 @@ watch(
               @click="changePassword"
             >
               {{ t("auth.changePassword") }}
+            </Button>
+          </DialogFooter>
+        </TabsContent>
+
+        <TabsContent value="about" class="space-y-5 py-2">
+          <div class="rounded-lg border bg-muted/20 p-4">
+            <div class="flex items-start justify-between gap-4">
+              <div class="min-w-0 space-y-1">
+                <div class="text-lg font-semibold">DBX</div>
+                <p class="text-sm text-muted-foreground">{{ t("settings.aboutDescription") }}</p>
+              </div>
+              <div class="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground">v0.5.0</div>
+            </div>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="rounded-lg border p-4">
+              <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                {{ t("settings.community") }}
+              </div>
+              <div class="mt-2 text-sm font-medium">{{ t("settings.qqGroup") }}</div>
+              <div class="mt-1 font-mono text-base">1087880322</div>
+            </div>
+            <div class="rounded-lg border p-4">
+              <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                {{ t("settings.project") }}
+              </div>
+              <div class="mt-2 text-sm font-medium">{{ t("settings.openSource") }}</div>
+              <div class="mt-1 text-sm text-muted-foreground">github.com/t8y2/dbx</div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
             </Button>
           </DialogFooter>
         </TabsContent>
