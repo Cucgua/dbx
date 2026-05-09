@@ -32,6 +32,8 @@ import {
   RefreshCcw,
   RotateCcw,
   Pencil,
+  Filter,
+  FileDown,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +41,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -827,6 +832,14 @@ const selectedCellCount = computed(() => selectedCells.value.columns.length * se
 const hasCellSelection = computed(() => selectedCellCount.value > 0);
 const selectionSummary = computed(() => t("grid.selectedCells", { count: selectedCellCount.value }));
 const contextRowItem = computed(() => (contextCell.value ? getRowItem(contextCell.value.rowId) : undefined));
+const contextColumn = computed(() => {
+  if (!contextCell.value || contextCell.value.col < 0) return null;
+  return props.result.columns[contextCell.value.col] ?? null;
+});
+const contextCellValue = computed<CellValue | null>(() => {
+  if (!contextCell.value || contextCell.value.col < 0) return null;
+  return contextRowItem.value?.data[contextCell.value.col] ?? null;
+});
 const activeCellDetail = computed(() => {
   const cell = detailCell.value;
   if (!cell) return null;
@@ -952,6 +965,50 @@ function toggleSort(colName: string, colIdx: number) {
     sortDir.value = "asc";
     emit("sort", colName, colIdx, "asc", currentWhereInput());
   }
+}
+
+function applyContextSort(direction: "asc" | "desc" | null) {
+  if (!contextColumn.value || !contextCell.value) return;
+  const column = contextColumn.value;
+  const columnIndex = contextCell.value.col;
+  orderByInput.value = "";
+  currentPage.value = 1;
+  if (direction) {
+    sortCol.value = column;
+    sortColIndex.value = columnIndex;
+    sortDir.value = direction;
+  } else {
+    sortCol.value = null;
+    sortColIndex.value = null;
+    sortDir.value = "asc";
+  }
+  emit("sort", column, columnIndex, direction, currentWhereInput());
+}
+
+function contextFilterCondition(mode: "equals" | "not-equals" | "is-null" | "is-not-null"): string | null {
+  if (!contextColumn.value) return null;
+  const column = quoteIdent(contextColumn.value);
+  const value = contextCellValue.value;
+
+  if (mode === "is-null") return `${column} IS NULL`;
+  if (mode === "is-not-null") return `${column} IS NOT NULL`;
+  if (value === null) return mode === "equals" ? `${column} IS NULL` : `${column} IS NOT NULL`;
+  return mode === "equals" ? `${column} = ${escapeVal(value)}` : `${column} <> ${escapeVal(value)}`;
+}
+
+async function applyContextFilter(mode: "equals" | "not-equals" | "is-null" | "is-not-null") {
+  if (!canUseWhereSearch.value) return;
+  const condition = contextFilterCondition(mode);
+  if (!condition) return;
+  const existing = whereFilterInput.value.trim();
+  whereFilterInput.value = existing ? `(${existing}) AND (${condition})` : condition;
+  await applyWhereFilter();
+}
+
+async function clearContextFilter() {
+  if (!canUseWhereSearch.value) return;
+  whereFilterInput.value = "";
+  await applyWhereFilter();
 }
 
 async function applyOrderBySearch() {
@@ -1326,6 +1383,12 @@ function selectSingleCell(rowIndex: number, colIndex: number) {
   selectionFocus.value = cell;
 }
 
+function selectRow(rowIndex: number) {
+  if (props.result.columns.length === 0) return;
+  selectionAnchor.value = { rowIndex, colIndex: 0 };
+  selectionFocus.value = { rowIndex, colIndex: props.result.columns.length - 1 };
+}
+
 function finishCellSelection() {
   isSelectingCells.value = false;
   document.removeEventListener("mouseup", finishCellSelection);
@@ -1445,8 +1508,13 @@ function onCellContext(rowId: number, rowIndex: number, colIdx: number) {
   }
 }
 
+function onRowContext(rowId: number, rowIndex: number) {
+  contextCell.value = { rowId, rowIndex, col: -1 };
+  selectRow(rowIndex);
+}
+
 function copyCell() {
-  if (!contextCell.value) return;
+  if (!contextCell.value || contextCell.value.col < 0) return;
   const item = getRowItem(contextCell.value.rowId);
   const val = item?.data[contextCell.value.col] ?? null;
   copyText(formatCell(val));
@@ -1983,9 +2051,11 @@ defineExpose({
                     :style="{ height: '26px', width: 'var(--total-w)' }"
                   >
                     <div
-                      class="shrink-0 px-2 py-1 border-r border-border text-center select-none"
+                      class="shrink-0 px-2 py-1 border-r border-border text-center select-none cursor-default hover:bg-accent/50"
                       :class="rowNumberStatusClass(item)"
                       :style="{ width: 'var(--row-num-w)' }"
+                      @click="selectRow(index)"
+                      @contextmenu="onRowContext(item.id, index)"
                     >
                       {{ index + 1 }}
                     </div>
@@ -2245,24 +2315,58 @@ defineExpose({
         </div>
       </ContextMenuTrigger>
 
-      <ContextMenuContent class="w-60">
-        <ContextMenuItem @click="copyCell">{{ t("grid.copyCell") }}</ContextMenuItem>
-        <ContextMenuItem @click="copyRow">{{ t("grid.copyRow") }}</ContextMenuItem>
-        <ContextMenuItem @click="copyRowAsInsert">{{ t("grid.copyRowInsert") }}</ContextMenuItem>
-        <ContextMenuItem @click="copyAll">{{ t("grid.copyAll") }}</ContextMenuItem>
-        <ContextMenuSeparator />
+      <ContextMenuContent class="w-64">
+        <template v-if="contextColumn">
+          <ContextMenuItem @click="applyContextSort('asc')">
+            <ArrowUp class="w-3.5 h-3.5 mr-2" /> {{ t("grid.sortAscending") }}
+          </ContextMenuItem>
+          <ContextMenuItem @click="applyContextSort('desc')">
+            <ArrowDown class="w-3.5 h-3.5 mr-2" /> {{ t("grid.sortDescending") }}
+          </ContextMenuItem>
+          <ContextMenuItem v-if="sortCol" @click="applyContextSort(null)">
+            <ArrowUpDown class="w-3.5 h-3.5 mr-2" /> {{ t("grid.clearSort") }}
+          </ContextMenuItem>
+          <ContextMenuSub v-if="canUseWhereSearch">
+            <ContextMenuSubTrigger> <Filter class="w-3.5 h-3.5 mr-2" /> {{ t("grid.filter") }} </ContextMenuSubTrigger>
+            <ContextMenuSubContent class="w-56">
+              <ContextMenuItem @click="applyContextFilter('equals')">{{ t("grid.filterByValue") }}</ContextMenuItem>
+              <ContextMenuItem @click="applyContextFilter('not-equals')">
+                {{ t("grid.filterExcludeValue") }}
+              </ContextMenuItem>
+              <ContextMenuItem @click="applyContextFilter('is-null')">{{ t("grid.filterIsNull") }}</ContextMenuItem>
+              <ContextMenuItem @click="applyContextFilter('is-not-null')">
+                {{ t("grid.filterIsNotNull") }}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem @click="clearContextFilter">{{ t("grid.clearFilter") }}</ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuSeparator />
+        </template>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger> <Copy class="w-3.5 h-3.5 mr-2" /> {{ t("grid.copy") }} </ContextMenuSubTrigger>
+          <ContextMenuSubContent class="w-56">
+            <ContextMenuItem v-if="contextColumn" @click="copyCell">{{ t("grid.copyCell") }}</ContextMenuItem>
+            <ContextMenuItem @click="copyRow">{{ t("grid.copyRow") }}</ContextMenuItem>
+            <ContextMenuItem @click="copyRowAsInsert">{{ t("grid.copyRowInsert") }}</ContextMenuItem>
+            <ContextMenuItem @click="copyAll">{{ t("grid.copyAll") }}</ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
         <ContextMenuItem v-if="contextCell" @click="openTranspose(contextCell.rowIndex)">
           <Rows3 class="w-3.5 h-3.5 mr-2" /> {{ t("grid.transpose") }}
         </ContextMenuItem>
+        <ContextMenuSub v-if="hasCellSelection">
+          <ContextMenuSubTrigger>{{ t("grid.selection") }}</ContextMenuSubTrigger>
+          <ContextMenuSubContent class="w-60">
+            <ContextMenuItem @click="copySelectionTsv">{{ t("grid.copySelectionTsv") }}</ContextMenuItem>
+            <ContextMenuItem @click="copySelectionCsv">{{ t("grid.copySelectionCsv") }}</ContextMenuItem>
+            <ContextMenuItem @click="copySelectionJson">{{ t("grid.copySelectionJson") }}</ContextMenuItem>
+            <ContextMenuItem @click="copySelectionSqlInList">{{ t("grid.copySelectionSql") }}</ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem @click="clearCellSelection">{{ t("grid.clearSelection") }}</ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
         <ContextMenuSeparator />
-        <template v-if="hasCellSelection">
-          <ContextMenuItem @click="copySelectionTsv">{{ t("grid.copySelectionTsv") }}</ContextMenuItem>
-          <ContextMenuItem @click="copySelectionCsv">{{ t("grid.copySelectionCsv") }}</ContextMenuItem>
-          <ContextMenuItem @click="copySelectionJson">{{ t("grid.copySelectionJson") }}</ContextMenuItem>
-          <ContextMenuItem @click="copySelectionSqlInList">{{ t("grid.copySelectionSql") }}</ContextMenuItem>
-          <ContextMenuItem @click="clearCellSelection">{{ t("grid.clearSelection") }}</ContextMenuItem>
-          <ContextMenuSeparator />
-        </template>
         <template v-if="editable && contextRowItem">
           <ContextMenuItem v-if="contextRowItem.isDeleted" @click="restoreRow(contextRowItem.id)">
             <Undo2 class="w-3.5 h-3.5 mr-2" /> {{ t("grid.restoreRow") }}
@@ -2272,9 +2376,14 @@ defineExpose({
           </ContextMenuItem>
           <ContextMenuSeparator />
         </template>
-        <ContextMenuItem @click="exportCsv">{{ t("grid.exportCsv") }}</ContextMenuItem>
-        <ContextMenuItem @click="exportJson">{{ t("grid.exportJson") }}</ContextMenuItem>
-        <ContextMenuItem @click="exportMarkdown">{{ t("grid.exportMarkdown") }}</ContextMenuItem>
+        <ContextMenuSub>
+          <ContextMenuSubTrigger> <FileDown class="w-3.5 h-3.5 mr-2" /> {{ t("grid.export") }} </ContextMenuSubTrigger>
+          <ContextMenuSubContent class="w-44">
+            <ContextMenuItem @click="exportCsv">{{ t("grid.exportCsv") }}</ContextMenuItem>
+            <ContextMenuItem @click="exportJson">{{ t("grid.exportJson") }}</ContextMenuItem>
+            <ContextMenuItem @click="exportMarkdown">{{ t("grid.exportMarkdown") }}</ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
       </ContextMenuContent>
     </ContextMenu>
 
