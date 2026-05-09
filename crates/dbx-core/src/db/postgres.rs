@@ -1,4 +1,5 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use futures::StreamExt;
 use percent_encoding::percent_decode_str;
 use rust_decimal::Decimal;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
@@ -260,37 +261,44 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
         || trimmed.starts_with("WITH")
         || trimmed.starts_with("TABLE")
     {
-        let rows: Vec<PgRow> = sqlx::query(sql).persistent(false).fetch_all(pool).await.map_err(|e| e.to_string())?;
+        let mut stream = sqlx::query(sql).persistent(false).fetch(pool);
+        let mut columns: Vec<String> = vec![];
+        let mut column_types: Vec<String> = vec![];
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-        let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(first) = rows.first() {
-            let cols = first.columns();
-            (
-                cols.iter().map(|c| c.name().to_string()).collect(),
-                cols.iter().map(|c| c.type_info().name().to_string()).collect(),
-            )
-        } else {
-            let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
-            (
-                desc.columns().iter().map(|c| c.name().to_string()).collect(),
-                desc.columns().iter().map(|c| c.type_info().name().to_string()).collect(),
-            )
-        };
-
-        let result_rows: Vec<Vec<serde_json::Value>> = rows
-            .iter()
-            .map(|row| {
+        while let Some(row) = stream.next().await {
+            let row = row.map_err(|e| e.to_string())?;
+            if columns.is_empty() {
+                let cols = row.columns();
+                columns = cols.iter().map(|c| c.name().to_string()).collect();
+                column_types = cols.iter().map(|c| c.type_info().name().to_string()).collect();
+            }
+            result_rows.push(
                 (0..row.len())
-                    .map(|i| pg_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                    .collect()
-            })
-            .collect();
+                    .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                    .collect(),
+            );
+            if result_rows.len() > crate::query::MAX_ROWS {
+                break;
+            }
+        }
+
+        if columns.is_empty() {
+            let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
+            columns = desc.columns().iter().map(|c| c.name().to_string()).collect();
+        }
+
+        let truncated = result_rows.len() > crate::query::MAX_ROWS;
+        if truncated {
+            result_rows.truncate(crate::query::MAX_ROWS);
+        }
 
         Ok(QueryResult {
             columns,
             rows: result_rows,
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
+            truncated,
         })
     } else {
         let result = sqlx::query(sql).execute(pool).await.map_err(|e| e.to_string())?;
@@ -319,38 +327,45 @@ pub async fn execute_query_with_schema(pool: &PgPool, schema: &str, sql: &str) -
         || trimmed.starts_with("WITH")
         || trimmed.starts_with("TABLE")
     {
-        let rows: Vec<PgRow> =
-            sqlx::query(sql).persistent(false).fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+        let mut stream = sqlx::query(sql).persistent(false).fetch(&mut *conn);
+        let mut columns: Vec<String> = vec![];
+        let mut column_types: Vec<String> = vec![];
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-        let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(first) = rows.first() {
-            let cols = first.columns();
-            (
-                cols.iter().map(|c| c.name().to_string()).collect(),
-                cols.iter().map(|c| c.type_info().name().to_string()).collect(),
-            )
-        } else {
-            let desc = (&mut *conn).describe(sql).await.map_err(|e| e.to_string())?;
-            (
-                desc.columns().iter().map(|c| c.name().to_string()).collect(),
-                desc.columns().iter().map(|c| c.type_info().name().to_string()).collect(),
-            )
-        };
-
-        let result_rows: Vec<Vec<serde_json::Value>> = rows
-            .iter()
-            .map(|row| {
+        while let Some(row) = stream.next().await {
+            let row = row.map_err(|e| e.to_string())?;
+            if columns.is_empty() {
+                let cols = row.columns();
+                columns = cols.iter().map(|c| c.name().to_string()).collect();
+                column_types = cols.iter().map(|c| c.type_info().name().to_string()).collect();
+            }
+            result_rows.push(
                 (0..row.len())
-                    .map(|i| pg_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                    .collect()
-            })
-            .collect();
+                    .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                    .collect(),
+            );
+            if result_rows.len() > crate::query::MAX_ROWS {
+                break;
+            }
+        }
+        drop(stream);
+
+        if columns.is_empty() {
+            let desc = (&mut *conn).describe(sql).await.map_err(|e| e.to_string())?;
+            columns = desc.columns().iter().map(|c| c.name().to_string()).collect();
+        }
+
+        let truncated = result_rows.len() > crate::query::MAX_ROWS;
+        if truncated {
+            result_rows.truncate(crate::query::MAX_ROWS);
+        }
 
         Ok(QueryResult {
             columns,
             rows: result_rows,
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
+            truncated,
         })
     } else {
         let result = sqlx::query(sql).execute(&mut *conn).await.map_err(|e| e.to_string())?;

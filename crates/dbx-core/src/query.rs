@@ -158,24 +158,22 @@ pub async fn do_execute(
             let p = p.clone();
             let bare = *mode == crate::connection::MysqlMode::Bare;
             drop(connections);
-            wait_for_query(cancel_token, db::mysql::execute_query(&p, sql, bare)).await.map(truncate_result)
+            wait_for_query(cancel_token, db::mysql::execute_query(&p, sql, bare)).await
         }
         PoolKind::Postgres(p) => {
             let p = p.clone();
             let schema = schema.map(|s| s.to_string());
             drop(connections);
             if let Some(schema) = schema {
-                wait_for_query(cancel_token, db::postgres::execute_query_with_schema(&p, &schema, sql))
-                    .await
-                    .map(truncate_result)
+                wait_for_query(cancel_token, db::postgres::execute_query_with_schema(&p, &schema, sql)).await
             } else {
-                wait_for_query(cancel_token, db::postgres::execute_query(&p, sql)).await.map(truncate_result)
+                wait_for_query(cancel_token, db::postgres::execute_query(&p, sql)).await
             }
         }
         PoolKind::Sqlite(p) => {
             let p = p.clone();
             drop(connections);
-            wait_for_query(cancel_token, db::sqlite::execute_query(&p, sql)).await.map(truncate_result)
+            wait_for_query(cancel_token, db::sqlite::execute_query(&p, sql)).await
         }
         PoolKind::ClickHouse(client) => {
             let client = client.clone();

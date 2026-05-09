@@ -1,4 +1,5 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use futures::StreamExt;
 use rust_decimal::Decimal;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
@@ -252,54 +253,70 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
         || trimmed.starts_with("EXPLAIN")
     {
         if bare {
-            let rows: Vec<MySqlRow> = sqlx::raw_sql(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+            let mut stream = sqlx::raw_sql(sql).fetch(&*pool);
+            let mut columns: Vec<String> = vec![];
+            let mut column_types: Vec<String> = vec![];
+            let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-            let (columns, column_types) = if let Some(first) = rows.first() {
-                let cols: Vec<String> = first.columns().iter().map(|c| c.name().to_string()).collect();
-                let types: Vec<String> = first.columns().iter().map(|c| c.type_info().name().to_string()).collect();
-                (cols, types)
-            } else {
-                (vec![], vec![])
-            };
-
-            let result_rows: Vec<Vec<serde_json::Value>> = rows
-                .iter()
-                .map(|row| {
+            while let Some(row) = stream.next().await {
+                let row: MySqlRow = row.map_err(|e| e.to_string())?;
+                if columns.is_empty() {
+                    columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+                    column_types = row.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+                }
+                result_rows.push(
                     (0..row.len())
-                        .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                        .collect()
-                })
-                .collect();
+                        .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                        .collect(),
+                );
+                if result_rows.len() > crate::query::MAX_ROWS {
+                    break;
+                }
+            }
+
+            let truncated = result_rows.len() > crate::query::MAX_ROWS;
+            if truncated {
+                result_rows.truncate(crate::query::MAX_ROWS);
+            }
 
             Ok(QueryResult {
                 columns,
                 rows: result_rows,
                 affected_rows: 0,
                 execution_time_ms: start.elapsed().as_millis(),
-                truncated: false,
+                truncated,
             })
         } else {
             let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
             let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
             let column_types: Vec<String> = desc.columns().iter().map(|c| c.type_info().name().to_string()).collect();
 
-            let rows: Vec<MySqlRow> = sqlx::query(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+            let mut stream = sqlx::query(sql).fetch(&*pool);
+            let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-            let result_rows: Vec<Vec<serde_json::Value>> = rows
-                .iter()
-                .map(|row| {
+            while let Some(row) = stream.next().await {
+                let row = row.map_err(|e| e.to_string())?;
+                result_rows.push(
                     (0..row.len())
-                        .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                        .collect()
-                })
-                .collect();
+                        .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                        .collect(),
+                );
+                if result_rows.len() > crate::query::MAX_ROWS {
+                    break;
+                }
+            }
+
+            let truncated = result_rows.len() > crate::query::MAX_ROWS;
+            if truncated {
+                result_rows.truncate(crate::query::MAX_ROWS);
+            }
 
             Ok(QueryResult {
                 columns,
                 rows: result_rows,
                 affected_rows: 0,
                 execution_time_ms: start.elapsed().as_millis(),
-                truncated: false,
+                truncated,
             })
         }
     } else {
