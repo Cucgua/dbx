@@ -37,7 +37,7 @@ jobs:
           api_key = os.environ["DEEPSEEK_API_KEY"]
 
           payload = json.dumps({
-              "model": "deepseek-chat",
+              "model": "deepseek-v4-pro",
               "messages": [
                   {
                       "role": "system",
