@@ -512,7 +512,7 @@ watch(orderByInput, (val) => {
   const trimmed = val.trim();
   if (trimmed.length === 0) return;
   const lastToken = trimmed.split(/[\s,()]+/).pop() || "";
-  if (lastToken.length > 0 && !["asc", "desc", "asc", "desc"].includes(lastToken.toLowerCase())) {
+  if (lastToken.length > 0 && !["asc", "desc"].includes(lastToken.toLowerCase())) {
     const tl = lastToken.toLowerCase();
     orderBySuggestions.value = props.tableMeta.columns
       .map((c) => c.name)
@@ -1725,6 +1725,7 @@ defineExpose({
                   placeholder="id > 100"
                   @keydown="onWhereFilterKeydown"
                   @click="updateWhereSuggestionPosition"
+                  @blur="dismissWhereSuggestions"
                 />
                 <span
                   ref="whereMeasureRef"
@@ -1775,6 +1776,7 @@ defineExpose({
                   placeholder="column desc"
                   @keydown="onOrderByKeydown"
                   @click="updateOrderBySuggestionPosition"
+                  @blur="dismissOrderBySuggestions"
                 />
                 <span
                   ref="orderByMeasureRef"
