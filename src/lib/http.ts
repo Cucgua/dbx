@@ -96,6 +96,18 @@ export async function listDatabases(connectionId: string): Promise<DatabaseInfo[
   return get(`/api/schema/databases?${qs({ connection_id: connectionId })}`);
 }
 
+export async function saveSchemaCache(cacheKey: string, payload: unknown): Promise<void> {
+  return post("/api/schema/cache", { cacheKey, payload });
+}
+
+export async function loadSchemaCache<T = unknown>(cacheKey: string): Promise<T | null> {
+  return get(`/api/schema/cache?${qs({ cache_key: cacheKey })}`);
+}
+
+export async function deleteSchemaCachePrefix(prefix: string): Promise<void> {
+  return del(`/api/schema/cache-prefix?${qs({ prefix })}`);
+}
+
 export async function listSchemas(connectionId: string, database: string): Promise<string[]> {
   return get(`/api/schema/schemas?${qs({ connection_id: connectionId, database })}`);
 }

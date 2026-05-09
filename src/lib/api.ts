@@ -39,6 +39,9 @@ export const loadConnections = forward("loadConnections");
 
 // Schema
 export const listDatabases = forward("listDatabases");
+export const saveSchemaCache = forward("saveSchemaCache");
+export const loadSchemaCache = forward("loadSchemaCache");
+export const deleteSchemaCachePrefix = forward("deleteSchemaCachePrefix");
 export const listSchemas = forward("listSchemas");
 export const listTables = forward("listTables");
 export const getColumns = forward("getColumns");

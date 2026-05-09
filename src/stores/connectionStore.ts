@@ -25,6 +25,10 @@ import { buildDatabaseTreeNodes } from "@/lib/databaseTree";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 
+interface LoadTreeOptions {
+  force?: boolean;
+}
+
 export const useConnectionStore = defineStore("connection", () => {
   const connections = ref<ConnectionConfig[]>([]);
   const isDesktop = isTauriRuntime();
@@ -38,6 +42,7 @@ export const useConnectionStore = defineStore("connection", () => {
   const treeNodes = ref<TreeNode[]>([]);
   const pinnedTreeNodeIds = ref<Set<string>>(loadPinnedTreeNodeIds());
   const connectedIds = ref<Set<string>>(new Set());
+  const loadedTreeNodeChildrenIds = ref<Set<string>>(new Set());
   const connectionErrors = ref<Record<string, string>>({});
   const editingConnectionId = ref<string | null>(null);
   const newConnectionGroupId = ref<string | null>(null);
@@ -188,6 +193,38 @@ export const useConnectionStore = defineStore("connection", () => {
 
   function setChildren(parent: TreeNode, children: TreeNode[]) {
     parent.children = orderPinnedFirst(children.map(pinTreeNode), (node) => !!node.pinned);
+    loadedTreeNodeChildrenIds.value.add(parent.id);
+  }
+
+  function schemaCacheKey(...parts: string[]): string {
+    return parts.map((part) => encodeURIComponent(part)).join(":");
+  }
+
+  async function loadPersistedTreeChildren(node: TreeNode, cacheKey: string): Promise<boolean> {
+    const children = await api.loadSchemaCache<TreeNode[]>(cacheKey).catch(() => null);
+    if (!children) return false;
+    setChildren(node, children);
+    node.isExpanded = true;
+    return true;
+  }
+
+  async function savePersistedTreeChildren(cacheKey: string, children: TreeNode[]) {
+    await api.saveSchemaCache(cacheKey, children).catch(() => undefined);
+  }
+
+  function useCachedChildren(node: TreeNode, options?: LoadTreeOptions): boolean {
+    if (options?.force || !loadedTreeNodeChildrenIds.value.has(node.id)) return false;
+    node.isExpanded = true;
+    return true;
+  }
+
+  function clearLoadedChildrenCache(prefix: string) {
+    for (const id of loadedTreeNodeChildrenIds.value) {
+      if (id === prefix || id.startsWith(`${prefix}:`)) {
+        loadedTreeNodeChildrenIds.value.delete(id);
+      }
+    }
+    api.deleteSchemaCachePrefix(`${schemaCacheKey(prefix)}:`).catch(() => undefined);
   }
 
   function findParentNode(nodes: TreeNode[], id: string, parent: TreeNode | null = null): TreeNode | null {
@@ -263,6 +300,7 @@ export const useConnectionStore = defineStore("connection", () => {
       activeConnectionId.value = null;
     }
     invalidateCompletionCache(id);
+    clearLoadedChildrenCache(id);
   }
 
   async function updateConnection(config: ConnectionConfig) {
@@ -276,6 +314,7 @@ export const useConnectionStore = defineStore("connection", () => {
     rebuildTreeNodes();
     connectedIds.value.delete(config.id);
     invalidateCompletionCache(config.id);
+    clearLoadedChildrenCache(config.id);
   }
 
   async function setDefaultDatabase(connectionId: string, database: string) {
@@ -343,6 +382,7 @@ export const useConnectionStore = defineStore("connection", () => {
       node.isExpanded = false;
       node.children = [];
     }
+    clearLoadedChildrenCache(connectionId);
     if (activeConnectionId.value === connectionId) {
       activeConnectionId.value = null;
     }
@@ -368,15 +408,20 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function loadDatabases(connectionId: string) {
+  async function loadDatabases(connectionId: string, options?: LoadTreeOptions) {
     const node = findNode(treeNodes.value, connectionId);
     if (!node) return;
+    if (useCachedChildren(node, options)) return;
+    const cacheKey = schemaCacheKey(connectionId, "databases");
+    if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
 
     node.isLoading = true;
     try {
       await ensureConnected(connectionId);
       const databases = await api.listDatabases(connectionId);
-      setChildren(node, buildDatabaseTreeNodes(connectionId, databases));
+      const children = buildDatabaseTreeNodes(connectionId, databases);
+      setChildren(node, children);
+      await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -460,57 +505,63 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function loadSchemas(connectionId: string, database: string) {
+  async function loadSchemas(connectionId: string, database: string, options?: LoadTreeOptions) {
     const nodeId = `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
     if (!node) return;
+    if (useCachedChildren(node, options)) return;
+    const cacheKey = schemaCacheKey(connectionId, database, "schemas");
+    if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
 
     node.isLoading = true;
     try {
+      await ensureConnected(connectionId);
       const schemas = await api.listSchemas(connectionId, database);
-      setChildren(
-        node,
-        schemas.map((s) => ({
-          id: `${connectionId}:${database}:${s}`,
-          label: s,
-          type: "schema" as const,
-          connectionId,
-          database,
-          schema: s,
-          isExpanded: false,
-          children: [],
-        })),
-      );
+      const children = schemas.map((s) => ({
+        id: `${connectionId}:${database}:${s}`,
+        label: s,
+        type: "schema" as const,
+        connectionId,
+        database,
+        schema: s,
+        isExpanded: false,
+        children: [],
+      }));
+      setChildren(node, children);
+      await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
     }
   }
 
-  async function loadTables(connectionId: string, database: string, schema?: string) {
+  async function loadTables(connectionId: string, database: string, schema?: string, options?: LoadTreeOptions) {
     const nodeId = schema ? `${connectionId}:${database}:${schema}` : `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
     if (!node) return;
+    if (useCachedChildren(node, options)) return;
+    const cacheKey = schemaCacheKey(connectionId, database, schema || "", "tables");
+    if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
 
     node.isLoading = true;
     try {
+      await ensureConnected(connectionId);
       const querySchema = schema || database;
       const tables = await api.listTables(connectionId, database, querySchema);
       const config = getConfig(connectionId);
       const effectiveSchema = schema || (config?.db_type && isSchemaAware(config.db_type) ? database : undefined);
-      setChildren(
-        node,
-        tables.map((t) => ({
-          id: `${nodeId}:${t.name}`,
-          label: t.name,
-          type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
-          connectionId,
-          database,
-          schema: effectiveSchema,
-          isExpanded: false,
-          children: [],
-        })),
-      );
+      const children = tables.map((t) => ({
+        id: `${nodeId}:${t.name}`,
+        label: t.name,
+        type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
+        connectionId,
+        database,
+        schema: effectiveSchema,
+        isExpanded: false,
+        children: [],
+      }));
+      setChildren(node, children);
+      await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -696,7 +747,7 @@ export const useConnectionStore = defineStore("connection", () => {
     return ids;
   }
 
-  async function loadTreeNodeChildren(node: TreeNode) {
+  async function loadTreeNodeChildren(node: TreeNode, options?: LoadTreeOptions) {
     if (node.type === "connection" && node.connectionId) {
       const config = getConfig(node.connectionId);
       if (config?.db_type === "redis") {
@@ -704,19 +755,19 @@ export const useConnectionStore = defineStore("connection", () => {
       } else if (config?.db_type === "mongodb" || config?.db_type === "elasticsearch") {
         await loadMongoDatabases(node.connectionId);
       } else {
-        await loadDatabases(node.connectionId);
+        await loadDatabases(node.connectionId, options);
       }
     } else if (node.type === "mongo-db" && node.connectionId && node.database) {
       await loadMongoCollections(node.connectionId, node.database);
     } else if (node.type === "database" && node.connectionId && node.database) {
       const config = getConfig(node.connectionId);
       if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
-        await loadSchemas(node.connectionId, node.database);
+        await loadSchemas(node.connectionId, node.database, options);
       } else {
-        await loadTables(node.connectionId, node.database);
+        await loadTables(node.connectionId, node.database, undefined, options);
       }
     } else if (node.type === "schema" && node.connectionId && node.database && node.schema) {
-      await loadTables(node.connectionId, node.database, node.schema);
+      await loadTables(node.connectionId, node.database, node.schema, options);
     } else if ((node.type === "table" || node.type === "view") && node.connectionId && node.database) {
       await loadTableGroups(node.connectionId, node.database, node.label, node.schema);
     } else if (node.type === "group-columns" && node.connectionId && node.database && node.tableName) {
@@ -730,12 +781,12 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function restoreExpandedChildren(node: TreeNode, expandedIds: Set<string>) {
+  async function restoreExpandedChildren(node: TreeNode, expandedIds: Set<string>, options?: LoadTreeOptions) {
     if (!node.children) return;
     for (const child of node.children) {
       if (!expandedIds.has(child.id)) continue;
-      await loadTreeNodeChildren(child);
-      await restoreExpandedChildren(child, expandedIds);
+      await loadTreeNodeChildren(child, options);
+      await restoreExpandedChildren(child, expandedIds, options);
     }
   }
 
@@ -745,8 +796,8 @@ export const useConnectionStore = defineStore("connection", () => {
     if (node.type !== "connection-group") {
       node.children = [];
     }
-    await loadTreeNodeChildren(node);
-    await restoreExpandedChildren(node, expandedIds);
+    await loadTreeNodeChildren(node, { force: true });
+    await restoreExpandedChildren(node, expandedIds, { force: true });
   }
 
   function isSchemaAwareDatabase(connectionId: string): boolean {
@@ -874,8 +925,8 @@ export const useConnectionStore = defineStore("connection", () => {
         }
         if (!expandedIds.has(node.id)) continue;
         node.children = [];
-        await loadTreeNodeChildren(node);
-        await restoreExpandedChildren(node, expandedIds);
+        await loadTreeNodeChildren(node, { force: true });
+        await restoreExpandedChildren(node, expandedIds, { force: true });
       }
     };
     await refreshExpandedNodes(treeNodes.value);

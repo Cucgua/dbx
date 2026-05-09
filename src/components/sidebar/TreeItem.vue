@@ -451,9 +451,9 @@ async function confirmDropTable() {
     await api.executeQuery(node.connectionId, node.database, buildDropTableSql(), node.schema);
     toast(t("contextMenu.dropTableSuccess", { name: node.label }), 3000);
     if (node.schema) {
-      await connectionStore.loadTables(node.connectionId, node.database, node.schema);
+      await connectionStore.loadTables(node.connectionId, node.database, node.schema, { force: true });
     } else {
-      await connectionStore.loadTables(node.connectionId, node.database);
+      await connectionStore.loadTables(node.connectionId, node.database, undefined, { force: true });
     }
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
@@ -518,7 +518,7 @@ async function confirmCreateDatabase() {
     const sql = `CREATE DATABASE ${quoteIdent(name)};`;
     await api.executeQuery(node.connectionId, "", sql);
     toast(t("contextMenu.createDatabaseSuccess", { name }), 3000);
-    await connectionStore.loadDatabases(node.connectionId);
+    await connectionStore.loadDatabases(node.connectionId, { force: true });
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -535,7 +535,7 @@ async function confirmDropDatabase() {
     await connectionStore.ensureConnected(node.connectionId);
     await api.executeQuery(node.connectionId, "", buildDropDatabaseSql());
     toast(t("contextMenu.dropDatabaseSuccess", { name: node.label }), 3000);
-    await connectionStore.loadDatabases(node.connectionId);
+    await connectionStore.loadDatabases(node.connectionId, { force: true });
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -556,7 +556,7 @@ async function confirmCreateSchema() {
     const sql = `CREATE SCHEMA ${quoteIdent(name)};`;
     await api.executeQuery(node.connectionId, node.database, sql);
     toast(t("contextMenu.createSchemaSuccess", { name }), 3000);
-    await connectionStore.loadSchemas(node.connectionId, node.database);
+    await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -573,7 +573,7 @@ async function confirmDropSchema() {
     await connectionStore.ensureConnected(node.connectionId);
     await api.executeQuery(node.connectionId, node.database, buildDropSchemaSql());
     toast(t("contextMenu.dropSchemaSuccess", { name: node.label }), 3000);
-    await connectionStore.loadSchemas(node.connectionId, node.database);
+    await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -609,9 +609,9 @@ async function confirmDuplicateStructure() {
     await api.executeQuery(node.connectionId, node.database, sql, node.schema);
     toast(t("contextMenu.duplicateStructureSuccess", { name: newName }), 3000);
     if (node.schema) {
-      await connectionStore.loadTables(node.connectionId, node.database, node.schema);
+      await connectionStore.loadTables(node.connectionId, node.database, node.schema, { force: true });
     } else {
-      await connectionStore.loadTables(node.connectionId, node.database);
+      await connectionStore.loadTables(node.connectionId, node.database, undefined, { force: true });
     }
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);

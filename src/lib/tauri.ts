@@ -117,6 +117,18 @@ export async function listDatabases(connectionId: string): Promise<DatabaseInfo[
   return invoke("list_databases", { connectionId });
 }
 
+export async function saveSchemaCache(cacheKey: string, payload: unknown): Promise<void> {
+  return invoke("save_schema_cache", { cacheKey, payload });
+}
+
+export async function loadSchemaCache<T = unknown>(cacheKey: string): Promise<T | null> {
+  return invoke("load_schema_cache", { cacheKey });
+}
+
+export async function deleteSchemaCachePrefix(prefix: string): Promise<void> {
+  return invoke("delete_schema_cache_prefix", { prefix });
+}
+
 export async function listTables(connectionId: string, database: string, schema: string): Promise<TableInfo[]> {
   return invoke("list_tables", { connectionId, database, schema });
 }

@@ -6,6 +6,7 @@ pub mod mongo;
 pub mod query;
 pub mod redis;
 pub mod schema;
+pub mod schema_cache;
 pub mod sql_file;
 pub mod table_import;
 pub mod transfer;

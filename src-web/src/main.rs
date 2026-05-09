@@ -89,6 +89,11 @@ async fn main() {
         .route("/schema/foreign-keys", get(routes::schema::list_foreign_keys))
         .route("/schema/triggers", get(routes::schema::list_triggers))
         .route("/schema/ddl", get(routes::schema::get_ddl))
+        .route(
+            "/schema/cache",
+            post(routes::schema_cache::save_schema_cache).get(routes::schema_cache::load_schema_cache),
+        )
+        .route("/schema/cache-prefix", delete(routes::schema_cache::delete_schema_cache_prefix))
         // Query
         .route("/query/execute", post(routes::query::execute_query))
         .route("/query/execute-multi", post(routes::query::execute_multi))

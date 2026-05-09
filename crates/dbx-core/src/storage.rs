@@ -53,6 +53,11 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         id INTEGER PRIMARY KEY CHECK (id = 1),
         settings_json TEXT NOT NULL
     )",
+    "CREATE TABLE IF NOT EXISTS schema_cache (
+        cache_key TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )",
 ];
 
 // ---------------------------------------------------------------------------
@@ -441,6 +446,49 @@ impl Storage {
             Some((json,)) => serde_json::from_str(&json).map(Some).map_err(|e| e.to_string()),
             None => Ok(None),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Schema cache
+// ---------------------------------------------------------------------------
+
+impl Storage {
+    pub async fn save_schema_cache(&self, cache_key: &str, payload: &serde_json::Value) -> Result<(), String> {
+        let json = serde_json::to_string(payload).map_err(|e| e.to_string())?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO schema_cache (cache_key, payload_json, updated_at) \
+             VALUES (?, ?, datetime('now'))",
+        )
+        .bind(cache_key)
+        .bind(&json)
+        .execute(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn load_schema_cache(&self, cache_key: &str) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT payload_json FROM schema_cache WHERE cache_key = ?")
+            .bind(cache_key)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        match row {
+            Some((json,)) => serde_json::from_str(&json).map(Some).map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn delete_schema_cache_prefix(&self, prefix: &str) -> Result<(), String> {
+        sqlx::query("DELETE FROM schema_cache WHERE cache_key = ? OR substr(cache_key, 1, ?) = ?")
+            .bind(prefix)
+            .bind(prefix.len() as i64)
+            .bind(prefix)
+            .execute(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 
