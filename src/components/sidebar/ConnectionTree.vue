@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Search, X, ListFilter, Check, FolderPlus } from "lucide-vue-next";
 import { useConnectionStore } from "@/stores/connectionStore";
 import type { TreeNode } from "@/types/database";
+import { matchSidebarLabel } from "@/lib/sidebarSearch";
 import TreeItem from "./TreeItem.vue";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import {
@@ -18,7 +19,27 @@ import {
 const { t } = useI18n();
 const store = useConnectionStore();
 const searchQuery = ref("");
+const deferredSearchQuery = ref("");
 const selectedTypes = ref<string[]>([]);
+let searchTimer: number | undefined;
+
+watch(
+  searchQuery,
+  (value) => {
+    const normalized = value.trim().toLowerCase();
+    window.clearTimeout(searchTimer);
+
+    if (!normalized) {
+      deferredSearchQuery.value = "";
+      return;
+    }
+
+    searchTimer = window.setTimeout(() => {
+      deferredSearchQuery.value = normalized;
+    }, 120);
+  },
+  { flush: "sync" },
+);
 
 const isFiltering = computed(() => !!searchQuery.value.trim() || hasTypeFilter.value);
 
@@ -55,28 +76,36 @@ function clearTypeFilter() {
   selectedTypes.value = [];
 }
 
-function fuzzyMatch(text: string, query: string): boolean {
-  let j = 0;
-  for (let i = 0; i < text.length && j < query.length; i++) {
-    if (text[i] === query[j]) j++;
-  }
-  return j === query.length;
-}
+const normalizedLabelCache = new WeakMap<TreeNode, { label: string; normalized: string }>();
 
-function matchesQuery(node: TreeNode, q: string): boolean {
-  const label = node.label.toLowerCase();
-  if (label.includes(q) || fuzzyMatch(label, q)) return true;
-  return node.children?.some((child) => matchesQuery(child, q)) ?? false;
+function normalizedLabel(node: TreeNode): string {
+  const cached = normalizedLabelCache.get(node);
+  if (cached?.label === node.label) return cached.normalized;
+
+  const normalized = node.label.toLowerCase();
+  normalizedLabelCache.set(node, { label: node.label, normalized });
+  return normalized;
 }
 
 function filterTree(nodes: TreeNode[], q: string): TreeNode[] {
-  return nodes
-    .filter((node) => matchesQuery(node, q))
-    .map((node) => {
-      if (!node.children) return node;
-      const filtered = filterTree(node.children, q);
-      return { ...node, children: filtered, isExpanded: filtered.length > 0 };
-    });
+  const filteredNodes: TreeNode[] = [];
+
+  for (const node of nodes) {
+    const label = normalizedLabel(node);
+    const selfMatches = !!matchSidebarLabel(label, q);
+    const filteredChildren = node.children ? filterTree(node.children, q) : undefined;
+
+    if (selfMatches || (filteredChildren && filteredChildren.length > 0)) {
+      if (!node.children) {
+        filteredNodes.push(node);
+      } else {
+        const children = filteredChildren ?? [];
+        filteredNodes.push({ ...node, children, isExpanded: children.length > 0 });
+      }
+    }
+  }
+
+  return filteredNodes;
 }
 
 function matchesType(node: TreeNode): boolean {
@@ -102,7 +131,7 @@ const filteredNodes = computed(() => {
     });
   }
 
-  const q = searchQuery.value.trim().toLowerCase();
+  const q = deferredSearchQuery.value;
   if (q) {
     nodes = filterTree(nodes, q);
   }
