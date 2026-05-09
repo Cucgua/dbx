@@ -210,12 +210,14 @@ onMounted(async () => {
     { sql, MySQL, PostgreSQL, SQLDialect },
     { basicSetup },
     { autocompletion, startCompletion },
+    { indentWithTab },
   ] = await Promise.all([
     import("@codemirror/view"),
     import("@codemirror/state"),
     import("@codemirror/lang-sql"),
     import("codemirror"),
     import("@codemirror/autocomplete"),
+    import("@codemirror/commands"),
   ]);
   editorViewModule = { EditorView, keymap } as typeof import("@codemirror/view");
   fontThemeComp = new Compartment();
@@ -281,6 +283,7 @@ onMounted(async () => {
         override: [async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos)],
       }),
       codeMirrorTheme.of(theme),
+      keymap.of([indentWithTab]),
       runKeymap,
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
