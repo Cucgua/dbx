@@ -34,6 +34,7 @@ const props = defineProps<{
 
 const store = useConnectionStore();
 
+const fileInput = ref<HTMLInputElement | null>(null);
 const filePath = ref("");
 const preview = ref<SqlFilePreview | null>(null);
 const selectingFile = ref(false);
@@ -198,11 +199,19 @@ async function loadDatabasesForConnection(id: string) {
   }
 }
 
-async function loadPreview(path: string) {
+async function previewSelectedSqlFile(fileOrPath: string | File) {
+  if (isTauriRuntime()) {
+    return previewSqlFile(fileOrPath as string);
+  }
+  const { previewSqlFile: previewWebSqlFile } = await import("@/lib/http");
+  return previewWebSqlFile(fileOrPath as File);
+}
+
+async function loadPreview(fileOrPath: string | File) {
   loadingPreview.value = true;
   preview.value = null;
   try {
-    preview.value = await previewSqlFile(path);
+    preview.value = await previewSelectedSqlFile(fileOrPath);
     filePath.value = preview.value.filePath;
     resetExecution();
   } catch (e: any) {
@@ -214,7 +223,10 @@ async function loadPreview(path: string) {
 
 async function selectFile() {
   if (running.value) return;
-  if (!isTauriRuntime()) return;
+  if (!isTauriRuntime()) {
+    fileInput.value?.click();
+    return;
+  }
   selectingFile.value = true;
   try {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -230,6 +242,27 @@ async function selectFile() {
   } finally {
     selectingFile.value = false;
   }
+}
+
+async function handleFileInputChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || running.value) return;
+  selectingFile.value = true;
+  try {
+    await loadPreview(file);
+  } finally {
+    selectingFile.value = false;
+  }
+}
+
+async function listenProgress(id: string, handler: (next: SqlFileProgress) => void): Promise<() => void> {
+  if (isTauriRuntime()) {
+    return listenSqlFileProgress(handler);
+  }
+  const { listenSqlFileProgressById } = await import("@/lib/http");
+  return listenSqlFileProgressById(id, handler);
 }
 
 async function startExecution() {
@@ -253,7 +286,7 @@ async function startExecution() {
       return;
     }
 
-    unlisten = await listenSqlFileProgress((next) => {
+    unlisten = await listenProgress(id, (next) => {
       if (next.executionId !== id) return;
       progress.value = next;
       terminalStatus.value = next.status;
@@ -351,6 +384,7 @@ watch(open, (value) => {
           </div>
 
           <div class="flex items-center gap-2">
+            <input ref="fileInput" type="file" accept=".sql,text/sql" class="hidden" @change="handleFileInputChange" />
             <Input
               :model-value="filePath"
               readonly

@@ -26,6 +26,7 @@ type ConfigTab = "connection" | "ssh";
 const { t } = useI18n();
 const { toast } = useToast();
 const open = defineModel<boolean>("open", { default: false });
+const isDesktop = isTauriRuntime();
 
 const props = defineProps<{
   editConfig?: ConnectionConfig;
@@ -770,7 +771,7 @@ async function browseDbFilePath() {
                     <Label class="text-right">{{ t("connection.filePath") }}</Label>
                     <div class="col-span-3 flex items-center gap-1">
                       <Input v-model="form.host" class="flex-1" placeholder="/path/to/database.db" />
-                      <Tooltip>
+                      <Tooltip v-if="isDesktop">
                         <TooltipTrigger as-child>
                           <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseDbFilePath">
                             <FolderOpen class="h-4 w-4" />
@@ -980,7 +981,7 @@ async function browseDbFilePath() {
                       placeholder="~/.ssh/id_rsa"
                       :disabled="!form.ssh_enabled"
                     />
-                    <Tooltip>
+                    <Tooltip v-if="isDesktop">
                       <TooltipTrigger as-child>
                         <Button
                           variant="outline"

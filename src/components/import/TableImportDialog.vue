@@ -40,6 +40,7 @@ const cancelling = ref(false);
 const importId = ref("");
 const progress = ref<api.TableImportProgress | null>(null);
 const errorMessage = ref("");
+const fileInput = ref<HTMLInputElement | null>(null);
 
 const selectedConnection = computed(() =>
   props.prefillConnectionId ? store.getConfig(props.prefillConnectionId) : undefined,
@@ -118,8 +119,34 @@ async function loadTargetColumns() {
   }
 }
 
+async function previewSelectedImportFile(fileOrPath: string | File) {
+  if (isTauriRuntime()) {
+    return api.previewTableImportFile(fileOrPath as string);
+  }
+  const { previewTableImportFile } = await import("@/lib/http");
+  return previewTableImportFile(fileOrPath as File);
+}
+
+async function loadPreview(fileOrPath: string | File) {
+  loadingPreview.value = true;
+  errorMessage.value = "";
+  try {
+    preview.value = await previewSelectedImportFile(fileOrPath);
+    applyAutoMapping();
+  } catch (e: any) {
+    preview.value = null;
+    columnMapping.value = {};
+    errorMessage.value = String(e?.message || e);
+  } finally {
+    loadingPreview.value = false;
+  }
+}
+
 async function selectFile() {
-  if (!isTauriRuntime()) return;
+  if (!isTauriRuntime()) {
+    fileInput.value?.click();
+    return;
+  }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
     multiple: false,
@@ -132,18 +159,15 @@ async function selectFile() {
   });
   if (!selected || Array.isArray(selected)) return;
 
-  loadingPreview.value = true;
-  errorMessage.value = "";
-  try {
-    preview.value = await api.previewTableImportFile(selected);
-    applyAutoMapping();
-  } catch (e: any) {
-    preview.value = null;
-    columnMapping.value = {};
-    errorMessage.value = String(e?.message || e);
-  } finally {
-    loadingPreview.value = false;
-  }
+  await loadPreview(selected);
+}
+
+async function handleFileInputChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || running.value) return;
+  await loadPreview(file);
 }
 
 function updateMapping(sourceColumn: string, value: any) {
@@ -227,6 +251,13 @@ watch(open, (value) => {
 
       <div class="space-y-4 py-2">
         <div class="grid grid-cols-[1fr_auto] gap-2">
+          <input
+            ref="fileInput"
+            type="file"
+            accept=".csv,.tsv,.json,.xlsx,.xlsm,.xls"
+            class="hidden"
+            @change="handleFileInputChange"
+          />
           <div class="min-w-0 rounded-md border bg-muted/20 px-3 py-2">
             <div class="truncate text-xs text-muted-foreground">{{ t("tableImport.target") }}</div>
             <div class="truncate text-sm font-medium">
