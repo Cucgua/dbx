@@ -50,9 +50,10 @@ export default {
     downloadAndInstall: "下载并安装",
     downloading: "下载中 {progress}%",
     downloadFailed: "更新下载失败：{error}",
-    restart: "立即重启",
+    restart: "退出并重启",
+    restartFailed: "重启应用失败：{error}",
     exitAndUpdate: "退出并更新",
-    reopenHint: "更新将在重新打开应用后生效",
+    reopenHint: "应用将自动重启以完成更新",
   },
   sidebar: {
     connections: "连接",

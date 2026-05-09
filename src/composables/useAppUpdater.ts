@@ -91,8 +91,12 @@ export function useAppUpdater() {
 
   async function restartApp() {
     if (!isTauriRuntime()) return;
-    const { exit } = await import("@tauri-apps/plugin-process");
-    await exit(0);
+    try {
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    } catch (e: any) {
+      toast(t("updates.restartFailed", { error: e?.message || String(e) }), 5000);
+    }
   }
 
   return {

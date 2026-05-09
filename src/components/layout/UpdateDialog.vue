@@ -84,7 +84,7 @@ const renderedNotes = computed(() => {
           <Button variant="outline" @click="emit('open-latest-release')">{{ t("updates.openRelease") }}</Button>
           <template v-if="isDesktop">
             <div v-if="updateReady" class="flex flex-col items-end gap-1">
-              <Button @click="emit('restart')">{{ t("updates.exitAndUpdate") }}</Button>
+              <Button @click="emit('restart')">{{ t("updates.restart") }}</Button>
               <span class="text-xs text-muted-foreground">{{ t("updates.reopenHint") }}</span>
             </div>
             <Button v-else-if="isDownloadingUpdate" disabled>

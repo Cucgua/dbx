@@ -51,9 +51,10 @@ export default {
     downloadAndInstall: "Download & Install",
     downloading: "Downloading {progress}%",
     downloadFailed: "Update download failed: {error}",
-    restart: "Restart Now",
+    restart: "Exit & Restart",
+    restartFailed: "Failed to restart app: {error}",
     exitAndUpdate: "Exit & Update",
-    reopenHint: "Changes will take effect when you reopen the app",
+    reopenHint: "The app will relaunch to finish updating",
   },
   sidebar: {
     connections: "CONNECTIONS",
