@@ -689,16 +689,19 @@ function currentOrderBy(): string | undefined {
 function prevPage() {
   if (currentPage.value <= 1) return;
   currentPage.value--;
+  resetGridVerticalScroll(true);
   emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentWhereInput(), currentOrderBy());
 }
 function nextPage() {
   if (!isFullPage.value) return;
   currentPage.value++;
+  resetGridVerticalScroll(true);
   emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentWhereInput(), currentOrderBy());
 }
 function changePageSize(size: number) {
   pageSize.value = size;
   currentPage.value = 1;
+  resetGridVerticalScroll(true);
   emit("paginate", 0, size, currentWhereInput(), currentOrderBy());
 }
 
@@ -706,7 +709,16 @@ function changePageSize(size: number) {
 type CellValue = string | number | boolean | null;
 const editingCell = ref<{ rowId: number; col: number } | null>(null);
 const editValue = ref("");
-const scrollerRef = ref<HTMLElement | { $el?: HTMLElement; el?: HTMLElement | { value?: HTMLElement } } | null>(null);
+type GridScrollerRef =
+  | HTMLElement
+  | {
+      $el?: HTMLElement;
+      el?: HTMLElement | { value?: HTMLElement };
+      scrollToItem?: (index: number) => void;
+      scrollToPosition?: (position: number) => void;
+    };
+
+const scrollerRef = ref<GridScrollerRef | null>(null);
 const dirtyRows = ref<Map<number, Map<number, CellValue>>>(new Map());
 const newRows = ref<CellValue[][]>([]);
 const deletedRows = ref<Set<number>>(new Set());
@@ -1105,6 +1117,8 @@ function setRowStatusFilter(value: string) {
 // --- Inline editor ---
 let isCancelling = false;
 let cancelScrollRestoreFrame = 0;
+let resetScrollFrame = 0;
+let resetScrollAfterResult = false;
 
 function getScrollerElement(): HTMLElement | null {
   const scroller = scrollerRef.value;
@@ -1114,6 +1128,30 @@ function getScrollerElement(): HTMLElement | null {
   if (scroller.el instanceof HTMLElement) return scroller.el;
   if (scroller.el?.value instanceof HTMLElement) return scroller.el.value;
   return null;
+}
+
+function scrollGridToTop() {
+  const scroller = scrollerRef.value;
+  if (scroller && !(scroller instanceof HTMLElement)) {
+    scroller.scrollToItem?.(0);
+    scroller.scrollToPosition?.(0);
+  }
+
+  const el = getScrollerElement();
+  if (el) el.scrollTop = 0;
+}
+
+function resetGridVerticalScroll(afterResult = false) {
+  if (afterResult) resetScrollAfterResult = true;
+  if (resetScrollFrame) cancelAnimationFrame(resetScrollFrame);
+  scrollGridToTop();
+  nextTick(() => {
+    scrollGridToTop();
+    resetScrollFrame = requestAnimationFrame(() => {
+      scrollGridToTop();
+      resetScrollFrame = 0;
+    });
+  });
 }
 
 function preserveScrollPosition() {
@@ -1492,6 +1530,10 @@ function transposeNav(delta: number) {
 watch(
   () => props.result,
   () => {
+    if (resetScrollAfterResult) {
+      resetScrollAfterResult = false;
+      resetGridVerticalScroll();
+    }
     clearCellSelection();
     showCellDetail.value = false;
     detailCell.value = null;
@@ -1678,6 +1720,8 @@ function onDdlResizeEnd() {
 }
 
 onUnmounted(() => {
+  if (resetScrollFrame) cancelAnimationFrame(resetScrollFrame);
+  if (cancelScrollRestoreFrame) cancelAnimationFrame(cancelScrollRestoreFrame);
   onDdlResizeEnd();
   finishCellSelection();
 });
