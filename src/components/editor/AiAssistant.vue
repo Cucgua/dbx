@@ -35,6 +35,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -368,9 +369,9 @@ async function persistConversation() {
   }).catch(() => {});
 }
 
-async function loadConversationList() {
-  conversations.value = await loadAiConversations().catch(() => []);
-  showConversationList.value = true;
+async function setConversationListOpen(open: boolean) {
+  showConversationList.value = open;
+  if (open) conversations.value = await loadAiConversations().catch(() => []);
 }
 
 function selectConversation(conv: AiConversation) {
@@ -467,16 +468,47 @@ function formatInlineText(text: string): string {
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat" :title="t('ai.newChat')">
         <MessageSquarePlus class="h-3.5 w-3.5" />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        class="h-6 w-6"
-        :class="{ 'bg-accent': showConversationList }"
-        @click="loadConversationList"
-        :title="t('history.title')"
-      >
-        <History class="h-3.5 w-3.5" />
-      </Button>
+      <Popover :open="showConversationList" @update:open="setConversationListOpen">
+        <PopoverTrigger as-child>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6"
+            :class="{ 'bg-accent': showConversationList }"
+            :title="t('history.title')"
+          >
+            <History class="h-3.5 w-3.5" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" class="w-72 gap-0 p-0" @click.stop>
+          <div class="flex items-center border-b px-3 py-2">
+            <span class="flex-1 text-xs font-medium">{{ t("history.title") }}</span>
+            <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat">
+              <MessageSquarePlus class="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <div v-if="!conversations.length" class="p-3 text-center text-xs text-muted-foreground">
+            {{ t("history.empty") }}
+          </div>
+          <div v-else class="max-h-64 overflow-auto p-1">
+            <div
+              v-for="conv in conversations"
+              :key="conv.id"
+              class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted"
+              :class="{ 'bg-muted': conv.id === conversationId }"
+              @click="selectConversation(conv)"
+            >
+              <span class="min-w-0 flex-1 truncate">{{ conv.title }}</span>
+              <button
+                class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-destructive"
+                @click.stop="deleteConversation(conv.id)"
+              >
+                <X class="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="clearMessages" :title="t('ai.clear')">
         <Trash2 class="h-3.5 w-3.5" />
       </Button>
@@ -486,27 +518,6 @@ function formatInlineText(text: string): string {
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="emit('close')">
         <X class="h-3.5 w-3.5" />
       </Button>
-    </div>
-
-    <div v-if="showConversationList" class="border-b max-h-48 overflow-auto">
-      <div v-if="!conversations.length" class="p-3 text-xs text-muted-foreground text-center">
-        {{ t("history.empty") }}
-      </div>
-      <div
-        v-for="conv in conversations"
-        :key="conv.id"
-        class="flex items-center gap-2 px-3 py-1.5 hover:bg-muted cursor-pointer text-xs"
-        :class="{ 'bg-muted': conv.id === conversationId }"
-        @click="selectConversation(conv)"
-      >
-        <span class="flex-1 truncate">{{ conv.title }}</span>
-        <button
-          class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
-          @click.stop="deleteConversation(conv.id)"
-        >
-          <X class="h-3 w-3" />
-        </button>
-      </div>
     </div>
 
     <div
