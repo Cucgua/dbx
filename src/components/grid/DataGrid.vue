@@ -64,7 +64,7 @@ import {
   type CellPosition,
   type CellSelectionRange,
 } from "@/lib/gridSelection";
-import { buildTableSelectSql, normalizeWhereInput, quoteTableIdentifier } from "@/lib/tableSelectSql";
+import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { buildDataGridSaveStatements, formatGridSqlLiteral } from "@/lib/dataGridSql";
 import { formatMarkdownTable } from "@/lib/markdownTable";
 import {
@@ -98,7 +98,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  reload: [sql?: string, whereInput?: string];
+  reload: [sql?: string, searchText?: string, whereInput?: string, orderBy?: string];
   paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
   sort: [column: string, columnIndex: number, direction: "asc" | "desc" | null, whereInput?: string];
 }>();
@@ -214,6 +214,23 @@ const searchInputRef = ref<HTMLInputElement>();
 const measureRef = ref<HTMLSpanElement>();
 const suggestionLeft = ref(0);
 
+const whereSuggestions = ref<string[]>([]);
+const whereSuggestionIndex = ref(-1);
+const whereFilterInputRef = ref<HTMLInputElement>();
+const whereMeasureRef = ref<HTMLSpanElement>();
+const whereSuggestionLeft = ref(0);
+
+const orderBySuggestions = ref<string[]>([]);
+const orderBySuggestionIndex = ref(-1);
+const orderByInputRef = ref<HTMLInputElement>();
+const orderByMeasureRef = ref<HTMLSpanElement>();
+const orderBySuggestionLeft = ref(0);
+
+const orderByInput = ref("");
+const hasOrderByInput = computed(() => orderByInput.value.trim().length > 0);
+const whereFilterInput = ref("");
+const hasWhereFilterInput = computed(() => whereFilterInput.value.trim().length > 0);
+
 function updateSuggestionPosition() {
   nextTick(() => {
     const input = searchInputRef.value;
@@ -227,30 +244,20 @@ function updateSuggestionPosition() {
 
 watch(searchText, (val) => {
   searchSuggestions.value = [];
-  if (!canUseWhereSearch.value || !props.tableMeta?.columns?.length) return;
+  if (!props.tableMeta?.columns?.length) return;
 
-  const trimmed = val.trimStart();
-  const lower = trimmed.toLowerCase();
+  const trimmed = val.trim();
+  if (trimmed.length === 0) return;
 
-  if (trimmed.length > 0 && lower !== "where" && "where".startsWith(lower)) {
-    searchSuggestions.value = ["WHERE "];
+  const lastToken = trimmed.split(/[\s,()><=!&|]+/).pop() || "";
+  if (lastToken.length > 0) {
+    const tl = lastToken.toLowerCase();
+    searchSuggestions.value = props.tableMeta.columns
+      .map((c) => c.name)
+      .filter((n) => n.toLowerCase().startsWith(tl) && n.toLowerCase() !== tl)
+      .slice(0, 8);
     suggestionIndex.value = 0;
     updateSuggestionPosition();
-    return;
-  }
-
-  const m = val.match(/^\s*where\s+(.+)$/i);
-  if (m) {
-    const lastToken = m[1].split(/[\s,()><=!]+/).pop() || "";
-    if (lastToken.length > 0) {
-      const tl = lastToken.toLowerCase();
-      searchSuggestions.value = props.tableMeta.columns
-        .map((c) => c.name)
-        .filter((n) => n.toLowerCase().startsWith(tl) && n.toLowerCase() !== tl)
-        .slice(0, 8);
-      suggestionIndex.value = 0;
-      updateSuggestionPosition();
-    }
   }
 });
 
@@ -259,17 +266,11 @@ function acceptSuggestion() {
   if (idx < 0 || idx >= searchSuggestions.value.length) return;
   const sug = searchSuggestions.value[idx];
 
-  if (sug === "WHERE ") {
-    const trimmed = searchText.value.trimStart();
-    const leading = searchText.value.slice(0, searchText.value.length - trimmed.length);
-    searchText.value = leading + "WHERE ";
-  } else {
-    const lastWordMatch = searchText.value.match(/([^\s,()><=!]+)$/);
-    if (lastWordMatch) {
-      const lastWord = lastWordMatch[1];
-      const prefix = searchText.value.slice(0, -lastWord.length);
-      searchText.value = prefix + sug;
-    }
+  const lastWordMatch = searchText.value.match(/([^\s,()><=!&|]+)$/);
+  if (lastWordMatch) {
+    const lastWord = lastWordMatch[1];
+    const prefix = searchText.value.slice(0, -lastWord.length);
+    searchText.value = prefix + sug;
   }
   searchSuggestions.value = [];
   suggestionIndex.value = -1;
@@ -345,12 +346,209 @@ function onSearchKeydown(e: KeyboardEvent) {
       return;
     }
   }
-  if (e.key === "Enter") {
-    onSearchEnter(e);
-    return;
-  }
   if (e.key === "Escape") {
     searchText.value = "";
+  }
+}
+
+// --- WHERE filter input suggestions ---
+function updateWhereSuggestionPosition() {
+  nextTick(() => {
+    const input = whereFilterInputRef.value;
+    const measure = whereMeasureRef.value;
+    if (!input || !measure) return;
+    const cursorPos = input.selectionStart ?? 0;
+    measure.textContent = whereFilterInput.value.slice(0, cursorPos);
+    whereSuggestionLeft.value = measure.getBoundingClientRect().width;
+  });
+}
+
+function acceptWhereSuggestion() {
+  const idx = whereSuggestionIndex.value;
+  if (idx < 0 || idx >= whereSuggestions.value.length) return;
+  const sug = whereSuggestions.value[idx];
+  const lastWordMatch = whereFilterInput.value.match(/([^\s,()><=!&|]+)$/);
+  if (lastWordMatch) {
+    const lastWord = lastWordMatch[1];
+    const prefix = whereFilterInput.value.slice(0, -lastWord.length);
+    whereFilterInput.value = prefix + sug;
+  }
+  whereSuggestions.value = [];
+  whereSuggestionIndex.value = -1;
+  whereFilterInputRef.value?.focus();
+}
+
+function dismissWhereSuggestions() {
+  whereSuggestions.value = [];
+  whereSuggestionIndex.value = -1;
+}
+
+function navigateWhereSuggestion(delta: number) {
+  if (whereSuggestions.value.length === 0) return;
+  whereSuggestionIndex.value = Math.min(
+    Math.max(whereSuggestionIndex.value + delta, 0),
+    whereSuggestions.value.length - 1,
+  );
+}
+
+watch(whereFilterInput, (val) => {
+  whereSuggestions.value = [];
+  if (!props.tableMeta?.columns?.length) return;
+  const trimmed = val.trim();
+  if (trimmed.length === 0) return;
+  const lastToken = trimmed.split(/[\s,()><=!&|]+/).pop() || "";
+  if (lastToken.length > 0) {
+    const tl = lastToken.toLowerCase();
+    whereSuggestions.value = props.tableMeta.columns
+      .map((c) => c.name)
+      .filter((n) => n.toLowerCase().startsWith(tl) && n.toLowerCase() !== tl)
+      .slice(0, 8);
+    whereSuggestionIndex.value = 0;
+    updateWhereSuggestionPosition();
+  }
+});
+
+function onWhereFilterKeydown(e: KeyboardEvent) {
+  if (e.key in PAIRS && !e.ctrlKey && !e.metaKey) {
+    const input = e.target as HTMLInputElement;
+    const start = input.selectionStart ?? 0;
+    const end = input.selectionEnd ?? 0;
+    const close = PAIRS[e.key];
+    if (start !== end) {
+      e.preventDefault();
+      const selected = whereFilterInput.value.slice(start, end);
+      whereFilterInput.value =
+        whereFilterInput.value.slice(0, start) + e.key + selected + close + whereFilterInput.value.slice(end);
+      nextTick(() => {
+        input.setSelectionRange(start + 1 + selected.length, start + 1 + selected.length);
+      });
+      whereSuggestionIndex.value = -1;
+      return;
+    }
+    if (e.key === close && whereFilterInput.value[start] === close) {
+      e.preventDefault();
+      input.setSelectionRange(start + 1, start + 1);
+      return;
+    }
+    e.preventDefault();
+    whereFilterInput.value = whereFilterInput.value.slice(0, start) + e.key + close + whereFilterInput.value.slice(end);
+    nextTick(() => {
+      input.setSelectionRange(start + 1, start + 1);
+    });
+    whereSuggestionIndex.value = -1;
+    return;
+  }
+  if (whereSuggestions.value.length > 0) {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      acceptWhereSuggestion();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      dismissWhereSuggestions();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateWhereSuggestion(1);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateWhereSuggestion(-1);
+      return;
+    }
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    applyWhereFilter();
+  }
+}
+
+// --- ORDER BY input suggestions ---
+function updateOrderBySuggestionPosition() {
+  nextTick(() => {
+    const input = orderByInputRef.value;
+    const measure = orderByMeasureRef.value;
+    if (!input || !measure) return;
+    const cursorPos = input.selectionStart ?? 0;
+    measure.textContent = orderByInput.value.slice(0, cursorPos);
+    orderBySuggestionLeft.value = measure.getBoundingClientRect().width;
+  });
+}
+
+function acceptOrderBySuggestion() {
+  const idx = orderBySuggestionIndex.value;
+  if (idx < 0 || idx >= orderBySuggestions.value.length) return;
+  const sug = orderBySuggestions.value[idx];
+  const lastWordMatch = orderByInput.value.match(/([^\s,()]+)$/);
+  if (lastWordMatch) {
+    const lastWord = lastWordMatch[1];
+    const prefix = orderByInput.value.slice(0, -lastWord.length);
+    orderByInput.value = prefix + sug;
+  }
+  orderBySuggestions.value = [];
+  orderBySuggestionIndex.value = -1;
+  orderByInputRef.value?.focus();
+}
+
+function dismissOrderBySuggestions() {
+  orderBySuggestions.value = [];
+  orderBySuggestionIndex.value = -1;
+}
+
+function navigateOrderBySuggestion(delta: number) {
+  if (orderBySuggestions.value.length === 0) return;
+  orderBySuggestionIndex.value = Math.min(
+    Math.max(orderBySuggestionIndex.value + delta, 0),
+    orderBySuggestions.value.length - 1,
+  );
+}
+
+watch(orderByInput, (val) => {
+  orderBySuggestions.value = [];
+  if (!props.tableMeta?.columns?.length) return;
+  const trimmed = val.trim();
+  if (trimmed.length === 0) return;
+  const lastToken = trimmed.split(/[\s,()]+/).pop() || "";
+  if (lastToken.length > 0 && !["asc", "desc"].includes(lastToken.toLowerCase())) {
+    const tl = lastToken.toLowerCase();
+    orderBySuggestions.value = props.tableMeta.columns
+      .map((c) => c.name)
+      .filter((n) => n.toLowerCase().startsWith(tl) && n.toLowerCase() !== tl)
+      .slice(0, 8);
+    orderBySuggestionIndex.value = 0;
+    updateOrderBySuggestionPosition();
+  }
+});
+
+function onOrderByKeydown(e: KeyboardEvent) {
+  if (orderBySuggestions.value.length > 0) {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      acceptOrderBySuggestion();
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      dismissOrderBySuggestions();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateOrderBySuggestion(1);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateOrderBySuggestion(-1);
+      return;
+    }
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    applyOrderBySearch();
   }
 }
 
@@ -469,34 +667,33 @@ const currentPage = ref(1);
 const isFullPage = computed(() => props.result.rows.length >= pageSize.value);
 const isResultsContext = computed(() => props.context === "results");
 const canUseWhereSearch = computed(() => !!props.tableMeta && !!props.onExecuteSql && !isResultsContext.value);
-const isWhereSearch = computed(() => canUseWhereSearch.value && /^\s*where\b/i.test(searchText.value));
-const wherePredicate = computed(() => (canUseWhereSearch.value ? normalizeWhereInput(searchText.value) : undefined));
-const activeWhereInput = computed(() => (isWhereSearch.value && wherePredicate.value ? searchText.value : undefined));
-const clientSearchText = computed(() => (isWhereSearch.value ? "" : searchText.value));
+const clientSearchText = computed(() => (searchText.value.trim() ? searchText.value : ""));
 
-const orderByInput = ref("");
-const hasOrderByInput = computed(() => orderByInput.value.trim().length > 0);
-const whereFilterInput = ref("");
-const hasWhereFilterInput = computed(() => whereFilterInput.value.trim().length > 0);
+function currentWhereInput(): string | undefined {
+  return whereFilterInput.value.trim() || undefined;
+}
 
 function currentOrderBy(): string | undefined {
-  return sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined;
+  return (
+    orderByInput.value.trim() ||
+    (sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined)
+  );
 }
 
 function prevPage() {
   if (currentPage.value <= 1) return;
   currentPage.value--;
-  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value, currentOrderBy());
+  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentWhereInput(), currentOrderBy());
 }
 function nextPage() {
   if (!isFullPage.value) return;
   currentPage.value++;
-  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, activeWhereInput.value, currentOrderBy());
+  emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentWhereInput(), currentOrderBy());
 }
 function changePageSize(size: number) {
   pageSize.value = size;
   currentPage.value = 1;
-  emit("paginate", 0, size, activeWhereInput.value, currentOrderBy());
+  emit("paginate", 0, size, currentWhereInput(), currentOrderBy());
 }
 
 // --- Editing ---
@@ -532,7 +729,13 @@ async function onToolbarRefresh() {
   if (transactionActive.value) {
     discardChanges();
   }
-  emit("reload", props.sql, searchText.value);
+  emit(
+    "reload",
+    props.sql,
+    searchText.value,
+    whereFilterInput.value.trim() || undefined,
+    orderByInput.value.trim() || undefined,
+  );
 }
 
 async function onToolbarCommit() {
@@ -541,6 +744,13 @@ async function onToolbarCommit() {
 
 function onToolbarRollback() {
   discardChanges();
+  emit(
+    "reload",
+    props.sql,
+    searchText.value,
+    whereFilterInput.value.trim() || undefined,
+    orderByInput.value.trim() || undefined,
+  );
 }
 
 const sortedRows = computed(() => {
@@ -729,47 +939,18 @@ function toggleSort(colName: string, colIdx: number) {
   if (sortCol.value === colName && sortColIndex.value === colIdx) {
     if (sortDir.value === "asc") {
       sortDir.value = "desc";
-      emit("sort", colName, colIdx, "desc", activeWhereInput.value);
+      emit("sort", colName, colIdx, "desc", currentWhereInput());
     } else {
       sortCol.value = null;
       sortColIndex.value = null;
       sortDir.value = "asc";
-      emit("sort", colName, colIdx, null, activeWhereInput.value);
+      emit("sort", colName, colIdx, null, currentWhereInput());
     }
   } else {
     sortCol.value = colName;
     sortColIndex.value = colIdx;
     sortDir.value = "asc";
-    emit("sort", colName, colIdx, "asc", activeWhereInput.value);
-  }
-}
-
-function onSearchEnter(event: KeyboardEvent) {
-  if (!isWhereSearch.value) return;
-  event.preventDefault();
-  void applyWhereSearch();
-}
-
-async function applyWhereSearch() {
-  if (!props.tableMeta || !props.onExecuteSql || !wherePredicate.value) return;
-  isApplyingWhere.value = true;
-  saveError.value = "";
-  currentPage.value = 1;
-  try {
-    const sql = buildTableSelectSql({
-      databaseType: props.databaseType,
-      schema: props.tableMeta.schema,
-      tableName: props.tableMeta.tableName,
-      primaryKeys: props.tableMeta.primaryKeys,
-      orderBy: sortCol.value ? `${quoteIdent(sortCol.value)} ${sortDir.value.toUpperCase()}` : undefined,
-      limit: pageSize.value,
-      whereInput: searchText.value,
-    });
-    await props.onExecuteSql(sql);
-  } catch (e: any) {
-    saveError.value = String(e?.message || e);
-  } finally {
-    isApplyingWhere.value = false;
+    emit("sort", colName, colIdx, "asc", currentWhereInput());
   }
 }
 
@@ -1115,7 +1296,13 @@ async function saveChanges() {
   deletedRows.value.clear();
   exitTransaction();
   isSaving.value = false;
-  emit("reload", props.sql, searchText.value);
+  emit(
+    "reload",
+    props.sql,
+    searchText.value,
+    whereFilterInput.value.trim() || undefined,
+    orderByInput.value.trim() || undefined,
+  );
 }
 
 function discardChanges() {
@@ -1526,17 +1713,46 @@ defineExpose({
             </div>
 
             <template v-if="canUseWhereSearch">
-              <div class="flex-1 flex items-center gap-1 px-2 py-1 border-l min-w-0">
+              <div class="flex-1 flex items-center gap-1 px-2 py-1 border-l min-w-0 relative">
                 <span class="text-foreground/60 text-xs font-medium select-none shrink-0">WHERE</span>
                 <input
+                  ref="whereFilterInputRef"
                   v-model="whereFilterInput"
                   autocapitalize="off"
                   autocorrect="off"
                   spellcheck="false"
                   class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
                   placeholder="id > 100"
-                  @keydown.enter.prevent="applyWhereFilter"
+                  @keydown="onWhereFilterKeydown"
+                  @click="updateWhereSuggestionPosition"
+                  @blur="dismissWhereSuggestions"
                 />
+                <span
+                  ref="whereMeasureRef"
+                  class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
+                  aria-hidden="true"
+                />
+                <!-- WHERE suggestion dropdown -->
+                <div
+                  v-if="whereSuggestions.length > 0"
+                  class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
+                  :style="{ left: whereSuggestionLeft + 24 + 'px' }"
+                >
+                  <div
+                    v-for="(sug, idx) in whereSuggestions"
+                    :key="sug"
+                    class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
+                    :class="idx === whereSuggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
+                    @mousedown.prevent="
+                      whereSuggestionIndex = idx;
+                      acceptWhereSuggestion();
+                    "
+                    @mouseenter="whereSuggestionIndex = idx"
+                  >
+                    <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
+                    <span>{{ sug }}</span>
+                  </div>
+                </div>
                 <button
                   v-if="hasWhereFilterInput"
                   class="text-muted-foreground hover:text-foreground shrink-0"
@@ -1548,17 +1764,46 @@ defineExpose({
                   <X class="w-3 h-3" />
                 </button>
               </div>
-              <div class="flex-1 flex items-center gap-1 px-2 py-1 border-l border-r min-w-0">
+              <div class="flex-1 flex items-center gap-1 px-2 py-1 border-l border-r min-w-0 relative">
                 <span class="text-foreground/60 text-xs font-medium select-none shrink-0">ORDER BY</span>
                 <input
+                  ref="orderByInputRef"
                   v-model="orderByInput"
                   autocapitalize="off"
                   autocorrect="off"
                   spellcheck="false"
                   class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground"
                   placeholder="column desc"
-                  @keydown.enter.prevent="applyOrderBySearch"
+                  @keydown="onOrderByKeydown"
+                  @click="updateOrderBySuggestionPosition"
+                  @blur="dismissOrderBySuggestions"
                 />
+                <span
+                  ref="orderByMeasureRef"
+                  class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
+                  aria-hidden="true"
+                />
+                <!-- ORDER BY suggestion dropdown -->
+                <div
+                  v-if="orderBySuggestions.length > 0"
+                  class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
+                  :style="{ left: orderBySuggestionLeft + 24 + 'px' }"
+                >
+                  <div
+                    v-for="(sug, idx) in orderBySuggestions"
+                    :key="sug"
+                    class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
+                    :class="idx === orderBySuggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
+                    @mousedown.prevent="
+                      orderBySuggestionIndex = idx;
+                      acceptOrderBySuggestion();
+                    "
+                    @mouseenter="orderBySuggestionIndex = idx"
+                  >
+                    <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
+                    <span>{{ sug }}</span>
+                  </div>
+                </div>
                 <button
                   v-if="hasOrderByInput"
                   class="text-muted-foreground hover:text-foreground shrink-0"
