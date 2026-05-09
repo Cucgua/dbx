@@ -81,6 +81,12 @@ const SQL_KEYWORDS = [
   "LAST_VALUE",
   "NTILE",
   "CROSS",
+  "APPLY",
+  "CROSS APPLY",
+  "OUTER APPLY",
+  "OPENJSON",
+  "OPENXML",
+  "OPENROWSET",
   "FULL",
   "NATURAL",
   "USING",
@@ -116,7 +122,7 @@ const SQL_KEYWORDS = [
   "PRAGMA",
 ];
 
-const TABLE_TRIGGER_KEYWORDS = new Set(["from", "join", "update", "into", "table", "describe", "explain"]);
+const TABLE_TRIGGER_KEYWORDS = new Set(["from", "join", "update", "into", "table", "describe", "explain", "apply"]);
 const JOIN_MODIFIERS = new Set(["left", "right", "inner", "outer", "cross", "full", "natural"]);
 
 export interface SqlCompletionTable {
@@ -336,6 +342,7 @@ function extractReferencedTables(sql: string): SqlCompletionReferencedTable[] {
     "inner",
     "outer",
     "cross",
+    "apply",
     "full",
     "natural",
     "on",
@@ -413,7 +420,7 @@ function extractReferencedTables(sql: string): SqlCompletionReferencedTable[] {
   ]);
 
   const pattern =
-    /\b(?:from|join|update|into)\s+((?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*))?)(?:\s+(?:as\s+)?([A-Za-z_][\w$]*))?/gi;
+    /\b(?:from|join|update|into|apply)\s+((?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*))?)(?:\s+(?:as\s+)?([A-Za-z_][\w$]*))?/gi;
   const referenced: SqlCompletionReferencedTable[] = [];
   for (const match of sql.matchAll(pattern)) {
     const rawName = match[1];
