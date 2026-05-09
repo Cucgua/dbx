@@ -73,6 +73,7 @@ import {
 import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { buildDataGridSaveStatements, formatGridSqlLiteral } from "@/lib/dataGridSql";
 import { formatMarkdownTable } from "@/lib/markdownTable";
+import { buildXlsxWorkbook } from "@/lib/xlsxExport";
 import {
   matchesRowStatusFilter,
   rowStatusFilterAfterAddingRow,
@@ -1592,7 +1593,12 @@ function copyAll() {
   copyText(`${header}\n${body}`);
 }
 
-async function saveFileContent(content: string, defaultFileName: string, filterName: string, filterExt: string) {
+async function saveFileContent(
+  content: string,
+  defaultFileName: string,
+  filterName: string,
+  filterExt: string,
+): Promise<boolean> {
   if (isTauriRuntime()) {
     const { save } = await import("@tauri-apps/plugin-dialog");
     const { writeTextFile } = await import("@tauri-apps/plugin-fs");
@@ -1600,7 +1606,9 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
       defaultPath: defaultFileName,
       filters: [{ name: filterName, extensions: [filterExt] }],
     });
-    if (path) await writeTextFile(path, "﻿" + content);
+    if (!path) return false;
+    await writeTextFile(path, "﻿" + content);
+    return true;
   } else {
     const blob = new Blob(["﻿", content], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -1609,32 +1617,96 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
     a.download = defaultFileName;
     a.click();
     URL.revokeObjectURL(url);
+    return true;
+  }
+}
+
+async function saveBinaryFileContent(
+  content: Uint8Array,
+  defaultFileName: string,
+  filterName: string,
+  filterExt: string,
+): Promise<boolean> {
+  if (isTauriRuntime()) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+    const path = await save({
+      defaultPath: defaultFileName,
+      filters: [{ name: filterName, extensions: [filterExt] }],
+    });
+    if (!path) return false;
+    await writeFile(path, content);
+    return true;
+  } else {
+    const blob = new Blob([content], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultFileName;
+    a.click();
+    URL.revokeObjectURL(url);
+    return true;
   }
 }
 
 async function exportCsv() {
-  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-  const header = props.result.columns.map(escape).join(",");
-  const body = displayItems.value.map((item) => item.data.map((c) => escape(formatCell(c))).join(",")).join("\n");
-  await saveFileContent(`${header}\n${body}`, "export.csv", "CSV", "csv");
+  try {
+    const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const header = props.result.columns.map(escape).join(",");
+    const body = displayItems.value.map((item) => item.data.map((c) => escape(formatCell(c))).join(",")).join("\n");
+    if (await saveFileContent(`${header}\n${body}`, "export.csv", "CSV", "csv")) {
+      toast(t("grid.exported"));
+    }
+  } catch (e: any) {
+    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 async function exportJson() {
-  const data = displayItems.value.map((item) => {
-    const obj: Record<string, unknown> = {};
-    props.result.columns.forEach((col, i) => {
-      obj[col] = item.data[i];
+  try {
+    const data = displayItems.value.map((item) => {
+      const obj: Record<string, unknown> = {};
+      props.result.columns.forEach((col, i) => {
+        obj[col] = item.data[i];
+      });
+      return obj;
     });
-    return obj;
-  });
-  await saveFileContent(JSON.stringify(data, null, 2), "export.json", "JSON", "json");
+    if (await saveFileContent(JSON.stringify(data, null, 2), "export.json", "JSON", "json")) {
+      toast(t("grid.exported"));
+    }
+  } catch (e: any) {
+    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 async function exportMarkdown() {
-  const cols = props.result.columns;
-  const visibleRows = displayItems.value.map((item) => item.data);
-  const md = formatMarkdownTable({ columns: cols, rows: visibleRows });
-  await saveFileContent(md, "export.md", "Markdown", "md");
+  try {
+    const cols = props.result.columns;
+    const visibleRows = displayItems.value.map((item) => item.data);
+    const md = formatMarkdownTable({ columns: cols, rows: visibleRows });
+    if (await saveFileContent(md, "export.md", "Markdown", "md")) {
+      toast(t("grid.exported"));
+    }
+  } catch (e: any) {
+    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function exportXlsx() {
+  try {
+    const workbook = buildXlsxWorkbook({
+      sheetName: props.tableMeta?.tableName || "Export",
+      columns: props.result.columns,
+      rows: displayItems.value.map((item) => item.data),
+    });
+    if (await saveBinaryFileContent(workbook, "export.xlsx", "Excel", "xlsx")) {
+      toast(t("grid.exported"));
+    }
+  } catch (e: any) {
+    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "");
@@ -2427,6 +2499,7 @@ defineExpose({
           <ContextMenuSubTrigger> <FileDown class="w-3.5 h-3.5 mr-2" /> {{ t("grid.export") }} </ContextMenuSubTrigger>
           <ContextMenuSubContent class="w-max max-w-[min(80vw,16rem)]">
             <ContextMenuItem @click="exportCsv">{{ t("grid.exportCsv") }}</ContextMenuItem>
+            <ContextMenuItem @click="exportXlsx">{{ t("grid.exportXlsx") }}</ContextMenuItem>
             <ContextMenuItem @click="exportJson">{{ t("grid.exportJson") }}</ContextMenuItem>
             <ContextMenuItem @click="exportMarkdown">{{ t("grid.exportMarkdown") }}</ContextMenuItem>
           </ContextMenuSubContent>
@@ -2497,6 +2570,7 @@ defineExpose({
         </DropdownMenuTrigger>
         <DropdownMenuContent>
           <DropdownMenuItem @click="exportCsv">{{ t("grid.exportCsv") }}</DropdownMenuItem>
+          <DropdownMenuItem @click="exportXlsx">{{ t("grid.exportXlsx") }}</DropdownMenuItem>
           <DropdownMenuItem @click="exportJson">{{ t("grid.exportJson") }}</DropdownMenuItem>
           <DropdownMenuItem @click="exportMarkdown">{{ t("grid.exportMarkdown") }}</DropdownMenuItem>
         </DropdownMenuContent>

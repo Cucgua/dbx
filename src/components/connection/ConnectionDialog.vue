@@ -14,7 +14,8 @@ import { useToast } from "@/composables/useToast";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { ArrowLeft, ChevronRight, Copy, FolderOpen, Grid3X3, List, Search } from "lucide-vue-next";
+import { applyParsedConnectionUrl, parseConnectionUrl } from "@/lib/connectionUrl";
+import { ArrowLeft, ChevronRight, Copy, FolderOpen, Grid3X3, Link2, List, Search } from "lucide-vue-next";
 
 type DbOption = { value: string; label: string };
 type DbCategory = { key: string; title: string; options: DbOption[] };
@@ -72,6 +73,7 @@ const form = ref(defaultForm());
 const selectedType = ref("mysql");
 const customDriverName = ref("");
 const mongoUseUrl = ref(false);
+const connectionUrlInput = ref("");
 const dialogStep = ref<DialogStep>("select");
 const dbPickerView = ref<DbPickerView>("icon");
 const dbSearchQuery = ref("");
@@ -445,6 +447,23 @@ function resetTestState() {
   testResult.value = null;
 }
 
+function applyConnectionUrl() {
+  try {
+    const parsed = parseConnectionUrl(connectionUrlInput.value, selectedType.value);
+    form.value = applyParsedConnectionUrl(form.value, parsed);
+    selectedType.value = parsed.driverProfile;
+    customDriverName.value = isCustomCompatibleProfile() ? parsed.driverLabel : "";
+    mongoUseUrl.value = !!parsed.useMongoUrl;
+    if (!form.value.name.trim()) {
+      form.value.name = parsed.database || parsed.host || parsed.driverLabel;
+    }
+    resetTestState();
+    toast(t("connection.parseConnectionUrlApplied"), 2000);
+  } catch (e: any) {
+    toast(t("connection.parseConnectionUrlFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
 async function copyTestResult() {
   if (!testResultMessage.value) return;
   await navigator.clipboard.writeText(testResultMessage.value);
@@ -457,6 +476,7 @@ function resetForm() {
   selectedType.value = "mysql";
   customDriverName.value = "";
   mongoUseUrl.value = false;
+  connectionUrlInput.value = "";
   dialogStep.value = "select";
   dbPickerView.value = "icon";
   dbSearchQuery.value = "";
@@ -677,6 +697,33 @@ async function browseDbFilePath() {
 
             <TabsContent value="connection" class="m-0">
               <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right">URL</Label>
+                  <div class="col-span-3 flex items-center gap-1">
+                    <Input
+                      v-model="connectionUrlInput"
+                      class="flex-1"
+                      :placeholder="t('connection.connectionUrlPlaceholder')"
+                      @keydown.enter.prevent="applyConnectionUrl"
+                    />
+                    <Tooltip>
+                      <TooltipTrigger as-child>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-9 w-9 shrink-0"
+                          :disabled="!connectionUrlInput.trim()"
+                          :aria-label="t('connection.parseConnectionUrl')"
+                          @click="applyConnectionUrl"
+                        >
+                          <Link2 class="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{{ t("connection.parseConnectionUrl") }}</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
+
                 <div class="grid grid-cols-4 items-center gap-4">
                   <Label class="text-right">{{ t("connection.name") }}</Label>
                   <Input v-model="form.name" class="col-span-3" :placeholder="t('connection.namePlaceholder')" />
