@@ -6154,7 +6154,7 @@ dependencies = [
 [[package]]
 name = "rust-gaussdb"
 version = "0.1.0"
-source = "git+https://github.com/t8y2/rust-gaussdb?branch=main#7720552bce54beae388950771470fe8e75edfcb9"
+source = "git+https://github.com/t8y2/rust-gaussdb?branch=main#8ad53d7301f19b5fc0856e98649b866118b8d8de"
 dependencies = [
  "base64 0.22.1",
  "byteorder",
