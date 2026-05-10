@@ -19,7 +19,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  import: [source: "dbx" | "navicat"];
+  import: [source: "dbx" | "navicat" | "dbeaver"];
   export: [];
   startResize: [event: MouseEvent];
 }>();
@@ -70,6 +70,9 @@ async function refreshTree() {
             </DropdownMenuItem>
             <DropdownMenuItem @select.prevent="emit('import', 'navicat')">
               {{ t("sidebar.importNavicat") }}
+            </DropdownMenuItem>
+            <DropdownMenuItem @select.prevent="emit('import', 'dbeaver')">
+              {{ t("sidebar.importDbeaver") }}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

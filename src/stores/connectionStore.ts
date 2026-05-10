@@ -27,6 +27,7 @@ import { useSavedSqlStore } from "@/stores/savedSqlStore";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 const SIDEBAR_TABLE_NODE_LIMIT = 15;
+type ImportSource = "dbx" | "navicat" | "dbeaver";
 
 interface LoadTreeOptions {
   force?: boolean;
@@ -1144,9 +1145,78 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function readImportFile(
-    source: "dbx" | "navicat" = "dbx",
-  ): Promise<{ content: string; encrypted: boolean } | null> {
+  function bytesToBase64(bytes: Uint8Array) {
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function siblingCredentialsPath(path: string) {
+    const fileName = path.split(/[\\/]/).pop() || "";
+    const credentialsFile = fileName.startsWith("data-sources-")
+      ? fileName.replace(/^data-sources/, "credentials-config")
+      : "credentials-config.json";
+    return path.replace(/[^\\/]+$/, credentialsFile);
+  }
+
+  async function readDbeaverImportFile(): Promise<{ content: string; encrypted: boolean } | null> {
+    let dataSources: string;
+    let credentialsBase64 = "";
+
+    if (isTauriRuntime()) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const { readTextFile, readFile } = await import("@tauri-apps/plugin-fs");
+      const path = await open({
+        filters: [{ name: "DBeaver Data Sources", extensions: ["json"] }],
+        multiple: false,
+      });
+      if (!path) return null;
+      const dataSourcesPath = path as string;
+      dataSources = await readTextFile(dataSourcesPath);
+      try {
+        credentialsBase64 = bytesToBase64(await readFile(siblingCredentialsPath(dataSourcesPath)));
+      } catch {
+        credentialsBase64 = "";
+      }
+    } else {
+      const files = await new Promise<FileList>((resolve, reject) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json";
+        input.multiple = true;
+        input.onchange = () => {
+          if (!input.files?.length) {
+            reject(new Error("No file selected"));
+            return;
+          }
+          resolve(input.files);
+        };
+        input.click();
+      });
+      const fileList = Array.from(files);
+      const dataSourcesFile =
+        fileList.find((file) => /^data-sources.*\.json$/i.test(file.name)) ||
+        fileList.find((file) => !/^credentials-config.*\.json$/i.test(file.name));
+      const credentialsFile = fileList.find((file) => /^credentials-config.*\.json$/i.test(file.name));
+      if (!dataSourcesFile) throw new Error("Select DBeaver data-sources.json");
+      dataSources = await dataSourcesFile.text();
+      if (credentialsFile) {
+        credentialsBase64 = bytesToBase64(new Uint8Array(await credentialsFile.arrayBuffer()));
+      }
+    }
+
+    return {
+      content: JSON.stringify({ format: "dbeaver-import", dataSources, credentialsBase64 }),
+      encrypted: false,
+    };
+  }
+
+  async function readImportFile(source: ImportSource = "dbx"): Promise<{ content: string; encrypted: boolean } | null> {
+    if (source === "dbeaver") return readDbeaverImportFile();
+
     let content: string;
 
     if (isTauriRuntime()) {
@@ -1194,12 +1264,32 @@ export const useConnectionStore = defineStore("connection", () => {
     content: string,
     passphrase: string | null,
   ): Promise<{ count: number; layout?: SidebarLayout }> {
-    let imported: ConnectionConfig[];
+    let imported: ConnectionConfig[] = [];
     let importedLayout: SidebarLayout | undefined;
 
     if (!passphrase && content.trimStart().startsWith("<")) {
       const { parseNavicatConnections } = await import("@/lib/navicatImport");
       imported = await parseNavicatConnections(content);
+    } else if (!passphrase) {
+      const { isDbeaverImportPayload, parseDbeaverConnections } = await import("@/lib/dbeaverImport");
+      if (isDbeaverImportPayload(content)) {
+        imported = await parseDbeaverConnections(content);
+      } else {
+        const parsed = JSON.parse(content);
+
+        if (Array.isArray(parsed)) {
+          imported = parsed;
+        } else if (parsed.format === "dbx-config" && Array.isArray(parsed.connections)) {
+          imported = parsed.connections;
+        } else if (parsed.connections && Array.isArray(parsed.connections)) {
+          imported = parsed.connections;
+          if (parsed.layout?.groups && parsed.layout?.order) {
+            importedLayout = parsed.layout;
+          }
+        } else {
+          imported = [];
+        }
+      }
     } else {
       const parsed = JSON.parse(content);
 
@@ -1217,17 +1307,6 @@ export const useConnectionStore = defineStore("connection", () => {
         } else {
           imported = [];
         }
-      } else if (Array.isArray(parsed)) {
-        imported = parsed;
-      } else if (parsed.format === "dbx-config" && Array.isArray(parsed.connections)) {
-        imported = parsed.connections;
-      } else if (parsed.connections && Array.isArray(parsed.connections)) {
-        imported = parsed.connections;
-        if (parsed.layout?.groups && parsed.layout?.order) {
-          importedLayout = parsed.layout;
-        }
-      } else {
-        imported = [];
       }
     }
 

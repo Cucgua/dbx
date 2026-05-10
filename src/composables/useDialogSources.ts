@@ -202,7 +202,7 @@ export function useDialogSources() {
     }
   }
 
-  async function onImportClick(source: "dbx" | "navicat" = "dbx") {
+  async function onImportClick(source: "dbx" | "navicat" | "dbeaver" = "dbx") {
     try {
       const result = await connectionStore.readImportFile(source);
       if (!result) return;
@@ -217,7 +217,9 @@ export function useDialogSources() {
           count > 0
             ? source === "navicat"
               ? t("configExport.importNavicatSuccess", { count })
-              : t("configExport.importSuccess", { count })
+              : source === "dbeaver"
+                ? t("configExport.importDbeaverSuccess", { count })
+                : t("configExport.importSuccess", { count })
             : t("configExport.importNone"),
           4000,
         );

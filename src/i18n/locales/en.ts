@@ -62,6 +62,7 @@ export default {
     import: "Import Connections",
     importDbx: "Import DBX Config",
     importNavicat: "Import Navicat NCX",
+    importDbeaver: "Import DBeaver",
     export: "Export Connections",
     showMore: "Show {count} more...",
     filterByType: "Filter by type",
@@ -428,6 +429,8 @@ export default {
     importSuccess: "Imported {count} connection(s)",
     importNavicatSuccess:
       "Imported {count} Navicat connection(s). Fill in any connection whose password is still empty before testing.",
+    importDbeaverSuccess:
+      "Imported {count} DBeaver connection(s). Fill in any connection whose password is still empty before testing.",
     importNone: "No new connections to import",
     importLayoutConfirm: "The imported file contains connection groups. Apply them?",
     importLayoutTitle: "Import Groups",
