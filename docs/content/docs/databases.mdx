@@ -1,10 +1,10 @@
 ---
 title: Database Support
-description: 25+ database engines through native Rust drivers, no JDBC dependency.
+description: 25+ database engines through native Rust drivers by default, with optional JDBC plugin support for more databases.
 ---
 
 <Callout type="info">
-Native Rust drivers, no JDBC dependency. MySQL and PostgreSQL compatible databases work out of the box.
+DBX uses native Rust drivers by default, with no JDBC required. For additional databases, install the optional [JDBC plugin](/docs/plugins).
 </Callout>
 
 ## Fully Supported
@@ -85,3 +85,7 @@ DM8 connects via the DM ODBC driver. Default port: **5236**, default user: **SYS
     DM does not provide a native macOS ODBC driver. For development/testing, DM is best accessed from Linux.
   </Tab>
 </Tabs>
+
+## Optional JDBC Plugin
+
+If your target database is not built in, or if you must use a vendor JDBC driver, create a JDBC connection with the [JDBC plugin](/docs/plugins). The JDBC plugin does not increase the main DBX installer size and does not automatically download vendor drivers.
