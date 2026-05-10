@@ -498,6 +498,7 @@ export async function mongoDeleteDocument(
 // --- History ---
 export interface HistoryEntry {
   id: string;
+  connection_id?: string;
   connection_name: string;
   database: string;
   sql: string;
@@ -505,6 +506,12 @@ export interface HistoryEntry {
   execution_time_ms: number;
   success: boolean;
   error?: string;
+  activity_kind?: "query" | "data_change" | "schema_change" | "import" | "transfer";
+  operation?: string;
+  target?: string;
+  affected_rows?: number | null;
+  rollback_sql?: string | null;
+  details_json?: string | null;
 }
 
 export async function saveHistory(entry: HistoryEntry): Promise<void> {

@@ -73,7 +73,7 @@ import {
   type CellSelectionRange,
 } from "@/lib/gridSelection";
 import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql";
-import { buildDataGridSaveStatements, formatGridSqlLiteral } from "@/lib/dataGridSql";
+import { buildDataGridRollbackStatements, buildDataGridSaveStatements, formatGridSqlLiteral } from "@/lib/dataGridSql";
 import { formatMarkdownTable } from "@/lib/markdownTable";
 import { buildXlsxWorkbook } from "@/lib/xlsxExport";
 import {
@@ -84,9 +84,13 @@ import {
 } from "@/lib/gridRowStatus";
 
 import { useToast } from "@/composables/useToast";
+import { useConnectionStore } from "@/stores/connectionStore";
+import { useHistoryStore } from "@/stores/historyStore";
 
 const { t } = useI18n();
 const { toast } = useToast();
+const connectionStore = useConnectionStore();
+const historyStore = useHistoryStore();
 
 const props = defineProps<{
   result: QueryResult;
@@ -1539,28 +1543,81 @@ function deleteSelectedRow() {
   requestDeleteRow(contextCell.value.rowId);
 }
 
-function generateSaveStatements(): string[] {
-  if (!props.tableMeta) return [];
-  return buildDataGridSaveStatements({
+function saveStatementOptions() {
+  if (!props.tableMeta) return null;
+  return {
     databaseType: props.databaseType,
     tableMeta: props.tableMeta,
     columns: props.result.columns,
     rows: props.result.rows,
-    dirtyRows: [...dirtyRows.value.entries()].map(([rowIndex, changes]) => [rowIndex, [...changes.entries()]]),
+    dirtyRows: [...dirtyRows.value.entries()].map(
+      ([rowIndex, changes]) => [rowIndex, [...changes.entries()]] as [number, Array<[number, CellValue]>],
+    ),
     deletedRows: [...deletedRows.value],
     newRows: newRows.value,
+  };
+}
+
+function tableHistoryTarget() {
+  if (!props.tableMeta) return "";
+  return [props.tableMeta.schema, props.tableMeta.tableName].filter(Boolean).join(".");
+}
+
+function dataChangeOperation() {
+  const operations = [
+    newRows.value.length > 0 ? "INSERT" : "",
+    dirtyRows.value.size > 0 ? "UPDATE" : "",
+    deletedRows.value.size > 0 ? "DELETE" : "",
+  ].filter(Boolean);
+  return operations.length === 1 ? operations[0] : "DATA CHANGE";
+}
+
+async function recordDataGridHistory(
+  statements: string[],
+  rollbackStatements: string[],
+  elapsed: number,
+  result?: { affected_rows?: number },
+) {
+  if (!props.connectionId || !props.database || !props.tableMeta) return;
+  const connName = connectionStore.getConfig(props.connectionId)?.name || "";
+  const details = {
+    schema: props.tableMeta.schema,
+    table: props.tableMeta.tableName,
+    inserted_rows: newRows.value.length,
+    updated_rows: dirtyRows.value.size,
+    deleted_rows: deletedRows.value.size,
+    statements,
+    rollback_statements: rollbackStatements,
+  };
+  await historyStore.add({
+    connection_id: props.connectionId,
+    connection_name: connName,
+    database: props.database,
+    sql: statements.join("\n"),
+    execution_time_ms: elapsed,
+    success: true,
+    activity_kind: "data_change",
+    operation: dataChangeOperation(),
+    target: tableHistoryTarget(),
+    affected_rows: result?.affected_rows ?? statements.length,
+    rollback_sql: rollbackStatements.length ? rollbackStatements.join("\n") : undefined,
+    details_json: JSON.stringify(details),
   });
 }
 
 async function saveChanges() {
-  const stmts = generateSaveStatements();
+  const options = saveStatementOptions();
+  const stmts = options ? buildDataGridSaveStatements(options) : [];
   if (stmts.length === 0) return;
+  const rollbackStmts = options ? buildDataGridRollbackStatements(options) : [];
   saveError.value = "";
   isSaving.value = true;
+  const start = Date.now();
+  let result: { affected_rows?: number } | undefined;
 
   if (useTransaction.value && props.connectionId && props.database) {
     try {
-      await api.executeInTransaction(props.connectionId, props.database, stmts, props.tableMeta?.schema);
+      result = await api.executeInTransaction(props.connectionId, props.database, stmts, props.tableMeta?.schema);
     } catch (e: any) {
       saveError.value = String(e.message || e);
       isSaving.value = false;
@@ -1568,7 +1625,7 @@ async function saveChanges() {
     }
   } else if (props.connectionId && props.database) {
     try {
-      await api.executeBatch(props.connectionId, props.database, stmts);
+      result = await api.executeBatch(props.connectionId, props.database, stmts);
     } catch (e: any) {
       saveError.value = String(e.message || e);
       isSaving.value = false;
@@ -1584,6 +1641,11 @@ async function saveChanges() {
       isSaving.value = false;
       return;
     }
+  }
+  try {
+    await recordDataGridHistory(stmts, rollbackStmts, Date.now() - start, result);
+  } catch (e) {
+    console.warn("[DBX] failed to record data grid history", e);
   }
   dirtyRows.value.clear();
   newRows.value = [];

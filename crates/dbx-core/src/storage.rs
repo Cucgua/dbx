@@ -25,13 +25,20 @@ const SCHEMA_STATEMENTS: &[&str] = &[
     )",
     "CREATE TABLE IF NOT EXISTS history (
         id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL DEFAULT '',
         connection_name TEXT NOT NULL DEFAULT '',
         database TEXT NOT NULL DEFAULT '',
         sql_text TEXT NOT NULL DEFAULT '',
         executed_at TEXT NOT NULL DEFAULT '',
         execution_time_ms INTEGER NOT NULL DEFAULT 0,
         success INTEGER NOT NULL DEFAULT 1,
-        error TEXT
+        error TEXT,
+        activity_kind TEXT NOT NULL DEFAULT 'query',
+        operation TEXT NOT NULL DEFAULT '',
+        target TEXT NOT NULL DEFAULT '',
+        affected_rows INTEGER,
+        rollback_sql TEXT,
+        details_json TEXT
     )",
     "CREATE TABLE IF NOT EXISTS ai_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -93,9 +100,38 @@ impl Storage {
         for statement in SCHEMA_STATEMENTS {
             sqlx::query(statement).execute(&pool).await.map_err(|e| e.to_string())?;
         }
+        ensure_history_columns(&pool).await?;
 
         Ok(Self { db: pool })
     }
+}
+
+async fn ensure_history_columns(pool: &SqlitePool) -> Result<(), String> {
+    const COLUMNS: &[(&str, &str)] = &[
+        ("activity_kind", "TEXT NOT NULL DEFAULT 'query'"),
+        ("connection_id", "TEXT NOT NULL DEFAULT ''"),
+        ("operation", "TEXT NOT NULL DEFAULT ''"),
+        ("target", "TEXT NOT NULL DEFAULT ''"),
+        ("affected_rows", "INTEGER"),
+        ("rollback_sql", "TEXT"),
+        ("details_json", "TEXT"),
+    ];
+
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('history')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let existing: std::collections::HashSet<String> = rows.into_iter().map(|(name,)| name).collect();
+    for (name, definition) in COLUMNS {
+        if existing.contains(*name) {
+            continue;
+        }
+        sqlx::query(&format!("ALTER TABLE history ADD COLUMN {name} {definition}"))
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +141,7 @@ impl Storage {
 #[derive(sqlx::FromRow)]
 struct HistoryRow {
     id: String,
+    connection_id: String,
     connection_name: String,
     database: String,
     sql_text: String,
@@ -112,14 +149,21 @@ struct HistoryRow {
     execution_time_ms: i64,
     success: bool,
     error: Option<String>,
+    activity_kind: String,
+    operation: String,
+    target: String,
+    affected_rows: Option<i64>,
+    rollback_sql: Option<String>,
+    details_json: Option<String>,
 }
 
 impl Storage {
     pub async fn save_history_entry(&self, entry: &HistoryEntry) -> Result<(), String> {
         sqlx::query(
             "INSERT OR REPLACE INTO history \
-             (id, connection_name, database, sql_text, executed_at, execution_time_ms, success, error) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, connection_name, database, sql_text, executed_at, execution_time_ms, success, error, \
+              activity_kind, connection_id, operation, target, affected_rows, rollback_sql, details_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&entry.id)
         .bind(&entry.connection_name)
@@ -129,6 +173,13 @@ impl Storage {
         .bind(entry.execution_time_ms as i64)
         .bind(entry.success)
         .bind(&entry.error)
+        .bind(&entry.activity_kind)
+        .bind(&entry.connection_id)
+        .bind(&entry.operation)
+        .bind(&entry.target)
+        .bind(entry.affected_rows)
+        .bind(&entry.rollback_sql)
+        .bind(&entry.details_json)
         .execute(&self.db)
         .await
         .map_err(|e| e.to_string())?;
@@ -148,7 +199,8 @@ impl Storage {
     pub async fn load_history_entries(&self, limit: usize, offset: usize) -> Result<Vec<HistoryEntry>, String> {
         let rows: Vec<HistoryRow> = sqlx::query_as(
             "SELECT id, connection_name, database, sql_text, executed_at, \
-             execution_time_ms, success, error \
+             execution_time_ms, success, error, activity_kind, connection_id, operation, target, \
+             affected_rows, rollback_sql, details_json \
              FROM history ORDER BY executed_at DESC LIMIT ? OFFSET ?",
         )
         .bind(limit as i64)
@@ -161,6 +213,7 @@ impl Storage {
             .into_iter()
             .map(|r| HistoryEntry {
                 id: r.id,
+                connection_id: r.connection_id,
                 connection_name: r.connection_name,
                 database: r.database,
                 sql: r.sql_text,
@@ -168,6 +221,12 @@ impl Storage {
                 execution_time_ms: r.execution_time_ms as u128,
                 success: r.success,
                 error: r.error,
+                activity_kind: if r.activity_kind.is_empty() { "query".to_string() } else { r.activity_kind },
+                operation: r.operation,
+                target: r.target,
+                affected_rows: r.affected_rows,
+                rollback_sql: r.rollback_sql,
+                details_json: r.details_json,
             })
             .collect())
     }
@@ -737,8 +796,9 @@ impl Storage {
             sqlx::query(
                 "INSERT OR IGNORE INTO history \
                  (id, connection_name, database, sql_text, executed_at, \
-                  execution_time_ms, success, error) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  execution_time_ms, success, error, activity_kind, connection_id, operation, target, \
+                  affected_rows, rollback_sql, details_json) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&entry.id)
             .bind(&entry.connection_name)
@@ -748,6 +808,13 @@ impl Storage {
             .bind(entry.execution_time_ms as i64)
             .bind(entry.success)
             .bind(&entry.error)
+            .bind(&entry.activity_kind)
+            .bind(&entry.connection_id)
+            .bind(&entry.operation)
+            .bind(&entry.target)
+            .bind(entry.affected_rows)
+            .bind(&entry.rollback_sql)
+            .bind(&entry.details_json)
             .execute(&self.db)
             .await
             .map_err(|e| e.to_string())?;

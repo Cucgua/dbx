@@ -40,6 +40,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { HistoryEntry } from "@/lib/tauri";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
@@ -92,6 +93,21 @@ const activeConnection = computed(() => {
   const tab = activeTab.value;
   return tab ? connectionStore.getConfig(tab.connectionId) : undefined;
 });
+
+function restoreHistorySql(sql: string, entry: HistoryEntry) {
+  const tab = activeTab.value;
+  if (tab?.mode === "query") {
+    queryStore.updateSql(tab.id, sql);
+    return;
+  }
+
+  const connectionId = entry.connection_id || tab?.connectionId || connectionStore.connections[0]?.id;
+  if (!connectionId) return;
+  const config = connectionStore.getConfig(connectionId);
+  const database = entry.database || tab?.database || (config ? resolveDefaultDatabase(config, []) : "");
+  const tabId = queryStore.createTab(connectionId, database || "", t("tabs.sql"));
+  queryStore.updateSql(tabId, sql);
+}
 
 const executableSql = computed(() => {
   const tab = activeTab.value;
@@ -634,14 +650,7 @@ onUnmounted(() => {
             :style="{ width: historyWidth + 'px' }"
           >
             <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startHistoryResize" />
-            <QueryHistory
-              @restore="
-                (sql: string) => {
-                  if (queryStore.activeTabId) queryStore.updateSql(queryStore.activeTabId, sql);
-                }
-              "
-              @close="showHistory = false"
-            />
+            <QueryHistory @restore="restoreHistorySql" @close="showHistory = false" />
           </div>
         </div>
 
