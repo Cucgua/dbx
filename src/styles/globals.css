@@ -162,6 +162,13 @@
 }
 
 /* Panel resize handles */
+.app-panel-gutter {
+  background: oklch(0.965 0 0);
+}
+.dark .app-panel-gutter {
+  background: oklch(0.18 0 0);
+}
+
 .panel-resize-handle {
   position: absolute;
   top: 0;

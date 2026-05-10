@@ -511,7 +511,7 @@ onUnmounted(() => {
           @open-sql-file="dialogs.showSqlFileDialog.value = true"
         />
 
-        <div class="flex-1 flex min-h-0 gap-1 bg-muted/35 p-1">
+        <div class="app-panel-gutter flex-1 flex min-h-0 gap-1 p-1">
           <AppSidebar
             :sidebar-width="sidebarWidth"
             @import="dialogs.onImportClick"
@@ -519,7 +519,7 @@ onUnmounted(() => {
             @start-resize="startSidebarResize"
           />
 
-          <div class="flex-1 min-w-0 overflow-hidden rounded-md border bg-background">
+          <div class="flex-1 min-w-0 overflow-hidden rounded-md border border-border/80 bg-background">
             <div class="h-full flex flex-col min-w-0">
               <AppTabBar />
               <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
@@ -590,7 +590,7 @@ onUnmounted(() => {
 
           <div
             v-if="showAiPanel"
-            class="h-full shrink-0 relative overflow-hidden rounded-md border bg-background"
+            class="h-full shrink-0 relative overflow-hidden rounded-md border border-border/80 bg-background"
             :style="{ width: aiPanelWidth + 'px' }"
           >
             <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startAiPanelResize" />
@@ -608,7 +608,7 @@ onUnmounted(() => {
 
           <div
             v-if="showHistory"
-            class="h-full shrink-0 relative overflow-hidden rounded-md border bg-background"
+            class="h-full shrink-0 relative overflow-hidden rounded-md border border-border/80 bg-background"
             :style="{ width: historyWidth + 'px' }"
           >
             <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startHistoryResize" />

@@ -463,7 +463,7 @@ function formatInlineText(text: string): string {
 
 <template>
   <div class="flex h-full min-h-0 flex-col overflow-hidden">
-    <div class="h-9 flex items-center gap-2 border-b px-3 shrink-0">
+    <div class="h-10 flex items-center gap-2 border-b px-3 shrink-0">
       <span class="flex-1 truncate text-xs font-medium">{{ chatTitle }}</span>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat" :title="t('ai.newChat')">
         <MessageSquarePlus class="h-3.5 w-3.5" />
