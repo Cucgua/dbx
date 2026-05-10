@@ -1144,14 +1144,19 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function readImportFile(): Promise<{ content: string; encrypted: boolean } | null> {
+  async function readImportFile(
+    source: "dbx" | "navicat" = "dbx",
+  ): Promise<{ content: string; encrypted: boolean } | null> {
     let content: string;
 
     if (isTauriRuntime()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
       const path = await open({
-        filters: [{ name: "JSON", extensions: ["json"] }],
+        filters:
+          source === "navicat"
+            ? [{ name: "Navicat Connection Export", extensions: ["ncx", "xml"] }]
+            : [{ name: "DBX JSON", extensions: ["json"] }],
         multiple: false,
       });
       if (!path) return null;
@@ -1160,7 +1165,7 @@ export const useConnectionStore = defineStore("connection", () => {
       content = await new Promise<string>((resolve, reject) => {
         const input = document.createElement("input");
         input.type = "file";
-        input.accept = ".json";
+        input.accept = source === "navicat" ? ".ncx,.xml" : ".json";
         input.onchange = () => {
           const file = input.files?.[0];
           if (!file) {
@@ -1176,6 +1181,10 @@ export const useConnectionStore = defineStore("connection", () => {
       });
     }
 
+    if (content.trimStart().startsWith("<")) {
+      return { content, encrypted: false };
+    }
+
     const { isEncryptedConfig } = await import("@/lib/configCrypto");
     const parsed = JSON.parse(content);
     return { content, encrypted: isEncryptedConfig(parsed) };
@@ -1187,33 +1196,39 @@ export const useConnectionStore = defineStore("connection", () => {
   ): Promise<{ count: number; layout?: SidebarLayout }> {
     let imported: ConnectionConfig[];
     let importedLayout: SidebarLayout | undefined;
-    const parsed = JSON.parse(content);
 
-    if (passphrase) {
-      const { decryptConfig } = await import("@/lib/configCrypto");
-      const json = await decryptConfig(parsed, passphrase);
-      const decrypted = JSON.parse(json);
-      if (Array.isArray(decrypted)) {
-        imported = decrypted;
-      } else if (decrypted.connections) {
-        imported = decrypted.connections;
-        if (decrypted.layout?.groups && decrypted.layout?.order) {
-          importedLayout = decrypted.layout;
+    if (!passphrase && content.trimStart().startsWith("<")) {
+      const { parseNavicatConnections } = await import("@/lib/navicatImport");
+      imported = await parseNavicatConnections(content);
+    } else {
+      const parsed = JSON.parse(content);
+
+      if (passphrase) {
+        const { decryptConfig } = await import("@/lib/configCrypto");
+        const json = await decryptConfig(parsed, passphrase);
+        const decrypted = JSON.parse(json);
+        if (Array.isArray(decrypted)) {
+          imported = decrypted;
+        } else if (decrypted.connections) {
+          imported = decrypted.connections;
+          if (decrypted.layout?.groups && decrypted.layout?.order) {
+            importedLayout = decrypted.layout;
+          }
+        } else {
+          imported = [];
+        }
+      } else if (Array.isArray(parsed)) {
+        imported = parsed;
+      } else if (parsed.format === "dbx-config" && Array.isArray(parsed.connections)) {
+        imported = parsed.connections;
+      } else if (parsed.connections && Array.isArray(parsed.connections)) {
+        imported = parsed.connections;
+        if (parsed.layout?.groups && parsed.layout?.order) {
+          importedLayout = parsed.layout;
         }
       } else {
         imported = [];
       }
-    } else if (Array.isArray(parsed)) {
-      imported = parsed;
-    } else if (parsed.format === "dbx-config" && Array.isArray(parsed.connections)) {
-      imported = parsed.connections;
-    } else if (parsed.connections && Array.isArray(parsed.connections)) {
-      imported = parsed.connections;
-      if (parsed.layout?.groups && parsed.layout?.order) {
-        importedLayout = parsed.layout;
-      }
-    } else {
-      imported = [];
     }
 
     let count = 0;

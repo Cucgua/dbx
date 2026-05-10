@@ -3,6 +3,12 @@ import { useI18n } from "vue-i18n";
 import { Upload, Download, RefreshCw } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import ConnectionTree from "@/components/sidebar/ConnectionTree.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToast } from "@/composables/useToast";
@@ -13,7 +19,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  import: [];
+  import: [source: "dbx" | "navicat"];
   export: [];
   startResize: [event: MouseEvent];
 }>();
@@ -52,14 +58,21 @@ async function refreshTree() {
           </TooltipTrigger>
           <TooltipContent>{{ t("contextMenu.refreshChildren") }}</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button variant="ghost" size="icon" class="h-5 w-5" @click="emit('import')">
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button variant="ghost" size="icon" class="h-5 w-5" :title="t('sidebar.import')">
               <Upload class="h-3 w-3" />
             </Button>
-          </TooltipTrigger>
-          <TooltipContent>{{ t("sidebar.import") }}</TooltipContent>
-        </Tooltip>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-44">
+            <DropdownMenuItem @select.prevent="emit('import', 'dbx')">
+              {{ t("sidebar.importDbx") }}
+            </DropdownMenuItem>
+            <DropdownMenuItem @select.prevent="emit('import', 'navicat')">
+              {{ t("sidebar.importNavicat") }}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Tooltip>
           <TooltipTrigger as-child>
             <Button variant="ghost" size="icon" class="h-5 w-5" @click="emit('export')">

@@ -60,6 +60,8 @@ export default {
     connections: "CONNECTIONS",
     noConnections: "No connections yet",
     import: "Import Connections",
+    importDbx: "Import DBX Config",
+    importNavicat: "Import Navicat NCX",
     export: "Export Connections",
     showMore: "Show {count} more...",
     filterByType: "Filter by type",
@@ -424,6 +426,8 @@ export default {
     wrongPassphrase: "Wrong passphrase or corrupted file",
     exportSuccess: "Connections exported successfully",
     importSuccess: "Imported {count} connection(s)",
+    importNavicatSuccess:
+      "Imported {count} Navicat connection(s). Fill in any connection whose password is still empty before testing.",
     importNone: "No new connections to import",
     importLayoutConfirm: "The imported file contains connection groups. Apply them?",
     importLayoutTitle: "Import Groups",

@@ -202,9 +202,9 @@ export function useDialogSources() {
     }
   }
 
-  async function onImportClick() {
+  async function onImportClick(source: "dbx" | "navicat" = "dbx") {
     try {
-      const result = await connectionStore.readImportFile();
+      const result = await connectionStore.readImportFile(source);
       if (!result) return;
       pendingImportContent.value = result.content;
       if (result.encrypted) {
@@ -213,7 +213,14 @@ export function useDialogSources() {
         showConfigPassphraseDialog.value = true;
       } else {
         const { count, layout } = await connectionStore.importConnectionsFromFile(result.content, null);
-        toast(count > 0 ? t("configExport.importSuccess", { count }) : t("configExport.importNone"), 2000);
+        toast(
+          count > 0
+            ? source === "navicat"
+              ? t("configExport.importNavicatSuccess", { count })
+              : t("configExport.importSuccess", { count })
+            : t("configExport.importNone"),
+          4000,
+        );
         if (layout && count > 0) {
           pendingImportLayout.value = layout;
           showImportLayoutConfirm.value = true;
