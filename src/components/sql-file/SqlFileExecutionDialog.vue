@@ -261,7 +261,7 @@ async function listenProgress(id: string, handler: (next: SqlFileProgress) => vo
   if (isTauriRuntime()) {
     return listenSqlFileProgress(handler);
   }
-  const { listenSqlFileProgressById } = await import("@/lib/http");
+  const { listenSqlFileProgressById } = await import("@/lib/httpSqlFileProgress");
   return listenSqlFileProgressById(id, handler);
 }
 

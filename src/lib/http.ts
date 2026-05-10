@@ -382,29 +382,8 @@ export async function listenSqlFileProgress(_handler: (progress: SqlFileProgress
   // For HTTP mode we need an executionId, but the tauri API does not take one.
   // The SSE endpoint requires a specific executionId. As a workaround we return
   // a no-op unlisten; callers that need progress in web mode should use
-  // listenSqlFileProgressById instead.
+  // the web-specific SQL file progress listener instead.
   return () => {};
-}
-
-/**
- * Web-specific: listen to SQL file execution progress for a given executionId via SSE.
- */
-export function listenSqlFileProgressById(
-  executionId: string,
-  handler: (progress: SqlFileProgress) => void,
-): () => void {
-  const es = new EventSource(`/api/sql-file/progress/${executionId}`);
-  es.onmessage = (e) => {
-    const progress: SqlFileProgress = JSON.parse(e.data);
-    handler(progress);
-    if (progress.status === "done" || progress.status === "error" || progress.status === "cancelled") {
-      es.close();
-    }
-  };
-  es.onerror = () => {
-    es.close();
-  };
-  return () => es.close();
 }
 
 // ---------------------------------------------------------------------------
