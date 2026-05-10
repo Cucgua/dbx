@@ -322,7 +322,27 @@ export const useConnectionStore = defineStore("connection", () => {
         loadedTreeNodeChildrenIds.value.delete(id);
       }
     }
+    api.deleteSchemaCachePrefix(`${prefix}:`).catch(() => undefined);
     api.deleteSchemaCachePrefix(`${schemaCacheKey(prefix)}:`).catch(() => undefined);
+  }
+
+  function schemaCachePrefixForNode(node: TreeNode): string | null {
+    if (node.type === "connection" && node.connectionId) {
+      return `${schemaCacheKey(node.connectionId)}:`;
+    }
+    if (node.type === "database" && node.connectionId && node.database) {
+      return `${schemaCacheKey(node.connectionId, node.database)}:`;
+    }
+    if (node.type === "schema" && node.connectionId && node.database && node.schema) {
+      return `${schemaCacheKey(node.connectionId, node.database, node.schema)}:`;
+    }
+    return null;
+  }
+
+  async function clearPersistedTreeCacheForNode(node: TreeNode) {
+    const prefix = schemaCachePrefixForNode(node);
+    if (!prefix) return;
+    await api.deleteSchemaCachePrefix(prefix).catch(() => undefined);
   }
 
   function findParentNode(nodes: TreeNode[], id: string, parent: TreeNode | null = null): TreeNode | null {
@@ -948,6 +968,8 @@ export const useConnectionStore = defineStore("connection", () => {
   async function refreshTreeNode(node: TreeNode) {
     const expandedIds = collectExpandedNodeIds([node]);
     expandedIds.add(node.id);
+    await clearPersistedTreeCacheForNode(node);
+    clearLoadedChildrenCache(node.id);
     if (node.type !== "connection-group") {
       node.children = [];
     }

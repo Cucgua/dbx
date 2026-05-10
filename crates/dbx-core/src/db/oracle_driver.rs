@@ -59,20 +59,33 @@ fn value_to_json(val: &rust_oracle::Value) -> serde_json::Value {
 pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, String> {
     let result = conn
         .query(
-            "SELECT username FROM all_users \
-             WHERE username NOT IN (\
-               'SYS','SYSTEM','SYSMAN','DBSNMP','SYSBACKUP','SYSDG','SYSKM','OUTLN',\
-               'AUDSYS','LBACSYS','DVF','DVSYS','APPQOSSYS','CTXSYS','MDSYS','MDDATA',\
-               'ORDSYS','ORDDATA','ORDPLUGINS','XDB','ANONYMOUS','DIP','EXFSYS',\
-               'GSMADMIN_INTERNAL','GSMCATUSER','GSMUSER','OJVMSYS','OLAPSYS',\
-               'ORACLE_OCM','SI_INFORMTN_SCHEMA','WMSYS','XS$NULL','DBSFWUSER',\
-               'REMOTE_SCHEDULER_AGENT','PDBADMIN','DGPDB_INT','OPS$ORACLE',\
-               'GGSYS','FLOWS_FILES','APEX_PUBLIC_USER'\
+            "WITH schema_names AS ( \
+               SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AS owner FROM DUAL \
+               UNION \
+               SELECT DISTINCT owner \
+               FROM all_objects \
+               WHERE object_type IN ('TABLE', 'VIEW') \
              ) \
-             AND username NOT LIKE 'APEX_%' \
-             AND username NOT LIKE 'FLOWS_%' \
-             AND username NOT LIKE '%$%' \
-             ORDER BY username",
+             SELECT owner \
+             FROM schema_names \
+             WHERE owner IS NOT NULL \
+               AND owner NOT IN (\
+                 'SYS','SYSTEM','SYSMAN','DBSNMP','SYSBACKUP','SYSDG','SYSKM','OUTLN',\
+                 'AUDSYS','LBACSYS','DVF','DVSYS','APPQOSSYS','CTXSYS','MDSYS','MDDATA',\
+                 'ORDSYS','ORDDATA','ORDPLUGINS','XDB','ANONYMOUS','DIP','EXFSYS',\
+                 'GSMADMIN_INTERNAL','GSMCATUSER','GSMUSER','OJVMSYS','OLAPSYS',\
+                 'ORACLE_OCM','SI_INFORMTN_SCHEMA','WMSYS','XS$NULL','DBSFWUSER',\
+                 'REMOTE_SCHEDULER_AGENT','PDBADMIN','DGPDB_INT','OPS$ORACLE',\
+                 'GGSYS','FLOWS_FILES','APEX_PUBLIC_USER'\
+               ) \
+               AND owner NOT LIKE 'APEX_%' \
+               AND owner NOT LIKE 'FLOWS_%' \
+               AND owner NOT LIKE '%$%' \
+             ORDER BY CASE \
+               WHEN owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') THEN 0 \
+               WHEN owner = SYS_CONTEXT('USERENV', 'SESSION_USER') THEN 1 \
+               ELSE 2 \
+             END, owner",
             &[],
         )
         .await
