@@ -26,6 +26,7 @@ import { buildSqlServerDatabaseTreeNodes, SQLSERVER_DEFAULT_SCHEMA } from "@/lib
 import { useSavedSqlStore } from "@/stores/savedSqlStore";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
+const SIDEBAR_TABLE_NODE_LIMIT = 15;
 
 interface LoadTreeOptions {
   force?: boolean;
@@ -289,6 +290,24 @@ export const useConnectionStore = defineStore("connection", () => {
 
   async function savePersistedTreeChildren(cacheKey: string, children: TreeNode[]) {
     await api.saveSchemaCache(cacheKey, children).catch(() => undefined);
+  }
+
+  function buildObjectBrowserNode(
+    nodeId: string,
+    connectionId: string,
+    database: string,
+    schema: string | undefined,
+    objectCount: number,
+  ): TreeNode {
+    return {
+      id: `${nodeId}:__object_browser`,
+      label: "tree.objectBrowser",
+      type: "object-browser",
+      connectionId,
+      database,
+      schema,
+      objectCount,
+    };
   }
 
   function useCachedChildren(node: TreeNode, options?: LoadTreeOptions): boolean {
@@ -637,7 +656,26 @@ export const useConnectionStore = defineStore("connection", () => {
         api.listSchemas(connectionId, database),
         api.listTables(connectionId, database, SQLSERVER_DEFAULT_SCHEMA),
       ]);
-      const children = buildSqlServerDatabaseTreeNodes(connectionId, database, schemas, defaultSchemaTables);
+      let children = buildSqlServerDatabaseTreeNodes(connectionId, database, schemas, defaultSchemaTables);
+      if (defaultSchemaTables.length > SIDEBAR_TABLE_NODE_LIMIT) {
+        const previewTables = buildSqlServerDatabaseTreeNodes(
+          connectionId,
+          database,
+          [],
+          defaultSchemaTables.slice(0, SIDEBAR_TABLE_NODE_LIMIT),
+        );
+        children = [
+          ...previewTables,
+          buildObjectBrowserNode(
+            `${nodeId}:${SQLSERVER_DEFAULT_SCHEMA}`,
+            connectionId,
+            database,
+            SQLSERVER_DEFAULT_SCHEMA,
+            defaultSchemaTables.length,
+          ),
+          ...children.filter((child) => child.type === "schema"),
+        ];
+      }
       setChildren(node, children);
       await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;
@@ -661,7 +699,8 @@ export const useConnectionStore = defineStore("connection", () => {
       const tables = await api.listTables(connectionId, database, querySchema);
       const config = getConfig(connectionId);
       const effectiveSchema = schema || (config?.db_type && isSchemaAware(config.db_type) ? database : undefined);
-      const children = tables.map((t) => ({
+      const visibleTables = tables.slice(0, SIDEBAR_TABLE_NODE_LIMIT);
+      const children: TreeNode[] = visibleTables.map((t) => ({
         id: `${nodeId}:${t.name}`,
         label: t.name,
         type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
@@ -671,6 +710,9 @@ export const useConnectionStore = defineStore("connection", () => {
         isExpanded: false,
         children: [],
       }));
+      if (tables.length > SIDEBAR_TABLE_NODE_LIMIT) {
+        children.push(buildObjectBrowserNode(nodeId, connectionId, database, effectiveSchema, tables.length));
+      }
       setChildren(node, children);
       await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;

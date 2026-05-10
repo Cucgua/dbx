@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
-import { X, Pin, ChevronRight, Table2, Code2 } from "lucide-vue-next";
+import { X, Pin, ChevronRight, Table2, Code2, TableProperties } from "lucide-vue-next";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -73,6 +73,11 @@ function tabColorStyle(tab: QueryTab) {
     borderColor: isActive ? hexToRgba(color, 0.72) : hexToRgba(color, 0.18),
   };
 }
+
+function tabIconClass(tab: QueryTab) {
+  if (tab.mode === "data" || tab.mode === "objects") return "text-emerald-600 dark:text-emerald-400";
+  return "text-blue-600 dark:text-blue-400";
+}
 </script>
 
 <template>
@@ -126,13 +131,9 @@ function tabColorStyle(tab: QueryTab) {
                 @click="queryStore.activeTabId = tab.id"
                 @mousedown.middle.prevent="queryStore.closeTab(tab.id)"
               >
-                <span
-                  class="shrink-0"
-                  :class="
-                    tab.mode === 'data' ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'
-                  "
-                >
+                <span class="shrink-0" :class="tabIconClass(tab)">
                   <Table2 v-if="tab.mode === 'data'" class="h-3.5 w-3.5" />
+                  <TableProperties v-else-if="tab.mode === 'objects'" class="h-3.5 w-3.5" />
                   <Code2 v-else class="h-3.5 w-3.5" />
                 </span>
                 <span class="min-w-0 truncate flex-1">{{ tabDisplayTitle(tab) }}</span>

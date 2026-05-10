@@ -88,6 +88,7 @@ export interface DatabaseInfo {
 export interface TableInfo {
   name: string;
   table_type: string;
+  comment?: string | null;
 }
 
 export interface ColumnInfo {
@@ -146,6 +147,7 @@ export type TreeNodeType =
   | "group-indexes"
   | "group-fkeys"
   | "group-triggers"
+  | "object-browser"
   | "saved-sql-root"
   | "saved-sql-folder"
   | "saved-sql-file"
@@ -184,6 +186,7 @@ export interface TreeNode {
   database?: string;
   schema?: string;
   tableName?: string;
+  objectCount?: number;
   savedSqlId?: string;
   savedSqlFolderId?: string;
   meta?: ColumnInfo | IndexInfo | ForeignKeyInfo | TriggerInfo;
@@ -213,7 +216,11 @@ export interface QueryTab {
   executionId?: string;
   isExplaining?: boolean;
   explainExecutionId?: string;
-  mode: "data" | "query" | "redis" | "mongo";
+  mode: "data" | "query" | "redis" | "mongo" | "objects";
+  objectBrowser?: {
+    schema?: string;
+    objectType?: "tables";
+  };
   tableMeta?: {
     schema?: string;
     tableName: string;

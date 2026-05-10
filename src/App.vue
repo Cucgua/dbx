@@ -599,6 +599,17 @@ onUnmounted(() => {
                   @sort="onSort"
                   @execute-sql="onExecuteSql"
                   @click-table="onClickTable"
+                  @open-object-table="
+                    (target) =>
+                      activeTab &&
+                      openTableTarget({
+                        connectionId: activeTab.connectionId,
+                        database: activeTab.database,
+                        schema: target.schema,
+                        tableName: target.tableName,
+                      })
+                  "
+                  @object-schema-change="(schema) => activeTab && queryStore.updateSchema(activeTab.id, schema)"
                 />
               </div>
               <WelcomeScreen

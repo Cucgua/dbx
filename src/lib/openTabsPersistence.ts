@@ -10,6 +10,7 @@ export interface SavedOpenTab {
   savedSqlId?: string;
   pinned?: boolean;
   mode?: QueryTab["mode"];
+  objectBrowser?: QueryTab["objectBrowser"];
   tableMeta?: QueryTab["tableMeta"];
 }
 
@@ -29,6 +30,7 @@ export function serializeOpenTabs(tabs: QueryTab[]): SavedOpenTab[] {
     savedSqlId: tab.savedSqlId,
     pinned: tab.pinned,
     mode: tab.mode,
+    objectBrowser: tab.objectBrowser,
     tableMeta: tab.tableMeta,
   }));
 }

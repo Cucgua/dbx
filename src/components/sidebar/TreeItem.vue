@@ -155,6 +155,8 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: Link, colorClass: "text-blue-400" };
     case "group-triggers":
       return { icon: Zap, colorClass: "text-orange-400" };
+    case "object-browser":
+      return { icon: TableProperties, colorClass: "text-primary" };
     case "saved-sql-root":
       return { icon: FolderOpen, colorClass: "text-blue-500" };
     case "saved-sql-folder":
@@ -183,6 +185,7 @@ const leafTypes: Set<TreeNodeType> = new Set([
   "index",
   "fkey",
   "trigger",
+  "object-browser",
   "redis-db",
   "mongo-collection",
   "saved-sql-file",
@@ -210,10 +213,16 @@ function isGroupLabel(node: TreeNode): boolean {
   return groupTypes.has(node.type);
 }
 
+function displayLabel(node: TreeNode): string {
+  if (node.type === "object-browser") return t(node.label, { count: node.objectCount ?? 0 });
+  return isGroupLabel(node) ? t(node.label) : node.label;
+}
+
 async function toggle() {
   const node = props.node;
   if (node.isLoading) return;
   emit("search-toggle", node);
+  const wasExpanded = !!node.isExpanded;
 
   if (node.type === "connection-group") {
     node.isExpanded = !node.isExpanded;
@@ -277,12 +286,23 @@ async function toggle() {
       await connectionStore.loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
     }
   } catch (e: any) {
+    if (!wasExpanded) node.isExpanded = false;
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
 function onClick() {
   const node = props.node;
+  if (canOpenObjectBrowser.value) {
+    const shouldOpenObjectBrowser = !canExpand || !node.isExpanded;
+    if (canExpand) void toggle();
+    if (shouldOpenObjectBrowser) void openObjectBrowser();
+    return;
+  }
+  if (node.type === "object-browser") {
+    void openObjectBrowser();
+    return;
+  }
   const action = treeNodeRowAction(node.type, canExpand);
   if (action === "open-data") {
     openData();
@@ -290,6 +310,32 @@ function onClick() {
     openSavedSqlFile();
   } else if (action === "toggle") {
     toggle();
+  }
+}
+
+async function openObjectBrowser() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    connectionStore.activeConnectionId = node.connectionId;
+
+    if (node.database) {
+      queryStore.openObjectBrowser(node.connectionId, node.database, node.schema);
+      return;
+    }
+
+    const connection = connectionStore.getConfig(node.connectionId);
+    if (!connection) return;
+    const options = await getDatabaseOptions(node.connectionId);
+    const database = resolveDefaultDatabase(connection, options);
+    if (database) {
+      queryStore.openObjectBrowser(node.connectionId, database);
+    } else {
+      await toggle();
+    }
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
@@ -1024,6 +1070,16 @@ const canOpenDatabaseSearch = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return !!props.node.database && !!config && DATABASE_SEARCH_SUPPORTED_TYPES.has(config.db_type);
 });
+const canOpenObjectBrowser = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return (
+    (props.node.type === "database" || props.node.type === "schema" || props.node.type === "object-browser") &&
+    !!config &&
+    config.db_type !== "redis" &&
+    config.db_type !== "mongodb" &&
+    config.db_type !== "elasticsearch"
+  );
+});
 const canOpenTableImport = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
@@ -1363,7 +1419,7 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             @click.stop
             @vue:mounted="($event: any) => $event.el.focus()"
           />
-          <span v-else class="min-w-0 flex-1 truncate">{{ isGroupLabel(node) ? t(node.label) : node.label }}</span>
+          <span v-else class="min-w-0 flex-1 truncate">{{ displayLabel(node) }}</span>
           <Badge v-if="isNodeDefaultDatabase" variant="secondary" class="h-4 px-1.5 text-[10px]">
             {{ t("editor.defaultDatabase") }}
           </Badge>
@@ -1493,6 +1549,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </template>
 
       <template v-if="node.type === 'database' || node.type === 'schema'">
+        <ContextMenuItem v-if="canOpenObjectBrowser" @click="openObjectBrowser">
+          <TableProperties class="w-4 h-4" /> {{ t("contextMenu.openObjectBrowser") }}
+        </ContextMenuItem>
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
         </ContextMenuItem>

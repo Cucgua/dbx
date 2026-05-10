@@ -9,6 +9,7 @@ import QueryEditor from "@/components/editor/QueryEditor.vue";
 import DataGrid from "@/components/grid/DataGrid.vue";
 import RedisKeyBrowser from "@/components/redis/RedisKeyBrowser.vue";
 import MongoDocBrowser from "@/components/mongo/MongoDocBrowser.vue";
+import ObjectBrowser from "@/components/objects/ObjectBrowser.vue";
 import ColumnInfoPanel from "@/components/editor/ColumnInfoPanel.vue";
 import type { ColumnInfo } from "@/components/editor/ColumnInfoPanel.vue";
 const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
@@ -44,6 +45,8 @@ const emit = defineEmits<{
   sort: [column: string, columnIndex: number, direction: "asc" | "desc" | null, whereInput?: string];
   executeSql: [sql: string];
   clickTable: [tableName: string];
+  openObjectTable: [target: { tableName: string; schema?: string }];
+  objectSchemaChange: [schema: string | undefined];
 }>();
 
 const { t } = useI18n();
@@ -429,6 +432,18 @@ function onHandleCloseColumnPanel() {
           :collection="activeTab.sql"
         />
       </div>
+    </template>
+
+    <!-- Objects mode: virtualized database object browser -->
+    <template v-else-if="activeTab.mode === 'objects' && activeConnection">
+      <ObjectBrowser
+        :key="`${activeTab.id}-${activeTab.objectBrowser?.schema || ''}`"
+        :connection="activeConnection"
+        :database="activeTab.database"
+        :schema="activeTab.objectBrowser?.schema"
+        @open-table="emit('openObjectTable', $event)"
+        @schema-change="emit('objectSchemaChange', $event)"
+      />
     </template>
   </div>
 </template>

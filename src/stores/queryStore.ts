@@ -45,12 +45,7 @@ export const useQueryStore = defineStore("query", () => {
     return tabs.value.find((t) => t.connectionId === connectionId && t.database === database && t.title === title);
   }
 
-  function createTab(
-    connectionId: string,
-    database: string,
-    title?: string,
-    mode: "data" | "query" | "redis" | "mongo" = "query",
-  ) {
+  function createTab(connectionId: string, database: string, title?: string, mode: QueryTab["mode"] = "query") {
     if (title) {
       const existing = findTabByTitle(connectionId, database, title);
       if (existing) {
@@ -70,6 +65,42 @@ export const useQueryStore = defineStore("query", () => {
       isCancelling: false,
       isExplaining: false,
       mode,
+    };
+    tabs.value.push(tab);
+    activeTabId.value = id;
+    return id;
+  }
+
+  function openObjectBrowser(connectionId: string, database: string, schema?: string) {
+    const title = schema ? `${schema} objects` : `${database} objects`;
+    const existing = tabs.value.find(
+      (tab) =>
+        tab.mode === "objects" &&
+        tab.connectionId === connectionId &&
+        tab.database === database &&
+        (tab.objectBrowser?.schema || "") === (schema || ""),
+    );
+    if (existing) {
+      activeTabId.value = existing.id;
+      return existing.id;
+    }
+
+    const id = uuid();
+    const tab: QueryTab = {
+      id,
+      title,
+      connectionId,
+      database,
+      schema,
+      sql: "",
+      isExecuting: false,
+      isCancelling: false,
+      isExplaining: false,
+      mode: "objects",
+      objectBrowser: {
+        schema,
+        objectType: "tables",
+      },
     };
     tabs.value.push(tab);
     activeTabId.value = id;
@@ -157,6 +188,7 @@ export const useQueryStore = defineStore("query", () => {
     if (!tab || tab.database === database) return;
     tab.database = database;
     tab.schema = undefined;
+    tab.objectBrowser = undefined;
     tab.result = undefined;
     tab.lastExecutedSql = undefined;
     tab.resultBaseSql = undefined;
@@ -169,6 +201,7 @@ export const useQueryStore = defineStore("query", () => {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || tab.schema === schema) return;
     tab.schema = schema;
+    if (tab.mode === "objects") tab.objectBrowser = { ...tab.objectBrowser, schema };
   }
 
   function updateConnection(id: string, connectionId: string, database = "") {
@@ -460,6 +493,7 @@ export const useQueryStore = defineStore("query", () => {
     closeOtherTabs,
     closeAllTabs,
     updateSql,
+    openObjectBrowser,
     linkSavedSql,
     openSavedSql,
     togglePinnedTab,
