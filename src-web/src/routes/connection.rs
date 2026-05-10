@@ -78,9 +78,9 @@ pub async fn disconnect_db(
     let app = &state.app;
     let mut connections = app.connections.lock().await;
 
-    // Remove all pool keys that start with this connection_id
+    let pool_prefix = format!("{}:", body.connection_id);
     let keys_to_remove: Vec<String> =
-        connections.keys().filter(|k| k.starts_with(&body.connection_id)).cloned().collect();
+        connections.keys().filter(|k| *k == &body.connection_id || k.starts_with(&pool_prefix)).cloned().collect();
     for key in keys_to_remove {
         connections.remove(&key);
     }
@@ -116,11 +116,11 @@ async fn cache_connection_configs(state: &WebState, configs: &[ConnectionConfig]
 
 #[cfg(test)]
 mod tests {
-    use super::{save_connections, SaveConnectionsRequest};
+    use super::{disconnect_db, save_connections, DisconnectRequest, SaveConnectionsRequest};
     use crate::state::{LoginRateLimit, WebState};
     use axum::extract::State;
     use axum::Json;
-    use dbx_core::connection::AppState;
+    use dbx_core::connection::{AppState, PoolKind};
     use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
     use dbx_core::storage::Storage;
     use std::collections::{HashMap, HashSet};
@@ -188,6 +188,33 @@ mod tests {
 
         let configs = state.app.configs.lock().await;
         assert_eq!(configs.get("sqlite-conn").map(|c| c.host.as_str()), Some(config.host.as_str()));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn disconnect_db_keeps_connections_with_similar_prefixes() {
+        let (state, dir) = test_web_state().await;
+        let conn_path = dir.join("conn.db");
+        let conn2_path = dir.join("conn2.db");
+        std::fs::File::create(&conn_path).unwrap();
+        std::fs::File::create(&conn2_path).unwrap();
+        let conn_pool = dbx_core::db::sqlite::connect_path(&conn_path.to_string_lossy()).await.unwrap();
+        let conn2_pool = dbx_core::db::sqlite::connect_path(&conn2_path.to_string_lossy()).await.unwrap();
+
+        {
+            let mut connections = state.app.connections.lock().await;
+            connections.insert("conn".to_string(), PoolKind::Sqlite(conn_pool));
+            connections.insert("conn2".to_string(), PoolKind::Sqlite(conn2_pool));
+        }
+
+        let result =
+            disconnect_db(State(state.clone()), Json(DisconnectRequest { connection_id: "conn".to_string() })).await;
+        assert!(result.is_ok());
+
+        let connections = state.app.connections.lock().await;
+        assert!(!connections.contains_key("conn"));
+        assert!(connections.contains_key("conn2"));
 
         let _ = std::fs::remove_dir_all(dir);
     }
