@@ -97,10 +97,98 @@ pub async fn save_connections(
     Json(body): Json<SaveConnectionsRequest>,
 ) -> Result<Json<()>, AppError> {
     state.app.storage.save_connections(&body.configs).await.map_err(AppError)?;
+    cache_connection_configs(&state, &body.configs).await;
     Ok(Json(()))
 }
 
 pub async fn load_connections(State(state): State<Arc<WebState>>) -> Result<Json<Vec<ConnectionConfig>>, AppError> {
     let configs = state.app.storage.load_connections().await.map_err(AppError)?;
+    cache_connection_configs(&state, &configs).await;
     Ok(Json(configs))
+}
+
+async fn cache_connection_configs(state: &WebState, configs: &[ConnectionConfig]) {
+    let mut runtime_configs = state.app.configs.lock().await;
+    for config in configs {
+        runtime_configs.insert(config.id.clone(), config.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{save_connections, SaveConnectionsRequest};
+    use crate::state::{LoginRateLimit, WebState};
+    use axum::extract::State;
+    use axum::Json;
+    use dbx_core::connection::AppState;
+    use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
+    use dbx_core::storage::Storage;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Arc;
+    use tokio::sync::{Mutex, RwLock};
+
+    fn sqlite_config(id: &str, path: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            id: id.to_string(),
+            name: "SQLite".to_string(),
+            db_type: DatabaseType::Sqlite,
+            driver_profile: None,
+            driver_label: None,
+            url_params: None,
+            host: path.to_string(),
+            port: 0,
+            username: String::new(),
+            password: String::new(),
+            database: None,
+            color: None,
+            ssh_enabled: false,
+            ssh_host: String::new(),
+            ssh_port: 22,
+            ssh_user: String::new(),
+            ssh_password: String::new(),
+            ssh_key_path: String::new(),
+            ssh_key_passphrase: String::new(),
+            ssh_expose_lan: false,
+            ssh_connect_timeout_secs: dbx_core::models::connection::default_ssh_connect_timeout_secs(),
+            ssl: false,
+            sysdba: false,
+            connection_string: None,
+            external_config: None,
+            jdbc_driver_class: None,
+            jdbc_driver_paths: Vec::new(),
+        }
+    }
+
+    async fn test_web_state() -> (Arc<WebState>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("dbx-web-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Storage::open(&dir.join("storage.db")).await.unwrap();
+        let app = Arc::new(AppState::new_with_plugin_dir(storage, dir.join("plugins")));
+        let state = Arc::new(WebState {
+            app,
+            data_dir: dir.clone(),
+            password_hash: RwLock::new(None),
+            sessions: RwLock::new(HashSet::new()),
+            sse_channels: RwLock::new(HashMap::new()),
+            login_rate_limit: Mutex::new(LoginRateLimit { fail_count: 0, locked_until: None }),
+        });
+        (state, dir)
+    }
+
+    #[tokio::test]
+    async fn save_connections_updates_runtime_config_cache() {
+        let (state, dir) = test_web_state().await;
+        let db_path = dir.join("app.db");
+        let config = sqlite_config("sqlite-conn", &db_path.to_string_lossy());
+
+        let result =
+            save_connections(State(state.clone()), Json(SaveConnectionsRequest { configs: vec![config.clone()] }))
+                .await;
+        assert!(result.is_ok());
+
+        let configs = state.app.configs.lock().await;
+        assert_eq!(configs.get("sqlite-conn").map(|c| c.host.as_str()), Some(config.host.as_str()));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
