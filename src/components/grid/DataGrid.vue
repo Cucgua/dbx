@@ -1337,6 +1337,10 @@ function focusScrollerWithoutScrolling() {
   el.focus({ preventScroll: true });
 }
 
+function focusGridWithoutScrolling() {
+  gridRef.value?.focus({ preventScroll: true });
+}
+
 function restoreScrollAcrossFrames(restoreScroll: () => void) {
   if (cancelScrollRestoreFrame) cancelAnimationFrame(cancelScrollRestoreFrame);
   restoreScroll();
@@ -1425,6 +1429,35 @@ function commitEdit() {
     if (rowChanges?.size === 0) dirtyRows.value.delete(item.sourceIndex);
   }
   editingCell.value = null;
+}
+
+function applyCellValue(rowId: number, col: number, value: string | null) {
+  const item = getRowItem(rowId);
+  if (!item || item.isDeleted) return;
+
+  if (item.isNew && item.newIndex !== undefined) {
+    const oldVal = newRows.value[item.newIndex]?.[col];
+    newRows.value[item.newIndex][col] = value === null ? null : coerceCellValue(value, oldVal);
+    newRows.value = [...newRows.value];
+    return;
+  }
+
+  if (item.sourceIndex === undefined) return;
+
+  const oldVal = props.result.rows[item.sourceIndex]?.[col];
+  const newVal = value === null ? null : coerceCellValue(value, oldVal);
+  if (newVal !== oldVal) {
+    if (!dirtyRows.value.has(item.sourceIndex)) dirtyRows.value.set(item.sourceIndex, new Map());
+    dirtyRows.value.get(item.sourceIndex)!.set(col, newVal);
+    if (useTransaction.value && !transactionActive.value) {
+      enterTransaction();
+    }
+  } else {
+    const rowChanges = dirtyRows.value.get(item.sourceIndex);
+    rowChanges?.delete(col);
+    if (rowChanges?.size === 0) dirtyRows.value.delete(item.sourceIndex);
+  }
+  dirtyRows.value = new Map(dirtyRows.value);
 }
 
 function cancelEdit() {
@@ -1602,6 +1635,7 @@ function beginCellSelection(rowIndex: number, colIndex: number, event: MouseEven
   if (event.button !== 0) return;
   if (editingCell.value) return;
   event.preventDefault();
+  focusGridWithoutScrolling();
   selectSingleCell(rowIndex, colIndex);
   isSelectingCells.value = true;
   if (showTranspose.value) transposeRowIndex.value = rowIndex;
@@ -1630,6 +1664,80 @@ function copyText(text: string) {
 function copySelectionTsv() {
   if (!hasCellSelection.value) return;
   copyText(formatSelectionAsTsv(selectedCells.value));
+}
+
+function eventTargetAllowsNativeClipboard(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  return !!target?.closest("input, textarea, [contenteditable='true'], [role='textbox']");
+}
+
+function clipboardShortcut(event: KeyboardEvent, key: string): boolean {
+  return (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === key;
+}
+
+function selectedRangeStart(): CellPosition | null {
+  const range = selectedRange.value;
+  if (!range) return null;
+  return { rowIndex: range.startRow, colIndex: range.startCol };
+}
+
+function parseClipboardTable(text: string): string[][] {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n$/, "");
+  if (!normalized) return [[""]];
+  return normalized.split("\n").map((row) => row.split("\t"));
+}
+
+async function pasteClipboardIntoSelection() {
+  if (!props.editable) return;
+  const start = selectedRangeStart();
+  if (!start) return;
+
+  const text = await navigator.clipboard.readText();
+  const rows = parseClipboardTable(text);
+  rows.forEach((row, rowOffset) => {
+    const item = displayItems.value[start.rowIndex + rowOffset];
+    if (!item) return;
+    row.forEach((value, colOffset) => {
+      const col = start.colIndex + colOffset;
+      if (col >= props.result.columns.length) return;
+      applyCellValue(item.id, col, value);
+    });
+  });
+  toast(t("grid.pasted"));
+}
+
+function cutSelection() {
+  if (!props.editable || !selectedRange.value) return;
+  copySelectionTsv();
+  const range = selectedRange.value;
+  for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex++) {
+    const item = displayItems.value[rowIndex];
+    if (!item) continue;
+    for (let col = range.startCol; col <= range.endCol; col++) {
+      applyCellValue(item.id, col, null);
+    }
+  }
+}
+
+async function onGridKeydown(event: KeyboardEvent) {
+  if (eventTargetAllowsNativeClipboard(event)) return;
+  if (clipboardShortcut(event, "c")) {
+    if (!hasCellSelection.value) return;
+    event.preventDefault();
+    copySelectionTsv();
+    return;
+  }
+  if (clipboardShortcut(event, "x")) {
+    if (!props.editable || !hasCellSelection.value) return;
+    event.preventDefault();
+    cutSelection();
+    return;
+  }
+  if (clipboardShortcut(event, "v")) {
+    if (!props.editable || !hasCellSelection.value) return;
+    event.preventDefault();
+    await pasteClipboardIntoSelection();
+  }
 }
 
 function copySelectionCsv() {
@@ -2004,7 +2112,13 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="gridRef" class="h-full flex flex-col overflow-hidden" :style="columnVars">
+  <div
+    ref="gridRef"
+    class="h-full flex flex-col overflow-hidden outline-none"
+    :style="columnVars"
+    tabindex="0"
+    @keydown="onGridKeydown"
+  >
     <ContextMenu>
       <ContextMenuTrigger as-child>
         <div v-if="hasData || canUseWhereSearch" class="flex-1 flex flex-col overflow-hidden">

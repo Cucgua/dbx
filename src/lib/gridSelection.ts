@@ -68,9 +68,7 @@ function sqlValue(value: GridCellValue): string {
 }
 
 export function formatSelectionAsTsv(selection: SelectionData): string {
-  const header = selection.columns.join("\t");
-  const body = selection.rows.map((row) => row.map(displayValue).join("\t")).join("\n");
-  return [header, body].filter(Boolean).join("\n");
+  return selection.rows.map((row) => row.map(displayValue).join("\t")).join("\n");
 }
 
 export function formatSelectionAsCsv(selection: SelectionData): string {
