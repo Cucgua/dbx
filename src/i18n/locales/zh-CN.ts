@@ -453,6 +453,7 @@ export default {
     fixWithAi: "用 AI 修复",
     truncated: "上下文已截断",
     contextSummary: "{database} · {tables} 张表",
+    autoSqlBlocked: "AI 生成的 SQL 风险较高，已阻止自动执行，请手动检查后再运行。",
     settingsHint: "配置会保存在本机应用数据目录中。请求由 Tauri 后端发出，避免在前端直接暴露给模型服务。",
     actions: {
       generate: "生成 SQL",

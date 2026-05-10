@@ -46,6 +46,7 @@ import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useQueryStore } from "@/stores/queryStore";
 import { useToast } from "@/composables/useToast";
 import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
+import { extractFirstSqlCodeBlock, shouldAttemptAiAutoExecute } from "@/lib/aiSqlExecutionPolicy";
 import { Marked } from "marked";
 import {
   aiTestConnection,
@@ -81,6 +82,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   replaceSql: [sql: string];
   executeSql: [sql: string];
+  requestAutoExecuteSql: [sql: string];
   close: [];
 }>();
 
@@ -281,6 +283,8 @@ async function send() {
   prompt.value = "";
   scrollToBottom();
 
+  const requestedAction = activeAction.value;
+  const shouldAutoExecute = shouldAttemptAiAutoExecute(text, requestedAction);
   isGenerating.value = true;
   messages.value.push({ role: "assistant", content: "" });
   const assistantIdx = messages.value.length - 1;
@@ -314,6 +318,10 @@ async function send() {
     const msg = messages.value[assistantIdx];
     if (msg) msg.isThinking = false;
     isGenerating.value = false;
+    if (shouldAutoExecute) {
+      const sql = extractFirstSqlCodeBlock(msg?.content || "");
+      if (sql) emit("requestAutoExecuteSql", sql);
+    }
     activeAction.value = "generate";
     currentSessionId.value = "";
     persistConversation();

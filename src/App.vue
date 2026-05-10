@@ -36,6 +36,7 @@ import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isCloseTabShortcut, isExecuteSqlShortcut } from "@/lib/keyboardShortcuts";
 import { isPreviewTab } from "@/lib/tabPresentation";
 import { SQL_FILE_UNSUPPORTED_TYPES } from "@/lib/databaseCapabilities";
+import { classifyAiSqlExecution } from "@/lib/aiSqlExecutionPolicy";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -119,9 +120,16 @@ const executableSql = computed(() => {
     : "";
 });
 
-const { dangerSql, showDangerDialog, tryExecute, cancelActiveExecution, tryExplain, onDangerConfirm } = useSqlExecution(
-  { activeTab, activeConnection, executableSql, activeOutputView },
-);
+const {
+  dangerSql,
+  pendingDangerSql,
+  showDangerDialog,
+  tryExecute,
+  doExecute,
+  cancelActiveExecution,
+  tryExplain,
+  onDangerConfirm,
+} = useSqlExecution({ activeTab, activeConnection, executableSql, activeOutputView });
 
 const dialogs = useDialogSources();
 const { getDatabaseOptions } = useDatabaseOptions();
@@ -377,6 +385,28 @@ function onAiExecuteSql(sql: string) {
   queryStore.updateSql(tabId, sql);
   selectedSql.value = "";
   nextTick(() => tryExecute(sql));
+}
+
+function onAiRequestAutoExecuteSql(sql: string) {
+  const tabId = ensureQueryTab();
+  queryStore.updateSql(tabId, sql);
+  selectedSql.value = "";
+
+  const decision = classifyAiSqlExecution(sql, activeConnection.value);
+  if (decision.action === "block") {
+    toast(t("ai.autoSqlBlocked"), 5000);
+    return;
+  }
+
+  nextTick(() => {
+    if (decision.action === "auto_execute") {
+      void doExecute(sql);
+      return;
+    }
+    dangerSql.value = sql;
+    pendingDangerSql.value = sql;
+    showDangerDialog.value = true;
+  });
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -647,6 +677,7 @@ onUnmounted(() => {
                 :connection="activeConnection"
                 @replace-sql="onAiReplaceSql"
                 @execute-sql="onAiExecuteSql"
+                @request-auto-execute-sql="onAiRequestAutoExecuteSql"
                 @close="toggleAiPanel"
               />
             </div>

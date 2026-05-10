@@ -462,6 +462,7 @@ export default {
     fixWithAi: "Fix with AI",
     truncated: "Context truncated",
     contextSummary: "{database} · {tables} tables",
+    autoSqlBlocked: "The AI-generated SQL looked too risky to auto-execute. Review it manually before running.",
     settingsHint:
       "The config is stored in the local app data directory. Requests are sent by the Tauri backend instead of directly from the frontend.",
     actions: {
