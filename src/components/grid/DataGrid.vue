@@ -2151,12 +2151,31 @@ function onDdlResizeEnd() {
   window.removeEventListener("mouseup", onDdlResizeEnd);
 }
 
+const loadingElapsed = ref(0);
+let _loadingTimer: ReturnType<typeof setInterval> | undefined;
+let _loadingStart = 0;
+
+watch(
+  () => props.loading,
+  (isLoading) => {
+    clearInterval(_loadingTimer);
+    if (isLoading) {
+      _loadingStart = Date.now();
+      loadingElapsed.value = 0;
+      _loadingTimer = setInterval(() => {
+        loadingElapsed.value = Date.now() - _loadingStart;
+      }, 100);
+    }
+  },
+);
+
 onUnmounted(() => {
   if (resetScrollFrame) cancelAnimationFrame(resetScrollFrame);
   if (cancelScrollRestoreFrame) cancelAnimationFrame(cancelScrollRestoreFrame);
   onDdlResizeEnd();
   finishCellSelection();
   clearTimeout(_searchTimer);
+  clearInterval(_loadingTimer);
 });
 
 const SQL_KEYWORDS =
@@ -2442,7 +2461,7 @@ defineExpose({
           </div>
           <!-- Content area: table + DDL drawer -->
           <div class="flex-1 flex min-h-0 overflow-hidden">
-            <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+            <div class="flex-1 flex flex-col min-w-0 overflow-hidden relative">
               <!-- Sticky header -->
               <div
                 ref="headerRef"
@@ -2743,6 +2762,14 @@ defineExpose({
                   </div>
                 </template>
               </RecycleScroller>
+              <div v-if="loading" class="absolute inset-0 z-20 bg-background/50 flex items-center justify-center">
+                <div
+                  class="flex items-center gap-2 px-3 py-1.5 rounded-md bg-background border shadow-sm text-xs text-muted-foreground"
+                >
+                  <Loader2 class="w-3.5 h-3.5 animate-spin" />
+                  <span>{{ (loadingElapsed / 1000).toFixed(1) }}s</span>
+                </div>
+              </div>
             </div>
             <!-- DDL Drawer -->
             <div
