@@ -737,6 +737,7 @@ pub async fn build_oracle_ddl(
     let columns = db::oracle_driver::get_columns(client, schema, table).await?;
     let indexes = db::oracle_driver::list_indexes(client, schema, table).await?;
     let fkeys = db::oracle_driver::list_foreign_keys(client, schema, table).await?;
+    let table_comment = db::oracle_driver::get_table_comment(client, schema, table).await?;
 
     let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
     let col_lines: Vec<String> = columns
@@ -768,6 +769,19 @@ pub async fn build_oracle_ddl(
         ));
     }
     ddl.push_str("\n);\n");
+
+    if let Some(comment) = table_comment.as_deref().filter(|comment| !comment.trim().is_empty()) {
+        ddl.push_str(&format!("\nCOMMENT ON TABLE \"{schema}\".\"{table}\" IS '{}';", comment.replace('\'', "''")));
+    }
+    for col in &columns {
+        if let Some(comment) = col.comment.as_deref().filter(|comment| !comment.trim().is_empty()) {
+            ddl.push_str(&format!(
+                "\nCOMMENT ON COLUMN \"{schema}\".\"{table}\".\"{}\" IS '{}';",
+                col.name,
+                comment.replace('\'', "''")
+            ));
+        }
+    }
 
     for idx in &indexes {
         if idx.is_primary {

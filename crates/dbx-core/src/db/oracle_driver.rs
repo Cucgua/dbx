@@ -7,6 +7,11 @@ use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub type OracleClient = Connection;
+const ORACLE_QUERY_LIMIT: usize = crate::query::MAX_ROWS + 1;
+
+fn quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
 
 pub async fn connect(
     host: &str,
@@ -32,6 +37,18 @@ fn value_to_json(val: &rust_oracle::Value) -> serde_json::Value {
         rust_oracle::Value::Integer(n) => serde_json::Value::Number((*n).into()),
         rust_oracle::Value::Float(f) => {
             serde_json::Number::from_f64(*f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+        }
+        rust_oracle::Value::Date(d) => serde_json::Value::String(format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            d.year, d.month, d.day, d.hour, d.minute, d.second
+        )),
+        rust_oracle::Value::Timestamp(ts) => {
+            let base = format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second
+            );
+            let value = if ts.microsecond > 0 { format!("{base}.{:06}", ts.microsecond) } else { base };
+            serde_json::Value::String(value)
         }
         rust_oracle::Value::Boolean(b) => serde_json::Value::Bool(*b),
         rust_oracle::Value::Json(v) => v.clone(),
@@ -73,12 +90,15 @@ pub async fn list_schemas(conn: &OracleClient) -> Result<Vec<String>, String> {
 }
 
 pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableInfo>, String> {
+    let s = quote_literal(schema);
     let sql = format!(
-        "SELECT object_name, \
-         CASE object_type WHEN 'VIEW' THEN 'VIEW' ELSE 'TABLE' END AS table_type \
-         FROM all_objects WHERE owner = '{s}' AND object_type IN ('TABLE','VIEW') \
-         ORDER BY object_name",
-        s = schema.replace('\'', "''")
+        "SELECT o.OBJECT_NAME, \
+         CASE o.OBJECT_TYPE WHEN 'VIEW' THEN 'VIEW' ELSE 'TABLE' END AS TABLE_TYPE, \
+         c.COMMENTS \
+         FROM ALL_OBJECTS o \
+         LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME \
+         WHERE o.OWNER = {s} AND o.OBJECT_TYPE IN ('TABLE','VIEW') \
+         ORDER BY o.OBJECT_NAME"
     );
     log::debug!("[oracle] list_tables: schema={schema}, sql={sql}");
     let result = conn.query(&sql, &[]).await.map_err(|e| {
@@ -91,40 +111,31 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
         .map(|row| TableInfo {
             name: row.get_string(0).unwrap_or("").to_string(),
             table_type: row.get_string(1).unwrap_or("TABLE").to_string(),
-            comment: None,
+            comment: row.get_string(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
         })
         .collect())
 }
 
 pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     log::debug!("[oracle] get_columns: schema={schema}, table={table}");
-    let s = schema.replace('\'', "''");
-    let t = table.replace('\'', "''");
-
-    let pk_result = conn
-        .query(
-            &format!(
-                "SELECT cols.COLUMN_NAME FROM ALL_CONS_COLUMNS cols \
-             JOIN ALL_CONSTRAINTS cons ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME AND cols.OWNER = cons.OWNER \
-             WHERE cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = '{s}' AND cons.TABLE_NAME = '{t}'"
-            ),
-            &[],
-        )
-        .await
-        .map_err(|e| {
-            log::error!("[oracle] get_columns pk query failed: {e}");
-            e.to_string()
-        })?;
-    let pk_names: std::collections::HashSet<String> =
-        pk_result.rows.iter().filter_map(|row| row.get_string(0).map(|s| s.to_string())).collect();
+    let s = quote_literal(schema);
+    let t = quote_literal(table);
 
     let col_result = conn
         .query(
             &format!(
-                "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_PRECISION, DATA_SCALE, DATA_LENGTH, CHAR_LENGTH \
-             FROM ALL_TAB_COLUMNS \
-             WHERE OWNER = '{s}' AND TABLE_NAME = '{t}' \
-             ORDER BY COLUMN_ID"
+                "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_PRECISION, c.DATA_SCALE, c.DATA_LENGTH, \
+                        c.CHAR_LENGTH, cc.COMMENTS, CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS IS_PK \
+                 FROM ALL_TAB_COLUMNS c \
+                 LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME \
+                 LEFT JOIN ( \
+                   SELECT cols.COLUMN_NAME \
+                   FROM ALL_CONS_COLUMNS cols \
+                   JOIN ALL_CONSTRAINTS cons ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME AND cols.OWNER = cons.OWNER \
+                   WHERE cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = {s} AND cons.TABLE_NAME = {t} \
+                 ) pk ON pk.COLUMN_NAME = c.COLUMN_NAME \
+                 WHERE c.OWNER = {s} AND c.TABLE_NAME = {t} \
+                 ORDER BY c.COLUMN_ID"
             ),
             &[],
         )
@@ -161,19 +172,29 @@ pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Resu
                 _ => base,
             };
             ColumnInfo {
-                is_primary_key: pk_names.contains(&name),
+                is_primary_key: row.get_i64(8).unwrap_or(0) == 1,
                 name,
                 data_type,
                 is_nullable: row.get_string(2).unwrap_or("N") == "Y",
                 column_default: None,
                 extra: None,
-                comment: None,
+                comment: row.get_string(7).filter(|s| !s.is_empty()).map(|s| s.to_string()),
                 numeric_precision: num_prec,
                 numeric_scale: num_scale,
                 character_maximum_length: char_len,
             }
         })
         .collect())
+}
+
+pub async fn get_table_comment(conn: &OracleClient, schema: &str, table: &str) -> Result<Option<String>, String> {
+    let s = quote_literal(schema);
+    let t = quote_literal(table);
+    let result = conn
+        .query(&format!("SELECT COMMENTS FROM ALL_TAB_COMMENTS WHERE OWNER = {s} AND TABLE_NAME = {t}"), &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(result.rows.first().and_then(|row| row.get_string(0)).filter(|s| !s.is_empty()).map(|s| s.to_string()))
 }
 
 pub async fn list_indexes(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
@@ -262,17 +283,17 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
 
-    // Rewrite FETCH FIRST N ROWS ONLY → ROWNUM for Oracle 11g compatibility
+    // Rewrite FETCH FIRST N ROWS ONLY → ROWNUM for Oracle 11g compatibility.
     let sql = rewrite_fetch_first(sql);
-    let sql = sql.as_ref();
 
-    if starts_with_executable_sql_keyword(sql, &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN"]) {
-        let result = conn.query(sql, &[]).await.map_err(|e| {
+    if starts_with_executable_sql_keyword(sql.as_ref(), &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN"]) {
+        let capped_sql = cap_select_rows(sql.as_ref());
+        let result = conn.query_with_limit(capped_sql.as_ref(), &[], ORACLE_QUERY_LIMIT, 500).await.map_err(|e| {
             log::error!("[oracle] execute_query SELECT failed: {e}");
             e.to_string()
         })?;
         let columns: Vec<String> = result.columns.iter().map(|c| c.name.clone()).collect();
-        let rows: Vec<Vec<serde_json::Value>> = result
+        let mut rows: Vec<Vec<serde_json::Value>> = result
             .rows
             .iter()
             .map(|row| {
@@ -281,16 +302,14 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
                     .collect()
             })
             .collect();
+        let truncated = rows.len() > crate::query::MAX_ROWS || result.has_more_rows;
+        if rows.len() > crate::query::MAX_ROWS {
+            rows.truncate(crate::query::MAX_ROWS);
+        }
 
-        Ok(QueryResult {
-            columns,
-            rows,
-            affected_rows: 0,
-            execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
-        })
+        Ok(QueryResult { columns, rows, affected_rows: 0, execution_time_ms: start.elapsed().as_millis(), truncated })
     } else {
-        match conn.execute(sql, &[]).await {
+        match conn.execute(sql.as_ref(), &[]).await {
             Ok(result) => {
                 let _ = conn.commit().await;
                 Ok(QueryResult {
@@ -311,6 +330,18 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
             }
         }
     }
+}
+
+fn cap_select_rows(sql: &str) -> std::borrow::Cow<'_, str> {
+    if !starts_with_executable_sql_keyword(sql, &["SELECT", "WITH"]) || has_for_update_clause(sql) {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+
+    std::borrow::Cow::Owned(format!("SELECT * FROM ({sql}) WHERE ROWNUM <= {ORACLE_QUERY_LIMIT}"))
+}
+
+fn has_for_update_clause(sql: &str) -> bool {
+    sql.to_uppercase().contains(" FOR UPDATE")
 }
 
 fn rewrite_fetch_first(sql: &str) -> std::borrow::Cow<'_, str> {
@@ -345,4 +376,35 @@ fn rewrite_fetch_first(sql: &str) -> std::borrow::Cow<'_, str> {
     }
 
     std::borrow::Cow::Owned(format!("SELECT * FROM ({base}) WHERE ROWNUM <= {n}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cap_select_rows_wraps_selects() {
+        let sql = "SELECT * FROM users ORDER BY id";
+        assert_eq!(cap_select_rows(sql), format!("SELECT * FROM ({sql}) WHERE ROWNUM <= {ORACLE_QUERY_LIMIT}"));
+    }
+
+    #[test]
+    fn cap_select_rows_wraps_ctes() {
+        let sql = "WITH recent AS (SELECT * FROM users) SELECT * FROM recent";
+        assert_eq!(cap_select_rows(sql), format!("SELECT * FROM ({sql}) WHERE ROWNUM <= {ORACLE_QUERY_LIMIT}"));
+    }
+
+    #[test]
+    fn cap_select_rows_keeps_for_update_queries() {
+        let sql = "SELECT * FROM users FOR UPDATE";
+        assert_eq!(cap_select_rows(sql), sql);
+    }
+
+    #[test]
+    fn rewrite_fetch_first_to_rownum() {
+        assert_eq!(
+            rewrite_fetch_first("SELECT * FROM users FETCH FIRST 20 ROWS ONLY"),
+            "SELECT * FROM (SELECT * FROM users) WHERE ROWNUM <= 20"
+        );
+    }
 }

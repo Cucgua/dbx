@@ -397,6 +397,8 @@ mod tests {
             ssl: false,
             sysdba: false,
             connection_string: None,
+            jdbc_driver_class: None,
+            jdbc_driver_paths: Vec::new(),
         }
     }
 
