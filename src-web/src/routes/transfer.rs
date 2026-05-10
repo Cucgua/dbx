@@ -139,8 +139,7 @@ pub async fn start_transfer(
             let _ = tx.send(json);
         }
 
-        // Clean up channel
-        state_clone.sse_channels.write().await.remove(&req.transfer_id);
+        state_clone.remove_sse_channel(&req.transfer_id).await;
     });
 
     Ok(Json(serde_json::json!({ "transferId": transfer_id })))

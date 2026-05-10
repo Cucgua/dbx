@@ -219,6 +219,9 @@ const sortCol = ref<string | null>(null);
 const sortColIndex = ref<number | null>(null);
 const sortDir = ref<"asc" | "desc">("asc");
 const searchText = ref("");
+const deferredClientSearchText = ref("");
+let _searchTimer: ReturnType<typeof setTimeout> | undefined;
+
 const searchSuggestions = ref<string[]>([]);
 const suggestionIndex = ref(-1);
 const searchInputRef = ref<HTMLInputElement>();
@@ -279,9 +282,18 @@ function rowMatchesLocalColumnFilters(data: CellValue[]): boolean {
 }
 
 const localFilteredRows = computed(() => {
-  const rows = props.result.rows.map((row, sourceIndex) => ({ row, sourceIndex }));
-  if (!hasLocalColumnFilters.value) return rows;
-  return rows.filter(({ row, sourceIndex }) => rowMatchesLocalColumnFilters(rowDataWithChanges(row, sourceIndex)));
+  const rows = props.result.rows;
+  const indices: number[] = [];
+  if (!hasLocalColumnFilters.value) {
+    for (let i = 0; i < rows.length; i++) indices.push(i);
+    return indices;
+  }
+  for (let i = 0; i < rows.length; i++) {
+    if (rowMatchesLocalColumnFilters(rowDataWithChanges(rows[i], i))) {
+      indices.push(i);
+    }
+  }
+  return indices;
 });
 
 function buildLocalFilterOptions(columnIndex: number) {
@@ -838,6 +850,17 @@ const isFullPage = computed(() => props.result.rows.length >= pageSize.value);
 const isResultsContext = computed(() => props.context === "results");
 const canUseWhereSearch = computed(() => !!props.tableMeta && !!props.onExecuteSql && !isResultsContext.value);
 const clientSearchText = computed(() => (searchText.value.trim() ? searchText.value : ""));
+watch(clientSearchText, (value) => {
+  clearTimeout(_searchTimer);
+  const q = value.trim().toLowerCase();
+  if (!q) {
+    deferredClientSearchText.value = "";
+    return;
+  }
+  _searchTimer = setTimeout(() => {
+    deferredClientSearchText.value = q;
+  }, 150);
+});
 
 function currentWhereInput(): string | undefined {
   return whereFilterInput.value.trim() || undefined;
@@ -936,15 +959,16 @@ function onToolbarRollback() {
 }
 
 const sortedRows = computed(() => {
-  let rows = localFilteredRows.value;
-  if (clientSearchText.value) {
-    const q = clientSearchText.value.toLowerCase();
-    rows = rows.filter(({ row, sourceIndex }) => {
-      const data = rowDataWithChanges(row, sourceIndex);
+  let indices = localFilteredRows.value;
+  const q = deferredClientSearchText.value;
+  if (q) {
+    const rows = props.result.rows;
+    indices = indices.filter((sourceIndex) => {
+      const data = rowDataWithChanges(rows[sourceIndex], sourceIndex);
       return data.some((cell) => cell !== null && String(cell).toLowerCase().includes(q));
     });
   }
-  return rows;
+  return indices;
 });
 
 function rowDataWithChanges(row: CellValue[], sourceIndex: number): CellValue[] {
@@ -965,7 +989,9 @@ interface RowItem {
 
 const displayItems = computed<RowItem[]>(() => {
   const cols = props.result.columns;
-  const items: RowItem[] = sortedRows.value.map(({ row, sourceIndex }) => {
+  const rows = props.result.rows;
+  const items: RowItem[] = sortedRows.value.map((sourceIndex) => {
+    const row = rows[sourceIndex];
     const dirty = dirtyRows.value.get(sourceIndex);
     const data = rowDataWithChanges(row, sourceIndex);
     const isDirtyCol = row.map((_, colIdx) => dirty?.has(colIdx) ?? false);
@@ -989,7 +1015,7 @@ const displayItems = computed<RowItem[]>(() => {
 });
 const hasVisibleRows = computed(() => displayItems.value.length > 0);
 const hasActiveFilter = computed(
-  () => !!clientSearchText.value || rowStatusFilter.value !== "all" || hasLocalColumnFilters.value,
+  () => !!deferredClientSearchText.value || rowStatusFilter.value !== "all" || hasLocalColumnFilters.value,
 );
 const totalFilterableRowCount = computed(() => props.result.rows.length + newRows.value.length);
 const emptyTitle = computed(() => (hasActiveFilter.value ? t("grid.noFilteredRows") : t("grid.noRows")));
@@ -2130,6 +2156,7 @@ onUnmounted(() => {
   if (cancelScrollRestoreFrame) cancelAnimationFrame(cancelScrollRestoreFrame);
   onDdlResizeEnd();
   finishCellSelection();
+  clearTimeout(_searchTimer);
 });
 
 const SQL_KEYWORDS =

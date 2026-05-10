@@ -11,6 +11,7 @@ use std::sync::Arc;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{delete, get, post};
 use axum::Router;
@@ -166,7 +167,11 @@ async fn main() {
         .with_state(web_state.clone());
 
     // Build app
-    let mut app = Router::new().nest("/api", api).layer(tower_http::trace::TraceLayer::new_for_http()).layer(cors);
+    let mut app = Router::new()
+        .nest("/api", api)
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
+        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(cors);
 
     // Static file serving
     if let Ok(static_dir) = std::env::var("DBX_STATIC_DIR") {

@@ -984,6 +984,17 @@ export const useConnectionStore = defineStore("connection", () => {
     return isSchemaAware(getConfig(connectionId)?.db_type);
   }
 
+  const COMPLETION_CACHE_MAX = 50;
+
+  function evictOldestCacheEntries(cache: Record<string, unknown>, max: number) {
+    const keys = Object.keys(cache);
+    if (keys.length <= max) return;
+    const toRemove = keys.slice(0, keys.length - max);
+    for (const key of toRemove) {
+      delete cache[key];
+    }
+  }
+
   async function listCompletionTables(connectionId: string, database: string): Promise<SqlCompletionTable[]> {
     const cacheKey = `${connectionId}:${database}`;
     if (completionTablesCache.value[cacheKey]) {
@@ -1009,6 +1020,7 @@ export const useConnectionStore = defineStore("connection", () => {
         }),
       );
       completionTablesCache.value[cacheKey] = tableGroups.flat();
+      evictOldestCacheEntries(completionTablesCache.value, COMPLETION_CACHE_MAX);
       return completionTablesCache.value[cacheKey];
     }
 
@@ -1017,6 +1029,7 @@ export const useConnectionStore = defineStore("connection", () => {
       name: table.name,
       type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
     }));
+    evictOldestCacheEntries(completionTablesCache.value, COMPLETION_CACHE_MAX);
     return completionTablesCache.value[cacheKey];
   }
 
@@ -1031,6 +1044,7 @@ export const useConnectionStore = defineStore("connection", () => {
       await ensureConnected(connectionId);
       const querySchema = schema || database;
       completionColumnsCache.value[cacheKey] = await api.getColumns(connectionId, database, querySchema, table);
+      evictOldestCacheEntries(completionColumnsCache.value, COMPLETION_CACHE_MAX);
     }
 
     return completionColumnsCache.value[cacheKey].map((column) => ({

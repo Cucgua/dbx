@@ -1112,52 +1112,51 @@ function openFieldLineage() {
 }
 
 const canExpand = !leafTypes.has(props.node.type);
+const nodeConfig = computed(() =>
+  props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined,
+);
 const canPin = computed(() => pinnableTypes.has(props.node.type));
 const canOpenSqlFileExecution = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!config && !SQL_FILE_UNSUPPORTED_TYPES.has(config.db_type);
+  return !!nodeConfig.value && !SQL_FILE_UNSUPPORTED_TYPES.has(nodeConfig.value.db_type);
 });
 const canOpenDiagram = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!props.node.database && !!config && DIAGRAM_SUPPORTED_TYPES.has(config.db_type);
+  return !!props.node.database && !!nodeConfig.value && DIAGRAM_SUPPORTED_TYPES.has(nodeConfig.value.db_type);
 });
 const canOpenDatabaseSearch = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!props.node.database && !!config && DATABASE_SEARCH_SUPPORTED_TYPES.has(config.db_type);
+  return !!props.node.database && !!nodeConfig.value && DATABASE_SEARCH_SUPPORTED_TYPES.has(nodeConfig.value.db_type);
 });
 const canOpenObjectBrowser = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
     (props.node.type === "database" || props.node.type === "schema" || props.node.type === "object-browser") &&
-    !!config &&
-    config.db_type !== "redis" &&
-    config.db_type !== "mongodb" &&
-    config.db_type !== "elasticsearch"
+    !!nodeConfig.value &&
+    nodeConfig.value.db_type !== "redis" &&
+    nodeConfig.value.db_type !== "mongodb" &&
+    nodeConfig.value.db_type !== "elasticsearch"
   );
 });
 const canOpenTableImport = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return (
-    props.node.type === "table" && !!props.node.database && !!config && TABLE_IMPORT_SUPPORTED_TYPES.has(config.db_type)
-  );
-});
-const canOpenStructureEditor = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
     props.node.type === "table" &&
     !!props.node.database &&
-    !!config &&
-    TABLE_STRUCTURE_SUPPORTED_TYPES.has(config.db_type)
+    !!nodeConfig.value &&
+    TABLE_IMPORT_SUPPORTED_TYPES.has(nodeConfig.value.db_type)
+  );
+});
+const canOpenStructureEditor = computed(() => {
+  return (
+    props.node.type === "table" &&
+    !!props.node.database &&
+    !!nodeConfig.value &&
+    TABLE_STRUCTURE_SUPPORTED_TYPES.has(nodeConfig.value.db_type)
   );
 });
 const canOpenFieldLineage = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
     props.node.type === "column" &&
     !!props.node.database &&
     !!props.node.tableName &&
-    !!config &&
-    FIELD_LINEAGE_SUPPORTED_TYPES.has(config.db_type)
+    !!nodeConfig.value &&
+    FIELD_LINEAGE_SUPPORTED_TYPES.has(nodeConfig.value.db_type)
   );
 });
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));

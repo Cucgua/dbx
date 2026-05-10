@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import { uuid } from "@/lib/utils";
 import * as api from "@/lib/api";
 import type { SavedSqlFile, SavedSqlFolder, SavedSqlLibrary } from "@/types/database";
@@ -34,13 +34,15 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
   const files = ref<SavedSqlFile[]>([]);
   const isLoaded = ref(false);
 
-  const version = computed(
-    () => `${folders.value.length}:${files.value.length}:${files.value.map((f) => f.updatedAt).join("|")}`,
-  );
+  const version = ref(0);
+  function bumpVersion() {
+    version.value++;
+  }
 
   function applyLibrary(library: SavedSqlLibrary) {
     folders.value = library.folders;
     files.value = library.files;
+    bumpVersion();
   }
 
   async function migrateLegacyLocalStorage() {
@@ -89,6 +91,7 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
     };
     const saved = await api.saveSavedSqlFolder(folder);
     folders.value = [...folders.value.filter((item) => item.id !== saved.id), saved];
+    bumpVersion();
     return saved;
   }
 
@@ -97,12 +100,14 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
     if (!existing) return;
     const saved = await api.saveSavedSqlFolder({ ...existing, name, updatedAt: nowIso() });
     folders.value = folders.value.map((folder) => (folder.id === id ? saved : folder));
+    bumpVersion();
   }
 
   async function deleteFolder(id: string) {
     await api.deleteSavedSqlFolder(id);
     folders.value = folders.value.filter((folder) => folder.id !== id);
     files.value = files.value.filter((file) => file.folderId !== id);
+    bumpVersion();
   }
 
   async function saveFile(input: {
@@ -139,6 +144,7 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
         };
     const saved = await api.saveSavedSqlFile(file);
     files.value = [...files.value.filter((item) => item.id !== saved.id), saved];
+    bumpVersion();
     return saved;
   }
 
@@ -147,11 +153,13 @@ export const useSavedSqlStore = defineStore("savedSql", () => {
     if (!existing) return;
     const saved = await api.saveSavedSqlFile({ ...existing, name, updatedAt: nowIso() });
     files.value = files.value.map((file) => (file.id === id ? saved : file));
+    bumpVersion();
   }
 
   async function deleteFile(id: string) {
     await api.deleteSavedSqlFile(id);
     files.value = files.value.filter((file) => file.id !== id);
+    bumpVersion();
   }
 
   return {

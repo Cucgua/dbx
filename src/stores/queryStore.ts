@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { uuid } from "@/lib/utils";
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import type { DatabaseType, QueryTab } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
 import { canCancelQueryExecution } from "@/lib/queryExecutionState";
@@ -39,9 +39,25 @@ export const useQueryStore = defineStore("query", () => {
   const activeTabId = ref<string | null>(restored.activeTabId);
   const MAX_CACHED_RESULTS = 10;
 
+  const _persistSnapshot = computed(() =>
+    tabs.value.map((t) => ({
+      id: t.id,
+      title: t.title,
+      connectionId: t.connectionId,
+      database: t.database,
+      schema: t.schema,
+      sql: t.sql,
+      savedSqlId: t.savedSqlId,
+      pinned: t.pinned,
+      mode: t.mode,
+      objectBrowser: t.objectBrowser,
+      tableMeta: t.tableMeta,
+    })),
+  );
+
   let _persistTimer: ReturnType<typeof setTimeout> | null = null;
   watch(
-    [tabs, activeTabId],
+    [_persistSnapshot, activeTabId],
     () => {
       if (_persistTimer) clearTimeout(_persistTimer);
       _persistTimer = setTimeout(() => {
@@ -49,7 +65,7 @@ export const useQueryStore = defineStore("query", () => {
         _persistTimer = null;
       }, 300);
     },
-    { deep: true },
+    { flush: "post" },
   );
 
   function findTabByTitle(connectionId: string, database: string, title: string) {
@@ -123,6 +139,8 @@ export const useQueryStore = defineStore("query", () => {
     if (idx < 0) return;
     if (tabs.value[idx].isExecuting) void cancelTabExecution(id);
     if (tabs.value[idx].isExplaining) void cancelTabExplain(id);
+    tabs.value[idx].result = undefined;
+    tabs.value[idx].results = undefined;
     tabs.value.splice(idx, 1);
     if (activeTabId.value === id) {
       activeTabId.value = tabs.value[Math.min(idx, tabs.value.length - 1)]?.id ?? null;

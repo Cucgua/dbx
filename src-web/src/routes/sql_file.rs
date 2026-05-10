@@ -75,7 +75,53 @@ pub async fn execute_sql_file(
     let app = state.app.clone();
     let state_clone = state.clone();
 
+    let file_path = std::path::Path::new(&req.file_path);
+    if !file_path.is_absolute() {
+        return Err(AppError("File path must be absolute".to_string()));
+    }
+    if req.file_path.contains("..") {
+        return Err(AppError("File path must not contain '..'".to_string()));
+    }
+
     tokio::spawn(async move {
+        match std::fs::metadata(&req.file_path) {
+            Ok(meta) if meta.len() > 200 * 1024 * 1024 => {
+                let progress = dbx_core::sql::SqlFileProgress {
+                    execution_id: req.execution_id.clone(),
+                    status: dbx_core::sql::SqlFileStatus::Error,
+                    statement_index: 0,
+                    success_count: 0,
+                    failure_count: 0,
+                    affected_rows: 0,
+                    elapsed_ms: 0,
+                    statement_summary: String::new(),
+                    error: Some(format!("File too large: {} bytes (max {} bytes)", meta.len(), 200 * 1024 * 1024)),
+                };
+                if let Ok(json) = serde_json::to_string(&progress) {
+                    let _ = tx.send(json);
+                }
+                return;
+            }
+            Err(e) => {
+                let progress = dbx_core::sql::SqlFileProgress {
+                    execution_id: req.execution_id.clone(),
+                    status: dbx_core::sql::SqlFileStatus::Error,
+                    statement_index: 0,
+                    success_count: 0,
+                    failure_count: 0,
+                    affected_rows: 0,
+                    elapsed_ms: 0,
+                    statement_summary: String::new(),
+                    error: Some(e.to_string()),
+                };
+                if let Ok(json) = serde_json::to_string(&progress) {
+                    let _ = tx.send(json);
+                }
+                return;
+            }
+            _ => {}
+        }
+
         let file_content = match std::fs::read_to_string(&req.file_path) {
             Ok(c) => c,
             Err(e) => {
@@ -196,7 +242,7 @@ pub async fn execute_sql_file(
             let _ = tx.send(json);
         }
 
-        state_clone.sse_channels.write().await.remove(&req.execution_id);
+        state_clone.remove_sse_channel(&req.execution_id).await;
     });
 
     Ok(Json(serde_json::json!({ "executionId": execution_id })))

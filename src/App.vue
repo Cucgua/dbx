@@ -128,7 +128,7 @@ const { getDatabaseOptions } = useDatabaseOptions();
 const { openLineageTarget, openDatabaseSearchTarget, onStructureEditorSaved, openTableTarget } =
   useNavigationTargets(dialogs);
 const { onExecuteSql, onReloadData, onPaginate, onSort } = useDataGridActions(activeTab);
-const { setupTauriListeners } = useTauriEvents({ openTableTarget });
+const { setupTauriListeners, cleanupTauriListeners } = useTauriEvents({ openTableTarget });
 
 const appVersion = ref("");
 const isClassicLayout = computed(() => settingsStore.editorSettings.appLayout === "classic");
@@ -494,6 +494,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  cleanupTauriListeners();
   window.removeEventListener("keydown", handleKeydown, true);
   document.removeEventListener("contextmenu", handleContextMenu);
 });
