@@ -3,7 +3,7 @@ use tauri::State;
 
 pub use dbx_core::connection::{
     connection_url_for_endpoint, expand_tilde, metadata_connection_config, probe_connection_endpoint,
-    redacted_connection_url_for_endpoint, AppState, MysqlMode, PoolKind,
+    redacted_connection_url_for_endpoint, AppState, MysqlMode, OraclePool, PoolKind,
 };
 use dbx_core::db;
 use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
@@ -201,7 +201,7 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
                 db_config.sysdba,
             )
             .await?;
-            PoolKind::Oracle(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
+            PoolKind::Oracle(std::sync::Arc::new(OraclePool::new(vec![client])))
         }
         DatabaseType::Elasticsearch => {
             let client =

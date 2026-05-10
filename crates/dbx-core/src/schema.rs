@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::connection::{AppState, MysqlMode, PoolKind};
+use crate::connection::{AppState, MysqlMode, OraclePool, PoolKind};
 use crate::db;
 
 pub fn duckdb_query_tables(con: &duckdb::Connection) -> Result<Vec<db::TableInfo>, String> {
@@ -92,12 +92,9 @@ pub fn extract_clickhouse(
     }
 }
 
-pub fn extract_oracle(
-    connections: &HashMap<String, PoolKind>,
-    key: &str,
-) -> Option<Arc<tokio::sync::Mutex<db::oracle_driver::OracleClient>>> {
+pub fn extract_oracle(connections: &HashMap<String, PoolKind>, key: &str) -> Option<Arc<OraclePool>> {
     match connections.get(key)? {
-        PoolKind::Oracle(client) => Some(client.clone()),
+        PoolKind::Oracle(pool) => Some(pool.clone()),
         _ => None,
     }
 }
@@ -142,8 +139,9 @@ pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Resul
             let mut client = client.lock().await;
             return db::sqlserver::list_databases(&mut client).await;
         }
-        if let Some(client) = extract_oracle(&connections, connection_id) {
+        if let Some(pool) = extract_oracle(&connections, connection_id) {
             drop(connections);
+            let client = pool.client();
             let client = client.lock().await;
             return db::oracle_driver::list_databases(&*client).await;
         }
@@ -195,8 +193,9 @@ pub async fn list_schemas_core(state: &AppState, connection_id: &str, database: 
             let mut client = client.lock().await;
             return db::sqlserver::list_schemas(&mut client).await;
         }
-        if let Some(client) = extract_oracle(&connections, &pool_key) {
+        if let Some(pool) = extract_oracle(&connections, &pool_key) {
             drop(connections);
+            let client = pool.client();
             let client = client.lock().await;
             return db::oracle_driver::list_schemas(&*client).await;
         }
@@ -256,8 +255,9 @@ pub async fn list_tables_core(
             let mut client = client.lock().await;
             return db::sqlserver::list_tables(&mut client, schema).await;
         }
-        if let Some(client) = extract_oracle(&connections, &pool_key) {
+        if let Some(pool) = extract_oracle(&connections, &pool_key) {
             drop(connections);
+            let client = pool.client();
             let client = client.lock().await;
             return db::oracle_driver::list_tables(&*client, schema).await;
         }
@@ -331,8 +331,9 @@ pub async fn get_columns_core(
             let mut client = client.lock().await;
             return db::sqlserver::get_columns(&mut client, schema, table).await;
         }
-        if let Some(client) = extract_oracle(&connections, &pool_key) {
+        if let Some(pool) = extract_oracle(&connections, &pool_key) {
             drop(connections);
+            let client = pool.client();
             let client = client.lock().await;
             return db::oracle_driver::get_columns(&*client, schema, table).await;
         }
@@ -381,8 +382,9 @@ pub async fn list_indexes_core(
             let mut client = client.lock().await;
             return db::sqlserver::list_indexes(&mut client, schema, table).await;
         }
-        if let Some(client) = extract_oracle(&connections, &pool_key) {
+        if let Some(pool) = extract_oracle(&connections, &pool_key) {
             drop(connections);
+            let client = pool.client();
             let client = client.lock().await;
             return db::oracle_driver::list_indexes(&*client, schema, table).await;
         }
@@ -431,8 +433,9 @@ pub async fn list_foreign_keys_core(
             let mut client = client.lock().await;
             return db::sqlserver::list_foreign_keys(&mut client, schema, table).await;
         }
-        if let Some(client) = extract_oracle(&connections, &pool_key) {
+        if let Some(pool) = extract_oracle(&connections, &pool_key) {
             drop(connections);
+            let client = pool.client();
             let client = client.lock().await;
             return db::oracle_driver::list_foreign_keys(&*client, schema, table).await;
         }
@@ -481,8 +484,9 @@ pub async fn list_triggers_core(
             let mut client = client.lock().await;
             return db::sqlserver::list_triggers(&mut client, schema, table).await;
         }
-        if let Some(client) = extract_oracle(&connections, &pool_key) {
+        if let Some(pool) = extract_oracle(&connections, &pool_key) {
             drop(connections);
+            let client = pool.client();
             let client = client.lock().await;
             return db::oracle_driver::list_triggers(&*client, schema, table).await;
         }
@@ -557,8 +561,9 @@ pub async fn get_table_ddl_core(
             let mut client = client.lock().await;
             return build_sqlserver_ddl(&mut client, schema, table).await;
         }
-        if let Some(client) = extract_oracle(&connections, &pool_key) {
+        if let Some(pool) = extract_oracle(&connections, &pool_key) {
             drop(connections);
+            let client = pool.client();
             let client = client.lock().await;
             return build_oracle_ddl(&*client, schema, table).await;
         }

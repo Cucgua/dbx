@@ -26,23 +26,34 @@ async function openTableTarget(target: NavigationTarget) {
     await connectionStore.ensureConnected(target.connectionId);
     if (!config) throw new Error("Connection config not found");
     const querySchema = target.schema || target.database;
-    const columns = await api.getColumns(target.connectionId, target.database, querySchema, target.tableName);
-    const primaryKeys = columns.filter((c) => c.is_primary_key).map((c) => c.name);
     const sql = buildTableSelectSql({
       databaseType: config.db_type,
       schema: target.schema,
       tableName: target.tableName,
-      primaryKeys,
       whereInput: target.whereInput,
     });
     queryStore.updateSql(tabId, sql);
     queryStore.setTableMeta(tabId, {
       schema: target.schema,
       tableName: target.tableName,
-      columns,
-      primaryKeys,
+      columns: [],
+      primaryKeys: [],
     });
-    await queryStore.executeTabSql(tabId, sql);
+    const columnsPromise = api.getColumns(target.connectionId, target.database, querySchema, target.tableName);
+    const dataPromise = queryStore.executeTabSql(tabId, sql);
+    const [columnsResult, dataResult] = await Promise.allSettled([columnsPromise, dataPromise]);
+    if (columnsResult.status === "fulfilled") {
+      const columns = columnsResult.value;
+      queryStore.setTableMeta(tabId, {
+        schema: target.schema,
+        tableName: target.tableName,
+        columns,
+        primaryKeys: columns.filter((c) => c.is_primary_key).map((c) => c.name),
+      });
+    }
+    if (dataResult.status === "rejected") throw dataResult.reason;
+    if (columnsResult.status === "rejected")
+      console.error("[DBX] ERROR fetching table metadata:", columnsResult.reason);
   } catch (e: any) {
     queryStore.setErrorResult(tabId, e);
   }

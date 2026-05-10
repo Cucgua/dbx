@@ -501,8 +501,8 @@ pub async fn execute_on_pool(state: &AppState, pool_key: &str, sql: &str) -> Res
             let mut client = client.lock().await;
             db::sqlserver::execute_query(&mut client, sql).await
         }
-        PoolKind::Oracle(client) => {
-            let client = client.clone();
+        PoolKind::Oracle(pool) => {
+            let client = pool.client();
             drop(connections);
             let client = client.lock().await;
             db::oracle_driver::execute_query(&*client, sql).await
@@ -618,8 +618,8 @@ pub async fn get_columns_for_transfer(
         let mut client = client.lock().await;
         return db::sqlserver::get_columns(&mut client, &schema, &table).await;
     }
-    if let Some(PoolKind::Oracle(client)) = connections.get(pool_key) {
-        let client = client.clone();
+    if let Some(PoolKind::Oracle(pool)) = connections.get(pool_key) {
+        let client = pool.client();
         let schema = schema.to_string();
         let table = table.to_string();
         drop(connections);

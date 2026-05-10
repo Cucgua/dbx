@@ -295,13 +295,15 @@ pub async fn list_triggers(conn: &OracleClient, schema: &str, table: &str) -> Re
 pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
+    let explicit_limit = explicit_select_row_limit(sql);
 
     // Rewrite FETCH FIRST N ROWS ONLY → ROWNUM for Oracle 11g compatibility.
     let sql = rewrite_fetch_first(sql);
 
     if starts_with_executable_sql_keyword(sql.as_ref(), &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN"]) {
         let capped_sql = cap_select_rows(sql.as_ref());
-        let result = conn.query_with_limit(capped_sql.as_ref(), &[], ORACLE_QUERY_LIMIT, 500).await.map_err(|e| {
+        let query_limit = explicit_limit.unwrap_or(ORACLE_QUERY_LIMIT).min(ORACLE_QUERY_LIMIT);
+        let result = conn.query_with_limit(capped_sql.as_ref(), &[], query_limit, 500).await.map_err(|e| {
             log::error!("[oracle] execute_query SELECT failed: {e}");
             e.to_string()
         })?;
@@ -355,6 +357,55 @@ fn cap_select_rows(sql: &str) -> std::borrow::Cow<'_, str> {
 
 fn has_for_update_clause(sql: &str) -> bool {
     sql.to_uppercase().contains(" FOR UPDATE")
+}
+
+fn explicit_select_row_limit(sql: &str) -> Option<usize> {
+    fetch_first_row_limit(sql).or_else(|| rownum_row_limit(sql))
+}
+
+fn fetch_first_row_limit(sql: &str) -> Option<usize> {
+    let upper = sql.to_uppercase();
+    let fetch_pos = upper.find("FETCH FIRST").or_else(|| upper.find("FETCH NEXT"))?;
+    let after_fetch = &upper[fetch_pos..];
+    let end = after_fetch.find("ROWS ONLY")?;
+    let keyword_len = if after_fetch.starts_with("FETCH FIRST") { 11 } else { 10 };
+    sql[fetch_pos + keyword_len..fetch_pos + end].trim().parse::<usize>().ok()
+}
+
+fn rownum_row_limit(sql: &str) -> Option<usize> {
+    let upper = sql.to_uppercase();
+    let mut rest = upper.as_str();
+    let mut best: Option<usize> = None;
+
+    while let Some(pos) = rest.find("ROWNUM") {
+        rest = &rest[pos + "ROWNUM".len()..];
+        let trimmed = rest.trim_start();
+        let value_start = if let Some(after) = trimmed.strip_prefix("<=") {
+            after.trim_start()
+        } else if let Some(after) = trimmed.strip_prefix('<') {
+            if let Some(n) = parse_leading_usize(after.trim_start()) {
+                let exclusive = n.saturating_sub(1);
+                best = Some(best.map_or(exclusive, |current| current.min(exclusive)));
+            }
+            continue;
+        } else {
+            continue;
+        };
+
+        if let Some(n) = parse_leading_usize(value_start) {
+            best = Some(best.map_or(n, |current| current.min(n)));
+        }
+    }
+
+    best
+}
+
+fn parse_leading_usize(value: &str) -> Option<usize> {
+    let digits: String = value.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 fn rewrite_fetch_first(sql: &str) -> std::borrow::Cow<'_, str> {
@@ -418,6 +469,22 @@ mod tests {
         assert_eq!(
             rewrite_fetch_first("SELECT * FROM users FETCH FIRST 20 ROWS ONLY"),
             "SELECT * FROM (SELECT * FROM users) WHERE ROWNUM <= 20"
+        );
+    }
+
+    #[test]
+    fn explicit_select_row_limit_reads_fetch_first() {
+        assert_eq!(explicit_select_row_limit("SELECT * FROM users FETCH FIRST 100 ROWS ONLY"), Some(100));
+        assert_eq!(explicit_select_row_limit("SELECT * FROM users OFFSET 20 ROWS FETCH NEXT 50 ROWS ONLY"), Some(50));
+    }
+
+    #[test]
+    fn explicit_select_row_limit_reads_rownum() {
+        assert_eq!(explicit_select_row_limit("SELECT * FROM users WHERE ROWNUM <= 100"), Some(100));
+        assert_eq!(explicit_select_row_limit("SELECT * FROM users WHERE ROWNUM < 101"), Some(100));
+        assert_eq!(
+            explicit_select_row_limit("SELECT * FROM (SELECT * FROM users WHERE ROWNUM <= 500) WHERE ROWNUM <= 100"),
+            Some(100)
         );
     }
 }

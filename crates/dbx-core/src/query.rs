@@ -189,8 +189,8 @@ pub async fn do_execute(
             };
             wait_for_query(cancel_token, db::sqlserver::execute_query(&mut client, sql)).await.map(truncate_result)
         }
-        PoolKind::Oracle(client) => {
-            let client = client.clone();
+        PoolKind::Oracle(pool) => {
+            let client = pool.client();
             drop(connections);
             let client = match cancel_token.as_ref() {
                 Some(token) => tokio::select! {
