@@ -106,6 +106,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "rename-started": [];
+  "search-toggle": [node: TreeNode];
 }>();
 
 const isExportingDatabase = ref(false);
@@ -212,6 +213,7 @@ function isGroupLabel(node: TreeNode): boolean {
 async function toggle() {
   const node = props.node;
   if (node.isLoading) return;
+  emit("search-toggle", node);
 
   if (node.type === "connection-group") {
     node.isExpanded = !node.isExpanded;
@@ -1396,6 +1398,7 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             :node="child"
             :depth="depth + 1"
             :drag-disabled="dragDisabled"
+            @search-toggle="emit('search-toggle', $event)"
           />
           <div
             v-if="hasMoreChildren"

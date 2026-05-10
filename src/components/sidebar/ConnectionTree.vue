@@ -21,6 +21,7 @@ const store = useConnectionStore();
 const searchQuery = ref("");
 const deferredSearchQuery = ref("");
 const selectedTypes = ref<string[]>([]);
+const searchCollapsedIds = ref<Set<string>>(new Set());
 let searchTimer: number | undefined;
 
 watch(
@@ -41,6 +42,7 @@ watch(
   { flush: "sync" },
 );
 
+const isSearching = computed(() => !!deferredSearchQuery.value);
 const isFiltering = computed(() => !!searchQuery.value.trim() || hasTypeFilter.value);
 
 const typeStats = computed(() => {
@@ -100,7 +102,11 @@ function filterTree(nodes: TreeNode[], q: string): TreeNode[] {
         filteredNodes.push(node);
       } else {
         const children = filteredChildren ?? [];
-        filteredNodes.push({ ...node, children, isExpanded: children.length > 0 });
+        filteredNodes.push({
+          ...node,
+          children,
+          isExpanded: children.length > 0 && !searchCollapsedIds.value.has(node.id),
+        });
       }
     }
   }
@@ -144,6 +150,14 @@ const pendingRenameGroupId = ref<string | null>(null);
 function createNewGroup() {
   const groupId = store.createConnectionGroup(t("connectionGroup.newGroupDefault"));
   pendingRenameGroupId.value = groupId;
+}
+
+function onSearchToggle(node: TreeNode) {
+  if (!isSearching.value || !node.children) return;
+  const next = new Set(searchCollapsedIds.value);
+  if (node.isExpanded) next.add(node.id);
+  else next.delete(node.id);
+  searchCollapsedIds.value = next;
 }
 </script>
 
@@ -219,6 +233,7 @@ function createNewGroup() {
       :depth="0"
       :drag-disabled="isFiltering"
       :pending-rename="pendingRenameGroupId === node.id"
+      @search-toggle="onSearchToggle"
       @rename-started="pendingRenameGroupId = null"
     />
     <div v-if="store.treeNodes.length === 0" class="px-3 py-8 text-center text-muted-foreground text-xs">
