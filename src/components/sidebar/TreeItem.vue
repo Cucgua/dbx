@@ -58,6 +58,7 @@ import type { DatabaseType, QueryResult, TreeNode, TreeNodeType } from "@/types/
 import * as api from "@/lib/api";
 import { uuid } from "@/lib/utils";
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
+import { canTreeNodeShowExpander, treeItemPaddingLeft } from "@/lib/sidebarTreeItemLayout";
 import {
   DATABASE_EXPORT_PAGE_SIZE,
   DATABASE_EXPORT_ROW_LIMIT,
@@ -173,7 +174,7 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
     case "redis-db":
       return { icon: Database, colorClass: "text-red-400" };
     case "mongo-db":
-      return { icon: Database, colorClass: "text-green-500" };
+      return { icon: Database, colorClass: "text-yellow-500" };
     case "mongo-collection":
       return { icon: Table, colorClass: "text-green-400" };
     default:
@@ -181,16 +182,6 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
   }
 }
 
-const leafTypes: Set<TreeNodeType> = new Set([
-  "column",
-  "index",
-  "fkey",
-  "trigger",
-  "object-browser",
-  "redis-db",
-  "mongo-collection",
-  "saved-sql-file",
-]);
 const groupTypes: Set<TreeNodeType> = new Set([
   "group-columns",
   "group-indexes",
@@ -291,8 +282,8 @@ async function toggle() {
 function onClick() {
   const node = props.node;
   if (canOpenObjectBrowser.value) {
-    const shouldOpenObjectBrowser = !canExpand || !node.isExpanded;
-    if (canExpand) void toggle();
+    const shouldOpenObjectBrowser = !canExpand.value || !node.isExpanded;
+    if (canExpand.value) void toggle();
     if (shouldOpenObjectBrowser) void openObjectBrowser();
     return;
   }
@@ -300,7 +291,7 @@ function onClick() {
     void openObjectBrowser();
     return;
   }
-  const action = treeNodeRowAction(node.type, canExpand);
+  const action = treeNodeRowAction(node.type, canExpand.value);
   if (action === "open-data") {
     openData();
   } else if (node.type === "saved-sql-file") {
@@ -1087,7 +1078,12 @@ function openFieldLineage() {
   };
 }
 
-const canExpand = !leafTypes.has(props.node.type);
+const canExpand = computed(() =>
+  canTreeNodeShowExpander({
+    type: props.node.type,
+    childCount: props.node.children?.length ?? 0,
+  }),
+);
 const nodeConfig = computed(() =>
   props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined,
 );
@@ -1163,7 +1159,7 @@ const columnComment = computed(() =>
     ? (props.node.meta as any).comment
     : null,
 );
-const paddingLeft = `${props.depth * 16 + 8}px`;
+const paddingLeft = computed(() => treeItemPaddingLeft(props.depth));
 const isConnected = computed(
   () =>
     props.node.type === "connection" &&
@@ -1186,38 +1182,13 @@ const isActiveConnectionScope = computed(
 const rowStyle = computed(() => {
   const color = connectionColor.value;
   return {
-    paddingLeft,
+    paddingLeft: paddingLeft.value,
     backgroundColor: hexToRgba(color, isActiveConnectionScope.value ? 0.14 : 0.08),
   };
 });
 
-const CHILDREN_PAGE_SIZE = 50;
-const displayLimit = ref(CHILDREN_PAGE_SIZE);
-
-const visibleChildren = computed(() => {
-  if (!props.node.children) return [];
-  return props.node.children.slice(0, displayLimit.value);
-});
-
-const hasMoreChildren = computed(() => (props.node.children?.length ?? 0) > displayLimit.value);
-
-const remainingCount = computed(() => (props.node.children?.length ?? 0) - displayLimit.value);
-
 function togglePin() {
   connectionStore.toggleTreeNodePin(props.node.id);
-}
-
-watch(
-  () => props.node.isExpanded,
-  (expanded) => {
-    if (!expanded) displayLimit.value = CHILDREN_PAGE_SIZE;
-  },
-);
-
-async function showMore() {
-  if ((props.node.children?.length ?? 0) > displayLimit.value) {
-    displayLimit.value += CHILDREN_PAGE_SIZE;
-  }
 }
 
 // --- Connection Group Management ---
@@ -1484,25 +1455,6 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             <Pin class="w-3 h-3" :class="{ 'fill-current': isPinned }" />
           </button>
         </div>
-        <template v-if="node.isExpanded && node.children">
-          <TreeItem
-            v-for="child in visibleChildren"
-            :key="child.id"
-            :node="child"
-            :depth="depth + 1"
-            :drag-disabled="dragDisabled"
-            @search-toggle="emit('search-toggle', $event)"
-          />
-          <div
-            v-if="hasMoreChildren"
-            class="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent text-xs text-muted-foreground"
-            :style="{ paddingLeft: `${(depth + 1) * 16 + 8}px` }"
-            @click="showMore"
-          >
-            <Loader2 v-if="node.isLoading" class="w-3 h-3 shrink-0 animate-spin" />
-            <span>{{ t("sidebar.showMore", { count: Math.min(CHILDREN_PAGE_SIZE, remainingCount) }) }}</span>
-          </div>
-        </template>
       </div>
     </ContextMenuTrigger>
 

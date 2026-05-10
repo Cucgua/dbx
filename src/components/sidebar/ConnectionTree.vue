@@ -5,8 +5,11 @@ import { Search, X, ListFilter, Check, FolderPlus } from "lucide-vue-next";
 import { useConnectionStore } from "@/stores/connectionStore";
 import type { TreeNode } from "@/types/database";
 import { matchSidebarLabel } from "@/lib/sidebarSearch";
+import { flattenTree, shouldVirtualizeFlatTree, type FlatTreeNode } from "@/composables/useFlatTree";
 import TreeItem from "./TreeItem.vue";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
+import { RecycleScroller } from "vue-virtual-scroller";
+import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -145,22 +148,8 @@ const filteredNodes = computed(() => {
   return nodes;
 });
 
-const TOP_LEVEL_PAGE_SIZE = 50;
-const topLevelDisplayLimit = ref(TOP_LEVEL_PAGE_SIZE);
-
-const visibleFilteredNodes = computed(() => filteredNodes.value.slice(0, topLevelDisplayLimit.value));
-
-const hasMoreTopLevel = computed(() => filteredNodes.value.length > topLevelDisplayLimit.value);
-
-const remainingTopLevelCount = computed(() => filteredNodes.value.length - topLevelDisplayLimit.value);
-
-function showMoreTopLevel() {
-  topLevelDisplayLimit.value += TOP_LEVEL_PAGE_SIZE;
-}
-
-watch(filteredNodes, () => {
-  topLevelDisplayLimit.value = TOP_LEVEL_PAGE_SIZE;
-});
+const flatNodes = computed<FlatTreeNode[]>(() => flattenTree(filteredNodes.value));
+const useVirtualTree = computed(() => shouldVirtualizeFlatTree(flatNodes.value.length));
 
 const pendingRenameGroupId = ref<string | null>(null);
 
@@ -179,7 +168,7 @@ function onSearchToggle(node: TreeNode) {
 </script>
 
 <template>
-  <div class="text-sm select-none">
+  <div class="h-full min-h-0 flex flex-col text-sm select-none">
     <div v-if="store.treeNodes.length > 0" class="sticky top-0 z-10 bg-background px-2 py-1">
       <div class="relative flex items-center gap-1">
         <div class="relative flex-1">
@@ -243,23 +232,37 @@ function onSearchToggle(node: TreeNode) {
         </DropdownMenu>
       </div>
     </div>
-    <TreeItem
-      v-for="node in visibleFilteredNodes"
-      :key="node.id"
-      :node="node"
-      :depth="0"
-      :drag-disabled="isFiltering"
-      :pending-rename="pendingRenameGroupId === node.id"
-      @search-toggle="onSearchToggle"
-      @rename-started="pendingRenameGroupId = null"
-    />
-    <div
-      v-if="hasMoreTopLevel"
-      class="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent text-xs text-muted-foreground"
-      style="padding-left: 8px"
-      @click="showMoreTopLevel"
+    <RecycleScroller
+      v-if="flatNodes.length > 0 && useVirtualTree"
+      class="min-h-0 flex-1 overflow-y-auto"
+      :items="flatNodes"
+      :item-size="28"
+      key-field="id"
+      type-field="type"
+      flow-mode
     >
-      <span>{{ t("sidebar.showMore", { count: Math.min(TOP_LEVEL_PAGE_SIZE, remainingTopLevelCount) }) }}</span>
+      <template #default="{ item }">
+        <TreeItem
+          :node="item.node"
+          :depth="item.depth"
+          :drag-disabled="isFiltering"
+          :pending-rename="pendingRenameGroupId === item.node.id"
+          @search-toggle="onSearchToggle"
+          @rename-started="pendingRenameGroupId = null"
+        />
+      </template>
+    </RecycleScroller>
+    <div v-else-if="flatNodes.length > 0" class="min-h-0 flex-1 overflow-y-auto">
+      <TreeItem
+        v-for="item in flatNodes"
+        :key="item.id"
+        :node="item.node"
+        :depth="item.depth"
+        :drag-disabled="isFiltering"
+        :pending-rename="pendingRenameGroupId === item.node.id"
+        @search-toggle="onSearchToggle"
+        @rename-started="pendingRenameGroupId = null"
+      />
     </div>
     <div v-if="store.treeNodes.length === 0" class="px-3 py-8 text-center text-muted-foreground text-xs">
       {{ t("sidebar.noConnections") }}
