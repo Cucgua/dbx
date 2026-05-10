@@ -667,6 +667,8 @@ export default {
     invalidJsonValue: "This cell is not a valid JSON value",
     duplicateField: "Duplicate field name: {field}",
     edit: "Edit",
+    documentView: "Document View",
+    tableView: "Table View",
   },
   history: {
     title: "History",

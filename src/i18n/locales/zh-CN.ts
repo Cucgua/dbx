@@ -653,6 +653,8 @@ export default {
     invalidJsonValue: "当前单元格不是合法 JSON 值",
     duplicateField: "字段名重复：{field}",
     edit: "编辑",
+    documentView: "文档视图",
+    tableView: "表格视图",
   },
   history: {
     title: "历史",

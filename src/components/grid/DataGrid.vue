@@ -88,6 +88,13 @@ const props = defineProps<{
   };
   loading?: boolean;
   onExecuteSql?: (sql: string) => Promise<void>;
+  customSave?: (changes: {
+    dirtyRows: Map<number, Map<number, string | number | boolean | null>>;
+    newRows: (string | number | boolean | null)[][];
+    deletedRows: Set<number>;
+    columns: string[];
+    rows: (string | number | boolean | null)[][];
+  }) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -804,6 +811,7 @@ const editor = useDataGridEditor({
   database: computed(() => props.database),
   tableMeta: computed(() => props.tableMeta),
   onExecuteSql: computed(() => props.onExecuteSql),
+  customSave: computed(() => props.customSave),
   sql: computed(() => props.sql),
   searchText,
   whereFilterInput,
@@ -1747,7 +1755,7 @@ defineExpose({
               {{ t("grid.refresh") }}
             </Button>
             <Select
-              v-if="useTransaction && editable && tableMeta"
+              v-if="useTransaction && editable && (tableMeta || customSave)"
               :model-value="rowStatusFilter"
               @update:model-value="(value: any) => setRowStatusFilter(String(value))"
             >
@@ -1763,7 +1771,7 @@ defineExpose({
               </SelectContent>
             </Select>
             <Button
-              v-if="useTransaction && editable && tableMeta"
+              v-if="useTransaction && editable && (tableMeta || customSave)"
               variant="ghost"
               size="sm"
               class="h-5 text-xs px-1.5 shrink-0"
@@ -2427,7 +2435,7 @@ defineExpose({
       <span>{{ result.execution_time_ms }}ms</span>
       <span v-if="hasCellSelection" class="text-foreground">{{ selectionSummary }}</span>
 
-      <template v-if="editable && tableMeta && !transactionActive">
+      <template v-if="editable && (tableMeta || customSave) && !useTransaction">
         <span v-if="hasPendingChanges" class="ml-2 text-foreground">
           {{ t("grid.pendingChanges", { count: pendingChangeCount }) }}
         </span>

@@ -2,13 +2,15 @@
 import { computed, ref, onMounted } from "vue";
 import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
-import { RefreshCw, Trash2, Plus, Save, ChevronLeft, ChevronRight } from "lucide-vue-next";
+import { RefreshCw, Trash2, Plus, Save, ChevronLeft, ChevronRight, Table2, Braces } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
+import DataGrid from "@/components/grid/DataGrid.vue";
 import * as api from "@/lib/api";
 import JsonEditNode from "./JsonEditNode.vue";
 import type { EditNode } from "@/types/editor";
+import type { QueryResult } from "@/types/database";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 
@@ -34,6 +36,7 @@ const isNew = ref(false);
 const error = ref("");
 const editFields = ref<EditNode[]>([]);
 const showDeleteConfirm = ref(false);
+const viewMode = ref<"document" | "table">("document");
 
 type PendingDelete = { kind: "document"; index: number } | { kind: "field"; index: number; name: string };
 
@@ -60,6 +63,83 @@ const deleteDetails = computed(() => {
   }
   return t("dangerDialog.mongoFieldDetails", { field: pending.name || t("mongo.field") });
 });
+
+const gridResult = computed<QueryResult>(() => {
+  const docs = documents.value;
+  if (!docs.length) return { columns: [], rows: [], affected_rows: 0, execution_time_ms: 0, truncated: false };
+
+  const keySet = new Set<string>();
+  keySet.add("_id");
+  for (const doc of docs) {
+    for (const key of Object.keys(doc)) {
+      if (key !== "_id") keySet.add(key);
+    }
+  }
+  const columns = [...keySet];
+
+  const rows = docs.map((doc) =>
+    columns.map((col) => {
+      const val = doc[col];
+      if (val === undefined || val === null) return null;
+      if (typeof val === "object") return JSON.stringify(val);
+      if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") return val;
+      return String(val);
+    }),
+  );
+
+  return { columns, rows, affected_rows: 0, execution_time_ms: 0, truncated: false };
+});
+
+async function gridSave(changes: {
+  dirtyRows: Map<number, Map<number, string | number | boolean | null>>;
+  deletedRows: Set<number>;
+  columns: string[];
+  rows: (string | number | boolean | null)[][];
+}) {
+  const cols = changes.columns;
+  const idColIdx = cols.indexOf("_id");
+  if (idColIdx < 0) throw new Error("No _id column");
+
+  for (const [rowIdx, dirtyCols] of changes.dirtyRows) {
+    const row = changes.rows[rowIdx];
+    const id = row?.[idColIdx];
+    if (id == null) continue;
+    const doc = documents.value[rowIdx];
+    if (!doc) continue;
+    const updated = { ...doc };
+    for (const [colIdx, newVal] of dirtyCols) {
+      const col = cols[colIdx];
+      if (col === "_id") continue;
+      if (newVal === null) {
+        delete updated[col];
+      } else if (typeof newVal === "string") {
+        try {
+          updated[col] = JSON.parse(newVal);
+        } catch {
+          updated[col] = newVal;
+        }
+      } else {
+        updated[col] = newVal;
+      }
+    }
+    await api.mongoUpdateDocument(
+      props.connectionId,
+      props.database,
+      props.collection,
+      String(id),
+      JSON.stringify(updated),
+    );
+  }
+
+  for (const rowIdx of changes.deletedRows) {
+    const row = changes.rows[rowIdx];
+    const id = row?.[idColIdx];
+    if (id == null) continue;
+    await api.mongoDeleteDocument(props.connectionId, props.database, props.collection, String(id));
+  }
+
+  await load();
+}
 
 async function load() {
   loading.value = true;
@@ -331,127 +411,172 @@ onMounted(load);
 </script>
 
 <template>
-  <Splitpanes class="h-full">
-    <!-- Document list (left) -->
-    <Pane :size="30" :min-size="15" :max-size="50">
-      <div class="h-full flex flex-col overflow-hidden">
-        <div class="h-9 flex items-center gap-1 px-3 border-b shrink-0 text-xs text-muted-foreground">
-          <span>{{ t("mongo.documents", { count: total }) }}</span>
-          <span class="flex-1" />
-          <Button variant="ghost" size="icon" class="h-5 w-5" @click="startNew"><Plus class="h-3 w-3" /></Button>
-          <Button variant="ghost" size="icon" class="h-5 w-5" @click="load"
-            ><RefreshCw class="h-3 w-3" :class="{ 'animate-spin': loading }"
-          /></Button>
-        </div>
-
-        <div class="flex-1 overflow-y-auto">
-          <div
-            v-for="(doc, idx) in documents"
-            :key="idx"
-            class="px-3 py-1.5 border-b text-xs font-mono cursor-pointer hover:bg-accent/50 flex items-center gap-2 group"
-            :class="{ 'bg-accent': selectedIdx === idx }"
-            @click="selectDoc(idx)"
-          >
-            <span class="truncate flex-1">{{ docPreview(doc) }}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive shrink-0"
-              @click.stop="requestDeleteDoc(idx)"
-            >
-              <Trash2 class="w-3 h-3" />
-            </Button>
-          </div>
-          <div v-if="documents.length === 0 && !loading" class="px-3 py-8 text-center text-muted-foreground text-xs">
-            {{ t("mongo.emptyCollection") }}
-          </div>
-        </div>
-
-        <!-- Pagination -->
-        <div class="flex items-center justify-center gap-2 px-3 py-1 border-t text-xs text-muted-foreground shrink-0">
-          <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="page <= 0" @click="prevPage">
-            <ChevronLeft class="h-3 w-3" />
-          </Button>
-          <span>{{ page + 1 }} / {{ Math.max(1, Math.ceil(total / pageSize)) }}</span>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-5 w-5"
-            :disabled="(page + 1) * pageSize >= total"
-            @click="nextPage"
-          >
-            <ChevronRight class="h-3 w-3" />
-          </Button>
-        </div>
+  <div class="h-full flex flex-col overflow-hidden">
+    <!-- Top toolbar: view toggle + document count + pagination + actions -->
+    <div class="h-9 flex items-center gap-1 px-3 border-b shrink-0 text-xs text-muted-foreground">
+      <div class="flex items-center border rounded-md overflow-hidden mr-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-5 w-5 rounded-none"
+          :class="{ 'bg-accent': viewMode === 'document' }"
+          :title="t('mongo.documentView')"
+          @click="viewMode = 'document'"
+        >
+          <Braces class="h-3 w-3" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-5 w-5 rounded-none"
+          :class="{ 'bg-accent': viewMode === 'table' }"
+          :title="t('mongo.tableView')"
+          @click="viewMode = 'table'"
+        >
+          <Table2 class="h-3 w-3" />
+        </Button>
       </div>
-    </Pane>
 
-    <!-- Document viewer/editor (right) -->
-    <Pane :size="70">
-      <div class="h-full flex flex-col min-w-0 overflow-hidden">
-        <template v-if="selectedIdx !== null || isNew">
-          <div class="h-9 flex items-center gap-2 px-4 border-b bg-muted/30 shrink-0">
-            <Badge variant="secondary" class="text-xs">{{ isNew ? "New" : selectedDoc?._id }}</Badge>
-            <span class="flex-1" />
-            <Button v-if="!isEditing" variant="ghost" size="sm" class="h-6 text-xs" @click="startEdit">{{
-              t("mongo.edit")
-            }}</Button>
-            <template v-if="isEditing">
-              <Button variant="ghost" size="sm" class="h-6 text-xs" @click="addField">
-                <Plus class="w-3 h-3 mr-1" /> {{ t("mongo.addField") }}
-              </Button>
-              <Button variant="ghost" size="sm" class="h-6 text-xs" @click="cancelEdit">{{ t("grid.discard") }}</Button>
-              <Button size="sm" class="h-6 text-xs" @click="saveDoc"
-                ><Save class="w-3 h-3 mr-1" />{{ t("grid.save") }}</Button
-              >
-            </template>
-          </div>
+      <span>{{ t("mongo.documents", { count: total }) }}</span>
+      <span class="flex-1" />
 
-          <div v-if="isEditing" class="flex-1 overflow-auto bg-muted/10">
+      <Button v-if="viewMode === 'document'" variant="ghost" size="icon" class="h-5 w-5" @click="startNew"
+        ><Plus class="h-3 w-3"
+      /></Button>
+      <Button variant="ghost" size="icon" class="h-5 w-5" @click="load"
+        ><RefreshCw class="h-3 w-3" :class="{ 'animate-spin': loading }"
+      /></Button>
+
+      <div class="flex items-center gap-1 ml-1">
+        <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="page <= 0" @click="prevPage">
+          <ChevronLeft class="h-3 w-3" />
+        </Button>
+        <span>{{ page + 1 }} / {{ Math.max(1, Math.ceil(total / pageSize)) }}</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-5 w-5"
+          :disabled="(page + 1) * pageSize >= total"
+          @click="nextPage"
+        >
+          <ChevronRight class="h-3 w-3" />
+        </Button>
+      </div>
+    </div>
+
+    <!-- Table view -->
+    <DataGrid
+      v-if="viewMode === 'table'"
+      class="flex-1 min-h-0"
+      :result="gridResult"
+      context="results"
+      editable
+      :custom-save="gridSave"
+      @reload="load"
+    />
+
+    <!-- Document view (split pane) -->
+    <Splitpanes v-else class="flex-1 min-h-0">
+      <!-- Document list (left) -->
+      <Pane :size="30" :min-size="15" :max-size="50">
+        <div class="h-full flex flex-col overflow-hidden">
+          <div class="flex-1 overflow-y-auto">
             <div
-              class="json-edit min-w-fit p-5 font-mono text-[13px] leading-6"
-              :style="{ '--mongo-key-width': editKeyWidth }"
+              v-for="(doc, idx) in documents"
+              :key="idx"
+              class="px-3 py-1.5 border-b text-xs font-mono cursor-pointer hover:bg-accent/50 flex items-center gap-2 group"
+              :class="{ 'bg-accent': selectedIdx === idx }"
+              @click="selectDoc(idx)"
             >
-              <div class="json-edit-brace">{</div>
-
-              <JsonEditNode
-                v-for="(field, idx) in editFields"
-                :key="field.key"
-                :node="field"
-                parent-kind="root"
-                :removable="!field.readonlyValue"
-                @remove="requestRemoveField(idx)"
-              />
-
-              <Button variant="ghost" size="sm" class="json-edit-add" @click="addField">
-                <Plus class="w-3 h-3 mr-1" /> {{ t("mongo.addField") }}
+              <span class="truncate flex-1">{{ docPreview(doc) }}</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive shrink-0"
+                @click.stop="requestDeleteDoc(idx)"
+              >
+                <Trash2 class="w-3 h-3" />
               </Button>
-
-              <div class="json-edit-brace">}</div>
+            </div>
+            <div v-if="documents.length === 0 && !loading" class="px-3 py-8 text-center text-muted-foreground text-xs">
+              {{ t("mongo.emptyCollection") }}
             </div>
           </div>
+        </div>
+      </Pane>
 
-          <div v-else class="flex-1 overflow-auto bg-muted/10">
-            <pre class="json-viewer min-w-fit p-5 font-mono text-[13px] leading-6" v-html="highlightedJson(editJson)" />
+      <!-- Document viewer/editor (right) -->
+      <Pane :size="70">
+        <div class="h-full flex flex-col min-w-0 overflow-hidden">
+          <template v-if="selectedIdx !== null || isNew">
+            <div class="h-9 flex items-center gap-2 px-4 border-b bg-muted/30 shrink-0">
+              <Badge variant="secondary" class="text-xs">{{ isNew ? "New" : selectedDoc?._id }}</Badge>
+              <span class="flex-1" />
+              <Button v-if="!isEditing" variant="ghost" size="sm" class="h-6 text-xs" @click="startEdit">{{
+                t("mongo.edit")
+              }}</Button>
+              <template v-if="isEditing">
+                <Button variant="ghost" size="sm" class="h-6 text-xs" @click="addField">
+                  <Plus class="w-3 h-3 mr-1" /> {{ t("mongo.addField") }}
+                </Button>
+                <Button variant="ghost" size="sm" class="h-6 text-xs" @click="cancelEdit">{{
+                  t("grid.discard")
+                }}</Button>
+                <Button size="sm" class="h-6 text-xs" @click="saveDoc"
+                  ><Save class="w-3 h-3 mr-1" />{{ t("grid.save") }}</Button
+                >
+              </template>
+            </div>
+
+            <div v-if="isEditing" class="flex-1 overflow-auto bg-muted/10">
+              <div
+                class="json-edit min-w-fit p-5 font-mono text-[13px] leading-6"
+                :style="{ '--mongo-key-width': editKeyWidth }"
+              >
+                <div class="json-edit-brace">{</div>
+
+                <JsonEditNode
+                  v-for="(field, idx) in editFields"
+                  :key="field.key"
+                  :node="field"
+                  parent-kind="root"
+                  :removable="!field.readonlyValue"
+                  @remove="requestRemoveField(idx)"
+                />
+
+                <Button variant="ghost" size="sm" class="json-edit-add" @click="addField">
+                  <Plus class="w-3 h-3 mr-1" /> {{ t("mongo.addField") }}
+                </Button>
+
+                <div class="json-edit-brace">}</div>
+              </div>
+            </div>
+
+            <div v-else class="flex-1 overflow-auto bg-muted/10">
+              <pre
+                class="json-viewer min-w-fit p-5 font-mono text-[13px] leading-6"
+                v-html="highlightedJson(editJson)"
+              />
+            </div>
+          </template>
+          <div v-else class="h-full flex items-center justify-center text-muted-foreground text-sm">
+            {{ t("mongo.selectDocument") }}
           </div>
-        </template>
-        <div v-else class="h-full flex items-center justify-center text-muted-foreground text-sm">
-          {{ t("mongo.selectDocument") }}
-        </div>
 
-        <div v-if="error" class="px-3 py-1.5 border-t bg-destructive/10 text-destructive text-xs shrink-0">
-          {{ error }}
+          <div v-if="error" class="px-3 py-1.5 border-t bg-destructive/10 text-destructive text-xs shrink-0">
+            {{ error }}
+          </div>
+          <DangerConfirmDialog
+            v-model:open="showDeleteConfirm"
+            :message="t('dangerDialog.deleteMessage')"
+            :details="deleteDetails"
+            :confirm-label="t('dangerDialog.deleteConfirm')"
+            @confirm="confirmDelete"
+          />
         </div>
-        <DangerConfirmDialog
-          v-model:open="showDeleteConfirm"
-          :message="t('dangerDialog.deleteMessage')"
-          :details="deleteDetails"
-          :confirm-label="t('dangerDialog.deleteConfirm')"
-          @confirm="confirmDelete"
-        />
-      </div>
-    </Pane>
-  </Splitpanes>
+      </Pane>
+    </Splitpanes>
+  </div>
 </template>
 
 <style scoped>

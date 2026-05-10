@@ -44,6 +44,16 @@ export interface UseDataGridEditorOptions {
     | undefined
   >;
   onExecuteSql: ComputedRef<((sql: string) => Promise<void>) | undefined>;
+  customSave?: ComputedRef<
+    | ((changes: {
+        dirtyRows: Map<number, Map<number, CellValue>>;
+        newRows: CellValue[][];
+        deletedRows: Set<number>;
+        columns: string[];
+        rows: CellValue[][];
+      }) => Promise<void>)
+    | undefined
+  >;
   sql: ComputedRef<string | undefined>;
   searchText: Ref<string>;
   whereFilterInput: Ref<string>;
@@ -67,6 +77,7 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
     database,
     tableMeta,
     onExecuteSql,
+    customSave,
     sql,
     searchText,
     whereFilterInput,
@@ -95,7 +106,7 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
   const saveError = ref("");
 
   const useTransaction = computed(
-    () => editable.value && !!connectionId.value && !!database.value && !!tableMeta.value,
+    () => editable.value && (!!customSave?.value || (!!connectionId.value && !!database.value && !!tableMeta.value)),
   );
 
   function enterTransaction() {
@@ -440,12 +451,45 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
   }
 
   async function saveChanges() {
-    const stmtOptions = saveStatementOptions();
-    const stmts = stmtOptions ? buildDataGridSaveStatements(stmtOptions) : [];
-    if (stmts.length === 0) return;
-    const rollbackStmts = stmtOptions ? buildDataGridRollbackStatements(stmtOptions) : [];
     saveError.value = "";
     isSaving.value = true;
+
+    if (customSave?.value) {
+      try {
+        await customSave.value({
+          dirtyRows: dirtyRows.value,
+          newRows: newRows.value,
+          deletedRows: deletedRows.value,
+          columns: result.value.columns,
+          rows: result.value.rows,
+        });
+      } catch (e: any) {
+        saveError.value = String(e.message || e);
+        isSaving.value = false;
+        return;
+      }
+      dirtyRows.value.clear();
+      newRows.value = [];
+      deletedRows.value.clear();
+      exitTransaction();
+      isSaving.value = false;
+      emit(
+        "reload",
+        sql.value,
+        searchText.value,
+        whereFilterInput.value.trim() || undefined,
+        orderByInput.value.trim() || undefined,
+      );
+      return;
+    }
+
+    const stmtOptions = saveStatementOptions();
+    const stmts = stmtOptions ? buildDataGridSaveStatements(stmtOptions) : [];
+    if (stmts.length === 0) {
+      isSaving.value = false;
+      return;
+    }
+    const rollbackStmts = stmtOptions ? buildDataGridRollbackStatements(stmtOptions) : [];
     const start = Date.now();
     let apiResult: { affected_rows?: number } | undefined;
 
