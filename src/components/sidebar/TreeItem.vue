@@ -1305,10 +1305,12 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
     <ContextMenuTrigger as-child>
       <div>
         <div
-          class="group flex min-w-0 items-center gap-1.5 py-1 px-2 rounded-sm cursor-pointer hover:bg-accent transition-colors relative"
+          class="group flex min-w-0 items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent transition-colors relative"
           :class="{
             'ring-1 ring-primary/50 bg-primary/5': showDropInside,
             'opacity-50': isDragging,
+            'rounded-none': connectionColor,
+            'rounded-sm': !connectionColor,
           }"
           :style="rowStyle"
           @click="onClick"
