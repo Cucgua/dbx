@@ -6,16 +6,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { ConnectionConfig, DatabaseType } from "@/types/database";
+import type { ConnectionConfig, DatabaseType, JdbcDriverInfo } from "@/types/database";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToast } from "@/composables/useToast";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { applyParsedConnectionUrl, parseConnectionUrl } from "@/lib/connectionUrl";
-import { ArrowLeft, ChevronRight, Copy, FolderOpen, Grid3X3, Link2, List, Search } from "lucide-vue-next";
+import { ArrowLeft, ChevronRight, Copy, ExternalLink, FolderOpen, Grid3X3, Link2, List, Search } from "lucide-vue-next";
 
 type DbOption = { value: string; label: string };
 type DbCategory = { key: string; title: string; options: DbOption[] };
@@ -68,12 +69,17 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   ssh_connect_timeout_secs: 5,
   ssl: false,
   connection_string: undefined,
+  jdbc_driver_class: undefined,
+  jdbc_driver_paths: [],
 });
 
 const form = ref(defaultForm());
 const selectedType = ref("mysql");
 const customDriverName = ref("");
 const mongoUseUrl = ref(false);
+const jdbcDriverPathsInput = ref("");
+const jdbcDrivers = ref<JdbcDriverInfo[]>([]);
+const selectedJdbcDriverPath = ref("");
 const connectionUrlInput = ref("");
 const dialogStep = ref<DialogStep>("select");
 const dbPickerView = ref<DbPickerView>("icon");
@@ -170,6 +176,7 @@ const driverProfiles: Record<
     icon: "cockroachdb",
   },
   dm: { type: "dameng", port: 5236, user: "SYSDBA", label: "DM (Dameng)", icon: "dm" },
+  jdbc: { type: "jdbc", port: 0, user: "", label: "JDBC", icon: "jdbc" },
   tdengine: { type: "mysql", port: 6030, user: "root", label: "TDengine", icon: "tdengine" },
   custom_mysql: {
     type: "mysql",
@@ -220,6 +227,13 @@ function applyProfile(val: string, preserveConnectionFields = false) {
     if (profile.type === "sqlite" || profile.type === "duckdb") {
       form.value.host = "";
     }
+    if (profile.type === "jdbc") {
+      form.value.host = "";
+      form.value.connection_string = "";
+      form.value.jdbc_driver_class = "";
+      form.value.jdbc_driver_paths = [];
+      jdbcDriverPathsInput.value = "";
+    }
   }
 }
 
@@ -252,9 +266,12 @@ watch(
         ssh_connect_timeout_secs: config.ssh_connect_timeout_secs || 5,
         ssl: config.ssl || false,
         connection_string: config.connection_string,
+        jdbc_driver_class: config.jdbc_driver_class,
+        jdbc_driver_paths: config.jdbc_driver_paths || [],
       };
       selectedType.value = profile;
       mongoUseUrl.value = !!config.connection_string;
+      jdbcDriverPathsInput.value = (config.jdbc_driver_paths || []).join("\n");
       customDriverName.value = isCustomCompatibleProfile() ? config.driver_label || "" : "";
       dialogStep.value = "config";
       configTab.value = "connection";
@@ -330,6 +347,7 @@ const iconTypeMap: Record<string, string> = {
   cockroachdb: "cockroachdb",
   tdengine: "tdengine",
   dm: "dm",
+  jdbc: "jdbc",
   custom_mysql: "mysql",
   custom_postgres: "postgres",
 };
@@ -360,6 +378,7 @@ const dbOptions = [
   { value: "vastbase", label: "Vastbase" },
   { value: "redshift", label: "Redshift" },
   { value: "cockroachdb", label: "CockroachDB" },
+  { value: "jdbc", label: "JDBC" },
   { value: "custom_mysql", label: "Custom (MySQL)" },
   { value: "custom_postgres", label: "Custom (PostgreSQL)" },
 ];
@@ -387,7 +406,8 @@ const filteredDbCategories = computed<DbCategory[]>(() => {
 
 const hasDbPickerResults = computed(() => filteredDbCategories.value.some((category) => category.options.length > 0));
 const selectedDbIcon = computed(() => iconTypeMap[selectedType.value] || selectedProfile().icon || selectedType.value);
-const canUseSsh = computed(() => form.value.db_type !== "sqlite");
+const isJdbcConnection = computed(() => form.value.db_type === "jdbc");
+const canUseSsh = computed(() => form.value.db_type !== "sqlite" && form.value.db_type !== "jdbc");
 const testResultMessage = computed(() => {
   if (!testResult.value) return "";
   return testResult.value.ok ? t("connection.testSuccess") : testResult.value.message;
@@ -439,6 +459,16 @@ function connectionConfigForSubmit(id: string): ConnectionConfig {
   if (config.db_type === "mongodb" && !mongoUseUrl.value) {
     config.connection_string = undefined;
   }
+  if (config.db_type === "jdbc") {
+    config.host = "";
+    config.port = 0;
+    config.connection_string = config.connection_string?.trim() || "";
+    config.jdbc_driver_class = config.jdbc_driver_class?.trim() || undefined;
+    config.jdbc_driver_paths = jdbcDriverPathsInput.value
+      .split(/\r?\n/)
+      .map((path) => path.trim())
+      .filter(Boolean);
+  }
   return config;
 }
 
@@ -477,6 +507,8 @@ function resetForm() {
   selectedType.value = "mysql";
   customDriverName.value = "";
   mongoUseUrl.value = false;
+  jdbcDriverPathsInput.value = "";
+  selectedJdbcDriverPath.value = "";
   connectionUrlInput.value = "";
   dialogStep.value = "select";
   dbPickerView.value = "icon";
@@ -493,6 +525,7 @@ watch(open, (value) => {
   if (!props.editConfig) {
     resetForm();
   }
+  void loadJdbcDrivers();
 });
 
 watch(canUseSsh, (value) => {
@@ -513,6 +546,10 @@ async function save() {
     } else {
       const config = connectionConfigForSubmit(uuid());
       await store.addConnection(config);
+      if (config.db_type === "jdbc") {
+        open.value = false;
+        return;
+      }
       open.value = false;
       await nextTick();
       emit("connectStarted", config.name);
@@ -567,6 +604,58 @@ async function browseDbFilePath() {
     if (selected && typeof selected === "string") {
       form.value.host = selected;
     }
+  }
+}
+
+async function browseJdbcDriverPaths() {
+  if (!isTauriRuntime()) return;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    title: t("connection.jdbcDriverBrowse"),
+    multiple: true,
+    filters: [{ name: "JDBC Driver", extensions: ["jar"] }],
+  });
+  if (!selected) return;
+
+  const paths = Array.isArray(selected) ? selected : [selected];
+  const existing = jdbcDriverPathsInput.value
+    .split(/\r?\n/)
+    .map((path) => path.trim())
+    .filter(Boolean);
+  const merged = Array.from(
+    new Set([...existing, ...paths.filter((path): path is string => typeof path === "string")]),
+  );
+  jdbcDriverPathsInput.value = merged.join("\n");
+}
+
+async function loadJdbcDrivers() {
+  if (!isDesktop) return;
+  try {
+    jdbcDrivers.value = await api.listJdbcDrivers();
+  } catch {
+    jdbcDrivers.value = [];
+  }
+}
+
+function addJdbcDriverPath(path: string) {
+  const existing = jdbcDriverPathsInput.value
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  jdbcDriverPathsInput.value = Array.from(new Set([...existing, path])).join("\n");
+}
+
+function onJdbcDriverSelect(path: any) {
+  if (typeof path !== "string" || !path) return;
+  selectedJdbcDriverPath.value = path;
+  addJdbcDriverPath(path);
+}
+
+function openExternalUrl(url: string) {
+  if (isTauriRuntime()) {
+    import("@tauri-apps/plugin-shell").then(({ open }) => open(url));
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 }
 </script>
@@ -689,17 +778,17 @@ async function browseDbFilePath() {
       <template v-else>
         <div class="space-y-3">
           <Tabs v-model="configTab" class="min-h-0">
-            <div class="flex items-center justify-between border-b pb-2">
+            <div v-if="canUseSsh" class="flex items-center justify-between border-b pb-2">
               <TabsList>
                 <TabsTrigger value="connection">{{ t("connection.basicTab") }}</TabsTrigger>
-                <TabsTrigger v-if="canUseSsh" value="ssh">{{ t("connection.sshTunnel") }}</TabsTrigger>
+                <TabsTrigger value="ssh">{{ t("connection.sshTunnel") }}</TabsTrigger>
               </TabsList>
             </div>
 
             <TabsContent value="connection" class="m-0">
               <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
-                <div class="grid grid-cols-4 items-center gap-4">
-                  <Label class="text-right">URL</Label>
+                <div v-if="!isJdbcConnection" class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right">{{ t("connection.connectionUrlOptional") }}</Label>
                   <div class="col-span-3 flex items-center gap-1">
                     <Input
                       v-model="connectionUrlInput"
@@ -765,8 +854,90 @@ async function browseDbFilePath() {
                   </div>
                 </div>
 
+                <!-- JDBC: optional external plugin -->
+                <template v-if="form.db_type === 'jdbc'">
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.jdbcUrl") }}</Label>
+                    <Input
+                      v-model="form.connection_string"
+                      class="col-span-3"
+                      :placeholder="t('connection.jdbcUrlPlaceholder')"
+                    />
+                  </div>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.user") }}</Label>
+                    <Input v-model="form.username" class="col-span-3" placeholder="sa" />
+                  </div>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.password") }}</Label>
+                    <Input v-model="form.password" type="password" class="col-span-3" />
+                  </div>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{ t("connection.jdbcDriverClass") }}</Label>
+                    <Input
+                      v-model="form.jdbc_driver_class"
+                      class="col-span-3"
+                      :placeholder="t('connection.jdbcDriverClassPlaceholder')"
+                    />
+                  </div>
+                  <div class="grid grid-cols-4 items-start gap-4">
+                    <Label class="text-right mt-2">{{ t("connection.jdbcDriverPaths") }}</Label>
+                    <div class="col-span-3 space-y-2">
+                      <Select
+                        v-if="jdbcDrivers.length > 0"
+                        :model-value="selectedJdbcDriverPath"
+                        @update:model-value="onJdbcDriverSelect"
+                      >
+                        <SelectTrigger>
+                          <SelectValue :placeholder="t('connection.jdbcDriverSelectPlaceholder')" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem v-for="driver in jdbcDrivers" :key="driver.path" :value="driver.path">
+                            {{ driver.name }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div class="flex items-start gap-1">
+                        <textarea
+                          v-model="jdbcDriverPathsInput"
+                          class="flex min-h-12 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          :placeholder="t('connection.jdbcDriverPathsPlaceholder')"
+                        />
+                        <Tooltip v-if="isDesktop">
+                          <TooltipTrigger as-child>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              class="h-9 w-9 shrink-0"
+                              @click="browseJdbcDriverPaths"
+                            >
+                              <FolderOpen class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.jdbcDriverBrowse") }}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-4 items-start gap-4">
+                    <span />
+                    <div class="col-span-3 space-y-2">
+                      <p class="text-xs text-muted-foreground">
+                        {{ t("connection.jdbcPluginHint") }}
+                      </p>
+                      <div class="flex flex-wrap gap-2">
+                        <Button type="button" variant="outline" size="sm" @click="openExternalUrl('https://dbxio.com')">
+                          <ExternalLink class="h-3.5 w-3.5" />
+                          {{ t("connection.jdbcDocs") }}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
                 <!-- SQLite / DuckDB: file path only -->
-                <template v-if="form.db_type === 'sqlite' || form.db_type === 'duckdb'">
+                <template v-else-if="form.db_type === 'sqlite' || form.db_type === 'duckdb'">
                   <div class="grid grid-cols-4 items-center gap-4">
                     <Label class="text-right">{{ t("connection.filePath") }}</Label>
                     <div class="col-span-3 flex items-center gap-1">
@@ -1074,9 +1245,21 @@ async function browseDbFilePath() {
           <Button
             class="shrink-0"
             @click="save"
-            :disabled="isSaving || !form.name || (!form.host && !(mongoUseUrl && form.connection_string))"
+            :disabled="
+              isSaving ||
+              !form.name ||
+              (!form.host &&
+                !(mongoUseUrl && form.connection_string) &&
+                !(form.db_type === 'jdbc' && form.connection_string))
+            "
           >
-            {{ isSaving ? t("common.loading") : editingId ? t("connection.save") : t("connection.saveAndConnect") }}
+            {{
+              isSaving
+                ? t("common.loading")
+                : editingId || isJdbcConnection
+                  ? t("connection.save")
+                  : t("connection.saveAndConnect")
+            }}
           </Button>
         </DialogFooter>
       </template>

@@ -13,7 +13,8 @@ export type DatabaseType =
   | "starrocks"
   | "redshift"
   | "dameng"
-  | "gaussdb";
+  | "gaussdb"
+  | "jdbc";
 
 export interface ConnectionConfig {
   id: string;
@@ -40,6 +41,44 @@ export interface ConnectionConfig {
   ssl?: boolean;
   sysdba?: boolean;
   connection_string?: string;
+  jdbc_driver_class?: string;
+  jdbc_driver_paths?: string[];
+}
+
+export interface PluginDriverManifest {
+  id: string;
+  label: string;
+  kind: string;
+  database_type?: string;
+}
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version?: string;
+  protocol_version?: number;
+  description?: string;
+  executable?: string;
+  drivers: PluginDriverManifest[];
+}
+
+export interface InstalledPlugin {
+  manifest: PluginManifest;
+  path: string;
+}
+
+export interface JdbcDriverInfo {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface JdbcPluginStatus {
+  installed: boolean;
+  version?: string | null;
+  protocol_version?: number | null;
+  compatible: boolean;
+  path: string;
 }
 
 export interface DatabaseInfo {

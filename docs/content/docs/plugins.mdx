@@ -1,0 +1,56 @@
+---
+title: Plugins
+description: Optional DBX plugins and driver manifests.
+---
+
+DBX can discover optional plugins from the app data `plugins` directory. Plugins are not bundled with the main app, so they can add specialized database support without increasing the default installer size.
+
+Each plugin lives in its own folder and must include a `manifest.json` file:
+
+```json
+{
+  "id": "jdbc",
+  "name": "DBX JDBC Plugin",
+  "version": "0.1.0",
+  "protocol_version": 1,
+  "description": "Adds JDBC driver support.",
+  "executable": "bin/dbx-jdbc-plugin",
+  "drivers": [
+    {
+      "id": "jdbc",
+      "label": "JDBC",
+      "kind": "external",
+      "database_type": "jdbc"
+    }
+  ]
+}
+```
+
+The JDBC connection type is intentionally optional. The main DBX app stores JDBC connection metadata, but actual JDBC execution requires a plugin process that provides the driver protocol. The optional JDBC plugin has its own version and declares compatibility through `protocol_version`. It uses the local Java runtime, and users can import database-specific JDBC driver JARs in settings or provide paths in the connection form.
+
+## Driver protocol
+
+DBX starts the plugin executable and exchanges JSON Lines requests and responses over stdin/stdout. After a connection is established, DBX reuses the same plugin process for queries and metadata requests on that connection.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "driver": "jdbc",
+  "method": "executeQuery",
+  "params": {
+    "connection": {},
+    "database": "default",
+    "schema": "",
+    "sql": "SELECT 1"
+  }
+}
+```
+
+Responses follow the same shape:
+
+```json
+{ "id": 1, "result": { "columns": ["x"], "rows": [[1]], "affected_rows": 0, "execution_time_ms": 12, "truncated": false } }
+```
+
+Supported initial methods are `testConnection`, `connect`, `executeQuery`, `listDatabases`, `listSchemas`, `listTables`, and `getColumns`.

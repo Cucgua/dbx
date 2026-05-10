@@ -5,6 +5,7 @@ mod connection_secrets;
 pub mod history;
 pub mod mcp_bridge;
 pub mod mongo_cmd;
+pub mod plugins;
 pub mod query;
 pub mod query_cancel;
 pub mod redis_cmd;

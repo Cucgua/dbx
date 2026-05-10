@@ -43,6 +43,10 @@ pub struct ConnectionConfig {
     pub sysdba: bool,
     #[serde(default)]
     pub connection_string: Option<String>,
+    #[serde(default)]
+    pub jdbc_driver_class: Option<String>,
+    #[serde(default)]
+    pub jdbc_driver_paths: Vec<String>,
 }
 
 fn default_ssh_port() -> u16 {
@@ -78,6 +82,7 @@ pub enum DatabaseType {
     Redshift,
     Dameng,
     Gaussdb,
+    Jdbc,
 }
 
 impl ConnectionConfig {
@@ -172,6 +177,7 @@ impl ConnectionConfig {
             DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
             DatabaseType::Dameng => format!("dm://{host}:{port}{db_part}"),
             DatabaseType::Gaussdb => format!("gaussdb://{host}:{port}{db_part}"),
+            DatabaseType::Jdbc => "jdbc:<redacted>".to_string(),
         }
     }
 
@@ -241,6 +247,9 @@ impl ConnectionConfig {
             }
             DatabaseType::Gaussdb => {
                 format!("gaussdb://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Jdbc => {
+                self.connection_string.as_deref().filter(|value| !value.is_empty()).unwrap_or("jdbc:").to_string()
             }
         }
     }

@@ -21,6 +21,7 @@
     "ai-assistant",
     "mcp",
     "---设置---",
+    "plugins",
     "config-export",
     "ssh-tunnel"
   ]

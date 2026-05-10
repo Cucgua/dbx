@@ -6,6 +6,10 @@ node_modules/
 # Build output
 dist/
 /target/
+plugins/jdbc/target/
+plugins/jdbc/dependency-reduced-pom.xml
+plugins/jdbc/lib/*.jar
+plugins/jdbc/dist/
 docs/.next/
 docs/out/
 docs/.source/

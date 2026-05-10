@@ -237,6 +237,23 @@ pub async fn do_execute(
             .await
             .map(truncate_result)
         }
+        PoolKind::ExternalDriver { config, session, .. } => {
+            let config = config.clone();
+            let session = session.clone();
+            let sql = sql.to_string();
+            let schema = schema.map(str::to_string);
+            drop(connections);
+            wait_for_query(cancel_token, async move {
+                let params = serde_json::json!({
+                    "connection": config,
+                    "sql": sql,
+                    "schema": schema,
+                });
+                session.invoke::<db::QueryResult>("executeQuery", params).await
+            })
+            .await
+            .map(truncate_result)
+        }
     }
 }
 
@@ -396,7 +413,8 @@ pub async fn execute_statements_in_transaction(
             | PoolKind::Redis(_)
             | PoolKind::MongoDb(_)
             | PoolKind::Oracle(_)
-            | PoolKind::Elasticsearch(_) => TxPath::None,
+            | PoolKind::Elasticsearch(_)
+            | PoolKind::ExternalDriver { .. } => TxPath::None,
         })
     };
 

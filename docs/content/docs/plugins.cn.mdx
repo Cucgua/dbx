@@ -1,0 +1,56 @@
+---
+title: 插件
+description: DBX 可选插件与驱动清单。
+---
+
+DBX 可以从应用数据目录下的 `plugins` 目录发现可选插件。插件不会打包进主应用，因此可以在不增加默认安装包体积的前提下扩展特殊数据库支持。
+
+每个插件使用独立目录，并需要包含 `manifest.json`：
+
+```json
+{
+  "id": "jdbc",
+  "name": "DBX JDBC Plugin",
+  "version": "0.1.0",
+  "protocol_version": 1,
+  "description": "Adds JDBC driver support.",
+  "executable": "bin/dbx-jdbc-plugin",
+  "drivers": [
+    {
+      "id": "jdbc",
+      "label": "JDBC",
+      "kind": "external",
+      "database_type": "jdbc"
+    }
+  ]
+}
+```
+
+JDBC 连接类型是可选能力。DBX 主应用只保存 JDBC 连接元数据，真正执行 JDBC 查询需要安装提供驱动协议的插件进程。可选 JDBC 插件使用独立版本号，并通过 `protocol_version` 声明兼容的插件协议；它使用用户本机的 Java runtime，数据库对应的 JDBC driver JAR 由用户在设置中导入或在连接表单里填写路径。
+
+## 驱动协议
+
+DBX 会启动插件可执行文件，并通过 stdin/stdout 发送 JSON Lines 请求与响应。连接建立后，DBX 会复用同一个插件进程处理该连接上的查询和元数据请求。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "driver": "jdbc",
+  "method": "executeQuery",
+  "params": {
+    "connection": {},
+    "database": "default",
+    "schema": "",
+    "sql": "SELECT 1"
+  }
+}
+```
+
+响应格式如下：
+
+```json
+{ "id": 1, "result": { "columns": ["x"], "rows": [[1]], "affected_rows": 0, "execution_time_ms": 12, "truncated": false } }
+```
+
+第一版协议支持 `testConnection`、`connect`、`executeQuery`、`listDatabases`、`listSchemas`、`listTables` 和 `getColumns`。

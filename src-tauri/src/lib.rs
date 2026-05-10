@@ -34,7 +34,7 @@ pub fn run() {
                 s
             });
 
-            let state = Arc::new(AppState::new(storage));
+            let state = Arc::new(AppState::new_with_plugin_dir(storage, data_dir.join("plugins")));
             app.manage(state.clone());
 
             let app_handle = app.handle().clone();
@@ -73,6 +73,13 @@ pub fn run() {
             commands::connection::load_connections,
             commands::connection::save_sidebar_layout,
             commands::connection::load_sidebar_layout,
+            commands::plugins::list_plugins,
+            commands::plugins::list_jdbc_drivers,
+            commands::plugins::import_jdbc_drivers,
+            commands::plugins::delete_jdbc_driver,
+            commands::plugins::jdbc_plugin_status,
+            commands::plugins::install_jdbc_plugin,
+            commands::plugins::uninstall_jdbc_plugin,
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::list_schemas,

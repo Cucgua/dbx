@@ -154,8 +154,40 @@ jobs:
           Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $zipName -Force
           gh release upload "${env:GITHUB_REF_NAME}" $zipName --repo "${env:GITHUB_REPOSITORY}" --clobber
 
+  jdbc-plugin:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Read JDBC plugin version
+        id: jdbc-plugin
+        shell: bash
+        run: |
+          VERSION="$(grep -m1 '<version>' plugins/jdbc/pom.xml | sed -E 's/.*<version>([^<]+)<.*/\1/')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Package JDBC plugin
+        run: ./plugins/jdbc/package.sh
+
+      - name: Upload JDBC plugin asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "plugins/jdbc/dist/dbx-jdbc-plugin-${{ steps.jdbc-plugin.outputs.version }}.zip" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+
   publish:
-    needs: [build, docker-manifest]
+    needs: [build, docker-manifest, jdbc-plugin]
     runs-on: ubuntu-latest
     steps:
       - name: Publish draft release

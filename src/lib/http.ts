@@ -7,6 +7,9 @@ import type {
   ForeignKeyInfo,
   TriggerInfo,
   QueryResult,
+  InstalledPlugin,
+  JdbcDriverInfo,
+  JdbcPluginStatus,
   SidebarLayout,
   SavedSqlFile,
   SavedSqlFolder,
@@ -89,6 +92,34 @@ export async function saveConnections(configs: ConnectionConfig[]): Promise<void
 
 export async function loadConnections(): Promise<ConnectionConfig[]> {
   return get("/api/connection/list");
+}
+
+export async function listPlugins(): Promise<InstalledPlugin[]> {
+  return get("/api/plugins");
+}
+
+export async function listJdbcDrivers(): Promise<JdbcDriverInfo[]> {
+  return [];
+}
+
+export async function importJdbcDrivers(_paths: string[]): Promise<JdbcDriverInfo[]> {
+  return [];
+}
+
+export async function deleteJdbcDriver(_path: string): Promise<JdbcDriverInfo[]> {
+  return [];
+}
+
+export async function jdbcPluginStatus(): Promise<JdbcPluginStatus> {
+  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
+}
+
+export async function installJdbcPlugin(): Promise<JdbcPluginStatus> {
+  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
+}
+
+export async function uninstallJdbcPlugin(): Promise<JdbcPluginStatus> {
+  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
 }
 
 export async function loadSavedSqlLibrary(): Promise<SavedSqlLibrary> {

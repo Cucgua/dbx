@@ -43,7 +43,7 @@ async fn main() {
         let db_path = data_dir.join("dbx.db");
         let storage = Storage::open(&db_path).await.expect("Failed to open storage");
         storage.migrate_from_json(&data_dir).await.expect("Failed to migrate JSON data");
-        Arc::new(AppState::new(storage))
+        Arc::new(AppState::new_with_plugin_dir(storage, data_dir.join("plugins")))
     };
 
     // Password hash: env var takes priority, then database
@@ -80,6 +80,7 @@ async fn main() {
         .route("/connection/disconnect", post(routes::connection::disconnect_db))
         .route("/connection/save", post(routes::connection::save_connections))
         .route("/connection/list", get(routes::connection::load_connections))
+        .route("/plugins", get(routes::plugins::list_plugins))
         // Schema
         .route("/schema/databases", get(routes::schema::list_databases))
         .route("/schema/schemas", get(routes::schema::list_schemas))

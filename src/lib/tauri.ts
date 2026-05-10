@@ -9,6 +9,9 @@ import type {
   ForeignKeyInfo,
   TriggerInfo,
   QueryResult,
+  InstalledPlugin,
+  JdbcDriverInfo,
+  JdbcPluginStatus,
   SavedSqlFile,
   SavedSqlFolder,
   SavedSqlLibrary,
@@ -242,6 +245,34 @@ export async function saveConnections(configs: ConnectionConfig[]): Promise<void
 
 export async function loadConnections(): Promise<ConnectionConfig[]> {
   return invoke("load_connections");
+}
+
+export async function listPlugins(): Promise<InstalledPlugin[]> {
+  return invoke("list_plugins");
+}
+
+export async function listJdbcDrivers(): Promise<JdbcDriverInfo[]> {
+  return invoke("list_jdbc_drivers");
+}
+
+export async function importJdbcDrivers(paths: string[]): Promise<JdbcDriverInfo[]> {
+  return invoke("import_jdbc_drivers", { paths });
+}
+
+export async function deleteJdbcDriver(path: string): Promise<JdbcDriverInfo[]> {
+  return invoke("delete_jdbc_driver", { path });
+}
+
+export async function jdbcPluginStatus(): Promise<JdbcPluginStatus> {
+  return invoke("jdbc_plugin_status");
+}
+
+export async function installJdbcPlugin(): Promise<JdbcPluginStatus> {
+  return invoke("install_jdbc_plugin");
+}
+
+export async function uninstallJdbcPlugin(): Promise<JdbcPluginStatus> {
+  return invoke("uninstall_jdbc_plugin");
 }
 
 export async function loadSavedSqlLibrary(): Promise<SavedSqlLibrary> {

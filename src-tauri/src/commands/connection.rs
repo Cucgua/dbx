@@ -130,6 +130,7 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
             )
             .await
             .map(|_| "Connection successful".to_string()),
+            DatabaseType::Jdbc => state.test_external_driver("jdbc", &config).await,
         },
     };
 
@@ -230,6 +231,7 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
             .await?;
             PoolKind::Gaussdb(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
         }
+        DatabaseType::Jdbc => state.external_driver_pool("jdbc", &db_config).await?,
     };
 
     state.connections.lock().await.insert(id.clone(), pool);
@@ -258,6 +260,7 @@ pub async fn disconnect_db(state: State<'_, Arc<AppState>>, connection_id: Strin
                 PoolKind::Elasticsearch(_) => {}
                 PoolKind::Dameng(_) => {}
                 PoolKind::Gaussdb(_) => {}
+                PoolKind::ExternalDriver { .. } => {}
             }
         }
     }

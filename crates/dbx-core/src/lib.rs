@@ -5,6 +5,7 @@ pub mod db;
 pub mod history;
 pub mod models;
 pub mod mongo_ops;
+pub mod plugins;
 pub mod query;
 pub mod query_cancel;
 pub mod redis_ops;

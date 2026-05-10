@@ -125,6 +125,14 @@ pub fn extract_gaussdb(
 pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<db::DatabaseInfo>, String> {
     {
         let connections = state.connections.lock().await;
+        if let Some(PoolKind::ExternalDriver { config, session, .. }) = connections.get(connection_id) {
+            let config = config.clone();
+            let session = session.clone();
+            drop(connections);
+            return session
+                .invoke::<Vec<db::DatabaseInfo>>("listDatabases", serde_json::json!({ "connection": config }))
+                .await;
+        }
         if let Some(client) = extract_clickhouse(&connections, connection_id) {
             drop(connections);
             return db::clickhouse_driver::list_databases(&client).await;
@@ -174,6 +182,14 @@ pub async fn list_schemas_core(state: &AppState, connection_id: &str, database: 
 
     {
         let connections = state.connections.lock().await;
+        if let Some(PoolKind::ExternalDriver { config, session, .. }) = connections.get(&pool_key) {
+            let config = config.clone();
+            let session = session.clone();
+            drop(connections);
+            return session
+                .invoke::<Vec<String>>("listSchemas", serde_json::json!({ "connection": config, "database": database }))
+                .await;
+        }
         if let Some(client) = extract_sqlserver(&connections, &pool_key) {
             drop(connections);
             let mut client = client.lock().await;
@@ -215,6 +231,17 @@ pub async fn list_tables_core(
 
     {
         let connections = state.connections.lock().await;
+        if let Some(PoolKind::ExternalDriver { config, session, .. }) = connections.get(&pool_key) {
+            let config = config.clone();
+            let session = session.clone();
+            drop(connections);
+            return session
+                .invoke::<Vec<db::TableInfo>>(
+                    "listTables",
+                    serde_json::json!({ "connection": config, "database": database, "schema": schema }),
+                )
+                .await;
+        }
         if let Some(con) = extract_duckdb(&connections, &pool_key) {
             drop(connections);
             let con = con.lock().map_err(|e| e.to_string())?;
@@ -274,6 +301,22 @@ pub async fn get_columns_core(
 
     {
         let connections = state.connections.lock().await;
+        if let Some(PoolKind::ExternalDriver { config, session, .. }) = connections.get(&pool_key) {
+            let config = config.clone();
+            let session = session.clone();
+            drop(connections);
+            return session
+                .invoke::<Vec<db::ColumnInfo>>(
+                    "getColumns",
+                    serde_json::json!({
+                        "connection": config,
+                        "database": database,
+                        "schema": schema,
+                        "table": table,
+                    }),
+                )
+                .await;
+        }
         if let Some(con) = extract_duckdb(&connections, &pool_key) {
             drop(connections);
             let con = con.lock().map_err(|e| e.to_string())?;

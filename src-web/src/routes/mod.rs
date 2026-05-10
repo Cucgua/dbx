@@ -3,6 +3,7 @@ pub mod connection;
 pub mod history;
 pub mod layout;
 pub mod mongo;
+pub mod plugins;
 pub mod query;
 pub mod redis;
 pub mod saved_sql;

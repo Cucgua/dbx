@@ -1,12 +1,17 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::db;
 use crate::db::ssh_tunnel::TunnelManager;
 use crate::models::connection::{parse_mongo_first_host, ConnectionConfig, DatabaseType};
+use crate::plugins::{PluginDriverSession, PluginRegistry};
 use crate::query_cancel::RunningQueries;
 use crate::storage::Storage;
+
+pub const JDBC_PLUGIN_NOT_INSTALLED: &str =
+    "JDBC plugin is not installed. Install the optional JDBC plugin to use this connection.";
 
 pub fn expand_tilde(path: &str) -> String {
     if path == "~" || path.starts_with("~/") {
@@ -37,6 +42,7 @@ pub enum PoolKind {
     Elasticsearch(db::elasticsearch_driver::EsClient),
     Dameng(Arc<std::sync::Mutex<db::dm_driver::DmClient>>),
     Gaussdb(Arc<tokio::sync::Mutex<db::gaussdb_driver::GaussdbClient>>),
+    ExternalDriver { driver_id: String, config: ConnectionConfig, session: Arc<PluginDriverSession> },
 }
 
 pub struct AppState {
@@ -45,6 +51,7 @@ pub struct AppState {
     pub running_queries: RunningQueries,
     pub tunnels: TunnelManager,
     pub storage: Storage,
+    pub plugins: PluginRegistry,
 }
 
 pub fn metadata_connection_config(config: &ConnectionConfig) -> ConnectionConfig {
@@ -67,13 +74,39 @@ pub fn database_connection_config(config: &ConnectionConfig, database: Option<&s
 
 impl AppState {
     pub fn new(storage: Storage) -> Self {
+        Self::new_with_plugin_dir(storage, default_plugin_dir())
+    }
+
+    pub fn new_with_plugin_dir(storage: Storage, plugin_dir: PathBuf) -> Self {
         Self {
             connections: Mutex::new(HashMap::new()),
             configs: Mutex::new(HashMap::new()),
             running_queries: RunningQueries::default(),
             tunnels: TunnelManager::new(),
             storage,
+            plugins: PluginRegistry::new(plugin_dir),
         }
+    }
+
+    pub fn jdbc_unavailable_error(&self) -> String {
+        match self.plugins.find_driver("jdbc") {
+            Ok(Some(_)) => "JDBC plugin is installed, but the connection could not be opened.".to_string(),
+            Ok(None) => JDBC_PLUGIN_NOT_INSTALLED.to_string(),
+            Err(err) => format!("Failed to inspect JDBC plugin: {err}"),
+        }
+    }
+
+    pub async fn test_external_driver(&self, driver_id: &str, config: &ConnectionConfig) -> Result<String, String> {
+        let params = serde_json::json!({ "connection": config });
+        self.plugins.invoke_driver::<serde_json::Value>(driver_id, "testConnection", params).await?;
+        Ok("Connection successful".to_string())
+    }
+
+    pub async fn external_driver_pool(&self, driver_id: &str, config: &ConnectionConfig) -> Result<PoolKind, String> {
+        let session = self.plugins.start_driver_session(driver_id).await?;
+        let params = serde_json::json!({ "connection": config });
+        session.invoke::<serde_json::Value>("connect", params).await?;
+        Ok(PoolKind::ExternalDriver { driver_id: driver_id.to_string(), config: config.clone(), session })
     }
 
     pub async fn get_or_create_pool(&self, connection_id: &str, database: Option<&str>) -> Result<String, String> {
@@ -87,7 +120,8 @@ impl AppState {
             return Ok(connection_id.to_string());
         }
 
-        let is_single_conn = matches!(db_type, Some(DatabaseType::Oracle) | Some(DatabaseType::Dameng));
+        let is_single_conn =
+            matches!(db_type, Some(DatabaseType::Oracle) | Some(DatabaseType::Dameng) | Some(DatabaseType::Jdbc));
         let pool_key = if is_single_conn {
             connection_id.to_string()
         } else {
@@ -210,6 +244,7 @@ impl AppState {
                 .await?;
                 PoolKind::Gaussdb(Arc::new(tokio::sync::Mutex::new(client)))
             }
+            DatabaseType::Jdbc => self.external_driver_pool("jdbc", &db_config).await?,
         };
 
         self.connections.lock().await.insert(pool_key.clone(), pool);
@@ -285,6 +320,11 @@ impl AppState {
     }
 }
 
+fn default_plugin_dir() -> PathBuf {
+    let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".dbx").join("plugins")
+}
+
 pub fn connection_url_for_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> String {
     if host == config.host && port == config.port {
         config.connection_url()
@@ -305,6 +345,7 @@ pub async fn probe_connection_endpoint(config: &ConnectionConfig, host: &str, po
     match config.db_type {
         DatabaseType::Sqlite | DatabaseType::DuckDb => Ok(()),
         DatabaseType::MongoDb if config.connection_string.as_deref().is_some_and(|value| !value.is_empty()) => Ok(()),
+        DatabaseType::Jdbc => Ok(()),
         _ => db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port).await,
     }
 }
@@ -354,6 +395,8 @@ mod tests {
             ssl: false,
             sysdba: false,
             connection_string: None,
+            jdbc_driver_class: None,
+            jdbc_driver_paths: Vec::new(),
         }
     }
 
