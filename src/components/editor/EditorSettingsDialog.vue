@@ -102,6 +102,15 @@ function setAppLayout(value: "separated" | "classic") {
 
 const activeSettingsTab = ref("editor");
 const isWeb = !isTauriRuntime();
+
+function openExternalUrl(url: string) {
+  if (isTauriRuntime()) {
+    import("@tauri-apps/plugin-shell").then(({ open }) => open(url));
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 const jdbcDrivers = ref<JdbcDriverInfo[]>([]);
 const isLoadingJdbcDrivers = ref(false);
 const jdbcPluginStatus = ref<JdbcPluginStatus | null>(null);
@@ -713,7 +722,12 @@ watch(
                 {{ t("settings.project") }}
               </div>
               <div class="mt-2 text-sm font-medium">{{ t("settings.openSource") }}</div>
-              <div class="mt-1 text-sm text-muted-foreground">github.com/t8y2/dbx</div>
+              <div
+                class="mt-1 text-sm text-primary cursor-pointer hover:underline"
+                @click="openExternalUrl('https://github.com/t8y2/dbx')"
+              >
+                github.com/t8y2/dbx
+              </div>
             </div>
           </div>
 
