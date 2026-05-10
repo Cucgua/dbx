@@ -43,6 +43,9 @@ pub struct ConnectionConfig {
     pub sysdba: bool,
     #[serde(default)]
     pub connection_string: Option<String>,
+    /// Typed configuration for external tabular sources.
+    #[serde(default)]
+    pub external_config: Option<serde_json::Value>,
     #[serde(default)]
     pub jdbc_driver_class: Option<String>,
     #[serde(default)]
@@ -57,7 +60,7 @@ pub fn default_ssh_connect_timeout_secs() -> u64 {
     5
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseType {
     Mysql,
@@ -397,6 +400,7 @@ mod tests {
             ssl: false,
             sysdba: false,
             connection_string: None,
+            external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
         }

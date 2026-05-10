@@ -237,6 +237,22 @@ pub async fn do_execute(
             .await
             .map(truncate_result)
         }
+        PoolKind::ExternalTabular(ext_pool) => {
+            if !starts_with_executable_sql_keyword(sql, &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN", "PRAGMA"]) {
+                return Err("External data sources are read-only. Only SELECT queries are supported.".to_string());
+            }
+            let con = ext_pool.cache.clone();
+            let sql = sql.to_string();
+            drop(connections);
+            wait_for_query(cancel_token, async move {
+                let task = tokio::task::spawn_blocking(move || {
+                    let con = con.lock().map_err(|e| e.to_string())?;
+                    duckdb_execute(&con, &sql)
+                });
+                task.await.map_err(|e| e.to_string())?
+            })
+            .await
+        }
         PoolKind::ExternalDriver { config, session, .. } => {
             let config = config.clone();
             let session = session.clone();
@@ -414,6 +430,7 @@ pub async fn execute_statements_in_transaction(
             | PoolKind::MongoDb(_)
             | PoolKind::Oracle(_)
             | PoolKind::Elasticsearch(_)
+            | PoolKind::ExternalTabular(_)
             | PoolKind::ExternalDriver { .. } => TxPath::None,
         })
     };

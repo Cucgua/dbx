@@ -72,6 +72,16 @@ pub fn extract_duckdb(
     }
 }
 
+pub fn extract_external(
+    connections: &HashMap<String, PoolKind>,
+    key: &str,
+) -> Option<Arc<crate::external::ExternalPool>> {
+    match connections.get(key)? {
+        PoolKind::ExternalTabular(pool) => Some(pool.clone()),
+        _ => None,
+    }
+}
+
 pub fn extract_sqlserver(
     connections: &HashMap<String, PoolKind>,
     key: &str,
@@ -122,6 +132,9 @@ pub fn extract_gaussdb(
 pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<db::DatabaseInfo>, String> {
     {
         let connections = state.connections.lock().await;
+        if extract_external(&connections, connection_id).is_some() {
+            return Ok(vec![db::DatabaseInfo { name: "main".to_string() }]);
+        }
         if let Some(PoolKind::ExternalDriver { config, session, .. }) = connections.get(connection_id) {
             let config = config.clone();
             let session = session.clone();
@@ -230,6 +243,16 @@ pub async fn list_tables_core(
 
     {
         let connections = state.connections.lock().await;
+        if let Some(ext_pool) = extract_external(&connections, &pool_key) {
+            drop(connections);
+            let cache = ext_pool.cache.clone();
+            return tokio::task::spawn_blocking(move || {
+                let con = cache.lock().map_err(|e| e.to_string())?;
+                duckdb_query_tables(&con)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
         if let Some(PoolKind::ExternalDriver { config, session, .. }) = connections.get(&pool_key) {
             let config = config.clone();
             let session = session.clone();
@@ -301,6 +324,17 @@ pub async fn get_columns_core(
 
     {
         let connections = state.connections.lock().await;
+        if let Some(ext_pool) = extract_external(&connections, &pool_key) {
+            drop(connections);
+            let cache = ext_pool.cache.clone();
+            let table = table.to_string();
+            return tokio::task::spawn_blocking(move || {
+                let con = cache.lock().map_err(|e| e.to_string())?;
+                duckdb_query_columns(&con, &table)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
         if let Some(PoolKind::ExternalDriver { config, session, .. }) = connections.get(&pool_key) {
             let config = config.clone();
             let session = session.clone();
