@@ -2,6 +2,7 @@ import type {
   ConnectionConfig,
   DatabaseInfo,
   TableInfo,
+  ObjectInfo,
   ColumnInfo,
   IndexInfo,
   ForeignKeyInfo,
@@ -168,6 +169,10 @@ export async function listSchemas(connectionId: string, database: string): Promi
 
 export async function listTables(connectionId: string, database: string, schema: string): Promise<TableInfo[]> {
   return get(`/api/schema/tables?${qs({ connection_id: connectionId, database, schema })}`);
+}
+
+export async function listObjects(connectionId: string, database: string, schema: string): Promise<ObjectInfo[]> {
+  return get(`/api/schema/objects?${qs({ connection_id: connectionId, database, schema })}`);
 }
 
 export async function getColumns(

@@ -4,6 +4,7 @@ import type {
   ConnectionConfig,
   DatabaseInfo,
   TableInfo,
+  ObjectInfo,
   ColumnInfo,
   IndexInfo,
   ForeignKeyInfo,
@@ -137,6 +138,10 @@ export async function deleteSchemaCachePrefix(prefix: string): Promise<void> {
 
 export async function listTables(connectionId: string, database: string, schema: string): Promise<TableInfo[]> {
   return invoke("list_tables", { connectionId, database, schema });
+}
+
+export async function listObjects(connectionId: string, database: string, schema: string): Promise<ObjectInfo[]> {
+  return invoke("list_objects", { connectionId, database, schema });
 }
 
 export async function listSchemas(connectionId: string, database: string): Promise<string[]> {

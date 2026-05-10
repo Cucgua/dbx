@@ -313,6 +313,59 @@ pub async fn list_tables_core(
     }
 }
 
+pub async fn list_objects_core(
+    state: &AppState,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+) -> Result<Vec<db::ObjectInfo>, String> {
+    let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
+
+    {
+        let connections = state.connections.lock().await;
+        if let Some(ext_pool) = extract_external(&connections, &pool_key) {
+            drop(connections);
+            let cache = ext_pool.cache.clone();
+            return tokio::task::spawn_blocking(move || {
+                let con = cache.lock().map_err(|e| e.to_string())?;
+                Ok(duckdb_query_tables(&con)?
+                    .into_iter()
+                    .map(|table| db::ObjectInfo {
+                        name: table.name,
+                        object_type: table.table_type,
+                        schema: None,
+                        comment: table.comment,
+                    })
+                    .collect())
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        if let Some(client) = extract_sqlserver(&connections, &pool_key) {
+            drop(connections);
+            let mut client = client.lock().await;
+            return db::sqlserver::list_objects(&mut client, schema).await;
+        }
+        if let Some(pool) = extract_oracle(&connections, &pool_key) {
+            drop(connections);
+            let client = pool.client();
+            let client = client.lock().await;
+            return db::oracle_driver::list_objects(&*client, schema).await;
+        }
+    }
+
+    Ok(list_tables_core(state, connection_id, database, schema)
+        .await?
+        .into_iter()
+        .map(|table| db::ObjectInfo {
+            name: table.name,
+            object_type: table.table_type,
+            schema: if schema.is_empty() { None } else { Some(schema.to_string()) },
+            comment: table.comment,
+        })
+        .collect())
+}
+
 pub async fn get_columns_core(
     state: &AppState,
     connection_id: &str,

@@ -1,24 +1,24 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { RecycleScroller } from "vue-virtual-scroller";
-import { Loader2, RefreshCw, Search, Table2, Eye } from "lucide-vue-next";
+import { Braces, Eye, Loader2, RefreshCw, Search, ScrollText, Table2 } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as api from "@/lib/api";
-import type { ConnectionConfig, TableInfo } from "@/types/database";
+import type { ConnectionConfig, ObjectInfo } from "@/types/database";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
 
 type ObjectRow = {
   id: string;
   name: string;
   schema?: string;
-  type: "TABLE" | "VIEW";
+  type: "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
   comment?: string | null;
 };
 
-type ObjectFilter = "all" | "tables" | "views";
+type ObjectFilter = "all" | "tables" | "views" | "procedures" | "functions";
 
 const props = defineProps<{
   connection: ConnectionConfig;
@@ -46,7 +46,22 @@ let loadId = 0;
 const needsSchema = computed(() => isSchemaAware(props.connection.db_type));
 const tableCount = computed(() => rows.value.filter((row) => row.type === "TABLE").length);
 const viewCount = computed(() => rows.value.filter((row) => row.type === "VIEW").length);
-const showObjectFilter = computed(() => tableCount.value > 0 && viewCount.value > 0);
+const procedureCount = computed(() => rows.value.filter((row) => row.type === "PROCEDURE").length);
+const functionCount = computed(() => rows.value.filter((row) => row.type === "FUNCTION").length);
+const objectFilters = computed<ObjectFilter[]>(() =>
+  (
+    [
+      ["all", rows.value.length],
+      ["tables", tableCount.value],
+      ["views", viewCount.value],
+      ["procedures", procedureCount.value],
+      ["functions", functionCount.value],
+    ] as Array<[ObjectFilter, number]>
+  )
+    .filter(([filter, count]) => filter === "all" || count > 0)
+    .map(([filter]) => filter),
+);
+const showObjectFilter = computed(() => objectFilters.value.length > 2);
 const hasComments = computed(() => rows.value.some((row) => row.comment?.trim()));
 const gridTemplateColumns = computed(() =>
   hasComments.value ? "minmax(0,1fr) 120px 160px minmax(160px,0.7fr)" : "minmax(0,1fr) 120px 160px",
@@ -63,21 +78,47 @@ const searchedRows = computed(() => {
 const filteredRows = computed(() => {
   if (objectFilter.value === "tables") return searchedRows.value.filter((row) => row.type === "TABLE");
   if (objectFilter.value === "views") return searchedRows.value.filter((row) => row.type === "VIEW");
+  if (objectFilter.value === "procedures") return searchedRows.value.filter((row) => row.type === "PROCEDURE");
+  if (objectFilter.value === "functions") return searchedRows.value.filter((row) => row.type === "FUNCTION");
   return searchedRows.value;
 });
 
 function normalizeType(type: string): ObjectRow["type"] {
   const value = type.toUpperCase();
   if (value.includes("VIEW")) return "VIEW";
+  if (value.includes("PROC")) return "PROCEDURE";
+  if (value.includes("FUNC")) return "FUNCTION";
   return "TABLE";
 }
 
 function iconFor(row: ObjectRow) {
-  return row.type === "VIEW" ? Eye : Table2;
+  if (row.type === "VIEW") return Eye;
+  if (row.type === "PROCEDURE") return ScrollText;
+  if (row.type === "FUNCTION") return Braces;
+  return Table2;
 }
 
 function typeLabel(type: ObjectRow["type"]) {
-  return type === "VIEW" ? t("objects.view") : t("objects.table");
+  if (type === "VIEW") return t("objects.view");
+  if (type === "PROCEDURE") return t("objects.procedure");
+  if (type === "FUNCTION") return t("objects.function");
+  return t("objects.table");
+}
+
+function iconClass(type: ObjectRow["type"]) {
+  if (type === "VIEW") return "text-purple-500";
+  if (type === "PROCEDURE") return "text-blue-500";
+  if (type === "FUNCTION") return "text-amber-500";
+  return "text-green-500";
+}
+
+function canOpen(row: ObjectRow) {
+  return row.type === "TABLE" || row.type === "VIEW";
+}
+
+function openRow(row: ObjectRow) {
+  if (!canOpen(row)) return;
+  emit("openTable", { tableName: row.name, schema: row.schema });
 }
 
 async function loadSchemas() {
@@ -105,14 +146,14 @@ async function loadObjects() {
   rows.value = [];
   try {
     const schema = needsSchema.value ? selectedSchema.value || "" : props.database;
-    const tables: TableInfo[] = await api.listTables(props.connection.id, props.database, schema);
+    const objects: ObjectInfo[] = await api.listObjects(props.connection.id, props.database, schema);
     if (id !== loadId) return;
-    rows.value = tables.map((table) => ({
-      id: `${schema || props.database}:${table.name}:${table.table_type}`,
-      name: table.name,
-      schema: needsSchema.value ? schema : undefined,
-      type: normalizeType(table.table_type),
-      comment: table.comment,
+    rows.value = objects.map((object) => ({
+      id: `${object.schema || schema || props.database}:${object.name}:${object.object_type}`,
+      name: object.name,
+      schema: object.schema || (needsSchema.value ? schema : undefined),
+      type: normalizeType(object.object_type),
+      comment: object.comment,
     }));
   } catch (e: any) {
     if (id !== loadId) return;
@@ -136,11 +177,22 @@ function onSchemaChange(value: any) {
 function filterCount(filter: ObjectFilter) {
   if (filter === "tables") return tableCount.value;
   if (filter === "views") return viewCount.value;
+  if (filter === "procedures") return procedureCount.value;
+  if (filter === "functions") return functionCount.value;
   return rows.value.length;
 }
 
 function filterLabel(filter: ObjectFilter) {
-  const key = filter === "tables" ? "objects.tables" : filter === "views" ? "objects.views" : "objects.all";
+  const key =
+    filter === "tables"
+      ? "objects.tables"
+      : filter === "views"
+        ? "objects.views"
+        : filter === "procedures"
+          ? "objects.procedures"
+          : filter === "functions"
+            ? "objects.functions"
+            : "objects.all";
   return `${t(key)} ${filterCount(filter)}`;
 }
 
@@ -171,7 +223,7 @@ watch(
         <Input v-model="search" class="h-7 text-xs" :placeholder="t('objects.search')" />
         <div v-if="showObjectFilter" class="flex h-7 shrink-0 items-center rounded border bg-muted/20 p-0.5">
           <button
-            v-for="filter in ['all', 'tables', 'views'] as ObjectFilter[]"
+            v-for="filter in objectFilters"
             :key="filter"
             type="button"
             class="h-6 rounded-sm px-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
@@ -223,24 +275,21 @@ watch(
         <div class="truncate">{{ t("objects.schemaColumn") }}</div>
         <div v-if="hasComments" class="truncate">{{ t("objects.comment") }}</div>
       </div>
-      <RecycleScroller class="flex-1 min-h-0" :items="filteredRows" :item-size="36" key-field="id">
+      <RecycleScroller class="flex-1 min-h-0" :items="filteredRows" :item-size="38" key-field="id">
         <template #default="{ item }">
           <div
-            class="grid h-9 cursor-pointer items-center gap-3 border-b px-3 text-xs hover:bg-accent/50"
+            class="grid h-[38px] cursor-pointer items-center gap-3 border-b px-3 hover:bg-accent/50"
+            :class="{ 'cursor-default hover:bg-transparent': !canOpen(item) }"
             :style="{ gridTemplateColumns }"
-            @click="emit('openTable', { tableName: item.name, schema: item.schema })"
+            @click="openRow(item)"
           >
             <div class="flex min-w-0 items-center gap-2">
-              <component
-                :is="iconFor(item)"
-                class="h-3.5 w-3.5 shrink-0"
-                :class="item.type === 'VIEW' ? 'text-purple-500' : 'text-green-500'"
-              />
-              <span class="truncate font-medium">{{ item.name }}</span>
+              <component :is="iconFor(item)" class="h-3.5 w-3.5 shrink-0" :class="iconClass(item.type)" />
+              <span class="truncate text-[13px] font-medium text-foreground">{{ item.name }}</span>
             </div>
-            <div class="truncate text-muted-foreground">{{ typeLabel(item.type) }}</div>
-            <div class="truncate text-muted-foreground">{{ item.schema || props.database }}</div>
-            <div v-if="hasComments" class="truncate text-muted-foreground" :title="item.comment || ''">
+            <div class="truncate text-xs text-muted-foreground">{{ typeLabel(item.type) }}</div>
+            <div class="truncate text-xs text-muted-foreground">{{ item.schema || props.database }}</div>
+            <div v-if="hasComments" class="truncate text-xs text-muted-foreground" :title="item.comment || ''">
               {{ item.comment || "" }}
             </div>
           </div>

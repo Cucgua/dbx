@@ -135,6 +135,46 @@ pub async fn list_tables(client: &mut SqlServerClient, schema: &str) -> Result<V
         .collect())
 }
 
+pub async fn list_objects(client: &mut SqlServerClient, schema: &str) -> Result<Vec<crate::types::ObjectInfo>, String> {
+    let sql = format!(
+        "SELECT o.name, \
+         CASE o.type \
+           WHEN 'U' THEN 'TABLE' \
+           WHEN 'V' THEN 'VIEW' \
+           WHEN 'P' THEN 'PROCEDURE' \
+           WHEN 'FN' THEN 'FUNCTION' \
+           WHEN 'IF' THEN 'FUNCTION' \
+           WHEN 'TF' THEN 'FUNCTION' \
+           WHEN 'FS' THEN 'FUNCTION' \
+           WHEN 'FT' THEN 'FUNCTION' \
+           ELSE o.type_desc \
+         END AS object_type \
+         FROM sys.objects o \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         WHERE s.name = '{}' \
+           AND o.type IN ('U','V','P','FN','IF','TF','FS','FT') \
+           AND o.is_ms_shipped = 0 \
+         ORDER BY CASE o.type \
+           WHEN 'U' THEN 0 \
+           WHEN 'V' THEN 1 \
+           WHEN 'P' THEN 2 \
+           ELSE 3 \
+         END, o.name",
+        schema.replace('\'', "''")
+    );
+    let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| crate::types::ObjectInfo {
+            name: row.get::<&str, _>(0).unwrap_or("").to_string(),
+            object_type: row.get::<&str, _>(1).unwrap_or("TABLE").to_string(),
+            schema: Some(schema.to_string()),
+            comment: None,
+        })
+        .collect())
+}
+
 pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let sql = format!(
         "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.IS_NULLABLE, c.COLUMN_DEFAULT, \

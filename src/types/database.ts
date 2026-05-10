@@ -91,6 +91,15 @@ export interface TableInfo {
   comment?: string | null;
 }
 
+export type DatabaseObjectType = "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
+
+export interface ObjectInfo {
+  name: string;
+  object_type: DatabaseObjectType | string;
+  schema?: string | null;
+  comment?: string | null;
+}
+
 export interface ColumnInfo {
   name: string;
   data_type: string;

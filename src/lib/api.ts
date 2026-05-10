@@ -56,6 +56,7 @@ export const loadSchemaCache = forward("loadSchemaCache");
 export const deleteSchemaCachePrefix = forward("deleteSchemaCachePrefix");
 export const listSchemas = forward("listSchemas");
 export const listTables = forward("listTables");
+export const listObjects = forward("listObjects");
 export const getColumns = forward("getColumns");
 export const listIndexes = forward("listIndexes");
 export const listForeignKeys = forward("listForeignKeys");

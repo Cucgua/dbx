@@ -129,6 +129,44 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
         .collect())
 }
 
+pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate::types::ObjectInfo>, String> {
+    let s = quote_literal(schema);
+    let sql = format!(
+        "SELECT o.OBJECT_NAME, \
+         CASE o.OBJECT_TYPE \
+           WHEN 'TABLE' THEN 'TABLE' \
+           WHEN 'VIEW' THEN 'VIEW' \
+           WHEN 'PROCEDURE' THEN 'PROCEDURE' \
+           WHEN 'FUNCTION' THEN 'FUNCTION' \
+           ELSE o.OBJECT_TYPE \
+         END AS OBJECT_TYPE, \
+         c.COMMENTS \
+         FROM ALL_OBJECTS o \
+         LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME \
+         WHERE o.OWNER = {s} \
+           AND o.OBJECT_TYPE IN ('TABLE','VIEW','PROCEDURE','FUNCTION') \
+           AND o.OBJECT_NAME NOT LIKE 'BIN$%' \
+         ORDER BY CASE o.OBJECT_TYPE \
+           WHEN 'TABLE' THEN 0 \
+           WHEN 'VIEW' THEN 1 \
+           WHEN 'PROCEDURE' THEN 2 \
+           WHEN 'FUNCTION' THEN 3 \
+           ELSE 4 \
+         END, o.OBJECT_NAME"
+    );
+    let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| crate::types::ObjectInfo {
+            name: row.get_string(0).unwrap_or("").to_string(),
+            object_type: row.get_string(1).unwrap_or("TABLE").to_string(),
+            schema: Some(schema.to_string()),
+            comment: row.get_string(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+        })
+        .collect())
+}
+
 pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     log::debug!("[oracle] get_columns: schema={schema}, table={table}");
     let s = quote_literal(schema);

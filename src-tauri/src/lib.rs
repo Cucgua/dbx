@@ -82,6 +82,7 @@ pub fn run() {
             commands::plugins::uninstall_jdbc_plugin,
             commands::schema::list_databases,
             commands::schema::list_tables,
+            commands::schema::list_objects,
             commands::schema::list_schemas,
             commands::schema::get_columns,
             commands::schema::list_indexes,
