@@ -1349,11 +1349,6 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             class="w-3.5 h-3.5 shrink-0"
             :class="getIconInfo(node)?.colorClass"
           />
-          <span
-            v-if="node.type === 'connection'"
-            class="h-3 w-1.5 rounded-full shrink-0"
-            :style="{ backgroundColor: connectionColor || '#9ca3af' }"
-          />
           <input
             v-if="isRenamingGroup"
             v-model="renameInput"

@@ -115,6 +115,7 @@ const { onExecuteSql, onReloadData, onPaginate, onSort } = useDataGridActions(ac
 const { setupTauriListeners } = useTauriEvents({ openTableTarget });
 
 const appVersion = ref("");
+const isClassicLayout = computed(() => settingsStore.editorSettings.appLayout === "classic");
 const hasSqlFileConnections = computed(() =>
   connectionStore.connections.some((c) => !SQL_FILE_UNSUPPORTED_TYPES.has(c.db_type)),
 );
@@ -511,15 +512,28 @@ onUnmounted(() => {
           @open-sql-file="dialogs.showSqlFileDialog.value = true"
         />
 
-        <div class="app-panel-gutter flex-1 flex min-h-0 gap-1 p-1">
+        <div
+          :class="
+            isClassicLayout
+              ? 'app-layout-classic flex-1 flex min-h-0'
+              : 'app-panel-gutter flex-1 flex min-h-0 gap-1 p-1'
+          "
+        >
           <AppSidebar
             :sidebar-width="sidebarWidth"
+            :classic-layout="isClassicLayout"
             @import="dialogs.onImportClick"
             @export="dialogs.onExportClick"
             @start-resize="startSidebarResize"
           />
 
-          <div class="flex-1 min-w-0 overflow-hidden rounded-md border border-border/80 bg-background">
+          <div
+            :class="
+              isClassicLayout
+                ? 'flex-1 min-w-0'
+                : 'flex-1 min-w-0 overflow-hidden rounded-md border border-border/80 bg-background'
+            "
+          >
             <div class="h-full flex flex-col min-w-0">
               <AppTabBar />
               <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
@@ -590,7 +604,11 @@ onUnmounted(() => {
 
           <div
             v-if="showAiPanel"
-            class="h-full shrink-0 relative overflow-hidden rounded-md border border-border/80 bg-background"
+            :class="
+              isClassicLayout
+                ? 'h-full shrink-0 relative bg-background'
+                : 'h-full shrink-0 relative overflow-hidden rounded-md border border-border/80 bg-background'
+            "
             :style="{ width: aiPanelWidth + 'px' }"
           >
             <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startAiPanelResize" />
@@ -608,7 +626,11 @@ onUnmounted(() => {
 
           <div
             v-if="showHistory"
-            class="h-full shrink-0 relative overflow-hidden rounded-md border border-border/80 bg-background"
+            :class="
+              isClassicLayout
+                ? 'h-full shrink-0 relative bg-background'
+                : 'h-full shrink-0 relative overflow-hidden rounded-md border border-border/80 bg-background'
+            "
             :style="{ width: historyWidth + 'px' }"
           >
             <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startHistoryResize" />

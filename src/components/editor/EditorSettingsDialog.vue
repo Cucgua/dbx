@@ -31,6 +31,7 @@ const editFontSize = ref(settingsStore.editorSettings.fontSize);
 const editTheme = ref(settingsStore.editorSettings.theme);
 const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
 const editWordWrap = ref(settingsStore.editorSettings.wordWrap);
+const editAppLayout = ref(settingsStore.editorSettings.appLayout);
 
 // Sync from store when dialog opens
 watch(
@@ -42,6 +43,7 @@ watch(
       editTheme.value = settingsStore.editorSettings.theme;
       editExecuteMode.value = settingsStore.editorSettings.executeMode;
       editWordWrap.value = settingsStore.editorSettings.wordWrap;
+      editAppLayout.value = settingsStore.editorSettings.appLayout;
     }
   },
 );
@@ -52,7 +54,8 @@ function hasChanges(): boolean {
     editFontSize.value !== settingsStore.editorSettings.fontSize ||
     editTheme.value !== settingsStore.editorSettings.theme ||
     editExecuteMode.value !== settingsStore.editorSettings.executeMode ||
-    editWordWrap.value !== settingsStore.editorSettings.wordWrap
+    editWordWrap.value !== settingsStore.editorSettings.wordWrap ||
+    editAppLayout.value !== settingsStore.editorSettings.appLayout
   );
 }
 
@@ -63,6 +66,7 @@ function applySettings() {
     theme: editTheme.value,
     executeMode: editExecuteMode.value,
     wordWrap: editWordWrap.value,
+    appLayout: editAppLayout.value,
   });
   emit("update:open", false);
 }
@@ -73,6 +77,7 @@ function resetDefaults() {
   editTheme.value = DEFAULT_EDITOR_SETTINGS.theme;
   editExecuteMode.value = DEFAULT_EDITOR_SETTINGS.executeMode;
   editWordWrap.value = DEFAULT_EDITOR_SETTINGS.wordWrap;
+  editAppLayout.value = DEFAULT_EDITOR_SETTINGS.appLayout;
 }
 
 function onExecuteModeChange(v: any) {
@@ -85,6 +90,10 @@ function onFontFamilyChange(v: any) {
 
 function onThemeChange(v: any) {
   if (typeof v === "string") editTheme.value = v as typeof DEFAULT_EDITOR_SETTINGS.theme;
+}
+
+function setAppLayout(value: "separated" | "classic") {
+  editAppLayout.value = value;
 }
 
 const activeSettingsTab = ref("editor");
@@ -251,6 +260,7 @@ watch(
       <Tabs v-model="activeSettingsTab">
         <TabsList class="w-full">
           <TabsTrigger value="editor" class="flex-1">{{ t("settings.editorTab") }}</TabsTrigger>
+          <TabsTrigger value="appearance" class="flex-1">{{ t("settings.appearanceTab") }}</TabsTrigger>
           <TabsTrigger v-if="isWeb" value="security" class="flex-1">{{ t("settings.securityTab") }}</TabsTrigger>
           <TabsTrigger value="about" class="flex-1">{{ t("settings.aboutTab") }}</TabsTrigger>
         </TabsList>
@@ -330,6 +340,8 @@ watch(
             </Select>
           </div>
 
+          <Separator />
+
           <div class="space-y-2">
             <Label>{{ t("settings.executeMode") }}</Label>
             <Select :model-value="editExecuteMode" @update:model-value="onExecuteModeChange">
@@ -367,6 +379,52 @@ watch(
               "
             >
               <div ref="previewRef" style="min-width: 100%" />
+            </div>
+          </div>
+
+          <DialogFooter class="border-t-0 bg-transparent gap-2 sm:gap-0">
+            <Button variant="outline" @click="resetDefaults">
+              {{ t("settings.resetDefaults") }}
+            </Button>
+            <div class="flex-1" />
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+            <Button :disabled="!hasChanges()" @click="applySettings">
+              {{ t("settings.apply") }}
+            </Button>
+          </DialogFooter>
+        </TabsContent>
+
+        <TabsContent value="appearance" class="space-y-5 py-2">
+          <div class="space-y-2">
+            <Label>{{ t("settings.appLayout") }}</Label>
+            <p class="text-xs text-muted-foreground">{{ t("settings.appLayoutDescription") }}</p>
+            <div class="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                class="h-auto justify-start p-3"
+                :class="editAppLayout === 'separated' ? 'border-primary bg-primary/10' : ''"
+                @click="setAppLayout('separated')"
+              >
+                <div class="text-left">
+                  <div class="text-sm font-medium">{{ t("settings.appLayoutSeparated") }}</div>
+                  <div class="text-xs text-muted-foreground">{{ t("settings.appLayoutSeparatedDescription") }}</div>
+                </div>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                class="h-auto justify-start p-3"
+                :class="editAppLayout === 'classic' ? 'border-primary bg-primary/10' : ''"
+                @click="setAppLayout('classic')"
+              >
+                <div class="text-left">
+                  <div class="text-sm font-medium">{{ t("settings.appLayoutClassic") }}</div>
+                  <div class="text-xs text-muted-foreground">{{ t("settings.appLayoutClassicDescription") }}</div>
+                </div>
+              </Button>
             </div>
           </div>
 

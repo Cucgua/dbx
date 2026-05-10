@@ -168,6 +168,24 @@
 .dark .app-panel-gutter {
   background: oklch(0.18 0 0);
 }
+.app-layout-classic .panel-resize-handle {
+  width: 3px;
+}
+.app-layout-classic .panel-resize-handle--right {
+  right: 0;
+  border-right: 1px solid var(--border);
+}
+.app-layout-classic .panel-resize-handle--left {
+  left: 0;
+  border-left: 1px solid var(--border);
+}
+.app-layout-classic .panel-resize-handle::before {
+  display: none;
+}
+.app-layout-classic .panel-resize-handle:hover,
+.app-layout-classic .panel-resize-handle:active {
+  background: oklch(0.6 0.15 250);
+}
 
 .panel-resize-handle {
   position: absolute;

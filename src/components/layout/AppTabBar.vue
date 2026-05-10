@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/context-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useQueryStore } from "@/stores/queryStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useTabScroll } from "@/composables/useTabScroll";
 import { connectionColor, tabDisplayTitle, tabTooltipLines } from "@/lib/tabPresentation";
 import { hexToRgba } from "@/lib/color";
@@ -18,6 +19,7 @@ import type { QueryTab } from "@/types/database";
 
 const { t } = useI18n();
 const queryStore = useQueryStore();
+const settingsStore = useSettingsStore();
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const { canScrollLeft, canScrollRight, updateScrollButtons, scrollTabs } = useTabScroll(tabsContainerRef);
@@ -47,8 +49,23 @@ watch(
 function tabColorStyle(tab: QueryTab) {
   const color = connectionColor(tab.connectionId);
   const isActive = tab.id === queryStore.activeTabId;
+  const isClassic = settingsStore.editorSettings.appLayout === "classic";
   if (!color) {
-    return isActive ? { borderColor: "var(--ring)" } : undefined;
+    if (isClassic) {
+      return isActive ? { boxShadow: "0 1px 0 0 var(--color-background)" } : undefined;
+    }
+    return isActive
+      ? {
+          borderColor: "var(--ring)",
+        }
+      : undefined;
+  }
+
+  if (isClassic) {
+    return {
+      backgroundColor: hexToRgba(color, isActive ? 0.16 : 0.07),
+      boxShadow: isActive ? `inset 0 -2px 0 ${color}` : undefined,
+    };
   }
 
   return {
@@ -59,7 +76,15 @@ function tabColorStyle(tab: QueryTab) {
 </script>
 
 <template>
-  <div v-if="queryStore.tabs.length > 0" class="relative h-10 flex items-center border-b bg-background px-2 shrink-0">
+  <div
+    v-if="queryStore.tabs.length > 0"
+    class="relative flex border-b shrink-0"
+    :class="
+      settingsStore.editorSettings.appLayout === 'classic'
+        ? 'h-9 items-stretch bg-muted'
+        : 'h-10 items-center bg-background px-2'
+    "
+  >
     <button
       v-if="canScrollLeft"
       class="absolute left-0 z-10 h-full pl-1 pr-6 bg-linear-to-r from-background from-40% to-transparent text-muted-foreground hover:text-foreground"
@@ -70,20 +95,31 @@ function tabColorStyle(tab: QueryTab) {
     </button>
     <div
       ref="tabsContainerRef"
-      class="flex-1 flex items-center gap-1.5 overflow-x-auto min-w-0"
+      class="flex-1 flex items-center overflow-x-auto min-w-0"
+      :class="settingsStore.editorSettings.appLayout === 'classic' ? '' : 'gap-1.5'"
       style="-ms-overflow-style: none; scrollbar-width: none; -webkit-overflow-scrolling: touch"
       @scroll="updateScrollButtons"
     >
       <ContextMenu v-for="tab in queryStore.tabs" :key="tab.id">
-        <ContextMenuTrigger>
+        <ContextMenuTrigger :class="settingsStore.editorSettings.appLayout === 'classic' ? 'h-full' : ''">
           <Tooltip>
             <TooltipTrigger as-child>
               <div
-                class="group flex h-7 min-w-38 items-center gap-1 rounded-md border px-2 text-xs cursor-pointer transition-colors whitespace-nowrap"
+                class="group flex min-w-38 items-center gap-1 px-2 text-xs cursor-pointer transition-colors whitespace-nowrap"
                 :class="
-                  tab.id === queryStore.activeTabId
-                    ? 'text-foreground font-medium'
-                    : 'border-border/60 text-foreground/70 hover:border-border hover:text-foreground/90'
+                  settingsStore.editorSettings.appLayout === 'classic'
+                    ? [
+                        'h-full border-r border-border/50',
+                        tab.id === queryStore.activeTabId
+                          ? 'bg-background text-foreground font-medium'
+                          : 'text-foreground/70 hover:text-foreground/90',
+                      ]
+                    : [
+                        'h-7 rounded-md border',
+                        tab.id === queryStore.activeTabId
+                          ? 'text-foreground font-medium'
+                          : 'border-border/60 text-foreground/70 hover:border-border hover:text-foreground/90',
+                      ]
                 "
                 :style="tabColorStyle(tab)"
                 :data-active-tab="tab.id === queryStore.activeTabId"
