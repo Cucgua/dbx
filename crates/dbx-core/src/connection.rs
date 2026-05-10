@@ -158,13 +158,14 @@ impl AppState {
             configs.get(connection_id).map(|c| c.db_type.clone())
         };
 
-        let is_embedded = matches!(db_type, Some(DatabaseType::Sqlite) | Some(DatabaseType::DuckDb));
-        if is_embedded {
-            return Ok(connection_id.to_string());
-        }
-
-        let is_single_conn =
-            matches!(db_type, Some(DatabaseType::Oracle) | Some(DatabaseType::Dameng) | Some(DatabaseType::Jdbc));
+        let is_single_conn = matches!(
+            db_type,
+            Some(DatabaseType::Sqlite)
+                | Some(DatabaseType::DuckDb)
+                | Some(DatabaseType::Oracle)
+                | Some(DatabaseType::Dameng)
+                | Some(DatabaseType::Jdbc)
+        );
         let pool_key = if is_single_conn {
             connection_id.to_string()
         } else {
@@ -410,8 +411,10 @@ async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &sqlx::mysql::My
 
 #[cfg(test)]
 mod tests {
-    use super::{database_connection_config, metadata_connection_config};
+    use super::{database_connection_config, metadata_connection_config, AppState};
     use crate::models::connection::{ConnectionConfig, DatabaseType};
+    use crate::schema;
+    use crate::storage::Storage;
 
     fn mysql_config(database: Option<&str>) -> ConnectionConfig {
         ConnectionConfig {
@@ -443,6 +446,13 @@ mod tests {
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
         }
+    }
+
+    async fn test_app_state() -> (AppState, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("dbx-core-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Storage::open(&dir.join("storage.db")).await.unwrap();
+        (AppState::new(storage), dir)
     }
 
     #[test]
@@ -482,5 +492,29 @@ mod tests {
         let scoped = database_connection_config(&config, Some("analytics"));
 
         assert_eq!(scoped.database.as_deref(), Some("ORCL"));
+    }
+
+    #[tokio::test]
+    async fn sqlite_get_or_create_pool_initializes_connection_for_web_route() {
+        let (state, dir) = test_app_state().await;
+        let db_path = dir.join("app.db");
+        std::fs::File::create(&db_path).unwrap();
+        let mut config = mysql_config(None);
+        config.id = "sqlite-conn".to_string();
+        config.name = "SQLite".to_string();
+        config.db_type = DatabaseType::Sqlite;
+        config.host = db_path.to_string_lossy().to_string();
+        config.port = 0;
+
+        state.configs.lock().await.insert(config.id.clone(), config);
+
+        let pool_key = state.get_or_create_pool("sqlite-conn", None).await.unwrap();
+        assert_eq!(pool_key, "sqlite-conn");
+
+        let databases = schema::list_databases_core(&state, "sqlite-conn").await.unwrap();
+        assert_eq!(databases.len(), 1);
+        assert_eq!(databases[0].name, "main");
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
