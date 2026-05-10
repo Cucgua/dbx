@@ -35,20 +35,20 @@ pub async fn test_connection(
 
     // Store config temporarily
     let temp_id = format!("__test_{}", uuid::Uuid::new_v4());
-    app.configs.lock().await.insert(temp_id.clone(), config.clone());
+    app.configs.write().await.insert(temp_id.clone(), config.clone());
 
     // Try to connect
     let result = app.get_or_create_pool(&temp_id, config.database.as_deref()).await;
 
     // Clean up any pool keys created for the temporary connection, including
     // database-scoped keys like "__test_uuid:database".
-    let mut connections = app.connections.lock().await;
+    let mut connections = app.connections.write().await;
     let temp_keys: Vec<String> = connections.keys().filter(|key| key.starts_with(&temp_id)).cloned().collect();
     for key in temp_keys {
         connections.remove(&key);
     }
     drop(connections);
-    app.configs.lock().await.remove(&temp_id);
+    app.configs.write().await.remove(&temp_id);
 
     match result {
         Ok(_) => Ok(Json("Connection successful".to_string())),
@@ -64,7 +64,7 @@ pub async fn connect_db(
     let app = &state.app;
     let connection_id = config.id.clone();
 
-    app.configs.lock().await.insert(connection_id.clone(), config.clone());
+    app.configs.write().await.insert(connection_id.clone(), config.clone());
 
     app.get_or_create_pool(&connection_id, None).await.map_err(AppError)?;
 
@@ -76,7 +76,7 @@ pub async fn disconnect_db(
     Json(body): Json<DisconnectRequest>,
 ) -> Result<Json<()>, AppError> {
     let app = &state.app;
-    let mut connections = app.connections.lock().await;
+    let mut connections = app.connections.write().await;
 
     let pool_prefix = format!("{}:", body.connection_id);
     let keys_to_remove: Vec<String> =
@@ -86,7 +86,7 @@ pub async fn disconnect_db(
     }
     drop(connections);
 
-    app.configs.lock().await.remove(&body.connection_id);
+    app.configs.write().await.remove(&body.connection_id);
     app.tunnels.stop_tunnel(&body.connection_id).await;
 
     Ok(Json(()))
@@ -108,7 +108,7 @@ pub async fn load_connections(State(state): State<Arc<WebState>>) -> Result<Json
 }
 
 async fn cache_connection_configs(state: &WebState, configs: &[ConnectionConfig]) {
-    let mut runtime_configs = state.app.configs.lock().await;
+    let mut runtime_configs = state.app.configs.write().await;
     for config in configs {
         runtime_configs.insert(config.id.clone(), config.clone());
     }
@@ -186,7 +186,7 @@ mod tests {
                 .await;
         assert!(result.is_ok());
 
-        let configs = state.app.configs.lock().await;
+        let configs = state.app.configs.read().await;
         assert_eq!(configs.get("sqlite-conn").map(|c| c.host.as_str()), Some(config.host.as_str()));
 
         let _ = std::fs::remove_dir_all(dir);
@@ -203,7 +203,7 @@ mod tests {
         let conn2_pool = dbx_core::db::sqlite::connect_path(&conn2_path.to_string_lossy()).await.unwrap();
 
         {
-            let mut connections = state.app.connections.lock().await;
+            let mut connections = state.app.connections.write().await;
             connections.insert("conn".to_string(), PoolKind::Sqlite(conn_pool));
             connections.insert("conn2".to_string(), PoolKind::Sqlite(conn2_pool));
         }
@@ -212,7 +212,7 @@ mod tests {
             disconnect_db(State(state.clone()), Json(DisconnectRequest { connection_id: "conn".to_string() })).await;
         assert!(result.is_ok());
 
-        let connections = state.app.connections.lock().await;
+        let connections = state.app.connections.read().await;
         assert!(!connections.contains_key("conn"));
         assert!(connections.contains_key("conn2"));
 

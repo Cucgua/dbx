@@ -469,7 +469,7 @@ pub fn count_sql(table: &str, schema: &str, db_type: &DatabaseType) -> String {
 }
 
 pub async fn execute_on_pool(state: &AppState, pool_key: &str, sql: &str) -> Result<db::QueryResult, String> {
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(pool_key).ok_or("Connection not found")?;
 
     match pool {
@@ -585,7 +585,7 @@ pub async fn execute_on_pool(state: &AppState, pool_key: &str, sql: &str) -> Res
 }
 
 pub async fn get_db_type(state: &AppState, connection_id: &str) -> Result<DatabaseType, String> {
-    let configs = state.configs.lock().await;
+    let configs = state.configs.read().await;
     configs
         .get(connection_id)
         .map(|c| c.db_type.clone())
@@ -600,7 +600,7 @@ pub async fn get_columns_for_transfer(
     schema: &str,
     table: &str,
 ) -> Result<Vec<db::ColumnInfo>, String> {
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
 
     if let Some(PoolKind::DuckDb(con)) = connections.get(pool_key) {
         let con = con.clone();

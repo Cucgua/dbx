@@ -234,15 +234,15 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
         DatabaseType::Jdbc => state.external_driver_pool("jdbc", &db_config).await?,
     };
 
-    state.connections.lock().await.insert(id.clone(), pool);
-    state.configs.lock().await.insert(id.clone(), config);
+    state.connections.write().await.insert(id.clone(), pool);
+    state.configs.write().await.insert(id.clone(), config);
 
     Ok(id)
 }
 
 #[tauri::command]
 pub async fn disconnect_db(state: State<'_, Arc<AppState>>, connection_id: String) -> Result<(), String> {
-    let mut conns = state.connections.lock().await;
+    let mut conns = state.connections.write().await;
     let keys_to_remove: Vec<String> =
         conns.keys().filter(|k| *k == &connection_id || k.starts_with(&format!("{connection_id}:"))).cloned().collect();
     for key in keys_to_remove {
@@ -266,7 +266,7 @@ pub async fn disconnect_db(state: State<'_, Arc<AppState>>, connection_id: Strin
         }
     }
     drop(conns);
-    state.configs.lock().await.remove(&connection_id);
+    state.configs.write().await.remove(&connection_id);
     state.tunnels.stop_tunnel(&connection_id).await;
     Ok(())
 }

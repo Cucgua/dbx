@@ -121,17 +121,12 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   function setConnectionError(connectionId: string, message: string) {
-    connectionErrors.value = {
-      ...connectionErrors.value,
-      [connectionId]: message,
-    };
+    connectionErrors.value[connectionId] = message;
   }
 
   function clearConnectionError(connectionId: string) {
     if (!connectionErrors.value[connectionId]) return;
-    const next = { ...connectionErrors.value };
-    delete next[connectionId];
-    connectionErrors.value = next;
+    delete connectionErrors.value[connectionId];
   }
 
   function recordConnectionError(connectionId: string, error: unknown): string {
@@ -323,8 +318,15 @@ export const useConnectionStore = defineStore("connection", () => {
         loadedTreeNodeChildrenIds.value.delete(id);
       }
     }
-    api.deleteSchemaCachePrefix(`${prefix}:`).catch(() => undefined);
-    api.deleteSchemaCachePrefix(`${schemaCacheKey(prefix)}:`).catch(() => undefined);
+    const rawPrefix = `${prefix}:`;
+    const encodedPrefix = `${schemaCacheKey(prefix)}:`;
+    if (rawPrefix === encodedPrefix) {
+      api.deleteSchemaCachePrefix(rawPrefix).catch(() => undefined);
+    } else {
+      Promise.all([api.deleteSchemaCachePrefix(rawPrefix), api.deleteSchemaCachePrefix(encodedPrefix)]).catch(
+        () => undefined,
+      );
+    }
   }
 
   function schemaCachePrefixForNode(node: TreeNode): string | null {
@@ -399,12 +401,12 @@ export const useConnectionStore = defineStore("connection", () => {
 
   function invalidateCompletionCache(connectionId: string) {
     const cachePrefix = `${connectionId}:`;
-    completionTablesCache.value = Object.fromEntries(
-      Object.entries(completionTablesCache.value).filter(([key]) => !key.startsWith(cachePrefix)),
-    );
-    completionColumnsCache.value = Object.fromEntries(
-      Object.entries(completionColumnsCache.value).filter(([key]) => !key.startsWith(cachePrefix)),
-    );
+    for (const key of Object.keys(completionTablesCache.value)) {
+      if (key.startsWith(cachePrefix)) delete completionTablesCache.value[key];
+    }
+    for (const key of Object.keys(completionColumnsCache.value)) {
+      if (key.startsWith(cachePrefix)) delete completionColumnsCache.value[key];
+    }
   }
 
   async function removeConnection(id: string) {

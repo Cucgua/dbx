@@ -131,7 +131,7 @@ pub fn extract_gaussdb(
 
 pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<db::DatabaseInfo>, String> {
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if extract_external(&connections, connection_id).is_some() {
             return Ok(vec![db::DatabaseInfo { name: "main".to_string() }]);
         }
@@ -170,7 +170,7 @@ pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Resul
         }
     }
 
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(connection_id).ok_or("Connection not found")?;
 
     match pool {
@@ -192,7 +192,7 @@ pub async fn list_schemas_core(state: &AppState, connection_id: &str, database: 
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if let Some(PoolKind::ExternalDriver { config, session, .. }) = connections.get(&pool_key) {
             let config = config.clone();
             let session = session.clone();
@@ -224,7 +224,7 @@ pub async fn list_schemas_core(state: &AppState, connection_id: &str, database: 
         }
     }
 
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
@@ -242,7 +242,7 @@ pub async fn list_tables_core(
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if let Some(ext_pool) = extract_external(&connections, &pool_key) {
             drop(connections);
             let cache = ext_pool.cache.clone();
@@ -296,7 +296,7 @@ pub async fn list_tables_core(
         }
     }
 
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
@@ -322,7 +322,7 @@ pub async fn list_objects_core(
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if let Some(ext_pool) = extract_external(&connections, &pool_key) {
             drop(connections);
             let cache = ext_pool.cache.clone();
@@ -376,7 +376,7 @@ pub async fn get_columns_core(
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if let Some(ext_pool) = extract_external(&connections, &pool_key) {
             drop(connections);
             let cache = ext_pool.cache.clone();
@@ -436,7 +436,7 @@ pub async fn get_columns_core(
         }
     }
 
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
@@ -463,7 +463,7 @@ pub async fn list_indexes_core(
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if let Some(client) = extract_sqlserver(&connections, &pool_key) {
             drop(connections);
             let mut client = client.lock().await;
@@ -487,7 +487,7 @@ pub async fn list_indexes_core(
         }
     }
 
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
@@ -514,7 +514,7 @@ pub async fn list_foreign_keys_core(
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if let Some(client) = extract_sqlserver(&connections, &pool_key) {
             drop(connections);
             let mut client = client.lock().await;
@@ -538,7 +538,7 @@ pub async fn list_foreign_keys_core(
         }
     }
 
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
@@ -565,7 +565,7 @@ pub async fn list_triggers_core(
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if let Some(client) = extract_sqlserver(&connections, &pool_key) {
             drop(connections);
             let mut client = client.lock().await;
@@ -589,7 +589,7 @@ pub async fn list_triggers_core(
         }
     }
 
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
@@ -616,7 +616,7 @@ pub async fn get_table_ddl_core(
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
-        let connections = state.connections.lock().await;
+        let connections = state.connections.read().await;
         if let Some(con) = extract_duckdb(&connections, &pool_key) {
             drop(connections);
             let tbl = table.replace('\'', "''");
@@ -666,7 +666,7 @@ pub async fn get_table_ddl_core(
         }
     }
 
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
 
     match pool {
@@ -697,9 +697,11 @@ pub async fn sqlite_ddl(pool: &sqlx::sqlite::SqlitePool, table: &str) -> Result<
 }
 
 pub async fn pg_ddl(pool: &sqlx::postgres::PgPool, schema: &str, table: &str) -> Result<String, String> {
-    let columns = db::postgres::get_columns(pool, schema, table).await?;
-    let indexes = db::postgres::list_indexes(pool, schema, table).await?;
-    let fkeys = db::postgres::list_foreign_keys(pool, schema, table).await?;
+    let (columns, indexes, fkeys) = tokio::try_join!(
+        db::postgres::get_columns(pool, schema, table),
+        db::postgres::list_indexes(pool, schema, table),
+        db::postgres::list_foreign_keys(pool, schema, table),
+    )?;
 
     let mut ddl = format!("CREATE TABLE \"{schema}\".\"{table}\" (\n");
     let col_lines: Vec<String> = columns

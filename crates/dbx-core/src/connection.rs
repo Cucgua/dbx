@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::db;
 use crate::db::ssh_tunnel::TunnelManager;
@@ -89,8 +89,8 @@ async fn connect_oracle_pool(
 }
 
 pub struct AppState {
-    pub connections: Mutex<HashMap<String, PoolKind>>,
-    pub configs: Mutex<HashMap<String, ConnectionConfig>>,
+    pub connections: RwLock<HashMap<String, PoolKind>>,
+    pub configs: RwLock<HashMap<String, ConnectionConfig>>,
     pub running_queries: RunningQueries,
     pub tunnels: TunnelManager,
     pub storage: Storage,
@@ -122,8 +122,8 @@ impl AppState {
 
     pub fn new_with_plugin_dir(storage: Storage, plugin_dir: PathBuf) -> Self {
         Self {
-            connections: Mutex::new(HashMap::new()),
-            configs: Mutex::new(HashMap::new()),
+            connections: RwLock::new(HashMap::new()),
+            configs: RwLock::new(HashMap::new()),
             running_queries: RunningQueries::default(),
             tunnels: TunnelManager::new(),
             storage,
@@ -154,7 +154,7 @@ impl AppState {
 
     pub async fn get_or_create_pool(&self, connection_id: &str, database: Option<&str>) -> Result<String, String> {
         let db_type = {
-            let configs = self.configs.lock().await;
+            let configs = self.configs.read().await;
             configs.get(connection_id).map(|c| c.db_type.clone())
         };
 
@@ -175,7 +175,7 @@ impl AppState {
             }
         };
 
-        let conns = self.connections.lock().await;
+        let conns = self.connections.read().await;
         if conns.contains_key(&pool_key) {
             if let Some(PoolKind::Oracle(pool)) = conns.get(&pool_key) {
                 let client = pool.primary();
@@ -184,7 +184,7 @@ impl AppState {
                     drop(conn);
                     drop(conns);
                     log::info!("[oracle] connection closed, reconnecting...");
-                    self.connections.lock().await.remove(&pool_key);
+                    self.connections.write().await.remove(&pool_key);
                 } else {
                     return Ok(pool_key);
                 }
@@ -195,7 +195,7 @@ impl AppState {
             drop(conns);
         }
 
-        let configs = self.configs.lock().await;
+        let configs = self.configs.read().await;
         let config = configs.get(connection_id).ok_or("Connection config not found")?.clone();
         drop(configs);
 
@@ -292,7 +292,7 @@ impl AppState {
             DatabaseType::Jdbc => self.external_driver_pool("jdbc", &db_config).await?,
         };
 
-        self.connections.lock().await.insert(pool_key.clone(), pool);
+        self.connections.write().await.insert(pool_key.clone(), pool);
         Ok(pool_key)
     }
 
@@ -342,7 +342,7 @@ impl AppState {
 
     pub async fn reconnect_pool(&self, connection_id: &str, database: Option<&str>) -> Result<String, String> {
         let is_single_conn = {
-            let configs = self.configs.lock().await;
+            let configs = self.configs.read().await;
             configs
                 .get(connection_id)
                 .map(|c| {
@@ -360,7 +360,7 @@ impl AppState {
                 None => connection_id.to_string(),
             }
         };
-        self.connections.lock().await.remove(&pool_key);
+        self.connections.write().await.remove(&pool_key);
         self.get_or_create_pool(connection_id, database).await
     }
 }
@@ -506,7 +506,7 @@ mod tests {
         config.host = db_path.to_string_lossy().to_string();
         config.port = 0;
 
-        state.configs.lock().await.insert(config.id.clone(), config);
+        state.configs.write().await.insert(config.id.clone(), config);
 
         let pool_key = state.get_or_create_pool("sqlite-conn", None).await.unwrap();
         assert_eq!(pool_key, "sqlite-conn");

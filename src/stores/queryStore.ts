@@ -39,7 +39,18 @@ export const useQueryStore = defineStore("query", () => {
   const activeTabId = ref<string | null>(restored.activeTabId);
   const MAX_CACHED_RESULTS = 10;
 
-  watch([tabs, activeTabId], () => saveTabs(tabs.value, activeTabId.value), { deep: true, flush: "sync" });
+  let _persistTimer: ReturnType<typeof setTimeout> | null = null;
+  watch(
+    [tabs, activeTabId],
+    () => {
+      if (_persistTimer) clearTimeout(_persistTimer);
+      _persistTimer = setTimeout(() => {
+        saveTabs(tabs.value, activeTabId.value);
+        _persistTimer = null;
+      }, 300);
+    },
+    { deep: true },
+  );
 
   function findTabByTitle(connectionId: string, database: string, title: string) {
     return tabs.value.find((t) => t.connectionId === connectionId && t.database === database && t.title === title);

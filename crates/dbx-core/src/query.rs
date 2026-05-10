@@ -130,7 +130,7 @@ pub async fn do_execute(
     schema: Option<&str>,
     cancel_token: Option<CancellationToken>,
 ) -> Result<db::QueryResult, String> {
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(pool_key).ok_or("Connection not found")?;
 
     match pool {
@@ -417,7 +417,7 @@ pub async fn execute_statements_in_transaction(
 
     // Clone the pool handle within the lock, then drop it before any async work.
     let path = {
-        let conns = state.connections.lock().await;
+        let conns = state.connections.read().await;
         conns.get(&pool_key).map(|p| match p {
             PoolKind::Postgres(pg) => TxPath::Pg(pg.clone()),
             PoolKind::Mysql(mp, _mode) => TxPath::Mysql(mp.clone(), false),

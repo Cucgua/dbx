@@ -74,8 +74,6 @@ import {
 } from "@/lib/gridSelection";
 import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { buildDataGridRollbackStatements, buildDataGridSaveStatements, formatGridSqlLiteral } from "@/lib/dataGridSql";
-import { formatMarkdownTable } from "@/lib/markdownTable";
-import { buildXlsxWorkbook } from "@/lib/xlsxExport";
 import {
   matchesRowStatusFilter,
   rowStatusFilterAfterAddingRow,
@@ -2019,6 +2017,7 @@ async function exportMarkdown() {
   try {
     const cols = props.result.columns;
     const visibleRows = displayItems.value.map((item) => item.data);
+    const { formatMarkdownTable } = await import("@/lib/markdownTable");
     const md = formatMarkdownTable({ columns: cols, rows: visibleRows });
     if (await saveFileContent(md, "export.md", "Markdown", "md")) {
       toast(t("grid.exported"));
@@ -2030,6 +2029,7 @@ async function exportMarkdown() {
 
 async function exportXlsx() {
   try {
+    const { buildXlsxWorkbook } = await import("@/lib/xlsxExport");
     const workbook = buildXlsxWorkbook({
       sheetName: props.tableMeta?.tableName || "Export",
       columns: props.result.columns,
