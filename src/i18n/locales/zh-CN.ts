@@ -294,6 +294,7 @@ export default {
     rollback: "回滚",
     transactionActive: "编辑中",
     sortUnsupported: "当前 SQL 不支持全量排序，请改为单条 SELECT 查询后再尝试。",
+    truncatedHint: "结果已截断，仅显示前 10,000 行。如需更多数据，请使用 LIMIT/OFFSET 分页查询。",
   },
   welcome: {
     title: "数据库工作台",

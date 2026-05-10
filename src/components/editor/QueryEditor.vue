@@ -210,8 +210,9 @@ onMounted(async () => {
     { EditorState, Compartment, Prec },
     { sql, MSSQL, MySQL, PostgreSQL, SQLDialect },
     { basicSetup },
-    { autocompletion, startCompletion },
+    { autocompletion, startCompletion, closeBrackets, closeBracketsKeymap },
     { indentWithTab },
+    { bracketMatching },
   ] = await Promise.all([
     import("@codemirror/view"),
     import("@codemirror/state"),
@@ -219,6 +220,7 @@ onMounted(async () => {
     import("codemirror"),
     import("@codemirror/autocomplete"),
     import("@codemirror/commands"),
+    import("@codemirror/language"),
   ]);
   editorViewModule = { EditorView, keymap } as typeof import("@codemirror/view");
   fontThemeComp = new Compartment();
@@ -285,7 +287,9 @@ onMounted(async () => {
         override: [async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos)],
       }),
       codeMirrorTheme.of(theme),
-      Prec.highest(keymap.of([indentWithTab])),
+      closeBrackets(),
+      bracketMatching(),
+      Prec.highest(keymap.of([...closeBracketsKeymap, indentWithTab])),
       runKeymap,
       wordWrapComp.of(ss.wordWrap ? EditorView.lineWrapping : []),
       EditorView.updateListener.of((update) => {

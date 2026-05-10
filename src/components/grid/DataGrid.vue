@@ -5,7 +5,6 @@ const globalDdlOpen = ref(false);
 
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, watch } from "vue";
-import { useElementSize } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import {
   ArrowUp,
@@ -59,36 +58,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import type { QueryResult, ColumnInfo, DatabaseType } from "@/types/database";
-import { isTauriRuntime } from "@/lib/tauriRuntime";
 import * as api from "@/lib/api";
-import {
-  extractSelection,
-  formatSelectionAsCsv,
-  formatSelectionAsJson,
-  formatSelectionAsSqlInList,
-  formatSelectionAsTsv,
-  isCellInSelection,
-  normalizeSelectionRange,
-  type CellPosition,
-  type CellSelectionRange,
-} from "@/lib/gridSelection";
 import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql";
-import { buildDataGridRollbackStatements, buildDataGridSaveStatements, formatGridSqlLiteral } from "@/lib/dataGridSql";
-import {
-  matchesRowStatusFilter,
-  rowStatusFilterAfterAddingRow,
-  type RowStatus,
-  type RowStatusFilter,
-} from "@/lib/gridRowStatus";
+import { formatGridSqlLiteral } from "@/lib/dataGridSql";
+import { matchesRowStatusFilter, type RowStatus, type RowStatusFilter } from "@/lib/gridRowStatus";
 
 import { useToast } from "@/composables/useToast";
-import { useConnectionStore } from "@/stores/connectionStore";
-import { useHistoryStore } from "@/stores/historyStore";
+import { useDataGridExport } from "@/composables/useDataGridExport";
+import { useDataGridColumnResize } from "@/composables/useDataGridColumnResize";
+import { useDataGridSelection } from "@/composables/useDataGridSelection";
+import { useDataGridEditor } from "@/composables/useDataGridEditor";
 
 const { t } = useI18n();
 const { toast } = useToast();
-const connectionStore = useConnectionStore();
-const historyStore = useHistoryStore();
 
 const props = defineProps<{
   result: QueryResult;
@@ -208,9 +190,6 @@ function typeColorClass(t: string): string {
   return "text-muted-foreground";
 }
 const contextCell = ref<{ rowId: number; rowIndex: number; col: number } | null>(null);
-const selectionAnchor = ref<CellPosition | null>(null);
-const selectionFocus = ref<CellPosition | null>(null);
-const isSelectingCells = ref(false);
 const detailCell = ref<{ rowIndex: number; col: number } | null>(null);
 const showCellDetail = ref(false);
 const transposeRowIndex = ref<number | null>(null);
@@ -727,111 +706,22 @@ function onOrderByKeydown(e: KeyboardEvent) {
   }
 }
 
-const saveError = ref("");
 const isApplyingWhere = ref(false);
 const rowStatusFilter = ref<RowStatusFilter>("all");
-const columnWidths = ref<number[]>([]);
 const gridRef = ref<HTMLDivElement>();
 const headerRef = ref<HTMLDivElement>();
-const { width: gridWidth } = useElementSize(gridRef);
 
-const COL_MIN_WIDTH = 60;
-const COL_MAX_WIDTH = 400;
-const COL_CHAR_WIDTH = 8;
-const COL_HEADER_PADDING = 48;
-const COL_CELL_PADDING = 28;
-const COL_SAMPLE_ROWS = 50;
-
-function estimateTextWidth(text: string, padding: number): number {
-  return text.length * COL_CHAR_WIDTH + padding;
-}
-
-function initColumnWidths() {
-  if (columnWidths.value.length !== props.result.columns.length) {
-    const rows = props.result.rows;
-    const sampleCount = Math.min(rows.length, COL_SAMPLE_ROWS);
-    columnWidths.value = props.result.columns.map((colName, colIdx) => {
-      let maxWidth = estimateTextWidth(colName, COL_HEADER_PADDING);
-      for (let i = 0; i < sampleCount; i++) {
-        const val = rows[i]?.[colIdx];
-        if (val == null) continue;
-        const text = typeof val === "object" ? JSON.stringify(val) : String(val);
-        const displayLen = Math.min(text.length, 60);
-        const w = displayLen * COL_CHAR_WIDTH + COL_CELL_PADDING;
-        if (w > maxWidth) maxWidth = w;
-      }
-      return Math.max(COL_MIN_WIDTH, Math.min(COL_MAX_WIDTH, Math.round(maxWidth)));
-    });
-  }
-}
-
+// --- Column resize composable ---
+const { initColumnWidths, onResizeStart, autoFitColumn, columnVars, getIsResizing } = useDataGridColumnResize({
+  columns: computed(() => props.result.columns),
+  rows: computed(() => props.result.rows),
+  gridRef,
+});
 function syncHeaderScroll(e: Event) {
   if (headerRef.value) {
     headerRef.value.scrollLeft = (e.target as HTMLElement).scrollLeft;
   }
 }
-
-let isResizing = false;
-
-function onResizeStart(colIdx: number, event: MouseEvent) {
-  event.preventDefault();
-  isResizing = true;
-  const startX = event.clientX;
-  const startWidth = columnWidths.value[colIdx];
-  const onMove = (e: MouseEvent) => {
-    columnWidths.value[colIdx] = Math.max(60, startWidth + e.clientX - startX);
-  };
-  const onUp = () => {
-    document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
-    requestAnimationFrame(() => {
-      isResizing = false;
-    });
-  };
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
-}
-
-function autoFitColumn(colIdx: number) {
-  const colName = props.result.columns[colIdx];
-  if (!colName) return;
-  const rows = props.result.rows;
-  const sampleCount = Math.min(rows.length, COL_SAMPLE_ROWS);
-  let maxWidth = estimateTextWidth(colName, COL_HEADER_PADDING);
-  for (let i = 0; i < sampleCount; i++) {
-    const val = rows[i]?.[colIdx];
-    if (val == null) continue;
-    const text = typeof val === "object" ? JSON.stringify(val) : String(val);
-    const displayLen = Math.min(text.length, 60);
-    const w = displayLen * COL_CHAR_WIDTH + COL_CELL_PADDING;
-    if (w > maxWidth) maxWidth = w;
-  }
-  columnWidths.value[colIdx] = Math.max(COL_MIN_WIDTH, Math.min(COL_MAX_WIDTH, Math.round(maxWidth)));
-}
-
-const ROW_NUM_WIDTH = 48;
-const baseTotalWidth = computed(() => columnWidths.value.reduce((a, b) => a + b, 0));
-const renderedColumnWidths = computed(() => {
-  const widths = columnWidths.value;
-  if (widths.length === 0) return widths;
-
-  const extraWidth = Math.max(0, gridWidth.value - ROW_NUM_WIDTH - baseTotalWidth.value);
-  if (extraWidth === 0) return widths;
-
-  const extraPerColumn = extraWidth / widths.length;
-  return widths.map((width) => width + extraPerColumn);
-});
-const totalWidth = computed(() => renderedColumnWidths.value.reduce((a, b) => a + b, 0) + ROW_NUM_WIDTH);
-
-const columnVars = computed(() => {
-  const vars: Record<string, string> = {};
-  renderedColumnWidths.value.forEach((w, i) => {
-    vars[`--col-w-${i}`] = `${w}px`;
-  });
-  vars["--row-num-w"] = `${ROW_NUM_WIDTH}px`;
-  vars["--total-w"] = `${totalWidth.value}px`;
-  return vars;
-});
 
 initColumnWidths();
 watch(() => props.result.columns.length, initColumnWidths);
@@ -892,43 +782,70 @@ function changePageSize(size: number) {
   emit("paginate", 0, size, currentWhereInput(), currentOrderBy());
 }
 
-// --- Editing ---
+// --- Editing (composable) ---
 type CellValue = string | number | boolean | null;
-const editingCell = ref<{ rowId: number; col: number } | null>(null);
-const editValue = ref("");
-type GridScrollerRef =
-  | HTMLElement
-  | {
-      $el?: HTMLElement;
-      el?: HTMLElement | { value?: HTMLElement };
-      scrollToItem?: (index: number) => void;
-      scrollToPosition?: (position: number) => void;
-    };
 
-const scrollerRef = ref<GridScrollerRef | null>(null);
-const dirtyRows = ref<Map<number, Map<number, CellValue>>>(new Map());
-const newRows = ref<CellValue[][]>([]);
-const deletedRows = ref<Set<number>>(new Set());
-
-const dirtyRowCount = computed(() => dirtyRows.value.size);
-const newRowCount = computed(() => newRows.value.length);
-const deletedRowCount = computed(() => deletedRows.value.size);
-const pendingChangeCount = computed(() => dirtyRowCount.value + newRowCount.value + deletedRowCount.value);
-const hasPendingChanges = computed(() => pendingChangeCount.value > 0);
-
-// --- Transaction state ---
-const transactionActive = ref(false);
-const isSaving = ref(false);
-
-function enterTransaction() {
-  transactionActive.value = true;
+interface RowItem {
+  id: number;
+  sourceIndex?: number;
+  newIndex?: number;
+  data: CellValue[];
+  isNew: boolean;
+  isDeleted: boolean;
+  isDirtyCol: boolean[];
+  status: RowStatus;
 }
 
-function exitTransaction() {
-  transactionActive.value = false;
-}
+const editor = useDataGridEditor({
+  result: computed(() => props.result),
+  editable: computed(() => props.editable),
+  databaseType: computed(() => props.databaseType),
+  connectionId: computed(() => props.connectionId),
+  database: computed(() => props.database),
+  tableMeta: computed(() => props.tableMeta),
+  onExecuteSql: computed(() => props.onExecuteSql),
+  sql: computed(() => props.sql),
+  searchText,
+  whereFilterInput,
+  orderByInput,
+  rowStatusFilter,
+  getRowItem,
+  emit,
+});
 
-const useTransaction = computed(() => props.editable && !!props.connectionId && !!props.database && !!props.tableMeta);
+const {
+  editingCell,
+  editValue,
+  scrollerRef,
+  dirtyRows,
+  newRows,
+  deletedRows,
+  pendingChangeCount,
+  hasPendingChanges,
+  transactionActive,
+  isSaving,
+  saveError,
+  useTransaction,
+  enterTransaction,
+  exitTransaction,
+  startEdit,
+  commitEdit,
+  applyCellValue,
+  onEditKeydown,
+  addRow,
+  showDeleteRowConfirm,
+  requestDeleteRow,
+  confirmDeleteRow,
+  restoreRow,
+  saveChanges,
+  discardChanges,
+  rowDataWithChanges,
+  coerceCellValue,
+  resetGridVerticalScroll,
+  getResetScrollAfterResult,
+  clearResetScrollAfterResult,
+  cleanupFrames,
+} = editor;
 
 async function onToolbarRefresh() {
   if (transactionActive.value) {
@@ -971,22 +888,6 @@ const sortedRows = computed(() => {
   return indices;
 });
 
-function rowDataWithChanges(row: CellValue[], sourceIndex: number): CellValue[] {
-  const dirty = dirtyRows.value.get(sourceIndex);
-  return row.map((v, colIdx) => (dirty?.has(colIdx) ? dirty.get(colIdx)! : v));
-}
-
-interface RowItem {
-  id: number;
-  sourceIndex?: number;
-  newIndex?: number;
-  data: CellValue[];
-  isNew: boolean;
-  isDeleted: boolean;
-  isDirtyCol: boolean[];
-  status: RowStatus;
-}
-
 const displayItems = computed<RowItem[]>(() => {
   const cols = props.result.columns;
   const rows = props.result.rows;
@@ -1013,6 +914,21 @@ const displayItems = computed<RowItem[]>(() => {
   });
   return items.filter((item) => matchesRowStatusFilter(item.status, rowStatusFilter.value));
 });
+
+function getRowItem(rowId: number): RowItem | undefined {
+  return displayItems.value.find((item) => item.id === rowId);
+}
+
+const deleteRowDetails = computed(() =>
+  props.tableMeta?.tableName
+    ? t("dangerDialog.deleteRowDetails", { table: props.tableMeta.tableName })
+    : t("dangerDialog.deleteRowDetailsNoTable"),
+);
+
+function deleteSelectedRow() {
+  if (!contextCell.value) return;
+  requestDeleteRow(contextCell.value.rowId);
+}
 const hasVisibleRows = computed(() => displayItems.value.length > 0);
 const hasActiveFilter = computed(
   () => !!deferredClientSearchText.value || rowStatusFilter.value !== "all" || hasLocalColumnFilters.value,
@@ -1026,16 +942,31 @@ const isErrorResult = computed(
   () => props.result.columns.length === 1 && props.result.columns[0] === "Error" && props.result.rows.length > 0,
 );
 const errorMessage = computed(() => (isErrorResult.value ? String(props.result.rows[0]?.[0] ?? "") : ""));
-const selectedRange = computed<CellSelectionRange | null>(() => {
-  if (!selectionAnchor.value || !selectionFocus.value) return null;
-  return normalizeSelectionRange(selectionAnchor.value, selectionFocus.value);
+// --- Selection composable ---
+const selection = useDataGridSelection({
+  columns: computed(() => props.result.columns),
+  displayItems,
+  editingCell,
+  showTranspose,
+  transposeRowIndex,
+  gridRef,
 });
-const visibleSelectionRows = computed(() => displayItems.value.map((item) => item.data));
-const selectedCells = computed(() =>
-  extractSelection(props.result.columns, visibleSelectionRows.value, selectedRange.value),
-);
-const selectedCellCount = computed(() => selectedCells.value.columns.length * selectedCells.value.rows.length);
-const hasCellSelection = computed(() => selectedCellCount.value > 0);
+
+const {
+  selectedRange,
+  selectedCells,
+  selectedCellCount,
+  hasCellSelection,
+  clearCellSelection,
+  selectSingleCell,
+  selectRow,
+  finishCellSelection,
+  beginCellSelection,
+  extendCellSelection,
+  cellIsSelected,
+  selectedRangeStart,
+} = selection;
+
 const selectionSummary = computed(() => t("grid.selectedCells", { count: selectedCellCount.value }));
 const contextRowItem = computed(() => (contextCell.value ? getRowItem(contextCell.value.rowId) : undefined));
 const contextColumn = computed(() => {
@@ -1154,7 +1085,7 @@ function setDetailNull() {
 }
 
 function toggleSort(colName: string, colIdx: number) {
-  if (isResizing) return;
+  if (getIsResizing()) return;
   if (sortCol.value === colName && sortColIndex.value === colIdx) {
     if (sortDir.value === "asc") {
       sortDir.value = "desc";
@@ -1307,449 +1238,43 @@ function setRowStatusFilter(value: string) {
   rowStatusFilter.value = value as RowStatusFilter;
 }
 
-// --- Inline editor ---
-let isCancelling = false;
-let cancelScrollRestoreFrame = 0;
-let resetScrollFrame = 0;
-let resetScrollAfterResult = false;
-
-function getScrollerElement(): HTMLElement | null {
-  const scroller = scrollerRef.value;
-  if (!scroller) return null;
-  if (scroller instanceof HTMLElement) return scroller;
-  if (scroller.$el instanceof HTMLElement) return scroller.$el;
-  if (scroller.el instanceof HTMLElement) return scroller.el;
-  if (scroller.el?.value instanceof HTMLElement) return scroller.el.value;
-  return null;
-}
-
-function scrollGridToTop() {
-  const scroller = scrollerRef.value;
-  if (scroller && !(scroller instanceof HTMLElement)) {
-    scroller.scrollToItem?.(0);
-    scroller.scrollToPosition?.(0);
-  }
-
-  const el = getScrollerElement();
-  if (el) el.scrollTop = 0;
-}
-
-function resetGridVerticalScroll(afterResult = false) {
-  if (afterResult) resetScrollAfterResult = true;
-  if (resetScrollFrame) cancelAnimationFrame(resetScrollFrame);
-  scrollGridToTop();
-  nextTick(() => {
-    scrollGridToTop();
-    resetScrollFrame = requestAnimationFrame(() => {
-      scrollGridToTop();
-      resetScrollFrame = 0;
-    });
-  });
-}
-
-function preserveScrollPosition() {
-  const el = getScrollerElement();
-  if (!el) return () => {};
-  const top = el.scrollTop;
-  const left = el.scrollLeft;
-  return () => {
-    el.scrollTop = top;
-    el.scrollLeft = left;
-  };
-}
-
-function focusScrollerWithoutScrolling() {
-  const el = getScrollerElement();
-  if (!el) return;
-  if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
-  el.focus({ preventScroll: true });
-}
-
-function focusGridWithoutScrolling() {
-  gridRef.value?.focus({ preventScroll: true });
-}
-
-function restoreScrollAcrossFrames(restoreScroll: () => void) {
-  if (cancelScrollRestoreFrame) cancelAnimationFrame(cancelScrollRestoreFrame);
-  restoreScroll();
-  nextTick(() => {
-    restoreScroll();
-    cancelScrollRestoreFrame = requestAnimationFrame(() => {
-      restoreScroll();
-      cancelScrollRestoreFrame = requestAnimationFrame(() => {
-        restoreScroll();
-        cancelScrollRestoreFrame = 0;
-        isCancelling = false;
-      });
-    });
-  });
-}
-
-function getRowItem(rowId: number): RowItem | undefined {
-  return displayItems.value.find((item) => item.id === rowId);
-}
-
-function coerceCellValue(value: string, oldVal: CellValue | undefined): CellValue {
-  if (value.toUpperCase() === "NULL") return null;
-  if (value === "" && isNull(oldVal)) return null;
-  if (typeof oldVal === "number") {
-    const num = Number(value);
-    if (!Number.isNaN(num)) return num;
-  }
-  if (typeof oldVal === "boolean") {
-    return value === "true" || value === "1";
-  }
-  return value;
-}
-
-function startEdit(rowId: number, colIdx: number) {
-  if (!props.editable) return;
-  const item = getRowItem(rowId);
-  if (!item || item.isDeleted) return;
-  isCancelling = false;
-  editingCell.value = { rowId, col: colIdx };
-  const val = item?.data[colIdx] ?? null;
-  editValue.value = val === null ? "" : typeof val === "object" ? JSON.stringify(val) : String(val);
-  nextTick(() => {
-    const input = document.querySelector(".cell-edit-input") as HTMLInputElement;
-    input?.focus();
-    input?.select();
-  });
-}
-
-function commitEdit() {
-  if (isCancelling) return;
-  if (!editingCell.value) return;
-  const { rowId, col } = editingCell.value;
-  const item = getRowItem(rowId);
-  if (!item || item.isDeleted) {
-    editingCell.value = null;
-    return;
-  }
-
-  if (item.isNew && item.newIndex !== undefined) {
-    const oldVal = newRows.value[item.newIndex]?.[col];
-    const newVal = coerceCellValue(editValue.value, oldVal);
-    if (newRows.value[item.newIndex]) {
-      newRows.value[item.newIndex][col] = newVal;
-    }
-    editingCell.value = null;
-    return;
-  }
-
-  if (item.sourceIndex === undefined) {
-    editingCell.value = null;
-    return;
-  }
-
-  const oldVal = props.result.rows[item.sourceIndex]?.[col];
-  const newVal = coerceCellValue(editValue.value, oldVal);
-  if (newVal !== oldVal) {
-    if (!dirtyRows.value.has(item.sourceIndex)) dirtyRows.value.set(item.sourceIndex, new Map());
-    dirtyRows.value.get(item.sourceIndex)!.set(col, newVal);
-    // Enter transaction mode on first edit
-    if (useTransaction.value && !transactionActive.value) {
-      enterTransaction();
-    }
-  } else {
-    const rowChanges = dirtyRows.value.get(item.sourceIndex);
-    rowChanges?.delete(col);
-    if (rowChanges?.size === 0) dirtyRows.value.delete(item.sourceIndex);
-  }
-  editingCell.value = null;
-}
-
-function applyCellValue(rowId: number, col: number, value: string | null) {
-  const item = getRowItem(rowId);
-  if (!item || item.isDeleted) return;
-
-  if (item.isNew && item.newIndex !== undefined) {
-    const oldVal = newRows.value[item.newIndex]?.[col];
-    newRows.value[item.newIndex][col] = value === null ? null : coerceCellValue(value, oldVal);
-    newRows.value = [...newRows.value];
-    return;
-  }
-
-  if (item.sourceIndex === undefined) return;
-
-  const oldVal = props.result.rows[item.sourceIndex]?.[col];
-  const newVal = value === null ? null : coerceCellValue(value, oldVal);
-  if (newVal !== oldVal) {
-    if (!dirtyRows.value.has(item.sourceIndex)) dirtyRows.value.set(item.sourceIndex, new Map());
-    dirtyRows.value.get(item.sourceIndex)!.set(col, newVal);
-    if (useTransaction.value && !transactionActive.value) {
-      enterTransaction();
-    }
-  } else {
-    const rowChanges = dirtyRows.value.get(item.sourceIndex);
-    rowChanges?.delete(col);
-    if (rowChanges?.size === 0) dirtyRows.value.delete(item.sourceIndex);
-  }
-  dirtyRows.value = new Map(dirtyRows.value);
-}
-
-function cancelEdit() {
-  const restoreScroll = preserveScrollPosition();
-  isCancelling = true;
-  focusScrollerWithoutScrolling();
-  editingCell.value = null;
-  restoreScrollAcrossFrames(restoreScroll);
-}
-
-function onEditKeydown(e: KeyboardEvent) {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    commitEdit();
-  } else if (e.key === "Escape") {
-    e.preventDefault();
-    e.stopPropagation();
-    cancelEdit();
-  }
-}
-
-function addRow() {
-  rowStatusFilter.value = rowStatusFilterAfterAddingRow(rowStatusFilter.value);
-  newRows.value.push(props.result.columns.map(() => null));
-  if (useTransaction.value && !transactionActive.value) {
-    enterTransaction();
-  }
-  const rowId = -newRows.value.length;
-  nextTick(() => {
-    const el = getScrollerElement();
-    if (el) el.scrollTop = el.scrollHeight;
-    startEdit(rowId, 0);
-  });
-}
-
-function applyDeleteRow(rowId: number) {
-  const item = getRowItem(rowId);
-  if (!item) return;
-  if (item.isNew && item.newIndex !== undefined) {
-    newRows.value.splice(item.newIndex, 1);
-  } else if (item.sourceIndex !== undefined) {
-    dirtyRows.value.delete(item.sourceIndex);
-    deletedRows.value.add(item.sourceIndex);
-  }
-  if (editingCell.value?.rowId === rowId) editingCell.value = null;
-  if (useTransaction.value && !transactionActive.value) {
-    enterTransaction();
-  }
-}
-
-const showDeleteRowConfirm = ref(false);
-const pendingDeleteRowId = ref<number | null>(null);
-const deleteRowDetails = computed(() =>
-  props.tableMeta?.tableName
-    ? t("dangerDialog.deleteRowDetails", { table: props.tableMeta.tableName })
-    : t("dangerDialog.deleteRowDetailsNoTable"),
-);
-
-function requestDeleteRow(rowId: number) {
-  pendingDeleteRowId.value = rowId;
-  showDeleteRowConfirm.value = true;
-}
-
-function confirmDeleteRow() {
-  if (pendingDeleteRowId.value === null) return;
-  applyDeleteRow(pendingDeleteRowId.value);
-  pendingDeleteRowId.value = null;
-}
-
-function restoreRow(rowId: number) {
-  const item = getRowItem(rowId);
-  if (item?.sourceIndex !== undefined) {
-    deletedRows.value.delete(item.sourceIndex);
-  }
-}
-
-function deleteSelectedRow() {
-  if (!contextCell.value) return;
-  requestDeleteRow(contextCell.value.rowId);
-}
-
-function saveStatementOptions() {
-  if (!props.tableMeta) return null;
-  return {
-    databaseType: props.databaseType,
-    tableMeta: props.tableMeta,
-    columns: props.result.columns,
-    rows: props.result.rows,
-    dirtyRows: [...dirtyRows.value.entries()].map(
-      ([rowIndex, changes]) => [rowIndex, [...changes.entries()]] as [number, Array<[number, CellValue]>],
-    ),
-    deletedRows: [...deletedRows.value],
-    newRows: newRows.value,
-  };
-}
-
-function tableHistoryTarget() {
-  if (!props.tableMeta) return "";
-  return [props.tableMeta.schema, props.tableMeta.tableName].filter(Boolean).join(".");
-}
-
-function dataChangeOperation() {
-  const operations = [
-    newRows.value.length > 0 ? "INSERT" : "",
-    dirtyRows.value.size > 0 ? "UPDATE" : "",
-    deletedRows.value.size > 0 ? "DELETE" : "",
-  ].filter(Boolean);
-  return operations.length === 1 ? operations[0] : "DATA CHANGE";
-}
-
-async function recordDataGridHistory(
-  statements: string[],
-  rollbackStatements: string[],
-  elapsed: number,
-  result?: { affected_rows?: number },
-) {
-  if (!props.connectionId || !props.database || !props.tableMeta) return;
-  const connName = connectionStore.getConfig(props.connectionId)?.name || "";
-  const details = {
-    schema: props.tableMeta.schema,
-    table: props.tableMeta.tableName,
-    inserted_rows: newRows.value.length,
-    updated_rows: dirtyRows.value.size,
-    deleted_rows: deletedRows.value.size,
-    statements,
-    rollback_statements: rollbackStatements,
-  };
-  await historyStore.add({
-    connection_id: props.connectionId,
-    connection_name: connName,
-    database: props.database,
-    sql: statements.join("\n"),
-    execution_time_ms: elapsed,
-    success: true,
-    activity_kind: "data_change",
-    operation: dataChangeOperation(),
-    target: tableHistoryTarget(),
-    affected_rows: result?.affected_rows ?? statements.length,
-    rollback_sql: rollbackStatements.length ? rollbackStatements.join("\n") : undefined,
-    details_json: JSON.stringify(details),
-  });
-}
-
-async function saveChanges() {
-  const options = saveStatementOptions();
-  const stmts = options ? buildDataGridSaveStatements(options) : [];
-  if (stmts.length === 0) return;
-  const rollbackStmts = options ? buildDataGridRollbackStatements(options) : [];
-  saveError.value = "";
-  isSaving.value = true;
-  const start = Date.now();
-  let result: { affected_rows?: number } | undefined;
-
-  if (useTransaction.value && props.connectionId && props.database) {
-    try {
-      result = await api.executeInTransaction(props.connectionId, props.database, stmts, props.tableMeta?.schema);
-    } catch (e: any) {
-      saveError.value = String(e.message || e);
-      isSaving.value = false;
-      return;
-    }
-  } else if (props.connectionId && props.database) {
-    try {
-      result = await api.executeBatch(props.connectionId, props.database, stmts);
-    } catch (e: any) {
-      saveError.value = String(e.message || e);
-      isSaving.value = false;
-      return;
-    }
-  } else if (props.onExecuteSql) {
-    try {
-      for (const sql of stmts) {
-        await props.onExecuteSql(sql);
-      }
-    } catch (e: any) {
-      saveError.value = String(e.message || e);
-      isSaving.value = false;
-      return;
-    }
-  }
-  try {
-    await recordDataGridHistory(stmts, rollbackStmts, Date.now() - start, result);
-  } catch (e) {
-    console.warn("[DBX] failed to record data grid history", e);
-  }
-  dirtyRows.value.clear();
-  newRows.value = [];
-  deletedRows.value.clear();
-  exitTransaction();
-  isSaving.value = false;
-  emit(
-    "reload",
-    props.sql,
-    searchText.value,
-    whereFilterInput.value.trim() || undefined,
-    orderByInput.value.trim() || undefined,
-  );
-}
-
-function discardChanges() {
-  dirtyRows.value.clear();
-  newRows.value = [];
-  deletedRows.value.clear();
-  editingCell.value = null;
-  exitTransaction();
-}
+// --- Export composable ---
+const {
+  copyText,
+  copyCell,
+  copyRow,
+  copyRowAsInsert,
+  copyAll,
+  copySelectionTsv,
+  copySelectionCsv,
+  copySelectionJson,
+  copySelectionSqlInList,
+  exportCsv,
+  exportJson,
+  exportMarkdown,
+  exportXlsx,
+  copySql,
+} = useDataGridExport({
+  columns: computed(() => props.result.columns),
+  displayItems,
+  sql: computed(() => props.sql),
+  tableMeta: computed(() =>
+    props.tableMeta ? { schema: props.tableMeta.schema, tableName: props.tableMeta.tableName } : undefined,
+  ),
+  databaseType: computed(() => props.databaseType),
+  hasCellSelection,
+  selectedCells,
+  contextCell,
+  getRowItem,
+  formatCell,
+  quoteIdent,
+  escapeVal,
+});
 
 // --- Cell selection and detail ---
-function clearCellSelection() {
-  selectionAnchor.value = null;
-  selectionFocus.value = null;
-  isSelectingCells.value = false;
-}
-
-function selectSingleCell(rowIndex: number, colIndex: number) {
-  const cell = { rowIndex, colIndex };
-  selectionAnchor.value = cell;
-  selectionFocus.value = cell;
-}
-
-function selectRow(rowIndex: number) {
-  if (props.result.columns.length === 0) return;
-  selectionAnchor.value = { rowIndex, colIndex: 0 };
-  selectionFocus.value = { rowIndex, colIndex: props.result.columns.length - 1 };
-}
-
-function finishCellSelection() {
-  isSelectingCells.value = false;
-  document.removeEventListener("mouseup", finishCellSelection);
-}
-
-function beginCellSelection(rowIndex: number, colIndex: number, event: MouseEvent) {
-  if (event.button !== 0) return;
-  if (editingCell.value) return;
-  event.preventDefault();
-  focusGridWithoutScrolling();
-  selectSingleCell(rowIndex, colIndex);
-  isSelectingCells.value = true;
-  if (showTranspose.value) transposeRowIndex.value = rowIndex;
-  document.addEventListener("mouseup", finishCellSelection);
-}
-
-function extendCellSelection(rowIndex: number, colIndex: number) {
-  if (!isSelectingCells.value || !selectionAnchor.value) return;
-  selectionFocus.value = { rowIndex, colIndex };
-}
-
-function cellIsSelected(rowIndex: number, colIndex: number): boolean {
-  return isCellInSelection(rowIndex, colIndex, selectedRange.value);
-}
-
 function showCellDetails(rowIndex: number, colIndex: number) {
   detailCell.value = { rowIndex, col: colIndex };
   showCellDetail.value = true;
-}
-
-function copyText(text: string) {
-  navigator.clipboard.writeText(text);
-  toast(t("grid.copied"));
-}
-
-function copySelectionTsv() {
-  if (!hasCellSelection.value) return;
-  copyText(formatSelectionAsTsv(selectedCells.value));
 }
 
 function eventTargetAllowsNativeClipboard(event: KeyboardEvent): boolean {
@@ -1759,12 +1284,6 @@ function eventTargetAllowsNativeClipboard(event: KeyboardEvent): boolean {
 
 function clipboardShortcut(event: KeyboardEvent, key: string): boolean {
   return (event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === key;
-}
-
-function selectedRangeStart(): CellPosition | null {
-  const range = selectedRange.value;
-  if (!range) return null;
-  return { rowIndex: range.startRow, colIndex: range.startCol };
 }
 
 function parseClipboardTable(text: string): string[][] {
@@ -1826,21 +1345,6 @@ async function onGridKeydown(event: KeyboardEvent) {
   }
 }
 
-function copySelectionCsv() {
-  if (!hasCellSelection.value) return;
-  copyText(formatSelectionAsCsv(selectedCells.value));
-}
-
-function copySelectionJson() {
-  if (!hasCellSelection.value) return;
-  copyText(formatSelectionAsJson(selectedCells.value));
-}
-
-function copySelectionSqlInList() {
-  if (!hasCellSelection.value) return;
-  copyText(formatSelectionAsSqlInList(selectedCells.value));
-}
-
 function copyDetailValue() {
   if (!activeCellDetail.value) return;
   copyText(activeCellDetail.value.rawValue);
@@ -1889,8 +1393,8 @@ function transposeNav(delta: number) {
 watch(
   () => props.result,
   () => {
-    if (resetScrollAfterResult) {
-      resetScrollAfterResult = false;
+    if (getResetScrollAfterResult()) {
+      clearResetScrollAfterResult();
       resetGridVerticalScroll();
     }
     clearCellSelection();
@@ -1902,7 +1406,7 @@ watch(
   },
 );
 
-// --- Copy/Export ---
+// --- Context menu handlers ---
 function onCellContext(rowId: number, rowIndex: number, colIdx: number) {
   contextCell.value = { rowId, rowIndex, col: colIdx };
   if (!cellIsSelected(rowIndex, colIdx)) {
@@ -1915,167 +1419,7 @@ function onRowContext(rowId: number, rowIndex: number) {
   selectRow(rowIndex);
 }
 
-function copyCell() {
-  if (!contextCell.value || contextCell.value.col < 0) return;
-  const item = getRowItem(contextCell.value.rowId);
-  const val = item?.data[contextCell.value.col] ?? null;
-  copyText(formatCell(val));
-}
-
-function copyRow() {
-  if (!contextCell.value) return;
-  const item = getRowItem(contextCell.value.rowId);
-  if (!item) return;
-  const obj: Record<string, unknown> = {};
-  props.result.columns.forEach((col, i) => {
-    obj[col] = item.data[i];
-  });
-  copyText(JSON.stringify(obj, null, 2));
-}
-
-function copyRowAsInsert() {
-  if (!contextCell.value) return;
-  const item = getRowItem(contextCell.value.rowId);
-  if (!item) return;
-  const cols = props.result.columns.map((c) => quoteIdent(c)).join(", ");
-  const vals = item.data.map((v) => escapeVal(v)).join(", ");
-  const table = props.tableMeta
-    ? (props.tableMeta.schema ? `${quoteIdent(props.tableMeta.schema)}.` : "") + quoteIdent(props.tableMeta.tableName)
-    : "table_name";
-  copyText(`INSERT INTO ${table} (${cols}) VALUES (${vals});`);
-}
-
-function copyAll() {
-  const header = props.result.columns.join("\t");
-  const body = displayItems.value.map((item) => item.data.map((c) => formatCell(c)).join("\t")).join("\n");
-  copyText(`${header}\n${body}`);
-}
-
-async function saveFileContent(
-  content: string,
-  defaultFileName: string,
-  filterName: string,
-  filterExt: string,
-): Promise<boolean> {
-  if (isTauriRuntime()) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    const path = await save({
-      defaultPath: defaultFileName,
-      filters: [{ name: filterName, extensions: [filterExt] }],
-    });
-    if (!path) return false;
-    await writeTextFile(path, "﻿" + content);
-    return true;
-  } else {
-    const blob = new Blob(["﻿", content], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = defaultFileName;
-    a.click();
-    URL.revokeObjectURL(url);
-    return true;
-  }
-}
-
-async function saveBinaryFileContent(
-  content: Uint8Array,
-  defaultFileName: string,
-  filterName: string,
-  filterExt: string,
-): Promise<boolean> {
-  if (isTauriRuntime()) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const { writeFile } = await import("@tauri-apps/plugin-fs");
-    const path = await save({
-      defaultPath: defaultFileName,
-      filters: [{ name: filterName, extensions: [filterExt] }],
-    });
-    if (!path) return false;
-    await writeFile(path, content);
-    return true;
-  } else {
-    const blob = new Blob([content], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = defaultFileName;
-    a.click();
-    URL.revokeObjectURL(url);
-    return true;
-  }
-}
-
-async function exportCsv() {
-  try {
-    const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
-    const header = props.result.columns.map(escape).join(",");
-    const body = displayItems.value.map((item) => item.data.map((c) => escape(formatCell(c))).join(",")).join("\n");
-    if (await saveFileContent(`${header}\n${body}`, "export.csv", "CSV", "csv")) {
-      toast(t("grid.exported"));
-    }
-  } catch (e: any) {
-    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
-  }
-}
-
-async function exportJson() {
-  try {
-    const data = displayItems.value.map((item) => {
-      const obj: Record<string, unknown> = {};
-      props.result.columns.forEach((col, i) => {
-        obj[col] = item.data[i];
-      });
-      return obj;
-    });
-    if (await saveFileContent(JSON.stringify(data, null, 2), "export.json", "JSON", "json")) {
-      toast(t("grid.exported"));
-    }
-  } catch (e: any) {
-    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
-  }
-}
-
-async function exportMarkdown() {
-  try {
-    const cols = props.result.columns;
-    const visibleRows = displayItems.value.map((item) => item.data);
-    const { formatMarkdownTable } = await import("@/lib/markdownTable");
-    const md = formatMarkdownTable({ columns: cols, rows: visibleRows });
-    if (await saveFileContent(md, "export.md", "Markdown", "md")) {
-      toast(t("grid.exported"));
-    }
-  } catch (e: any) {
-    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
-  }
-}
-
-async function exportXlsx() {
-  try {
-    const { buildXlsxWorkbook } = await import("@/lib/xlsxExport");
-    const workbook = buildXlsxWorkbook({
-      sheetName: props.tableMeta?.tableName || "Export",
-      columns: props.result.columns,
-      rows: displayItems.value.map((item) => item.data),
-    });
-    if (await saveBinaryFileContent(workbook, "export.xlsx", "Excel", "xlsx")) {
-      toast(t("grid.exported"));
-    }
-  } catch (e: any) {
-    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
-  }
-}
-
 const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "");
-
-function copySql() {
-  if (!props.sql) return;
-  navigator.clipboard.writeText(props.sql);
-  toast(t("grid.copied"));
-}
 
 const showDdl = globalDdlOpen;
 const ddlContent = ref("");
@@ -2170,8 +1514,7 @@ watch(
 );
 
 onUnmounted(() => {
-  if (resetScrollFrame) cancelAnimationFrame(resetScrollFrame);
-  if (cancelScrollRestoreFrame) cancelAnimationFrame(cancelScrollRestoreFrame);
+  cleanupFrames();
   onDdlResizeEnd();
   finishCellSelection();
   clearTimeout(_searchTimer);
@@ -2458,6 +1801,13 @@ defineExpose({
               <RotateCcw class="w-3 h-3 mr-1" />
               {{ t("grid.rollback") }}
             </Button>
+          </div>
+          <!-- Truncation warning banner -->
+          <div
+            v-if="result.truncated"
+            class="shrink-0 px-3 py-1 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5"
+          >
+            <span>{{ t("grid.truncatedHint") }}</span>
           </div>
           <!-- Content area: table + DDL drawer -->
           <div class="flex-1 flex min-h-0 overflow-hidden">
@@ -3072,7 +2422,8 @@ defineExpose({
     <!-- Bottom status bar -->
     <div class="flex items-center gap-2 px-3 py-1 border-t text-xs text-muted-foreground bg-muted/30 shrink-0">
       <span v-if="hasData">{{ t("grid.totalRows", { count: result.rows.length }) }}</span>
-      <span v-else>{{ t("grid.rowsAffected", { count: result.affected_rows }) }}</span>
+      <span v-if="result.truncated" class="text-amber-500 text-xs ml-1">(truncated)</span>
+      <span v-if="!hasData">{{ t("grid.rowsAffected", { count: result.affected_rows }) }}</span>
       <span>{{ result.execution_time_ms }}ms</span>
       <span v-if="hasCellSelection" class="text-foreground">{{ selectionSummary }}</span>
 

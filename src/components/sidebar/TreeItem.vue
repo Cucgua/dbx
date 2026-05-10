@@ -80,6 +80,7 @@ import {
   usesFetchFirst,
 } from "@/lib/databaseCapabilities";
 import { treeNodeRowAction } from "@/lib/treeNodeClick";
+import { formatCsv, formatJson, formatSqlInsert } from "@/lib/exportFormats";
 import { hexToRgba } from "@/lib/color";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
@@ -235,14 +236,10 @@ async function toggle() {
     return;
   }
 
-  const showSavedSqlWhileLoading =
-    node.type === "connection" && !node.isExpanded && node.children?.some((child) => child.type === "saved-sql-root");
-
   if (node.isExpanded) {
     node.isExpanded = false;
     return;
   }
-  if (showSavedSqlWhileLoading) node.isExpanded = true;
 
   try {
     if (node.type === "connection" && node.connectionId) {
@@ -938,38 +935,17 @@ async function exportData(format: "csv" | "json" | "sql") {
 
     if (format === "csv") {
       ext = "csv";
-      const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
-      const header = result.columns.map(esc).join(",");
-      const body = result.rows.map((row) => row.map((c) => esc(c === null ? "" : String(c))).join(",")).join("\n");
-      content = `${header}\n${body}`;
+      content = formatCsv(result.columns, result.rows);
     } else if (format === "json") {
       ext = "json";
-      const data = result.rows.map((row) => {
-        const obj: Record<string, unknown> = {};
-        result.columns.forEach((col, i) => {
-          obj[col] = row[i];
-        });
-        return obj;
-      });
-      content = JSON.stringify(data, null, 2);
+      content = formatJson(result.columns, result.rows);
     } else {
       ext = "sql";
-      const cols = result.columns.map((c) => quoteIdent(c)).join(", ");
-      const lines = result.rows.map((row) => {
-        const vals = row
-          .map((v) => {
-            if (v === null) return "NULL";
-            if (typeof v === "number" || typeof v === "boolean") return String(v);
-            return `'${String(v).replace(/'/g, "''")}'`;
-          })
-          .join(", ");
-        return `INSERT INTO ${qualifiedName} (${cols}) VALUES (${vals});`;
-      });
-      content = lines.join("\n");
+      content = formatSqlInsert(qualifiedName, result.columns, result.rows, quoteIdent);
     }
 
     await saveFileContent(content, `${node.label}.${ext}`, ext.toUpperCase(), ext);
-    toast(t("grid.exported"));
+    toast(result.truncated ? t("grid.exported") + " (truncated)" : t("grid.exported"));
   } catch (e: any) {
     toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -996,7 +972,7 @@ async function exportDataXlsx() {
       rows: result.rows,
     });
     await saveBinaryFileContent(workbook, `${node.label}.xlsx`, "Excel", "xlsx");
-    toast(t("grid.exported"));
+    toast(result.truncated ? t("grid.exported") + " (truncated)" : t("grid.exported"));
   } catch (e: any) {
     toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -1215,7 +1191,7 @@ const rowStyle = computed(() => {
   };
 });
 
-const CHILDREN_PAGE_SIZE = 100;
+const CHILDREN_PAGE_SIZE = 50;
 const displayLimit = ref(CHILDREN_PAGE_SIZE);
 
 const visibleChildren = computed(() => {
@@ -1230,6 +1206,13 @@ const remainingCount = computed(() => (props.node.children?.length ?? 0) - displ
 function togglePin() {
   connectionStore.toggleTreeNodePin(props.node.id);
 }
+
+watch(
+  () => props.node.isExpanded,
+  (expanded) => {
+    if (!expanded) displayLimit.value = CHILDREN_PAGE_SIZE;
+  },
+);
 
 async function showMore() {
   if ((props.node.children?.length ?? 0) > displayLimit.value) {

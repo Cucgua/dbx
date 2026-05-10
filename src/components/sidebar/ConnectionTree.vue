@@ -145,6 +145,23 @@ const filteredNodes = computed(() => {
   return nodes;
 });
 
+const TOP_LEVEL_PAGE_SIZE = 50;
+const topLevelDisplayLimit = ref(TOP_LEVEL_PAGE_SIZE);
+
+const visibleFilteredNodes = computed(() => filteredNodes.value.slice(0, topLevelDisplayLimit.value));
+
+const hasMoreTopLevel = computed(() => filteredNodes.value.length > topLevelDisplayLimit.value);
+
+const remainingTopLevelCount = computed(() => filteredNodes.value.length - topLevelDisplayLimit.value);
+
+function showMoreTopLevel() {
+  topLevelDisplayLimit.value += TOP_LEVEL_PAGE_SIZE;
+}
+
+watch(filteredNodes, () => {
+  topLevelDisplayLimit.value = TOP_LEVEL_PAGE_SIZE;
+});
+
 const pendingRenameGroupId = ref<string | null>(null);
 
 function createNewGroup() {
@@ -227,7 +244,7 @@ function onSearchToggle(node: TreeNode) {
       </div>
     </div>
     <TreeItem
-      v-for="node in filteredNodes"
+      v-for="node in visibleFilteredNodes"
       :key="node.id"
       :node="node"
       :depth="0"
@@ -236,6 +253,14 @@ function onSearchToggle(node: TreeNode) {
       @search-toggle="onSearchToggle"
       @rename-started="pendingRenameGroupId = null"
     />
+    <div
+      v-if="hasMoreTopLevel"
+      class="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent text-xs text-muted-foreground"
+      style="padding-left: 8px"
+      @click="showMoreTopLevel"
+    >
+      <span>{{ t("sidebar.showMore", { count: Math.min(TOP_LEVEL_PAGE_SIZE, remainingTopLevelCount) }) }}</span>
+    </div>
     <div v-if="store.treeNodes.length === 0" class="px-3 py-8 text-center text-muted-foreground text-xs">
       {{ t("sidebar.noConnections") }}
     </div>

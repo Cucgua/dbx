@@ -295,6 +295,7 @@ export default {
     rollback: "Rollback",
     transactionActive: "Editing",
     sortUnsupported: "This SQL does not support full-result sorting. Try again with a single SELECT query.",
+    truncatedHint: "Results truncated to 10,000 rows. Use LIMIT/OFFSET in your query to paginate.",
   },
   welcome: {
     title: "Database Workspace",
