@@ -395,60 +395,6 @@ jobs:
             echo "::notice::Scoop manifest updated to ${VERSION}"
           fi
 
-  panel-appstore:
-    needs: publish
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Extract version from tag
-        id: version
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Submit to 1Panel App Store
-        env:
-          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
-          git clone --depth 1 \
-            "https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/${REPO_OWNER}/appstore.git" \
-            appstore
-          cd appstore
-
-          APP_DIR="apps/dbx"
-          mkdir -p "${APP_DIR}/${VERSION}"
-
-          cp "${{ github.workspace }}/1panel/data.yml" "${APP_DIR}/data.yml"
-          cp "${{ github.workspace }}/1panel/README.md" "${APP_DIR}/README.md"
-          if [ -f "${{ github.workspace }}/1panel/logo.png" ]; then
-            cp "${{ github.workspace }}/1panel/logo.png" "${APP_DIR}/logo.png"
-          fi
-          cp -r "${{ github.workspace }}/1panel/latest/." "${APP_DIR}/${VERSION}/"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          BRANCH="app/dbx-${VERSION}"
-          git checkout -b "${BRANCH}"
-          git add "${APP_DIR}"
-
-          if git diff --cached --quiet; then
-            echo "1Panel app store is already up to date."
-          else
-            git commit -m "feat(dbx): release ${VERSION}"
-            git push origin "${BRANCH}"
-            gh pr create \
-              --repo "1Panel-dev/appstore" \
-              --head "${REPO_OWNER}:${BRANCH}" \
-              --title "feat(dbx): release ${VERSION}" \
-              --body "Automated release of DBX v${VERSION}" \
-              --base master
-            echo "::notice::1Panel App Store PR created for ${VERSION}"
-          fi
-
   docker:
     runs-on: ubuntu-latest
     strategy:
