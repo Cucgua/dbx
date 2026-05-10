@@ -31,7 +31,10 @@ async function refreshTree() {
 </script>
 
 <template>
-  <div class="h-full shrink-0 relative select-none" :style="{ width: sidebarWidth + 'px' }">
+  <div
+    class="h-full shrink-0 relative select-none overflow-hidden rounded-md border bg-background"
+    :style="{ width: sidebarWidth + 'px' }"
+  >
     <div class="h-full flex flex-col overflow-hidden">
       <div class="h-9 flex items-center px-3 text-xs font-medium text-muted-foreground border-b bg-muted/20">
         {{ t("sidebar.connections") }}
