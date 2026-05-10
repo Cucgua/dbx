@@ -80,6 +80,7 @@ import {
   usesFetchFirst,
 } from "@/lib/databaseCapabilities";
 import { treeNodeRowAction } from "@/lib/treeNodeClick";
+import { hexToRgba } from "@/lib/color";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
@@ -1091,6 +1092,16 @@ const connectionColor = computed(() => {
   const connectionId = props.node.connectionId;
   return connectionId ? connectionStore.getConfig(connectionId)?.color || "" : "";
 });
+const isActiveConnectionScope = computed(
+  () => !!props.node.connectionId && connectionStore.activeConnectionId === props.node.connectionId,
+);
+const rowStyle = computed(() => {
+  const color = connectionColor.value;
+  return {
+    paddingLeft,
+    backgroundColor: hexToRgba(color, isActiveConnectionScope.value ? 0.14 : 0.08),
+  };
+});
 
 const CHILDREN_PAGE_SIZE = 100;
 const displayLimit = ref(CHILDREN_PAGE_SIZE);
@@ -1299,7 +1310,7 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             'ring-1 ring-primary/50 bg-primary/5': showDropInside,
             'opacity-50': isDragging,
           }"
-          :style="{ paddingLeft }"
+          :style="rowStyle"
           @click="onClick"
           @mousedown="isDraggable ? startDrag($event, node.id, node.type) : undefined"
           @mousemove="isDropTarget ? updateTarget($event, node.id, node.type) : undefined"

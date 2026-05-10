@@ -24,6 +24,7 @@ import { useSchemaOptions } from "@/composables/useSchemaOptions";
 import { connectionIconType } from "@/lib/connectionPresentation";
 import { isDefaultDatabase } from "@/lib/defaultDatabase";
 import { connectionDisplayName } from "@/lib/tabPresentation";
+import { hexToRgba } from "@/lib/color";
 import type { QueryTab, ConnectionConfig } from "@/types/database";
 
 const props = defineProps<{
@@ -72,6 +73,14 @@ const activeSchemaOptions = computed(() => {
 });
 
 const isActiveDatabaseDefault = computed(() => isDefaultDatabase(props.activeConnection, activeDatabaseValue.value));
+const toolbarStyle = computed(() => {
+  const color = props.activeConnection?.color;
+  if (!color) return undefined;
+  return {
+    backgroundColor: hexToRgba(color, 0.1),
+    boxShadow: `inset 0 1px 0 ${hexToRgba(color, 0.18)}`,
+  };
+});
 
 function databaseDisplayName(database: string): string {
   const connection = props.activeConnection;
@@ -83,6 +92,7 @@ function databaseDisplayName(database: string): string {
 <template>
   <div
     class="h-9 shrink-0 border-b bg-background/80 px-3 flex items-center gap-1 text-xs text-muted-foreground relative z-10"
+    :style="toolbarStyle"
   >
     <div class="flex items-center gap-0.5">
       <Tooltip>

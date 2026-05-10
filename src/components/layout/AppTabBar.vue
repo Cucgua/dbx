@@ -12,7 +12,9 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useQueryStore } from "@/stores/queryStore";
 import { useTabScroll } from "@/composables/useTabScroll";
-import { tabDisplayTitle, tabTooltipLines } from "@/lib/tabPresentation";
+import { connectionColor, tabDisplayTitle, tabTooltipLines } from "@/lib/tabPresentation";
+import { hexToRgba } from "@/lib/color";
+import type { QueryTab } from "@/types/database";
 
 const { t } = useI18n();
 const queryStore = useQueryStore();
@@ -41,6 +43,19 @@ watch(
     });
   },
 );
+
+function tabColorStyle(tab: QueryTab) {
+  const color = connectionColor(tab.connectionId);
+  const isActive = tab.id === queryStore.activeTabId;
+  if (!color) {
+    return isActive ? { boxShadow: "0 1px 0 0 var(--color-background)" } : undefined;
+  }
+
+  return {
+    backgroundColor: hexToRgba(color, isActive ? 0.16 : 0.07),
+    boxShadow: isActive ? `inset 0 -2px 0 ${color}` : undefined,
+  };
+}
 </script>
 
 <template>
@@ -70,9 +85,7 @@ watch(
                     ? 'bg-background text-foreground font-medium'
                     : 'text-foreground/70 hover:text-foreground/90'
                 "
-                :style="
-                  tab.id === queryStore.activeTabId ? { boxShadow: '0 1px 0 0 var(--color-background)' } : undefined
-                "
+                :style="tabColorStyle(tab)"
                 :data-active-tab="tab.id === queryStore.activeTabId"
                 @click="queryStore.activeTabId = tab.id"
                 @mousedown.middle.prevent="queryStore.closeTab(tab.id)"
