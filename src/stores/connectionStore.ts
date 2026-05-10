@@ -490,13 +490,13 @@ export const useConnectionStore = defineStore("connection", () => {
   async function loadDatabases(connectionId: string, options?: LoadTreeOptions) {
     const node = findNode(treeNodes.value, connectionId);
     if (!node) return;
-    if (useCachedChildren(node, options)) return;
-    const cacheKey = schemaCacheKey(connectionId, "databases");
-    if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
-
     node.isLoading = true;
     try {
       await ensureConnected(connectionId);
+      if (useCachedChildren(node, options)) return;
+      const cacheKey = schemaCacheKey(connectionId, "databases");
+      if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
       const databases = await api.listDatabases(connectionId);
       const children = withSavedSqlRoot(connectionId, buildDatabaseTreeNodes(connectionId, databases), node);
       setChildren(node, children);
@@ -596,13 +596,13 @@ export const useConnectionStore = defineStore("connection", () => {
     const nodeId = `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
     if (!node) return;
-    if (useCachedChildren(node, options)) return;
-    const cacheKey = schemaCacheKey(connectionId, database, "schemas");
-    if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
-
     node.isLoading = true;
     try {
       await ensureConnected(connectionId);
+      if (useCachedChildren(node, options)) return;
+      const cacheKey = schemaCacheKey(connectionId, database, "schemas");
+      if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
       const schemas = await api.listSchemas(connectionId, database);
       const children = schemas.map((s) => ({
         id: `${connectionId}:${database}:${s}`,
@@ -626,13 +626,13 @@ export const useConnectionStore = defineStore("connection", () => {
     const nodeId = `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
     if (!node) return;
-    if (useCachedChildren(node, options)) return;
-    const cacheKey = schemaCacheKey(connectionId, database, "sqlserver-objects");
-    if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
-
     node.isLoading = true;
     try {
       await ensureConnected(connectionId);
+      if (useCachedChildren(node, options)) return;
+      const cacheKey = schemaCacheKey(connectionId, database, "sqlserver-objects");
+      if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
       const [schemas, defaultSchemaTables] = await Promise.all([
         api.listSchemas(connectionId, database),
         api.listTables(connectionId, database, SQLSERVER_DEFAULT_SCHEMA),
@@ -650,13 +650,13 @@ export const useConnectionStore = defineStore("connection", () => {
     const nodeId = schema ? `${connectionId}:${database}:${schema}` : `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
     if (!node) return;
-    if (useCachedChildren(node, options)) return;
-    const cacheKey = schemaCacheKey(connectionId, database, schema || "", "tables");
-    if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
-
     node.isLoading = true;
     try {
       await ensureConnected(connectionId);
+      if (useCachedChildren(node, options)) return;
+      const cacheKey = schemaCacheKey(connectionId, database, schema || "", "tables");
+      if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
       const querySchema = schema || database;
       const tables = await api.listTables(connectionId, database, querySchema);
       const config = getConfig(connectionId);
