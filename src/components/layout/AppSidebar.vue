@@ -34,7 +34,7 @@ async function refreshTree() {
 <template>
   <div
     class="h-full shrink-0 relative select-none"
-    :class="classicLayout ? '' : 'overflow-hidden rounded-md border border-border/80 bg-background'"
+    :class="classicLayout ? '' : 'rounded-md border border-border/80 bg-background'"
     :style="{ width: sidebarWidth + 'px' }"
   >
     <div class="h-full flex flex-col overflow-hidden">

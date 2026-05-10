@@ -780,7 +780,6 @@ export default {
     theme: "主题",
     selectTheme: "选择主题...",
     appLayout: "界面布局",
-    appLayoutDescription: "选择主界面的面板分隔、标签页和标题栏样式。",
     appLayoutSeparated: "现代分隔",
     appLayoutSeparatedDescription: "面板分隔更清晰，标签页为块状样式。",
     appLayoutClassic: "经典紧凑",

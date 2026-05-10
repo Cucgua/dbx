@@ -793,7 +793,6 @@ export default {
     theme: "Theme",
     selectTheme: "Select theme...",
     appLayout: "Interface Layout",
-    appLayoutDescription: "Choose the main panel spacing, tab style, and header density.",
     appLayoutSeparated: "Modern separated",
     appLayoutSeparatedDescription: "Clear panel separation with block-style tabs.",
     appLayoutClassic: "Classic compact",

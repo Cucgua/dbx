@@ -179,9 +179,6 @@
   left: 0;
   border-left: 1px solid var(--border);
 }
-.app-layout-classic .panel-resize-handle::before {
-  display: none;
-}
 .app-layout-classic .panel-resize-handle:hover,
 .app-layout-classic .panel-resize-handle:active {
   background: oklch(0.6 0.15 250);
@@ -203,17 +200,7 @@
   left: -4px;
 }
 .panel-resize-handle::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 3px;
-  width: 1px;
-  background: var(--border);
-}
-.panel-resize-handle:hover::before,
-.panel-resize-handle:active::before {
-  background: oklch(0.6 0.15 250);
+  display: none;
 }
 
 /* Frosted glass menus */

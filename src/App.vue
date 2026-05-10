@@ -607,7 +607,7 @@ onUnmounted(() => {
             :class="
               isClassicLayout
                 ? 'h-full shrink-0 relative bg-background'
-                : 'h-full shrink-0 relative overflow-hidden rounded-md border border-border/80 bg-background'
+                : 'h-full shrink-0 relative rounded-md border border-border/80 bg-background'
             "
             :style="{ width: aiPanelWidth + 'px' }"
           >
@@ -629,7 +629,7 @@ onUnmounted(() => {
             :class="
               isClassicLayout
                 ? 'h-full shrink-0 relative bg-background'
-                : 'h-full shrink-0 relative overflow-hidden rounded-md border border-border/80 bg-background'
+                : 'h-full shrink-0 relative rounded-md border border-border/80 bg-background'
             "
             :style="{ width: historyWidth + 'px' }"
           >

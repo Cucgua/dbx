@@ -2241,7 +2241,10 @@ defineExpose({
           <div class="flex-1 flex min-h-0 overflow-hidden">
             <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
               <!-- Sticky header -->
-              <div ref="headerRef" class="shrink-0 bg-muted/60 z-10 border-y border-border overflow-hidden">
+              <div
+                ref="headerRef"
+                class="shrink-0 bg-[rgb(239_239_239)] dark:bg-muted/60 z-10 border-y border-border overflow-hidden"
+              >
                 <div class="flex text-xs font-semibold text-foreground" :style="{ width: 'var(--total-w)' }">
                   <div
                     class="shrink-0 px-2 py-1.5 border-r border-border text-center text-muted-foreground select-none"
