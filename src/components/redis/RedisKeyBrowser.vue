@@ -47,6 +47,9 @@ const checkedKeys = ref<Set<string>>(new Set());
 const showBatchDeleteConfirm = ref(false);
 
 const PAGE_SIZE = 200;
+const keyGridStyle = {
+  gridTemplateColumns: "minmax(12rem, 0.35fr) 80px 1fr 60px 60px",
+};
 
 const effectivePattern = computed(() => searchPattern.value.trim() || "*");
 const isSearchMode = computed(() => effectivePattern.value !== "*");
@@ -225,9 +228,7 @@ onMounted(loadKeys);
         </div>
 
         <!-- Table header -->
-        <div
-          class="grid grid-cols-[minmax(12rem,0.35fr)_70px_1fr_60px_60px] border-b bg-muted/50 shrink-0 text-xs font-medium text-muted-foreground"
-        >
+        <div class="grid border-b bg-muted/50 shrink-0 text-xs font-medium text-muted-foreground" :style="keyGridStyle">
           <div class="px-3 py-1 border-r">键</div>
           <div class="px-2 py-1 border-r">类型</div>
           <div class="px-3 py-1 border-r">值</div>
@@ -252,9 +253,9 @@ onMounted(loadKeys);
         <RecycleScroller v-else class="flex-1" :items="visibleRows" :item-size="28" key-field="id">
           <template #default="{ item: row }">
             <div
-              class="grid grid-cols-[minmax(12rem,0.35fr)_80px_1fr_60px_60px] border-b text-xs cursor-pointer hover:bg-accent/50 group"
+              class="grid border-b text-xs cursor-pointer hover:bg-accent/50 group"
               :class="{ 'bg-accent': row.node.kind === 'leaf' && selectedKeyRaw === row.node.keyRaw }"
-              :style="{ height: '28px' }"
+              :style="{ ...keyGridStyle, height: '28px' }"
               @click="onRowClick(row.node)"
             >
               <!-- Key column -->
