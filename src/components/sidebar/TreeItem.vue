@@ -830,6 +830,33 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
   }
 }
 
+async function saveBinaryFileContent(
+  content: Uint8Array,
+  defaultFileName: string,
+  filterName: string,
+  filterExt: string,
+) {
+  if (isTauriRuntime()) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+    const path = await save({
+      defaultPath: defaultFileName,
+      filters: [{ name: filterName, extensions: [filterExt] }],
+    });
+    if (path) await writeFile(path, content);
+  } else {
+    const blob = new Blob([content], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultFileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function exportDatabase() {
   const node = props.node;
   if (!(node.type === "database" || node.type === "schema") || !node.connectionId || !node.database) return;
@@ -942,8 +969,36 @@ async function exportData(format: "csv" | "json" | "sql") {
     }
 
     await saveFileContent(content, `${node.label}.${ext}`, ext.toUpperCase(), ext);
+    toast(t("grid.exported"));
   } catch (e: any) {
-    console.error("Export data failed:", e);
+    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function exportDataXlsx() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  const config = connectionStore.getConfig(node.connectionId);
+  if (!config) return;
+
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    const qualifiedName =
+      isSchemaAware(config.db_type) && node.schema
+        ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
+        : quoteIdent(node.label);
+    const result = await api.executeQuery(node.connectionId, node.database, `SELECT * FROM ${qualifiedName}`);
+
+    const { buildXlsxWorkbook } = await import("@/lib/xlsxExport");
+    const workbook = buildXlsxWorkbook({
+      sheetName: node.label,
+      columns: result.columns,
+      rows: result.rows,
+    });
+    await saveBinaryFileContent(workbook, `${node.label}.xlsx`, "Excel", "xlsx");
+    toast(t("grid.exported"));
+  } catch (e: any) {
+    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
@@ -1645,6 +1700,7 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             <ContextMenuItem @click="exportData('csv')">CSV</ContextMenuItem>
             <ContextMenuItem @click="exportData('json')">JSON</ContextMenuItem>
             <ContextMenuItem @click="exportData('sql')">SQL INSERT</ContextMenuItem>
+            <ContextMenuItem @click="exportDataXlsx">XLSX</ContextMenuItem>
           </ContextMenuSubContent>
         </ContextMenuSub>
         <ContextMenuItem @click="exportStructure">
