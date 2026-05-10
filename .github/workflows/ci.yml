@@ -31,6 +31,9 @@ jobs:
       - name: TypeScript check
         run: npx vue-tsc --noEmit
 
+      - name: Frontend tests
+        run: pnpm test
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 

@@ -18,8 +18,8 @@ test("builds SQL Server grid save statements with schema and bracket quoting", (
   });
 
   assert.deepEqual(statements, [
-    "UPDATE [game].[player states] SET [state] = 'ready', [updated at] = '2026-05-04' WHERE [role id] = 42;",
+    "UPDATE [game].[player states] SET [state] = N'ready', [updated at] = N'2026-05-04' WHERE [role id] = 42;",
     "DELETE FROM [game].[player states] WHERE [role id] = 42;",
-    "INSERT INTO [game].[player states] ([role id], [state], [updated at]) VALUES (43, 'new', '2026-05-05');",
+    "INSERT INTO [game].[player states] ([role id], [state], [updated at]) VALUES (43, N'new', N'2026-05-05');",
   ]);
 });

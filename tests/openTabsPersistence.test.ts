@@ -31,8 +31,10 @@ test("serializes unsaved query tabs with editor context", () => {
       database: "app",
       schema: "public",
       sql: "select * from users",
+      savedSqlId: undefined,
       pinned: true,
       mode: "query",
+      objectBrowser: undefined,
       tableMeta: undefined,
     },
   ]);
