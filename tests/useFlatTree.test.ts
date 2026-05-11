@@ -37,6 +37,6 @@ test("flattenTree preserves depth and node type for virtualized sidebar rows", (
 });
 
 test("shouldVirtualizeFlatTree only virtualizes very large sidebar trees", () => {
-  assert.equal(shouldVirtualizeFlatTree(399), false);
-  assert.equal(shouldVirtualizeFlatTree(400), true);
+  assert.equal(shouldVirtualizeFlatTree(99), false);
+  assert.equal(shouldVirtualizeFlatTree(100), true);
 });

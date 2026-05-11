@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { uuid } from "@/lib/utils";
-import { ref, watch } from "vue";
+import { ref, computed, watch } from "vue";
 import type { ColumnInfo, ConnectionConfig, SidebarLayout, TreeNode } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
 import {
@@ -111,8 +111,10 @@ export const useConnectionStore = defineStore("connection", () => {
     newConnectionGroupId.value = null;
   }
 
+  const configById = computed(() => new Map(connections.value.map((c) => [c.id, c])));
+
   function getConfig(connectionId: string) {
-    return connections.value.find((c) => c.id === connectionId);
+    return configById.value.get(connectionId);
   }
 
   function connectionErrorMessage(error: unknown): string {
