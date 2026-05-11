@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { uuid } from "@/lib/utils";
-import { ref, watch } from "vue";
+import { ref, computed, watch } from "vue";
 import type { ColumnInfo, ConnectionConfig, SidebarLayout, TreeNode } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
 import {
@@ -111,8 +111,10 @@ export const useConnectionStore = defineStore("connection", () => {
     newConnectionGroupId.value = null;
   }
 
+  const configById = computed(() => new Map(connections.value.map((c) => [c.id, c])));
+
   function getConfig(connectionId: string) {
-    return connections.value.find((c) => c.id === connectionId);
+    return configById.value.get(connectionId);
   }
 
   function connectionErrorMessage(error: unknown): string {
@@ -687,17 +689,25 @@ export const useConnectionStore = defineStore("connection", () => {
           [],
           defaultSchemaTables.slice(0, SIDEBAR_TABLE_NODE_LIMIT),
         );
-        children = [
-          ...previewTables,
-          buildObjectBrowserNode(
-            `${nodeId}:${SQLSERVER_DEFAULT_SCHEMA}`,
-            connectionId,
-            database,
-            SQLSERVER_DEFAULT_SCHEMA,
-            defaultSchemaTables.length,
-          ),
-          ...children.filter((child) => child.type === "schema"),
-        ];
+        const browserNode = buildObjectBrowserNode(
+          `${nodeId}:${SQLSERVER_DEFAULT_SCHEMA}`,
+          connectionId,
+          database,
+          SQLSERVER_DEFAULT_SCHEMA,
+          defaultSchemaTables.length,
+        );
+        const hiddenTables = defaultSchemaTables.slice(SIDEBAR_TABLE_NODE_LIMIT);
+        browserNode.hiddenChildren = hiddenTables.map((t) => ({
+          id: `${nodeId}:${SQLSERVER_DEFAULT_SCHEMA}:${t.name}`,
+          label: t.name,
+          type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
+          connectionId,
+          database,
+          schema: SQLSERVER_DEFAULT_SCHEMA,
+          isExpanded: false,
+          children: [],
+        }));
+        children = [...previewTables, browserNode, ...children.filter((child) => child.type === "schema")];
       }
       setChildren(node, children);
       await savePersistedTreeChildren(cacheKey, children);
@@ -734,7 +744,19 @@ export const useConnectionStore = defineStore("connection", () => {
         children: [],
       }));
       if (tables.length > SIDEBAR_TABLE_NODE_LIMIT) {
-        children.push(buildObjectBrowserNode(nodeId, connectionId, database, effectiveSchema, tables.length));
+        const hiddenTables = tables.slice(SIDEBAR_TABLE_NODE_LIMIT);
+        const browserNode = buildObjectBrowserNode(nodeId, connectionId, database, effectiveSchema, tables.length);
+        browserNode.hiddenChildren = hiddenTables.map((t) => ({
+          id: `${nodeId}:${t.name}`,
+          label: t.name,
+          type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
+          connectionId,
+          database,
+          schema: effectiveSchema,
+          isExpanded: false,
+          children: [],
+        }));
+        children.push(browserNode);
       }
       setChildren(node, children);
       await savePersistedTreeChildren(cacheKey, children);

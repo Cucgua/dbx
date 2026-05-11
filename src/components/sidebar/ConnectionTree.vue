@@ -96,6 +96,12 @@ function filterTree(nodes: TreeNode[], q: string): TreeNode[] {
   const filteredNodes: TreeNode[] = [];
 
   for (const node of nodes) {
+    if (node.type === "object-browser" && node.hiddenChildren) {
+      const matches = node.hiddenChildren.filter((child) => matchSidebarLabel(normalizedLabel(child), q));
+      if (matches.length > 0) filteredNodes.push(...matches);
+      continue;
+    }
+
     const label = normalizedLabel(node);
     const selfMatches = !!matchSidebarLabel(label, q);
     const filteredChildren = node.children ? filterTree(node.children, q) : undefined;

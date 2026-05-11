@@ -23,5 +23,5 @@ export function flattenTree(nodes: TreeNode[]): FlatTreeNode[] {
 }
 
 export function shouldVirtualizeFlatTree(count: number): boolean {
-  return count >= 400;
+  return count >= 100;
 }
