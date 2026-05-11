@@ -1139,7 +1139,17 @@ function applyContextSort(direction: "asc" | "desc" | null) {
   emit("sort", column, columnIndex, direction, currentWhereInput());
 }
 
-function contextFilterCondition(mode: "equals" | "not-equals" | "is-null" | "is-not-null"): string | null {
+type FilterMode =
+  | "equals"
+  | "not-equals"
+  | "is-null"
+  | "is-not-null"
+  | "like"
+  | "not-like"
+  | "less-than"
+  | "greater-than";
+
+function contextFilterCondition(mode: FilterMode): string | null {
   if (!contextColumn.value) return null;
   const column = quoteIdent(contextColumn.value);
   const value = contextCellValue.value;
@@ -1147,10 +1157,14 @@ function contextFilterCondition(mode: "equals" | "not-equals" | "is-null" | "is-
   if (mode === "is-null") return `${column} IS NULL`;
   if (mode === "is-not-null") return `${column} IS NOT NULL`;
   if (value === null) return mode === "equals" ? `${column} IS NULL` : `${column} IS NOT NULL`;
+  if (mode === "like") return `${column} LIKE ${escapeVal(`%${value}%`)}`;
+  if (mode === "not-like") return `${column} NOT LIKE ${escapeVal(`%${value}%`)}`;
+  if (mode === "less-than") return `${column} < ${escapeVal(value)}`;
+  if (mode === "greater-than") return `${column} > ${escapeVal(value)}`;
   return mode === "equals" ? `${column} = ${escapeVal(value)}` : `${column} <> ${escapeVal(value)}`;
 }
 
-async function applyContextFilter(mode: "equals" | "not-equals" | "is-null" | "is-not-null") {
+async function applyContextFilter(mode: FilterMode) {
   if (!canUseWhereSearch.value) return;
   const condition = contextFilterCondition(mode);
   if (!condition) return;
@@ -2366,6 +2380,13 @@ defineExpose({
               <ContextMenuItem @click="applyContextFilter('not-equals')">
                 {{ t("grid.filterExcludeValue") }}
               </ContextMenuItem>
+              <ContextMenuItem @click="applyContextFilter('like')">{{ t("grid.filterLike") }}</ContextMenuItem>
+              <ContextMenuItem @click="applyContextFilter('not-like')">{{ t("grid.filterNotLike") }}</ContextMenuItem>
+              <ContextMenuItem @click="applyContextFilter('less-than')">{{ t("grid.filterLessThan") }}</ContextMenuItem>
+              <ContextMenuItem @click="applyContextFilter('greater-than')">
+                {{ t("grid.filterGreaterThan") }}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
               <ContextMenuItem @click="applyContextFilter('is-null')">{{ t("grid.filterIsNull") }}</ContextMenuItem>
               <ContextMenuItem @click="applyContextFilter('is-not-null')">
                 {{ t("grid.filterIsNotNull") }}
