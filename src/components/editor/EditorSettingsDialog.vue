@@ -2,19 +2,27 @@
 import { ref, watch, shallowRef, computed } from "vue";
 import type { EditorView as EditorViewType } from "@codemirror/view";
 import { useI18n } from "vue-i18n";
-import { FolderOpen, Settings, Trash2 } from "lucide-vue-next";
+import { FolderOpen, Loader2, Settings, Trash2 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useSettingsStore, EDITOR_THEMES, FONT_FAMILIES, DEFAULT_EDITOR_SETTINGS } from "@/stores/settingsStore";
+import {
+  useSettingsStore,
+  EDITOR_THEMES,
+  FONT_FAMILIES,
+  DEFAULT_EDITOR_SETTINGS,
+  type AiProvider,
+  type AiApiStyle,
+} from "@/stores/settingsStore";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import type { JdbcDriverInfo, JdbcPluginStatus } from "@/types/database";
 import * as api from "@/lib/api";
+import { aiTestConnection } from "@/lib/api";
 import { useToast } from "@/composables/useToast";
 
 const { t } = useI18n();
@@ -23,6 +31,7 @@ const { toast } = useToast();
 
 const props = defineProps<{
   open: boolean;
+  initialTab?: string;
 }>();
 
 const emit = defineEmits<{
@@ -120,13 +129,15 @@ const jdbcDriverPathInput = ref("");
 
 watch(
   () => props.open,
-  (open) => {
+  async (open) => {
     if (open) {
-      activeSettingsTab.value = "editor";
+      activeSettingsTab.value = props.initialTab || "editor";
       passwordMessage.value = "";
       oldPassword.value = "";
       newPassword.value = "";
       confirmNewPassword.value = "";
+      await settingsStore.initAiConfig();
+      syncAiEditState();
       void loadJdbcDrivers();
       void loadJdbcPluginStatus();
     }
@@ -273,6 +284,91 @@ async function deleteJdbcDriver(path: string) {
   }
 }
 
+// ---------- AI Settings ----------
+const aiProviderDefaults: Record<AiProvider, { endpoint: string; model: string }> = {
+  claude: { endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514" },
+  openai: { endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o" },
+  custom: { endpoint: "", model: "" },
+};
+
+const aiEditProvider = ref<AiProvider>(settingsStore.aiConfig.provider);
+const aiEditApiKey = ref(settingsStore.aiConfig.apiKey);
+const aiEditEndpoint = ref(settingsStore.aiConfig.endpoint);
+const aiEditModel = ref(settingsStore.aiConfig.model);
+const aiEditApiStyle = ref<AiApiStyle>(settingsStore.aiConfig.apiStyle || "completions");
+const aiEditProxyEnabled = ref(!!settingsStore.aiConfig.proxyEnabled);
+const aiEditProxyUrl = ref(settingsStore.aiConfig.proxyUrl || "");
+
+const aiTesting = ref(false);
+const aiTestResult = ref<"" | "success" | "error">("");
+const aiTestError = ref("");
+
+function syncAiEditState() {
+  aiEditProvider.value = settingsStore.aiConfig.provider;
+  aiEditApiKey.value = settingsStore.aiConfig.apiKey;
+  aiEditEndpoint.value = settingsStore.aiConfig.endpoint;
+  aiEditModel.value = settingsStore.aiConfig.model;
+  aiEditApiStyle.value = settingsStore.aiConfig.apiStyle || "completions";
+  aiEditProxyEnabled.value = !!settingsStore.aiConfig.proxyEnabled;
+  aiEditProxyUrl.value = settingsStore.aiConfig.proxyUrl || "";
+  aiTestResult.value = "";
+  aiTestError.value = "";
+}
+
+function aiSelectProvider(provider: AiProvider) {
+  aiEditProvider.value = provider;
+  aiEditEndpoint.value = aiProviderDefaults[provider].endpoint;
+  aiEditModel.value = aiProviderDefaults[provider].model;
+}
+
+function aiHasChanges(): boolean {
+  return (
+    aiEditProvider.value !== settingsStore.aiConfig.provider ||
+    aiEditApiKey.value !== settingsStore.aiConfig.apiKey ||
+    aiEditEndpoint.value !== settingsStore.aiConfig.endpoint ||
+    aiEditModel.value !== settingsStore.aiConfig.model ||
+    aiEditApiStyle.value !== (settingsStore.aiConfig.apiStyle || "completions") ||
+    aiEditProxyEnabled.value !== !!settingsStore.aiConfig.proxyEnabled ||
+    aiEditProxyUrl.value !== (settingsStore.aiConfig.proxyUrl || "")
+  );
+}
+
+function aiApplySettings() {
+  settingsStore.updateAiConfig({
+    provider: aiEditProvider.value,
+    apiKey: aiEditApiKey.value,
+    endpoint: aiEditEndpoint.value,
+    model: aiEditModel.value,
+    apiStyle: aiEditApiStyle.value,
+    proxyEnabled: aiEditProxyEnabled.value,
+    proxyUrl: aiEditProxyUrl.value,
+  });
+}
+
+async function aiTestConn() {
+  if (!aiEditApiKey.value.trim() || !aiEditEndpoint.value.trim() || !aiEditModel.value.trim()) return;
+  aiTesting.value = true;
+  aiTestResult.value = "";
+  aiTestError.value = "";
+  try {
+    await aiTestConnection({
+      provider: aiEditProvider.value,
+      apiKey: aiEditApiKey.value,
+      endpoint: aiEditEndpoint.value,
+      model: aiEditModel.value,
+      apiStyle: aiEditApiStyle.value,
+      proxyEnabled: aiEditProxyEnabled.value,
+      proxyUrl: aiEditProxyUrl.value,
+    });
+    aiTestResult.value = "success";
+  } catch (e: any) {
+    aiTestResult.value = "error";
+    aiTestError.value = e?.message || String(e);
+  } finally {
+    aiTesting.value = false;
+  }
+}
+
 // ---------- CodeMirror preview ----------
 const previewRef = ref<HTMLDivElement>();
 const previewView = shallowRef<EditorViewType | null>(null);
@@ -381,6 +477,7 @@ watch(
         <TabsList class="w-full">
           <TabsTrigger value="editor" class="flex-1">{{ t("settings.editorTab") }}</TabsTrigger>
           <TabsTrigger value="appearance" class="flex-1">{{ t("settings.appearanceTab") }}</TabsTrigger>
+          <TabsTrigger value="ai" class="flex-1">{{ t("settings.aiTab") }}</TabsTrigger>
           <TabsTrigger v-if="!isWeb" value="jdbc" class="flex-1">{{ t("settings.jdbcTab") }}</TabsTrigger>
           <TabsTrigger v-if="isWeb" value="security" class="flex-1">{{ t("settings.securityTab") }}</TabsTrigger>
           <TabsTrigger value="about" class="flex-1">{{ t("settings.aboutTab") }}</TabsTrigger>
@@ -525,7 +622,7 @@ watch(
                 type="button"
                 variant="outline"
                 class="h-auto justify-start p-3"
-                :class="editAppLayout === 'separated' ? 'border-primary bg-primary/10' : ''"
+                :class="editAppLayout === 'separated' ? 'border-blue-300 border-2 ring-2 ring-blue-300/50' : ''"
                 @click="setAppLayout('separated')"
               >
                 <div class="text-left">
@@ -537,7 +634,7 @@ watch(
                 type="button"
                 variant="outline"
                 class="h-auto justify-start p-3"
-                :class="editAppLayout === 'classic' ? 'border-primary bg-primary/10' : ''"
+                :class="editAppLayout === 'classic' ? 'border-blue-300 border-2 ring-2 ring-blue-300/50' : ''"
                 @click="setAppLayout('classic')"
               >
                 <div class="text-left">
@@ -559,6 +656,111 @@ watch(
             <Button :disabled="!hasChanges()" @click="applySettings">
               {{ t("settings.apply") }}
             </Button>
+          </DialogFooter>
+        </TabsContent>
+
+        <!-- AI Settings Tab -->
+        <TabsContent value="ai" class="space-y-5 py-2">
+          <p class="text-xs text-muted-foreground">{{ t("ai.settingsHint") }}</p>
+
+          <div class="space-y-3">
+            <div class="grid grid-cols-3 items-center gap-3">
+              <Label class="text-right text-xs">{{ t("ai.provider") }}</Label>
+              <Select :model-value="aiEditProvider" @update:model-value="(v: any) => aiSelectProvider(v)">
+                <SelectTrigger class="col-span-2 h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="claude">Claude</SelectItem>
+                  <SelectItem value="openai">OpenAI</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div class="grid grid-cols-3 items-center gap-3">
+              <Label class="text-right text-xs">API Key</Label>
+              <Input v-model="aiEditApiKey" type="password" autocomplete="off" class="col-span-2 h-8 text-xs" />
+            </div>
+
+            <div class="grid grid-cols-3 items-center gap-3">
+              <Label class="text-right text-xs">Endpoint</Label>
+              <Input
+                v-model="aiEditEndpoint"
+                placeholder="https://api.openai.com/v1"
+                autocomplete="off"
+                class="col-span-2 h-8 text-xs"
+              />
+            </div>
+
+            <div class="grid grid-cols-3 items-center gap-3">
+              <Label class="text-right text-xs">Model</Label>
+              <Input v-model="aiEditModel" autocomplete="off" class="col-span-2 h-8 text-xs" />
+            </div>
+
+            <div v-if="aiEditProvider !== 'claude'" class="grid grid-cols-3 items-center gap-3">
+              <Label class="text-right text-xs">API</Label>
+              <div class="col-span-2 flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  class="h-8 flex-1 text-xs"
+                  :class="{ 'border-blue-300 border-2 ring-2 ring-blue-300/50': aiEditApiStyle === 'completions' }"
+                  @click="aiEditApiStyle = 'completions'"
+                  >/chat/completions</Button
+                >
+                <Button
+                  size="sm"
+                  variant="outline"
+                  class="h-8 flex-1 text-xs"
+                  :class="{ 'border-blue-300 border-2 ring-2 ring-blue-300/50': aiEditApiStyle === 'responses' }"
+                  @click="aiEditApiStyle = 'responses'"
+                  >/responses</Button
+                >
+              </div>
+            </div>
+
+            <div class="grid grid-cols-3 items-center gap-3">
+              <Label class="text-right text-xs">{{ t("ai.proxy") }}</Label>
+              <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                <input v-model="aiEditProxyEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
+                {{ t("ai.proxyEnable") }}
+              </label>
+            </div>
+
+            <div class="grid grid-cols-3 items-center gap-3">
+              <Label class="text-right text-xs">{{ t("ai.proxyUrl") }}</Label>
+              <Input
+                v-model="aiEditProxyUrl"
+                autocomplete="off"
+                class="col-span-2 h-8 text-xs"
+                placeholder="socks5://127.0.0.1:7890"
+                :disabled="!aiEditProxyEnabled"
+              />
+            </div>
+          </div>
+
+          <DialogFooter class="flex items-center gap-2">
+            <div class="flex-1 flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                :disabled="aiTesting || !aiEditApiKey?.trim() || !aiEditEndpoint?.trim() || !aiEditModel?.trim()"
+                @click="aiTestConn"
+              >
+                <Loader2 v-if="aiTesting" class="h-3 w-3 animate-spin mr-1" />
+                {{ t("connection.test") }}
+              </Button>
+              <span v-if="aiTestResult === 'success'" class="text-xs text-green-500">{{
+                t("connection.testSuccess")
+              }}</span>
+              <span
+                v-else-if="aiTestResult === 'error'"
+                class="text-xs text-destructive truncate max-w-[200px]"
+                :title="aiTestError"
+                >{{ aiTestError }}</span
+              >
+            </div>
+            <Button variant="outline" @click="emit('update:open', false)">{{ t("common.close") }}</Button>
+            <Button :disabled="!aiHasChanges()" @click="aiApplySettings">{{ t("settings.apply") }}</Button>
           </DialogFooter>
         </TabsContent>
 

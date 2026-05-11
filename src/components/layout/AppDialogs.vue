@@ -24,6 +24,7 @@ import { useDialogSources } from "@/composables/useDialogSources";
 const props = defineProps<{
   showConnectionDialog: boolean;
   showSettingsDialog: boolean;
+  settingsInitialTab?: string;
   showDangerDialog: boolean;
   dangerSql: string;
 }>();
@@ -98,7 +99,11 @@ watch(
     @connect-succeeded="emit('connectSucceeded', $event)"
     @connect-failed="emit('connectFailed', $event)"
   />
-  <EditorSettingsDialog :open="showSettingsDialog" @update:open="emit('update:showSettingsDialog', $event)" />
+  <EditorSettingsDialog
+    :open="showSettingsDialog"
+    :initial-tab="settingsInitialTab || 'editor'"
+    @update:open="emit('update:showSettingsDialog', $event)"
+  />
   <DangerConfirmDialog
     :open="showDangerDialog"
     :sql="dangerSql"

@@ -443,6 +443,7 @@ export default {
   ai: {
     placeholder: "描述你想查什么...",
     settings: "AI 设置",
+    noConfig: "AI 尚未配置。请在 设置 > AI 中配置你的 AI 服务。",
     provider: "提供商",
     run: "执行",
     readingSchema: "读取结构",
@@ -881,6 +882,7 @@ export default {
     title: "设置",
     editorTab: "编辑器",
     appearanceTab: "外观",
+    aiTab: "AI",
     jdbcTab: "JDBC 驱动",
     securityTab: "安全",
     aboutTab: "关于我们",
