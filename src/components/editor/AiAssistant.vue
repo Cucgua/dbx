@@ -173,6 +173,8 @@ const tempApiKey = ref(settings.aiConfig.apiKey);
 const tempEndpoint = ref(settings.aiConfig.endpoint);
 const tempModel = ref(settings.aiConfig.model);
 const tempApiStyle = ref<AiApiStyle>(settings.aiConfig.apiStyle || "completions");
+const tempProxyEnabled = ref(!!settings.aiConfig.proxyEnabled);
+const tempProxyUrl = ref(settings.aiConfig.proxyUrl || "");
 
 const providerDefaults: Record<AiProvider, { endpoint: string; model: string }> = {
   claude: { endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514" },
@@ -213,6 +215,8 @@ function openSettings() {
   tempEndpoint.value = settings.aiConfig.endpoint;
   tempModel.value = settings.aiConfig.model;
   tempApiStyle.value = settings.aiConfig.apiStyle || "completions";
+  tempProxyEnabled.value = !!settings.aiConfig.proxyEnabled;
+  tempProxyUrl.value = settings.aiConfig.proxyUrl || "";
   showSettings.value = true;
 }
 
@@ -223,6 +227,8 @@ function saveSettings() {
     endpoint: tempEndpoint.value,
     model: tempModel.value,
     apiStyle: tempApiStyle.value,
+    proxyEnabled: tempProxyEnabled.value,
+    proxyUrl: tempProxyUrl.value,
   });
   showSettings.value = false;
 }
@@ -242,6 +248,8 @@ async function testAiConnection() {
       endpoint: tempEndpoint.value,
       model: tempModel.value,
       apiStyle: tempApiStyle.value,
+      proxyEnabled: tempProxyEnabled.value,
+      proxyUrl: tempProxyUrl.value,
     });
     testResult.value = "success";
   } catch (e: any) {
@@ -798,6 +806,23 @@ function formatInlineText(text: string): string {
               >/responses</Button
             >
           </div>
+        </div>
+        <div class="grid grid-cols-3 items-center gap-3">
+          <Label class="text-right text-xs">{{ t("ai.proxy") }}</Label>
+          <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <input v-model="tempProxyEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
+            {{ t("ai.proxyEnable") }}
+          </label>
+        </div>
+        <div class="grid grid-cols-3 items-center gap-3">
+          <Label class="text-right text-xs">{{ t("ai.proxyUrl") }}</Label>
+          <Input
+            v-model="tempProxyUrl"
+            autocomplete="off"
+            class="col-span-2 h-8 text-xs"
+            placeholder="socks5://127.0.0.1:7890"
+            :disabled="!tempProxyEnabled"
+          />
         </div>
       </div>
       <DialogFooter class="flex items-center gap-2">

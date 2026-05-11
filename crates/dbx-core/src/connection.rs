@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::db;
+use crate::db::proxy_tunnel::ProxyTunnelManager;
 use crate::db::ssh_tunnel::TunnelManager;
 use crate::external;
 use crate::models::connection::{parse_mongo_first_host, ConnectionConfig, DatabaseType};
@@ -93,6 +94,7 @@ pub struct AppState {
     pub configs: RwLock<HashMap<String, ConnectionConfig>>,
     pub running_queries: RunningQueries,
     pub tunnels: TunnelManager,
+    pub proxy_tunnels: ProxyTunnelManager,
     pub storage: Storage,
     pub plugins: PluginRegistry,
 }
@@ -126,6 +128,7 @@ impl AppState {
             configs: RwLock::new(HashMap::new()),
             running_queries: RunningQueries::default(),
             tunnels: TunnelManager::new(),
+            proxy_tunnels: ProxyTunnelManager::new(),
             storage,
             plugins: PluginRegistry::new(plugin_dir),
         }
@@ -302,6 +305,37 @@ impl AppState {
         config: &ConnectionConfig,
     ) -> Result<(String, u16), String> {
         if !config.ssh_enabled || config.ssh_host.is_empty() {
+            if config.proxy_enabled && !config.proxy_host.is_empty() {
+                if let Some(local_port) = self.proxy_tunnels.local_port(connection_id).await {
+                    return Ok(("127.0.0.1".to_string(), local_port));
+                }
+
+                let (remote_host, remote_port) = if config.db_type == DatabaseType::MongoDb {
+                    config
+                        .connection_string
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .and_then(parse_mongo_first_host)
+                        .unwrap_or_else(|| (config.host.clone(), config.port))
+                } else {
+                    (config.host.clone(), config.port)
+                };
+
+                let local_port = self
+                    .proxy_tunnels
+                    .start_tunnel(
+                        connection_id,
+                        config.proxy_type,
+                        &config.proxy_host,
+                        config.proxy_port,
+                        &config.proxy_username,
+                        &config.proxy_password,
+                        &remote_host,
+                        remote_port,
+                    )
+                    .await?;
+                return Ok(("127.0.0.1".to_string(), local_port));
+            }
             return Ok((config.host.clone(), config.port));
         }
 
@@ -412,7 +446,7 @@ async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &sqlx::mysql::My
 #[cfg(test)]
 mod tests {
     use super::{database_connection_config, metadata_connection_config, AppState};
-    use crate::models::connection::{ConnectionConfig, DatabaseType};
+    use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
     use crate::schema;
     use crate::storage::Storage;
 
@@ -439,6 +473,12 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: crate::models::connection::default_ssh_connect_timeout_secs(),
+            proxy_enabled: false,
+            proxy_type: ProxyType::Socks5,
+            proxy_host: String::new(),
+            proxy_port: 1080,
+            proxy_username: String::new(),
+            proxy_password: String::new(),
             ssl: false,
             sysdba: false,
             connection_string: None,
@@ -515,6 +555,22 @@ mod tests {
         assert_eq!(databases.len(), 1);
         assert_eq!(databases[0].name, "main");
 
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn proxy_connection_uses_local_forward_endpoint() {
+        let (state, dir) = test_app_state().await;
+        let mut config = mysql_config(Some("app"));
+        config.proxy_enabled = true;
+        config.proxy_host = "127.0.0.1".to_string();
+        config.proxy_port = 65000;
+
+        let (host, port) = state.connection_host_port("proxied", &config).await.unwrap();
+
+        assert_eq!(host, "127.0.0.1");
+        assert_ne!(port, config.port);
+        state.proxy_tunnels.stop_tunnel("proxied").await;
         let _ = std::fs::remove_dir_all(dir);
     }
 }

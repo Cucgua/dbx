@@ -70,6 +70,10 @@ pub struct AiConfig {
     pub model: String,
     #[serde(default)]
     pub api_style: AiApiStyle,
+    #[serde(default)]
+    pub proxy_enabled: bool,
+    #[serde(default)]
+    pub proxy_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,6 +222,15 @@ fn validate_config(config: &AiConfig) -> Result<(), String> {
     Ok(())
 }
 
+pub fn build_ai_http_client(config: &AiConfig, timeout_secs: u64) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(timeout_secs));
+    if config.proxy_enabled && !config.proxy_url.trim().is_empty() {
+        let proxy = reqwest::Proxy::all(config.proxy_url.trim()).map_err(|e| format!("Invalid AI proxy URL: {e}"))?;
+        builder = builder.proxy(proxy);
+    }
+    builder.build().map_err(|e| e.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Non-streaming calls
 // ---------------------------------------------------------------------------
@@ -339,8 +352,7 @@ pub async fn call_responses_api(client: &reqwest::Client, request: AiCompletionR
 pub async fn test_connection_core(config: &AiConfig) -> Result<String, String> {
     validate_config(config)?;
 
-    let client =
-        reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build().map_err(|e| e.to_string())?;
+    let client = build_ai_http_client(config, 15)?;
 
     let request = AiCompletionRequest {
         config: config.clone(),
@@ -366,8 +378,7 @@ pub async fn test_connection_core(config: &AiConfig) -> Result<String, String> {
 pub async fn complete(request: &AiCompletionRequest) -> Result<String, String> {
     validate_config(&request.config)?;
 
-    let client =
-        reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build().map_err(|e| e.to_string())?;
+    let client = build_ai_http_client(&request.config, 60)?;
 
     match request.config.provider {
         AiProvider::Claude => call_claude(&client, request.clone()).await,
@@ -393,8 +404,7 @@ pub async fn stream(
 ) -> Result<(), String> {
     validate_config(&request.config)?;
 
-    let client =
-        reqwest::Client::builder().timeout(std::time::Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
+    let client = build_ai_http_client(&request.config, 120)?;
 
     match request.config.provider {
         AiProvider::Claude => stream_claude(&client, session_id, request, cancelled, &on_chunk).await,
@@ -723,4 +733,41 @@ pub fn load_config(path: &Path) -> Result<Option<AiConfig>, String> {
     }
     let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     serde_json::from_str(&json).map(Some).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_ai_http_client, AiApiStyle, AiConfig, AiProvider};
+
+    #[test]
+    fn ai_config_proxy_fields_default_for_legacy_config() {
+        let config: AiConfig = serde_json::from_value(serde_json::json!({
+            "provider": "openai",
+            "apiKey": "key",
+            "endpoint": "https://api.openai.com/v1/chat/completions",
+            "model": "gpt-4o",
+            "apiStyle": "completions"
+        }))
+        .unwrap();
+
+        assert_eq!(config.proxy_enabled, false);
+        assert_eq!(config.proxy_url, "");
+    }
+
+    #[test]
+    fn ai_http_client_rejects_invalid_proxy_url() {
+        let config = AiConfig {
+            provider: AiProvider::Openai,
+            api_key: "key".to_string(),
+            endpoint: "https://api.openai.com/v1/chat/completions".to_string(),
+            model: "gpt-4o".to_string(),
+            api_style: AiApiStyle::Completions,
+            proxy_enabled: true,
+            proxy_url: "not a proxy url".to_string(),
+        };
+
+        let err = build_ai_http_client(&config, 1).unwrap_err();
+
+        assert!(err.contains("Invalid AI proxy URL"));
+    }
 }

@@ -23,7 +23,7 @@ redis = { version = "0.32.2", features = ["tokio-comp", "tls-rustls", "tokio-rus
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 duckdb = "1.3.2"
 tiberius = { version = "0.12.3", default-features = false, features = ["tds73", "chrono", "rust_decimal", "rustls"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "socks"] }
 futures = "0.3"
 mongodb = "3.2.5"
 rust-oracle = { git = "https://github.com/t8y2/rust-oracle", branch = "main" }

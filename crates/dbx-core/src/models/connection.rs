@@ -38,6 +38,18 @@ pub struct ConnectionConfig {
     #[serde(default = "default_ssh_connect_timeout_secs")]
     pub ssh_connect_timeout_secs: u64,
     #[serde(default)]
+    pub proxy_enabled: bool,
+    #[serde(default)]
+    pub proxy_type: ProxyType,
+    #[serde(default)]
+    pub proxy_host: String,
+    #[serde(default = "default_proxy_port")]
+    pub proxy_port: u16,
+    #[serde(default)]
+    pub proxy_username: String,
+    #[serde(default)]
+    pub proxy_password: String,
+    #[serde(default)]
     pub ssl: bool,
     #[serde(default)]
     pub sysdba: bool,
@@ -58,6 +70,23 @@ fn default_ssh_port() -> u16 {
 
 pub fn default_ssh_connect_timeout_secs() -> u64 {
     5
+}
+
+fn default_proxy_port() -> u16 {
+    1080
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyType {
+    Socks5,
+    Http,
+}
+
+impl Default for ProxyType {
+    fn default() -> Self {
+        Self::Socks5
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -372,7 +401,7 @@ fn bracket_ipv6(host: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType};
+    use super::{default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, ProxyType};
 
     fn mysql_config(username: &str, password: &str, database: Option<&str>) -> ConnectionConfig {
         ConnectionConfig {
@@ -397,6 +426,12 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
+            proxy_enabled: false,
+            proxy_type: ProxyType::Socks5,
+            proxy_host: String::new(),
+            proxy_port: 1080,
+            proxy_username: String::new(),
+            proxy_password: String::new(),
             ssl: false,
             sysdba: false,
             connection_string: None,
@@ -429,6 +464,28 @@ mod tests {
 
         assert_eq!(config.ssh_connect_timeout_secs, default_ssh_connect_timeout_secs());
         assert_eq!(config.effective_ssh_connect_timeout_secs(), default_ssh_connect_timeout_secs());
+    }
+
+    #[test]
+    fn proxy_fields_default_for_legacy_config() {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "id",
+            "name": "name",
+            "db_type": "mysql",
+            "host": "10.1.2.3",
+            "port": 3306,
+            "username": "root",
+            "password": "",
+            "database": null
+        }))
+        .unwrap();
+
+        assert_eq!(config.proxy_enabled, false);
+        assert_eq!(config.proxy_type, ProxyType::Socks5);
+        assert_eq!(config.proxy_host, "");
+        assert_eq!(config.proxy_port, 1080);
+        assert_eq!(config.proxy_username, "");
+        assert_eq!(config.proxy_password, "");
     }
 
     #[test]

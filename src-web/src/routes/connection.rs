@@ -88,6 +88,7 @@ pub async fn disconnect_db(
 
     app.configs.write().await.remove(&body.connection_id);
     app.tunnels.stop_tunnel(&body.connection_id).await;
+    app.proxy_tunnels.stop_tunnel(&body.connection_id).await;
 
     Ok(Json(()))
 }
@@ -121,7 +122,7 @@ mod tests {
     use axum::extract::State;
     use axum::Json;
     use dbx_core::connection::{AppState, PoolKind};
-    use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
+    use dbx_core::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
     use dbx_core::storage::Storage;
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
@@ -150,6 +151,12 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: dbx_core::models::connection::default_ssh_connect_timeout_secs(),
+            proxy_enabled: false,
+            proxy_type: ProxyType::Socks5,
+            proxy_host: String::new(),
+            proxy_port: 1080,
+            proxy_username: String::new(),
+            proxy_password: String::new(),
             ssl: false,
             sysdba: false,
             connection_string: None,

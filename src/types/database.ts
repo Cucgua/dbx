@@ -38,6 +38,12 @@ export interface ConnectionConfig {
   ssh_key_passphrase?: string;
   ssh_expose_lan?: boolean;
   ssh_connect_timeout_secs?: number;
+  proxy_enabled?: boolean;
+  proxy_type?: "socks5" | "http";
+  proxy_host?: string;
+  proxy_port?: number;
+  proxy_username?: string;
+  proxy_password?: string;
   ssl?: boolean;
   sysdba?: boolean;
   connection_string?: string;

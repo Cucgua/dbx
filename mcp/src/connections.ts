@@ -15,6 +15,12 @@ export interface ConnectionConfig {
   database?: string;
   url_params?: string;
   ssh_enabled: boolean;
+  proxy_enabled?: boolean;
+  proxy_type?: "socks5" | "http";
+  proxy_host?: string;
+  proxy_port?: number;
+  proxy_username?: string;
+  proxy_password?: string;
   ssl: boolean;
 }
 
@@ -50,6 +56,7 @@ export async function loadConnections(): Promise<ConnectionConfig[]> {
       const config: ConnectionConfig = JSON.parse(row.config_json);
       config.id = row.id;
       if (!config.password) config.password = getSecret(db, row.id, "password");
+      if (!config.proxy_password) config.proxy_password = getSecret(db, row.id, "proxy_password");
       configs.push(config);
     }
 
@@ -90,6 +97,12 @@ export async function addConnection(config: Omit<ConnectionConfig, "id">): Promi
     ssh_key_path: "",
     ssh_key_passphrase: "",
     ssh_expose_lan: false,
+    proxy_enabled: config.proxy_enabled ?? false,
+    proxy_type: config.proxy_type ?? "socks5",
+    proxy_host: config.proxy_host ?? "",
+    proxy_port: config.proxy_port ?? 1080,
+    proxy_username: config.proxy_username ?? "",
+    proxy_password: "",
     ssl: config.ssl ?? false,
     sysdba: false,
     connection_string: null,
@@ -100,6 +113,9 @@ export async function addConnection(config: Omit<ConnectionConfig, "id">): Promi
     db.prepare("INSERT INTO connections (id, config_json) VALUES (?, ?)").run(id, configJson);
     if (config.password) {
       db.prepare("INSERT INTO connection_secrets (connection_id, key, secret) VALUES (?, ?, ?)").run(id, "password", config.password);
+    }
+    if (config.proxy_password) {
+      db.prepare("INSERT INTO connection_secrets (connection_id, key, secret) VALUES (?, ?, ?)").run(id, "proxy_password", config.proxy_password);
     }
   });
   insert();

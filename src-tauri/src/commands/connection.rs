@@ -137,6 +137,9 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
     if config.ssh_enabled && !config.ssh_host.is_empty() {
         state.tunnels.stop_tunnel(&tunnel_id).await;
     }
+    if config.proxy_enabled && !config.proxy_host.is_empty() {
+        state.proxy_tunnels.stop_tunnel(&tunnel_id).await;
+    }
 
     result
 }
@@ -268,5 +271,6 @@ pub async fn disconnect_db(state: State<'_, Arc<AppState>>, connection_id: Strin
     drop(conns);
     state.configs.write().await.remove(&connection_id);
     state.tunnels.stop_tunnel(&connection_id).await;
+    state.proxy_tunnels.stop_tunnel(&connection_id).await;
     Ok(())
 }
