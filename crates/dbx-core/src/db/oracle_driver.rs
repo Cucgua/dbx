@@ -62,9 +62,9 @@ pub async fn list_databases(conn: &OracleClient) -> Result<Vec<DatabaseInfo>, St
             "WITH schema_names AS ( \
                SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AS owner FROM DUAL \
                UNION \
-               SELECT DISTINCT owner \
-               FROM all_objects \
-               WHERE object_type IN ('TABLE', 'VIEW') \
+               SELECT DISTINCT owner FROM all_tables \
+               UNION \
+               SELECT DISTINCT owner FROM all_views \
              ) \
              SELECT owner \
              FROM schema_names \

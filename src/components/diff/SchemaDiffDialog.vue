@@ -48,6 +48,7 @@ const targetSchemas = ref<string[]>([]);
 const step = ref<"select" | "comparing" | "result">("select");
 const diffs = ref<TableDiff[]>([]);
 const syncSql = ref("");
+const loadingMeta = ref(false);
 const executing = ref(false);
 
 const sqlConnections = computed(() =>
@@ -71,6 +72,7 @@ function connectionIconType(connectionId: string) {
 
 async function loadDatabases(connectionId: string, side: "source" | "target") {
   if (!connectionId) return;
+  loadingMeta.value = true;
   try {
     await store.ensureConnected(connectionId);
     const dbs = await api.listDatabases(connectionId);
@@ -89,6 +91,8 @@ async function loadDatabases(connectionId: string, side: "source" | "target") {
   } catch {
     if (side === "source") sourceDatabases.value = [];
     else targetDatabases.value = [];
+  } finally {
+    loadingMeta.value = false;
   }
 }
 
@@ -141,6 +145,8 @@ async function startCompare() {
 
     const srcTableNames = srcTables.filter((t) => t.table_type !== "VIEW").map((t) => t.name);
     const tgtTableNames = tgtTables.filter((t) => t.table_type !== "VIEW").map((t) => t.name);
+    const srcTableComments = new Map(srcTables.map((t) => [t.name, t.comment ?? null]));
+    const tgtTableComments = new Map(tgtTables.map((t) => [t.name, t.comment ?? null]));
     const srcViewNames = srcTables.filter((t) => t.table_type === "VIEW").map((t) => t.name);
     const tgtViewNames = tgtTables.filter((t) => t.table_type === "VIEW").map((t) => t.name);
     const { added, removed, common } = diffTables(srcTableNames, tgtTableNames);
@@ -181,8 +187,17 @@ async function startCompare() {
       const idxDiffs = diffIndexes(srcIdx, tgtIdx);
       const fkDiffs = diffForeignKeys(srcFks, tgtFks);
       const triggerDiffs = diffTriggers(srcTriggers, tgtTriggers);
+      const srcComment = srcTableComments.get(name) ?? null;
+      const tgtComment = tgtTableComments.get(name) ?? null;
+      const commentChanged = (srcComment ?? "") !== (tgtComment ?? "");
 
-      if (colDiffs.length > 0 || idxDiffs.length > 0 || fkDiffs.length > 0 || triggerDiffs.length > 0) {
+      if (
+        colDiffs.length > 0 ||
+        idxDiffs.length > 0 ||
+        fkDiffs.length > 0 ||
+        triggerDiffs.length > 0 ||
+        commentChanged
+      ) {
         result.push({
           type: "modified",
           objectType: "table",
@@ -191,6 +206,8 @@ async function startCompare() {
           indexes: idxDiffs.length > 0 ? idxDiffs : undefined,
           foreignKeys: fkDiffs.length > 0 ? fkDiffs : undefined,
           triggers: triggerDiffs.length > 0 ? triggerDiffs : undefined,
+          sourceTableComment: commentChanged ? srcComment : undefined,
+          targetTableComment: commentChanged ? tgtComment : undefined,
         });
       }
     }
@@ -403,9 +420,10 @@ watch(open, async (val) => {
           </div>
         </div>
 
-        <Button v-if="step === 'select'" size="sm" :disabled="!canCompare" @click="startCompare">
-          <GitCompareArrows class="w-3.5 h-3.5 mr-1" />
-          {{ t("diff.compare") }}
+        <Button v-if="step === 'select'" size="sm" :disabled="!canCompare || loadingMeta" @click="startCompare">
+          <Loader2 v-if="loadingMeta" class="w-3.5 h-3.5 mr-1 animate-spin" />
+          <GitCompareArrows v-else class="w-3.5 h-3.5 mr-1" />
+          {{ loadingMeta ? t("common.loading") : t("diff.compare") }}
         </Button>
 
         <!-- Comparing -->

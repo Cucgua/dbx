@@ -41,6 +41,8 @@ export interface TableDiff {
   foreignKeys?: ForeignKeyDiff[];
   triggers?: TriggerDiff[];
   ddl?: string;
+  sourceTableComment?: string | null;
+  targetTableComment?: string | null;
 }
 
 export function diffColumns(source: ColumnInfo[], target: ColumnInfo[]): ColumnDiff[] {
@@ -62,6 +64,9 @@ export function diffColumns(source: ColumnInfo[], target: ColumnInfo[]): ColumnD
       }
       if ((sc.column_default ?? "") !== (tc.column_default ?? "")) {
         changes.push(`default: ${tc.column_default ?? "NULL"} → ${sc.column_default ?? "NULL"}`);
+      }
+      if ((sc.comment ?? "") !== (tc.comment ?? "")) {
+        changes.push(`comment: ${tc.comment ?? ""} → ${sc.comment ?? ""}`);
       }
       if (changes.length > 0) {
         diffs.push({ type: "modified", name: sc.name, source: sc, target: tc, changes });
@@ -268,6 +273,34 @@ function dropObjectSql(diff: TableDiff, dbType: DatabaseType, schema?: string): 
   return `DROP ${objectType} IF EXISTS ${qualifiedName(diff.name, dbType, schema)};`;
 }
 
+function commentLiteral(comment: string): string {
+  return `'${comment.replace(/'/g, "''")}'`;
+}
+
+function columnCommentSql(
+  tableName: string,
+  colName: string,
+  comment: string,
+  dbType: DatabaseType,
+  schema?: string,
+): string {
+  const isMySQL = dbType === "mysql" || dbType === "doris" || dbType === "starrocks";
+  if (isMySQL) {
+    return `-- Column comment for ${colName}: use ALTER TABLE ... MODIFY COLUMN to set comment in MySQL`;
+  }
+  const qt = qualifiedName(tableName, dbType, schema);
+  return `COMMENT ON COLUMN ${qt}.${quoteId(colName, dbType)} IS ${commentLiteral(comment)};`;
+}
+
+function tableCommentSql(tableName: string, comment: string, dbType: DatabaseType, schema?: string): string {
+  const isMySQL = dbType === "mysql" || dbType === "doris" || dbType === "starrocks";
+  const qt = qualifiedName(tableName, dbType, schema);
+  if (isMySQL) {
+    return `ALTER TABLE ${qt} COMMENT = ${commentLiteral(comment)};`;
+  }
+  return `COMMENT ON TABLE ${qt} IS ${commentLiteral(comment)};`;
+}
+
 export function generateSyncSql(diffs: TableDiff[], dbType: DatabaseType, schema?: string): string {
   const lines: string[] = [];
   const isMySQL = dbType === "mysql" || dbType === "doris" || dbType === "starrocks";
@@ -349,6 +382,21 @@ export function generateSyncSql(diffs: TableDiff[], dbType: DatabaseType, schema
           }
         }
         lines.push("");
+      }
+
+      if (diff.columns) {
+        for (const col of diff.columns) {
+          if (col.source && col.changes?.some((c) => c.startsWith("comment:"))) {
+            lines.push(columnCommentSql(diff.name, col.name, col.source.comment ?? "", dbType, schema));
+          }
+          if (col.type === "added" && col.source?.comment) {
+            lines.push(columnCommentSql(diff.name, col.name, col.source.comment, dbType, schema));
+          }
+        }
+      }
+
+      if (diff.sourceTableComment !== undefined && diff.sourceTableComment !== diff.targetTableComment) {
+        lines.push(tableCommentSql(diff.name, diff.sourceTableComment ?? "", dbType, schema));
       }
 
       if (diff.indexes) {
