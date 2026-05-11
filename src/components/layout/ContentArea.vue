@@ -374,6 +374,7 @@ function onHandleCloseColumnPanel() {
           :loading="activeTab.isExecuting"
           :editable="!!activeTab.tableMeta?.primaryKeys?.length"
           context="table-data"
+          :initial-where-input="activeTab.whereInput"
           :database-type="activeConnection?.db_type"
           :connection-id="activeTab.connectionId"
           :database="activeTab.database"

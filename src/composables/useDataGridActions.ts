@@ -48,6 +48,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     const tab = activeTab.value;
     if (!tab) return;
     if (tab.mode === "data" && tab.tableMeta) {
+      tab.whereInput = whereInput ?? "";
       queryStore.updateSql(tab.id, buildTableSql(tab, { whereInput, orderBy }));
       await queryStore.executeCurrentTab();
       return;
@@ -72,6 +73,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
   async function onPaginate(offset: number, limit: number, whereInput?: string, orderBy?: string) {
     const tab = activeTab.value;
     if (!tab?.tableMeta) return;
+    tab.whereInput = whereInput ?? "";
     const sql = buildTableSql(tab, { limit, offset, whereInput, orderBy });
     queryStore.updateSql(tab.id, sql);
     await queryStore.executeCurrentTab();
@@ -83,6 +85,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
 
     if (tab.mode === "data") {
       if (!tab.tableMeta) return;
+      tab.whereInput = whereInput ?? "";
       const orderBy = direction ? `${quoteIdent(tab, column)} ${direction.toUpperCase()}` : undefined;
       const sql = buildTableSql(tab, { orderBy, whereInput });
       queryStore.updateSql(tab.id, sql);

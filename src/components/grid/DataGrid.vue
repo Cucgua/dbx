@@ -80,6 +80,7 @@ const props = defineProps<{
   connectionId?: string;
   database?: string;
   context?: "results" | "table-data";
+  initialWhereInput?: string;
   tableMeta?: {
     schema?: string;
     tableName: string;
@@ -228,7 +229,7 @@ const orderBySuggestionLeft = ref(0);
 
 const orderByInput = ref("");
 const hasOrderByInput = computed(() => orderByInput.value.trim().length > 0);
-const whereFilterInput = ref("");
+const whereFilterInput = ref(props.initialWhereInput ?? "");
 const hasWhereFilterInput = computed(() => whereFilterInput.value.trim().length > 0);
 
 type LocalColumnFilterDraft = {

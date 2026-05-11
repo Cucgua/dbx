@@ -251,6 +251,7 @@ export interface QueryTab {
     selectStar: boolean;
     columns: string[];
   };
+  whereInput?: string;
 }
 
 export interface SavedSqlFolder {
