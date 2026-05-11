@@ -12,7 +12,6 @@ import {
   Search,
   ScrollText,
   Table2,
-  WrapText,
   X,
 } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
@@ -23,7 +22,9 @@ import * as api from "@/lib/api";
 import type { ConnectionConfig, ObjectInfo, ObjectSourceKind } from "@/types/database";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
 import { useToast } from "@/composables/useToast";
-import { buildEditableObjectSourceSql, objectSourceEditTabTitle } from "@/lib/objectSourceEditor";
+import { buildExecutableObjectSourceSql, objectSourceSaveExecutionMode } from "@/lib/objectSourceEditor";
+import QueryEditor from "@/components/editor/QueryEditor.vue";
+import type { SqlFormatDialect } from "@/lib/sqlFormatter";
 
 type ObjectRow = {
   id: string;
@@ -44,7 +45,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   openTable: [target: { tableName: string; schema?: string }];
   schemaChange: [schema: string | undefined];
-  editSource: [target: { title: string; sql: string; schema?: string }];
 }>();
 
 const { t } = useI18n();
@@ -61,7 +61,10 @@ const sourceLoading = ref(false);
 const sourceContent = ref("");
 const sourceError = ref("");
 const sourceRow = ref<ObjectRow | null>(null);
-const sourceWrap = ref(false);
+const sourceEditing = ref(false);
+const sourceDraft = ref("");
+const sourceSaving = ref(false);
+const sourceSaveError = ref("");
 const error = ref("");
 let loadId = 0;
 
@@ -70,6 +73,22 @@ const tableCount = computed(() => rows.value.filter((row) => row.type === "TABLE
 const viewCount = computed(() => rows.value.filter((row) => row.type === "VIEW").length);
 const procedureCount = computed(() => rows.value.filter((row) => row.type === "PROCEDURE").length);
 const functionCount = computed(() => rows.value.filter((row) => row.type === "FUNCTION").length);
+const sourceDialect = computed<"mysql" | "postgres" | "sqlserver">(() => {
+  if (props.connection.db_type === "postgres" || props.connection.db_type === "gaussdb") return "postgres";
+  if (props.connection.db_type === "sqlserver") return "sqlserver";
+  return "mysql";
+});
+const sourceFormatDialect = computed<SqlFormatDialect>(() => {
+  switch (props.connection.db_type) {
+    case "mysql":
+    case "postgres":
+    case "sqlite":
+    case "sqlserver":
+      return props.connection.db_type;
+    default:
+      return "generic";
+  }
+});
 const objectFilters = computed<ObjectFilter[]>(() =>
   (
     [
@@ -157,6 +176,9 @@ async function openSource(row: ObjectRow) {
   sourceRow.value = row;
   sourceContent.value = "";
   sourceError.value = "";
+  sourceEditing.value = false;
+  sourceDraft.value = "";
+  sourceSaveError.value = "";
   sourceLoading.value = true;
   try {
     const result = await api.getObjectSource(
@@ -178,6 +200,9 @@ function closeSource() {
   sourceRow.value = null;
   sourceContent.value = "";
   sourceError.value = "";
+  sourceEditing.value = false;
+  sourceDraft.value = "";
+  sourceSaveError.value = "";
 }
 
 function copySource() {
@@ -188,19 +213,45 @@ function copySource() {
 
 function editSource() {
   if (!sourceRow.value || !sourceContent.value) return;
+  sourceDraft.value = sourceContent.value;
+  sourceSaveError.value = "";
+  sourceEditing.value = true;
+}
+
+function cancelEditSource() {
+  sourceEditing.value = false;
+  sourceDraft.value = "";
+  sourceSaveError.value = "";
+}
+
+async function saveSource() {
+  if (!sourceRow.value || !sourceDraft.value.trim()) return;
   const row = sourceRow.value;
-  const schema = row.schema || selectedSchema.value;
-  emit("editSource", {
-    title: objectSourceEditTabTitle(schema, row.name),
-    schema,
-    sql: buildEditableObjectSourceSql({
+  const schema = row.schema || selectedSchema.value || props.database;
+  sourceSaving.value = true;
+  sourceSaveError.value = "";
+  try {
+    const sql = buildExecutableObjectSourceSql({
       databaseType: props.connection.db_type,
       objectType: row.type as ObjectSourceKind,
       schema,
       name: row.name,
-      source: sourceContent.value,
-    }),
-  });
+      source: sourceDraft.value,
+    });
+    if (objectSourceSaveExecutionMode(props.connection.db_type) === "single") {
+      await api.executeQuery(props.connection.id, props.database, sql, schema);
+    } else {
+      await api.executeScript(props.connection.id, props.database, sql, schema);
+    }
+    toast(t("objects.sourceSaved"));
+    sourceEditing.value = false;
+    sourceDraft.value = "";
+    await openSource(row);
+  } catch (e: any) {
+    sourceSaveError.value = e?.message || String(e);
+  } finally {
+    sourceSaving.value = false;
+  }
 }
 
 async function loadSchemas() {
@@ -381,20 +432,46 @@ watch(
         <div class="flex h-8 shrink-0 items-center gap-2 border-b bg-muted/20 px-3">
           <Code2 class="h-3.5 w-3.5 text-muted-foreground" />
           <span class="min-w-0 flex-1 truncate text-xs font-medium">{{ sourceTitle(sourceRow) }}</span>
-          <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="!sourceContent" @click="copySource">
-            <Copy class="h-3 w-3" />
-          </Button>
-          <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="!sourceContent" @click="editSource">
-            <PencilLine class="h-3 w-3" />
+          <Button
+            v-if="sourceEditing"
+            variant="ghost"
+            size="sm"
+            class="h-6 px-2 text-xs"
+            :disabled="sourceSaving || !sourceDraft.trim()"
+            @click="saveSource"
+          >
+            <Loader2 v-if="sourceSaving" class="mr-1 h-3 w-3 animate-spin" />
+            {{ t("objects.saveSource") }}
           </Button>
           <Button
+            v-if="sourceEditing"
+            variant="ghost"
+            size="sm"
+            class="h-6 px-2 text-xs"
+            :disabled="sourceSaving"
+            @click="cancelEditSource"
+          >
+            {{ t("objects.cancelEdit") }}
+          </Button>
+          <Button
+            v-if="!sourceEditing"
             variant="ghost"
             size="icon"
             class="h-5 w-5"
-            :class="{ 'bg-accent': sourceWrap }"
-            @click="sourceWrap = !sourceWrap"
+            :disabled="!sourceContent"
+            @click="copySource"
           >
-            <WrapText class="h-3 w-3" />
+            <Copy class="h-3 w-3" />
+          </Button>
+          <Button
+            v-if="!sourceEditing"
+            variant="ghost"
+            size="icon"
+            class="h-5 w-5"
+            :disabled="!sourceContent"
+            @click="editSource"
+          >
+            <PencilLine class="h-3 w-3" />
           </Button>
           <Button variant="ghost" size="icon" class="h-5 w-5" @click="closeSource">
             <X class="h-3 w-3" />
@@ -406,12 +483,33 @@ watch(
         <div v-else-if="sourceError" class="flex flex-1 items-center justify-center px-4 text-sm text-destructive">
           {{ sourceError }}
         </div>
-        <pre
+        <div v-else-if="sourceEditing" class="flex min-h-0 flex-1 flex-col">
+          <QueryEditor
+            v-model="sourceDraft"
+            class="min-h-0 flex-1"
+            :connection-id="props.connection.id"
+            :database="props.database"
+            :dialect="sourceDialect"
+            :format-dialect="sourceFormatDialect"
+            force-word-wrap
+            @execute="saveSource"
+          />
+          <div v-if="sourceSaveError" class="shrink-0 border-t px-3 py-2 text-xs text-destructive">
+            {{ sourceSaveError }}
+          </div>
+        </div>
+        <QueryEditor
           v-else
-          class="min-w-0 flex-1 overflow-auto p-3 font-mono text-xs leading-5"
-          :class="sourceWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'"
-          >{{ sourceContent }}</pre
-        >
+          :key="`source-preview-${sourceRow.id}`"
+          :model-value="sourceContent"
+          class="min-h-0 flex-1"
+          :connection-id="props.connection.id"
+          :database="props.database"
+          :dialect="sourceDialect"
+          :format-dialect="sourceFormatDialect"
+          force-word-wrap
+          read-only
+        />
       </div>
     </div>
   </div>

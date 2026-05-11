@@ -18,6 +18,8 @@ const props = defineProps<{
   dialect?: "mysql" | "postgres" | "sqlserver";
   formatDialect?: SqlFormatDialect;
   formatRequestId?: number;
+  readOnly?: boolean;
+  forceWordWrap?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -41,6 +43,7 @@ let editorViewModule: typeof import("@codemirror/view") | null = null;
 let fontThemeComp: import("@codemirror/state").Compartment | null = null;
 let codeMirrorTheme: import("@codemirror/state").Compartment | null = null;
 let wordWrapComp: import("@codemirror/state").Compartment | null = null;
+let readOnlyComp: import("@codemirror/state").Compartment | null = null;
 
 // Completion cache
 let cachedTables: Array<{ name: string; schema?: string; type?: "table" | "view" }> = [];
@@ -76,6 +79,11 @@ function zoomOut() {
 
 function resetZoom() {
   setFontSize(13);
+}
+
+function wordWrapExtension() {
+  if (!editorViewModule) return [];
+  return props.forceWordWrap || settingsStore.editorSettings.wordWrap ? editorViewModule.EditorView.lineWrapping : [];
 }
 
 function selectedSqlFromView(currentView: EditorViewType): string {
@@ -226,6 +234,7 @@ onMounted(async () => {
   fontThemeComp = new Compartment();
   codeMirrorTheme = new Compartment();
   wordWrapComp = new Compartment();
+  readOnlyComp = new Compartment();
 
   const ss = settingsStore.editorSettings;
 
@@ -291,7 +300,8 @@ onMounted(async () => {
       bracketMatching(),
       Prec.highest(keymap.of([...closeBracketsKeymap, indentWithTab])),
       runKeymap,
-      wordWrapComp.of(ss.wordWrap ? EditorView.lineWrapping : []),
+      wordWrapComp.of(props.forceWordWrap || ss.wordWrap ? EditorView.lineWrapping : []),
+      readOnlyComp.of([EditorState.readOnly.of(!!props.readOnly), EditorView.editable.of(!props.readOnly)]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           emit("update:modelValue", update.state.doc.toString());
@@ -489,6 +499,16 @@ watch(
   },
 );
 
+watch(
+  () => props.forceWordWrap,
+  () => {
+    if (!view.value || !wordWrapComp) return;
+    view.value.dispatch({
+      effects: wordWrapComp.reconfigure(wordWrapExtension()),
+    });
+  },
+);
+
 // Reactively apply editor settings changes
 watch(
   () => settingsStore.editorSettings,
@@ -498,7 +518,7 @@ watch(
     view.value.dispatch({
       effects: [
         codeMirrorTheme.reconfigure(themeExt),
-        wordWrapComp.reconfigure(ss.wordWrap ? editorViewModule.EditorView.lineWrapping : []),
+        wordWrapComp.reconfigure(props.forceWordWrap || ss.wordWrap ? editorViewModule.EditorView.lineWrapping : []),
         fontThemeComp.reconfigure(
           editorFontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily, {
             fixedHeight: true,

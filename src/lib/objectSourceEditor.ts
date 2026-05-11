@@ -8,6 +8,8 @@ type BuildEditableObjectSourceSqlInput = {
   source: string;
 };
 
+export type ObjectSourceSaveExecutionMode = "single" | "script";
+
 function quotePostgresIdentifier(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
 }
@@ -24,14 +26,10 @@ function postgresQualifiedName(schema: string | null | undefined, name: string) 
     .join(".");
 }
 
-export function objectSourceEditTabTitle(schema: string | null | undefined, name: string) {
-  return `Edit source - ${[schema, name].filter(Boolean).join(".")}`;
-}
-
-export function buildEditableObjectSourceSql(input: BuildEditableObjectSourceSqlInput) {
+export function buildExecutableObjectSourceSql(input: BuildEditableObjectSourceSqlInput) {
   const source = input.source.trim();
   if (input.databaseType === "sqlserver") {
-    return source.replace(/^CREATE\s+(?!OR\s+ALTER\b)/i, "CREATE OR ALTER ");
+    return source.replace(/^CREATE\s+(?:OR\s+ALTER\s+)?/i, "ALTER ");
   }
 
   if ((input.databaseType === "postgres" || input.databaseType === "gaussdb") && input.objectType === "VIEW") {
@@ -39,4 +37,8 @@ export function buildEditableObjectSourceSql(input: BuildEditableObjectSourceSql
   }
 
   return ensureSemicolon(source);
+}
+
+export function objectSourceSaveExecutionMode(databaseType: DatabaseType): ObjectSourceSaveExecutionMode {
+  return databaseType === "sqlserver" ? "single" : "script";
 }

@@ -9,6 +9,7 @@ use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub type SqlServerClient = Client<Compat<TcpStream>>;
+const SIMPLE_QUERY_MODULE_KEYWORDS: &[&str] = &["FUNCTION", "PROC", "PROCEDURE", "TRIGGER", "VIEW"];
 
 pub async fn connect(
     host: &str,
@@ -378,6 +379,15 @@ pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<Qu
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
         })
+    } else if requires_simple_query_batch(sql) {
+        client.simple_query(sql).await.map_err(|e| e.to_string())?.into_results().await.map_err(|e| e.to_string())?;
+        Ok(QueryResult {
+            columns: vec![],
+            rows: vec![],
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        })
     } else {
         let result = client.execute(sql, &[]).await.map_err(|e| e.to_string())?;
         Ok(QueryResult {
@@ -387,5 +397,86 @@ pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<Qu
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
         })
+    }
+}
+
+fn requires_simple_query_batch(sql: &str) -> bool {
+    let tokens = first_sql_tokens(sql, 4);
+    if tokens.len() >= 4
+        && tokens[0].eq_ignore_ascii_case("CREATE")
+        && tokens[1].eq_ignore_ascii_case("OR")
+        && tokens[2].eq_ignore_ascii_case("ALTER")
+    {
+        return SIMPLE_QUERY_MODULE_KEYWORDS.iter().any(|keyword| tokens[3].eq_ignore_ascii_case(keyword));
+    }
+
+    if tokens.len() >= 2 && (tokens[0].eq_ignore_ascii_case("CREATE") || tokens[0].eq_ignore_ascii_case("ALTER")) {
+        return SIMPLE_QUERY_MODULE_KEYWORDS.iter().any(|keyword| tokens[1].eq_ignore_ascii_case(keyword));
+    }
+
+    false
+}
+
+fn first_sql_tokens(sql: &str, limit: usize) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() && tokens.len() < limit {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+
+        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+
+        if i > start {
+            tokens.push(sql[start..i].to_string());
+        } else {
+            i += 1;
+        }
+    }
+
+    tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requires_simple_query_batch;
+
+    #[test]
+    fn sqlserver_module_definitions_require_simple_query_batch() {
+        assert!(requires_simple_query_batch("CREATE FUNCTION dbo.fn_demo() RETURNS INT AS BEGIN RETURN 1; END;"));
+        assert!(requires_simple_query_batch("ALTER PROCEDURE dbo.usp_demo AS SELECT 1;"));
+        assert!(requires_simple_query_batch("CREATE OR ALTER VIEW dbo.vw_demo AS SELECT 1 AS id;"));
+        assert!(requires_simple_query_batch(
+            "-- comment\nALTER TRIGGER dbo.tr_demo ON dbo.t AFTER INSERT AS SELECT 1;"
+        ));
+    }
+
+    #[test]
+    fn sqlserver_regular_ddl_can_use_execute() {
+        assert!(!requires_simple_query_batch("ALTER TABLE dbo.t ADD name NVARCHAR(20);"));
+        assert!(!requires_simple_query_batch("CREATE TABLE dbo.t(id INT);"));
+        assert!(!requires_simple_query_batch("UPDATE dbo.t SET id = 1;"));
     }
 }

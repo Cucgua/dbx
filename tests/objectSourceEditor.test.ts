@@ -1,9 +1,9 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { buildEditableObjectSourceSql, objectSourceEditTabTitle } from "../src/lib/objectSourceEditor.ts";
+import { buildExecutableObjectSourceSql, objectSourceSaveExecutionMode } from "../src/lib/objectSourceEditor.ts";
 
-test("SQL Server object source opens as CREATE OR ALTER", () => {
-  const sql = buildEditableObjectSourceSql({
+test("SQL Server edited source saves as ALTER", () => {
+  const sql = buildExecutableObjectSourceSql({
     databaseType: "sqlserver",
     objectType: "PROCEDURE",
     schema: "dbo",
@@ -11,11 +11,11 @@ test("SQL Server object source opens as CREATE OR ALTER", () => {
     source: "CREATE PROCEDURE dbo.usp_demo AS SELECT 1;",
   });
 
-  assert.equal(sql, "CREATE OR ALTER PROCEDURE dbo.usp_demo AS SELECT 1;");
+  assert.equal(sql, "ALTER PROCEDURE dbo.usp_demo AS SELECT 1;");
 });
 
-test("SQL Server existing CREATE OR ALTER source is preserved", () => {
-  const sql = buildEditableObjectSourceSql({
+test("SQL Server edited CREATE OR ALTER source saves as ALTER", () => {
+  const sql = buildExecutableObjectSourceSql({
     databaseType: "sqlserver",
     objectType: "VIEW",
     schema: "dbo",
@@ -23,11 +23,15 @@ test("SQL Server existing CREATE OR ALTER source is preserved", () => {
     source: "CREATE OR ALTER VIEW dbo.vw_demo AS SELECT 1 AS id;",
   });
 
-  assert.equal(sql, "CREATE OR ALTER VIEW dbo.vw_demo AS SELECT 1 AS id;");
+  assert.equal(sql, "ALTER VIEW dbo.vw_demo AS SELECT 1 AS id;");
+});
+
+test("SQL Server object source saves as a single batch", () => {
+  assert.equal(objectSourceSaveExecutionMode("sqlserver"), "single");
 });
 
 test("Postgres view body opens as CREATE OR REPLACE VIEW", () => {
-  const sql = buildEditableObjectSourceSql({
+  const sql = buildExecutableObjectSourceSql({
     databaseType: "postgres",
     objectType: "VIEW",
     schema: "public",
@@ -36,9 +40,4 @@ test("Postgres view body opens as CREATE OR REPLACE VIEW", () => {
   });
 
   assert.equal(sql, 'CREATE OR REPLACE VIEW "public"."active users" AS\nSELECT id, name FROM users WHERE active;');
-});
-
-test("object source edit tab title is stable per schema and object", () => {
-  assert.equal(objectSourceEditTabTitle("dbo", "usp_demo"), "Edit source - dbo.usp_demo");
-  assert.equal(objectSourceEditTabTitle(undefined, "usp_demo"), "Edit source - usp_demo");
 });

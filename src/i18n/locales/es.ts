@@ -146,7 +146,8 @@ export default {
     jdbcUrl: "URL JDBC",
     jdbcUrlPlaceholder: "jdbc:postgresql://localhost:5432/base_de_datos",
     jdbcDriverClass: "Clase del driver (opcional)",
-    jdbcDriverClassPlaceholder: "La mayoría de los drivers se registran automáticamente; usa com.vendor.jdbc.Driver si es necesario",
+    jdbcDriverClassPlaceholder:
+      "La mayoría de los drivers se registran automáticamente; usa com.vendor.jdbc.Driver si es necesario",
     jdbcDriverPaths: "JARs del driver JDBC",
     jdbcDriverSelectPlaceholder: "Seleccionar driver importado",
     jdbcDriverPathsPlaceholder: "/ruta/al/driver.jar\n/ruta/a/otro-driver.jar",
@@ -299,7 +300,8 @@ export default {
   },
   welcome: {
     title: "Espacio de trabajo de base de datos",
-    subtitle: "Selecciona una conexión a la izquierda para explorar el esquema, o abre una pestaña de consulta directamente.",
+    subtitle:
+      "Selecciona una conexión a la izquierda para explorar el esquema, o abre una pestaña de consulta directamente.",
     connections: "Conexiones",
     connected: "Conectado",
     databaseTypes: "Tipos de bases de datos",
@@ -363,14 +365,18 @@ export default {
       sameName: "Mismo nombre",
     },
     description: {
-      foreignKeyIncoming: "{target} apunta al campo actual mediante una clave foránea. Esta es una dependencia verificada.",
-      foreignKeyOutgoing: "El campo actual referencia a {target} mediante una clave foránea. Esta es una dependencia verificada.",
-      viewLikely: "La definición de la vista menciona tanto la tabla como el campo destino, lo que generalmente indica una dependencia de consulta.",
+      foreignKeyIncoming:
+        "{target} apunta al campo actual mediante una clave foránea. Esta es una dependencia verificada.",
+      foreignKeyOutgoing:
+        "El campo actual referencia a {target} mediante una clave foránea. Esta es una dependencia verificada.",
+      viewLikely:
+        "La definición de la vista menciona tanto la tabla como el campo destino, lo que generalmente indica una dependencia de consulta.",
       viewPossible:
         "La definición de la vista menciona un campo con el mismo nombre pero no la tabla destino, por lo que requiere confirmación.",
       historyLikely:
         "Una sentencia SQL del historial menciona tanto la tabla como el campo destino. Úsala como contexto de análisis de impacto.",
-      historyPossible: "Una sentencia SQL del historial menciona un campo con el mismo nombre. Puede estar relacionado pero requiere verificación.",
+      historyPossible:
+        "Una sentencia SQL del historial menciona un campo con el mismo nombre. Puede estar relacionado pero requiere verificación.",
       sameName:
         "Otra tabla tiene un campo con el mismo nombre. Puede compartir significado de negocio, pero no es una dependencia verificada en la base de datos.",
     },
@@ -462,7 +468,8 @@ export default {
     fixWithAi: "Corregir con IA",
     truncated: "Contexto truncado",
     contextSummary: "{database} · {tables} tablas",
-    autoSqlBlocked: "El SQL generado por la IA parecía demasiado riesgoso para ejecutarse automáticamente. Revísalo manualmente antes de ejecutar.",
+    autoSqlBlocked:
+      "El SQL generado por la IA parecía demasiado riesgoso para ejecutarse automáticamente. Revísalo manualmente antes de ejecutar.",
     settingsHint:
       "La configuración se almacena en el directorio de datos local de la aplicación. Las solicitudes son enviadas por el backend de Tauri en lugar de directamente desde el frontend.",
     actions: {
@@ -566,6 +573,10 @@ export default {
     function: "Función",
     name: "Nombre",
     type: "Tipo",
+    source: "Código fuente",
+    saveSource: "Guardar",
+    cancelEdit: "Cancelar",
+    sourceSaved: "Código fuente guardado",
     schemaColumn: "Esquema",
     comment: "Comentario",
     loadingSchemas: "Cargando esquemas...",
@@ -724,10 +735,12 @@ export default {
   },
   dangerDialog: {
     title: "Operación peligrosa",
-    message: "Esta sentencia SQL puede modificar o eliminar datos de forma irreversible. ¿Estás seguro de que deseas ejecutarla?",
+    message:
+      "Esta sentencia SQL puede modificar o eliminar datos de forma irreversible. ¿Estás seguro de que deseas ejecutarla?",
     deleteMessage: "Esta operación de eliminación puede ser irreversible. ¿Continuar?",
     deleteConfirm: "Confirmar eliminación",
-    deleteRowMessage: "Esta fila quedará marcada para eliminación y se borrará de la base de datos al guardar. ¿Continuar?",
+    deleteRowMessage:
+      "Esta fila quedará marcada para eliminación y se borrará de la base de datos al guardar. ¿Continuar?",
     deleteRowDetails: "Tabla: {table}",
     deleteRowDetailsNoTable: "Fila actual del resultado",
     redisKeyDetails: "Clave Redis: {key}",
