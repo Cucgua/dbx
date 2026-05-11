@@ -15,9 +15,22 @@ import {
   CloudDownload,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import WindowControls from "@/components/layout/WindowControls.vue";
 import { useWindowControls } from "@/composables/useWindowControls";
+import { currentLocale, setLocale, type Locale } from "@/i18n";
+
+const localeOptions: { value: Locale; flag: string; label: string }[] = [
+  { value: "en", flag: "🇺🇸", label: "English" },
+  { value: "es", flag: "🇪🇸", label: "Español" },
+  { value: "zh-CN", flag: "🇨🇳", label: "简体中文" },
+];
 
 defineProps<{
   isDark: boolean;
@@ -32,7 +45,6 @@ const emit = defineEmits<{
   "new-connection": [];
   "new-query": [];
   "toggle-theme": [];
-  "toggle-locale": [];
   "toggle-ai": [];
   "toggle-history": [];
   "open-github": [];
@@ -150,14 +162,25 @@ function onToolbarDblClick(e: MouseEvent) {
       <TooltipContent>{{ isDark ? "Light" : "Dark" }}</TooltipContent>
     </Tooltip>
 
-    <Tooltip>
-      <TooltipTrigger as-child>
-        <Button variant="ghost" size="icon" class="h-8 w-8" @click="emit('toggle-locale')">
+    <DropdownMenu>
+      <DropdownMenuTrigger as-child>
+        <Button variant="ghost" size="icon" class="h-8 w-8">
           <Globe class="h-4 w-4" />
         </Button>
-      </TooltipTrigger>
-      <TooltipContent>{{ t("common.language") }}</TooltipContent>
-    </Tooltip>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          v-for="option in localeOptions"
+          :key="option.value"
+          class="gap-2"
+          :class="{ 'bg-accent': currentLocale() === option.value }"
+          @click="setLocale(option.value)"
+        >
+          <span class="text-base leading-none">{{ option.flag }}</span>
+          <span>{{ option.label }}</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
 
     <Tooltip>
       <TooltipTrigger as-child>

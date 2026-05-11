@@ -28,7 +28,7 @@ import { useDialogSources } from "@/composables/useDialogSources";
 import { useNavigationTargets } from "@/composables/useNavigationTargets";
 import { useDataGridActions } from "@/composables/useDataGridActions";
 import { useTauriEvents } from "@/composables/useTauriEvents";
-import { setLocale, currentLocale, nextLocale } from "@/i18n";
+import "@/i18n";
 import * as api from "@/lib/api";
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
@@ -356,10 +356,6 @@ function changeActiveSchema(schema: string | undefined) {
   const tab = activeTab.value;
   if (tab) queryStore.updateSchema(tab.id, schema);
 }
-
-function toggleLocale() {
-  setLocale(nextLocale(currentLocale()));
-}
 function openGitHub() {
   openUrl("https://github.com/t8y2/dbx");
 }
@@ -549,7 +545,6 @@ onUnmounted(() => {
           @new-connection="showConnectionDialog = true"
           @new-query="newQuery"
           @toggle-theme="toggleTheme"
-          @toggle-locale="toggleLocale"
           @toggle-ai="toggleAiPanel"
           @toggle-history="showHistory = !showHistory"
           @open-github="openGitHub"
