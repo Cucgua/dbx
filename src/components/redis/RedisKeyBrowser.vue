@@ -229,11 +229,11 @@ onMounted(loadKeys);
 
         <!-- Table header -->
         <div class="grid border-b bg-muted/50 shrink-0 text-xs font-medium text-muted-foreground" :style="keyGridStyle">
-          <div class="px-3 py-1 border-r">键</div>
-          <div class="px-2 py-1 border-r">类型</div>
-          <div class="px-3 py-1 border-r">值</div>
-          <div class="px-2 py-1 border-r text-right">大小</div>
-          <div class="px-2 py-1 text-right">TTL</div>
+          <div class="px-3 py-1 border-r">{{ t('redis.columnKey') }}</div>
+          <div class="px-2 py-1 border-r">{{ t('redis.columnType') }}</div>
+          <div class="px-3 py-1 border-r">{{ t('redis.columnValue') }}</div>
+          <div class="px-2 py-1 border-r text-right">{{ t('redis.columnSize') }}</div>
+          <div class="px-2 py-1 text-right">{{ t('redis.columnTTL') }}</div>
         </div>
 
         <!-- Table body -->

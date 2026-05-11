@@ -647,6 +647,11 @@ export default {
     members: "{count} 个成员",
     entries: "{count} 条记录",
     noExpiry: "永不过期",
+    columnType: "类型",
+    columnKey: "键",
+    columnValue: "值",
+    columnSize: "大小",
+    columnTTL: "TTL",
     binaryStringReadonlyHint: "二进制字符串按转义文本只读展示；当前不支持直接编辑原始字节值。",
   },
   mongo: {
