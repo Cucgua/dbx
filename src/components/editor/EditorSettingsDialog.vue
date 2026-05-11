@@ -622,7 +622,7 @@ watch(
                 type="button"
                 variant="outline"
                 class="h-auto justify-start p-3"
-                :class="editAppLayout === 'separated' ? 'border-primary bg-primary/10' : ''"
+                :class="editAppLayout === 'separated' ? 'border-blue-300 border-2 ring-2 ring-blue-300/50' : ''"
                 @click="setAppLayout('separated')"
               >
                 <div class="text-left">
@@ -634,7 +634,7 @@ watch(
                 type="button"
                 variant="outline"
                 class="h-auto justify-start p-3"
-                :class="editAppLayout === 'classic' ? 'border-primary bg-primary/10' : ''"
+                :class="editAppLayout === 'classic' ? 'border-blue-300 border-2 ring-2 ring-blue-300/50' : ''"
                 @click="setAppLayout('classic')"
               >
                 <div class="text-left">
