@@ -22,7 +22,7 @@ type DbOption = { value: string; label: string };
 type DbCategory = { key: string; title: string; options: DbOption[] };
 type DialogStep = "select" | "config";
 type DbPickerView = "icon" | "list";
-type ConfigTab = "connection" | "ssh";
+type ConfigTab = "connection" | "ssh" | "proxy";
 
 const { t } = useI18n();
 const { toast } = useToast();
@@ -67,6 +67,12 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   ssh_key_passphrase: "",
   ssh_expose_lan: false,
   ssh_connect_timeout_secs: 5,
+  proxy_enabled: false,
+  proxy_type: "socks5",
+  proxy_host: "",
+  proxy_port: 1080,
+  proxy_username: "",
+  proxy_password: "",
   ssl: false,
   connection_string: undefined,
   jdbc_driver_class: undefined,
@@ -264,6 +270,12 @@ watch(
         ssh_key_passphrase: config.ssh_key_passphrase || "",
         ssh_expose_lan: config.ssh_expose_lan || false,
         ssh_connect_timeout_secs: config.ssh_connect_timeout_secs || 5,
+        proxy_enabled: config.proxy_enabled || false,
+        proxy_type: config.proxy_type || "socks5",
+        proxy_host: config.proxy_host || "",
+        proxy_port: config.proxy_port || 1080,
+        proxy_username: config.proxy_username || "",
+        proxy_password: config.proxy_password || "",
         ssl: config.ssl || false,
         connection_string: config.connection_string,
         jdbc_driver_class: config.jdbc_driver_class,
@@ -408,6 +420,9 @@ const hasDbPickerResults = computed(() => filteredDbCategories.value.some((categ
 const selectedDbIcon = computed(() => iconTypeMap[selectedType.value] || selectedProfile().icon || selectedType.value);
 const isJdbcConnection = computed(() => form.value.db_type === "jdbc");
 const canUseSsh = computed(() => form.value.db_type !== "sqlite" && form.value.db_type !== "jdbc");
+const canUseProxy = computed(
+  () => form.value.db_type !== "sqlite" && form.value.db_type !== "duckdb" && form.value.db_type !== "jdbc",
+);
 const testResultMessage = computed(() => {
   if (!testResult.value) return "";
   return testResult.value.ok ? t("connection.testSuccess") : testResult.value.message;
@@ -456,6 +471,8 @@ function connectionConfigForSubmit(id: string): ConnectionConfig {
   const config: ConnectionConfig = { ...form.value, id };
   const sshTimeout = Number(config.ssh_connect_timeout_secs);
   config.ssh_connect_timeout_secs = Number.isFinite(sshTimeout) && sshTimeout > 0 ? sshTimeout : 5;
+  const proxyPort = Number(config.proxy_port);
+  config.proxy_port = Number.isFinite(proxyPort) && proxyPort > 0 ? proxyPort : 1080;
   if (config.db_type === "mongodb" && !mongoUseUrl.value) {
     config.connection_string = undefined;
   }
@@ -530,6 +547,12 @@ watch(open, (value) => {
 
 watch(canUseSsh, (value) => {
   if (!value && configTab.value === "ssh") {
+    configTab.value = "connection";
+  }
+});
+
+watch(canUseProxy, (value) => {
+  if (!value && configTab.value === "proxy") {
     configTab.value = "connection";
   }
 });
@@ -778,10 +801,11 @@ function openExternalUrl(url: string) {
       <template v-else>
         <div class="space-y-3">
           <Tabs v-model="configTab" class="min-h-0">
-            <div v-if="canUseSsh" class="flex items-center justify-between border-b pb-2">
+            <div v-if="canUseSsh || canUseProxy" class="flex items-center justify-between border-b pb-2">
               <TabsList>
                 <TabsTrigger value="connection">{{ t("connection.basicTab") }}</TabsTrigger>
-                <TabsTrigger value="ssh">{{ t("connection.sshTunnel") }}</TabsTrigger>
+                <TabsTrigger v-if="canUseSsh" value="ssh">{{ t("connection.sshTunnel") }}</TabsTrigger>
+                <TabsTrigger v-if="canUseProxy" value="proxy">{{ t("connection.proxy") }}</TabsTrigger>
               </TabsList>
             </div>
 
@@ -1198,6 +1222,68 @@ function openExternalUrl(url: string) {
                     step="1"
                     class="col-span-3"
                     :disabled="!form.ssh_enabled"
+                  />
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent v-if="canUseProxy" value="proxy" class="m-0">
+              <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.proxy") }}</Label>
+                  <label class="col-span-3 flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" v-model="form.proxy_enabled" class="mr-0" />
+                    <span class="text-xs text-muted-foreground">{{ t("connection.proxyEnable") }}</span>
+                  </label>
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.proxyType") }}</Label>
+                  <Select
+                    :model-value="form.proxy_type || 'socks5'"
+                    :disabled="!form.proxy_enabled"
+                    @update:model-value="(value: any) => (form.proxy_type = value)"
+                  >
+                    <SelectTrigger class="col-span-3 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="socks5">SOCKS5</SelectItem>
+                      <SelectItem value="http">HTTP CONNECT</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.proxyHost") }}</Label>
+                  <Input
+                    v-model="form.proxy_host"
+                    class="col-span-2"
+                    placeholder="127.0.0.1"
+                    :disabled="!form.proxy_enabled"
+                  />
+                  <Input
+                    v-model.number="form.proxy_port"
+                    type="number"
+                    class="col-span-1"
+                    :disabled="!form.proxy_enabled"
+                  />
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.proxyUsername") }}</Label>
+                  <Input
+                    v-model="form.proxy_username"
+                    class="col-span-3"
+                    :placeholder="t('connection.proxyUsernamePlaceholder')"
+                    :disabled="!form.proxy_enabled"
+                  />
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.proxyPassword") }}</Label>
+                  <Input
+                    v-model="form.proxy_password"
+                    type="password"
+                    class="col-span-3"
+                    :placeholder="t('connection.proxyPasswordPlaceholder')"
+                    :disabled="!form.proxy_enabled"
                   />
                 </div>
               </div>

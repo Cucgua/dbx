@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 pub const MAIN_PASSWORD_KEY: &str = "password";
 pub const SSH_PASSWORD_KEY: &str = "ssh_password";
 pub const SSH_KEY_PASSPHRASE_KEY: &str = "ssh_key_passphrase";
+pub const PROXY_PASSWORD_KEY: &str = "proxy_password";
 pub const CONNECTION_STRING_KEY: &str = "connection_string";
 
 pub trait ConnectionSecretStore {
@@ -61,6 +62,7 @@ pub fn save_connections_to_file(
         persist_secret(store, &config.id, MAIN_PASSWORD_KEY, &config.password)?;
         persist_secret(store, &config.id, SSH_PASSWORD_KEY, &config.ssh_password)?;
         persist_secret(store, &config.id, SSH_KEY_PASSPHRASE_KEY, &config.ssh_key_passphrase)?;
+        persist_secret(store, &config.id, PROXY_PASSWORD_KEY, &config.proxy_password)?;
         persist_optional_secret(store, &config.id, CONNECTION_STRING_KEY, config.connection_string.as_deref())?;
     }
 
@@ -102,6 +104,15 @@ pub fn load_connections_from_file(
             }
         } else {
             store.set_secret(&config.id, SSH_KEY_PASSPHRASE_KEY, &config.ssh_key_passphrase)?;
+            needs_rewrite = true;
+        }
+
+        if config.proxy_password.is_empty() {
+            if let Some(secret) = store.get_secret(&config.id, PROXY_PASSWORD_KEY)? {
+                config.proxy_password = secret;
+            }
+        } else {
+            store.set_secret(&config.id, PROXY_PASSWORD_KEY, &config.proxy_password)?;
             needs_rewrite = true;
         }
 
@@ -195,6 +206,7 @@ fn sanitize_connections(configs: &[ConnectionConfig]) -> Vec<ConnectionConfig> {
             config.password.clear();
             config.ssh_password.clear();
             config.ssh_key_passphrase.clear();
+            config.proxy_password.clear();
             config.connection_string = None;
             config
         })
@@ -211,7 +223,7 @@ mod tests {
         load_connections_from_file, save_connections_to_file, ConnectionSecretStore, CONNECTION_STRING_KEY,
         MAIN_PASSWORD_KEY, SSH_PASSWORD_KEY,
     };
-    use crate::models::connection::{ConnectionConfig, DatabaseType};
+    use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::path::Path;
@@ -286,6 +298,12 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: crate::models::connection::default_ssh_connect_timeout_secs(),
+            proxy_enabled: false,
+            proxy_type: ProxyType::Socks5,
+            proxy_host: String::new(),
+            proxy_port: 1080,
+            proxy_username: String::new(),
+            proxy_password: String::new(),
             ssl: false,
             sysdba: false,
             connection_string: None,

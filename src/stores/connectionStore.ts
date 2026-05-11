@@ -171,6 +171,8 @@ export const useConnectionStore = defineStore("connection", () => {
       driver_label: config.driver_label || labelMap[profile] || config.db_type,
       url_params: config.url_params || "",
       ssh_connect_timeout_secs: config.ssh_connect_timeout_secs || 5,
+      proxy_type: config.proxy_type || "socks5",
+      proxy_port: config.proxy_port || 1080,
     };
   }
 

@@ -143,6 +143,14 @@ export default {
     sshKeyPathBrowse: "Examinar",
     sshExposeLan: "Exponer túnel a la red local",
     sshConnectTimeout: "Tiempo de espera SSH (segundos)",
+    proxy: "Proxy",
+    proxyEnable: "Conectar la base de datos mediante proxy",
+    proxyType: "Tipo de proxy",
+    proxyHost: "Host del proxy",
+    proxyUsername: "Usuario del proxy",
+    proxyUsernamePlaceholder: "Opcional",
+    proxyPassword: "Contraseña del proxy",
+    proxyPasswordPlaceholder: "Opcional",
     jdbcUrl: "URL JDBC",
     jdbcUrlPlaceholder: "jdbc:postgresql://localhost:5432/base_de_datos",
     jdbcDriverClass: "Clase del driver (opcional)",
@@ -474,6 +482,9 @@ export default {
     contextSummary: "{database} · {tables} tablas",
     autoSqlBlocked:
       "El SQL generado por la IA parecía demasiado riesgoso para ejecutarse automáticamente. Revísalo manualmente antes de ejecutar.",
+    proxy: "Proxy",
+    proxyEnable: "Enviar solicitudes de IA mediante proxy",
+    proxyUrl: "URL del proxy",
     settingsHint:
       "La configuración se almacena en el directorio de datos local de la aplicación. Las solicitudes son enviadas por el backend de Tauri en lugar de directamente desde el frontend.",
     actions: {

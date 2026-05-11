@@ -11,6 +11,8 @@ export interface AiConfig {
   endpoint: string;
   model: string;
   apiStyle: AiApiStyle;
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
 }
 
 const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = {
