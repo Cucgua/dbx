@@ -452,6 +452,7 @@ export default {
   ai: {
     placeholder: "Describe your query in natural language...",
     settings: "AI Settings",
+    noConfig: "AI is not configured. Please set up your AI provider in Settings > AI.",
     provider: "Provider",
     run: "Run",
     readingSchema: "Reading schema",
@@ -896,6 +897,7 @@ export default {
     title: "Settings",
     editorTab: "Editor",
     appearanceTab: "Appearance",
+    aiTab: "AI",
     jdbcTab: "JDBC Drivers",
     securityTab: "Security",
     aboutTab: "About",

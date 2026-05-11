@@ -16,7 +16,6 @@ import {
   MessageSquarePlus,
   Replace,
   Server,
-  Settings,
   Play,
   Square,
   Trash2,
@@ -27,7 +26,6 @@ import {
   TestTube,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu,
@@ -36,10 +34,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useSettingsStore, type AiProvider, type AiApiStyle } from "@/stores/settingsStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { connectionIconType } from "@/lib/connectionPresentation";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
@@ -49,7 +45,6 @@ import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
 import { extractFirstSqlCodeBlock, shouldAttemptAiAutoExecute } from "@/lib/aiSqlExecutionPolicy";
 import { Marked } from "marked";
 import {
-  aiTestConnection,
   aiCancelStream,
   saveAiConversation,
   loadAiConversations,
@@ -89,7 +84,6 @@ const emit = defineEmits<{
 const prompt = ref("");
 const messages = ref<ChatMessage[]>([]);
 const isGenerating = ref(false);
-const showSettings = ref(false);
 const scrollRef = ref<InstanceType<typeof ScrollArea> | null>(null);
 const activeAction = ref<AiAction>("generate");
 const currentSessionId = ref("");
@@ -168,20 +162,6 @@ function changeDatabase(database: string) {
   queryStore.updateDatabase(tab.id, database);
 }
 
-const tempProvider = ref<AiProvider>(settings.aiConfig.provider);
-const tempApiKey = ref(settings.aiConfig.apiKey);
-const tempEndpoint = ref(settings.aiConfig.endpoint);
-const tempModel = ref(settings.aiConfig.model);
-const tempApiStyle = ref<AiApiStyle>(settings.aiConfig.apiStyle || "completions");
-const tempProxyEnabled = ref(!!settings.aiConfig.proxyEnabled);
-const tempProxyUrl = ref(settings.aiConfig.proxyUrl || "");
-
-const providerDefaults: Record<AiProvider, { endpoint: string; model: string }> = {
-  claude: { endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514" },
-  openai: { endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o" },
-  custom: { endpoint: "", model: "" },
-};
-
 function appendAssistantDelta(assistantIdx: number, delta: string) {
   const msg = messages.value[assistantIdx];
   if (msg.isThinking) msg.isThinking = false;
@@ -209,63 +189,6 @@ function toggleReasoning(index: number) {
   expandedReasoning.value = next;
 }
 
-function openSettings() {
-  tempProvider.value = settings.aiConfig.provider;
-  tempApiKey.value = settings.aiConfig.apiKey;
-  tempEndpoint.value = settings.aiConfig.endpoint;
-  tempModel.value = settings.aiConfig.model;
-  tempApiStyle.value = settings.aiConfig.apiStyle || "completions";
-  tempProxyEnabled.value = !!settings.aiConfig.proxyEnabled;
-  tempProxyUrl.value = settings.aiConfig.proxyUrl || "";
-  showSettings.value = true;
-}
-
-function saveSettings() {
-  settings.updateAiConfig({
-    provider: tempProvider.value,
-    apiKey: tempApiKey.value,
-    endpoint: tempEndpoint.value,
-    model: tempModel.value,
-    apiStyle: tempApiStyle.value,
-    proxyEnabled: tempProxyEnabled.value,
-    proxyUrl: tempProxyUrl.value,
-  });
-  showSettings.value = false;
-}
-
-const testingAi = ref(false);
-const testResult = ref<"" | "success" | "error">("");
-const testError = ref("");
-
-async function testAiConnection() {
-  testingAi.value = true;
-  testResult.value = "";
-  testError.value = "";
-  try {
-    await aiTestConnection({
-      provider: tempProvider.value,
-      apiKey: tempApiKey.value,
-      endpoint: tempEndpoint.value,
-      model: tempModel.value,
-      apiStyle: tempApiStyle.value,
-      proxyEnabled: tempProxyEnabled.value,
-      proxyUrl: tempProxyUrl.value,
-    });
-    testResult.value = "success";
-  } catch (e: any) {
-    testResult.value = "error";
-    testError.value = e?.message || String(e);
-  } finally {
-    testingAi.value = false;
-  }
-}
-
-function selectProvider(provider: AiProvider) {
-  tempProvider.value = provider;
-  tempEndpoint.value = providerDefaults[provider].endpoint;
-  tempModel.value = providerDefaults[provider].model;
-}
-
 function scrollToBottom() {
   nextTick(() => {
     const root = scrollRef.value?.$el as HTMLElement | undefined;
@@ -283,7 +206,7 @@ async function send() {
 
   if (!props.connection || !props.tab) return;
   if (!settings.isConfigured()) {
-    openSettings();
+    toast(t("ai.noConfig"));
     return;
   }
 
@@ -531,9 +454,6 @@ function formatInlineText(text: string): string {
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="clearMessages" :title="t('ai.clear')">
         <Trash2 class="h-3.5 w-3.5" />
       </Button>
-      <Button variant="ghost" size="icon" class="h-6 w-6" @click="openSettings">
-        <Settings class="h-3.5 w-3.5" />
-      </Button>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="emit('close')">
         <X class="h-3.5 w-3.5" />
       </Button>
@@ -747,107 +667,6 @@ function formatInlineText(text: string): string {
       </div>
     </div>
   </div>
-
-  <Dialog v-model:open="showSettings">
-    <DialogContent class="sm:max-w-[420px]">
-      <DialogHeader>
-        <DialogTitle>{{ t("ai.settings") }}</DialogTitle>
-      </DialogHeader>
-      <div class="grid gap-3 py-2">
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">{{ t("ai.provider") }}</Label>
-          <Select :model-value="tempProvider" @update:model-value="(v: any) => selectProvider(v)">
-            <SelectTrigger class="col-span-2 h-8 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="claude">Claude</SelectItem>
-              <SelectItem value="openai">OpenAI</SelectItem>
-              <SelectItem value="custom">Custom</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">API Key</Label>
-          <Input v-model="tempApiKey" type="password" autocomplete="off" class="col-span-2 h-8 text-xs" />
-        </div>
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">Endpoint</Label>
-          <Input
-            v-model="tempEndpoint"
-            placeholder="https://api.openai.com/v1"
-            autocomplete="off"
-            class="col-span-2 h-8 text-xs"
-          />
-        </div>
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">Model</Label>
-          <Input v-model="tempModel" autocomplete="off" class="col-span-2 h-8 text-xs" />
-        </div>
-        <div v-if="tempProvider !== 'claude'" class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">API</Label>
-          <div class="col-span-2 flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              class="h-8 flex-1 text-xs"
-              :class="{
-                'border-blue-300 border-2 ring-2 ring-blue-300/50': tempApiStyle === 'completions',
-              }"
-              @click="tempApiStyle = 'completions'"
-              >/chat/completions</Button
-            >
-            <Button
-              size="sm"
-              variant="outline"
-              class="h-8 flex-1 text-xs"
-              :class="{
-                'border-blue-300 border-2 ring-2 ring-blue-300/50': tempApiStyle === 'responses',
-              }"
-              @click="tempApiStyle = 'responses'"
-              >/responses</Button
-            >
-          </div>
-        </div>
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">{{ t("ai.proxy") }}</Label>
-          <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
-            <input v-model="tempProxyEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
-            {{ t("ai.proxyEnable") }}
-          </label>
-        </div>
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">{{ t("ai.proxyUrl") }}</Label>
-          <Input
-            v-model="tempProxyUrl"
-            autocomplete="off"
-            class="col-span-2 h-8 text-xs"
-            placeholder="socks5://127.0.0.1:7890"
-            :disabled="!tempProxyEnabled"
-          />
-        </div>
-      </div>
-      <DialogFooter class="flex items-center gap-2">
-        <div class="flex-1 flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            :disabled="testingAi || !tempApiKey?.trim() || !tempEndpoint?.trim() || !tempModel?.trim()"
-            @click="testAiConnection"
-          >
-            <Loader2 v-if="testingAi" class="h-3 w-3 animate-spin mr-1" />
-            {{ t("connection.test") }}
-          </Button>
-          <span v-if="testResult === 'success'" class="text-xs text-green-500">{{ t("connection.testSuccess") }}</span>
-          <span
-            v-else-if="testResult === 'error'"
-            class="text-xs text-destructive truncate max-w-[200px]"
-            :title="testError"
-            >{{ testError }}</span
-          >
-        </div>
-        <Button size="sm" @click="saveSettings">{{ t("grid.save") }}</Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
 </template>
 
 <style scoped>
