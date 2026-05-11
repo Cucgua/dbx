@@ -77,9 +77,33 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
         .or_else(|_| row.try_get::<i64, _>(idx).map(super::safe_i64_to_json))
         .or_else(|_| row.try_get::<i32, _>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| row.try_get::<i16, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<i8, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| {
+            row.try_get::<Vec<i8>, _>(idx)
+                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
+        })
+        .or_else(|_| {
+            row.try_get::<Vec<i16>, _>(idx)
+                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
+        })
+        .or_else(|_| {
+            row.try_get::<Vec<i32>, _>(idx)
+                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
+        })
+        .or_else(|_| {
+            row.try_get::<Vec<i64>, _>(idx)
+                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
+        })
         .or_else(|_| {
             row.try_get::<f64, _>(idx).map(|v| {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+            })
+        })
+        .or_else(|_| {
+            row.try_get::<f32, _>(idx).map(|v| {
+                serde_json::Number::from_f64((v as f64 * 1_000_000.0).round() / 1_000_000.0)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
             })
         })
         .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
