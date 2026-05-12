@@ -247,11 +247,12 @@ function onSearchToggle(node: TreeNode) {
     </div>
     <RecycleScroller
       v-if="flatNodes.length > 0 && useVirtualTree"
-      class="min-h-0 flex-1 overflow-y-auto"
+      class="connection-tree-scroller min-h-0 flex-1 overflow-y-auto"
       :items="flatNodes"
       :item-size="SIDEBAR_TREE_ROW_HEIGHT"
       :buffer="SIDEBAR_TREE_SCROLL_BUFFER"
       :prerender="SIDEBAR_TREE_PRERENDER_COUNT"
+      :skip-hover="true"
       key-field="id"
       type-field="type"
       flow-mode
@@ -284,3 +285,14 @@ function onSearchToggle(node: TreeNode) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.connection-tree-scroller {
+  will-change: scroll-position;
+  contain: content;
+}
+
+.connection-tree-scroller :deep(.vue-recycle-scroller__item-view) {
+  contain: layout style paint;
+}
+</style>

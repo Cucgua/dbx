@@ -755,6 +755,17 @@ function syncHeaderScroll(e: Event) {
   }
 }
 
+let scrollingTimer = 0;
+const isScrolling = ref(false);
+function onScrollerScroll(e: Event) {
+  syncHeaderScroll(e);
+  if (!isScrolling.value) isScrolling.value = true;
+  clearTimeout(scrollingTimer);
+  scrollingTimer = window.setTimeout(() => {
+    isScrolling.value = false;
+  }, 120);
+}
+
 initColumnWidths();
 watch(() => visibleColumns.value.length, initColumnWidths);
 watch(
@@ -2134,10 +2145,13 @@ defineExpose({
                 v-else
                 ref="scrollerRef"
                 class="data-grid-scroller flex-1 overflow-x-auto overscroll-none"
+                :class="{ 'is-scrolling': isScrolling }"
                 :items="displayItems"
                 :item-size="26"
+                :buffer="600"
+                :skip-hover="true"
                 key-field="id"
-                @scroll="syncHeaderScroll"
+                @scroll="onScrollerScroll"
               >
                 <template #default="{ item, index }">
                   <div
@@ -2600,11 +2614,21 @@ defineExpose({
 <style scoped>
 .data-grid-scroller {
   overflow-anchor: none;
+  will-change: scroll-position;
+  contain: strict;
 }
 
 .data-grid-scroller :deep(.vue-recycle-scroller__item-wrapper) {
   min-width: var(--total-w);
   overflow: visible;
+}
+
+.data-grid-scroller :deep(.vue-recycle-scroller__item-view) {
+  contain: layout style paint;
+}
+
+.data-grid-scroller.is-scrolling :deep(.vue-recycle-scroller__item-view) {
+  pointer-events: none;
 }
 
 .ddl-drawer-resizing {

@@ -408,7 +408,14 @@ watch(
         <div class="truncate">{{ t("objects.schemaColumn") }}</div>
         <div v-if="hasComments" class="truncate">{{ t("objects.comment") }}</div>
       </div>
-      <RecycleScroller class="min-h-0 flex-1" :items="filteredRows" :item-size="38" key-field="id">
+      <RecycleScroller
+        class="object-browser-scroller min-h-0 flex-1"
+        :items="filteredRows"
+        :item-size="38"
+        :buffer="600"
+        :skip-hover="true"
+        key-field="id"
+      >
         <template #default="{ item }">
           <div
             class="grid h-[38px] cursor-pointer items-center gap-3 border-b px-3 hover:bg-accent/50"
@@ -514,3 +521,14 @@ watch(
     </div>
   </div>
 </template>
+
+<style scoped>
+.object-browser-scroller {
+  will-change: scroll-position;
+  contain: content;
+}
+
+.object-browser-scroller :deep(.vue-recycle-scroller__item-view) {
+  contain: layout style paint;
+}
+</style>

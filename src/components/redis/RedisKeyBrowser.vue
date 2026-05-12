@@ -398,7 +398,15 @@ onMounted(loadKeys);
           <Loader2 class="w-3.5 h-3.5 animate-spin" />
           <span>{{ t("redis.loadingKeys") }}</span>
         </div>
-        <RecycleScroller v-else class="flex-1" :items="visibleRows" :item-size="28" key-field="id">
+        <RecycleScroller
+          v-else
+          class="redis-key-scroller flex-1"
+          :items="visibleRows"
+          :item-size="28"
+          :buffer="600"
+          :skip-hover="true"
+          key-field="id"
+        >
           <template #default="{ item: row }">
             <div
               class="grid border-b text-xs cursor-pointer hover:bg-accent/50 group"
@@ -500,3 +508,14 @@ onMounted(loadKeys);
     @confirm="applyDangerAction"
   />
 </template>
+
+<style scoped>
+.redis-key-scroller {
+  will-change: scroll-position;
+  contain: content;
+}
+
+.redis-key-scroller :deep(.vue-recycle-scroller__item-view) {
+  contain: layout style paint;
+}
+</style>
