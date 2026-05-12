@@ -860,7 +860,7 @@ fn execute_query_oci(conn: &oracle_oci::Connection, sql: &str) -> Result<QueryRe
             truncated,
         })
     } else {
-        match conn.execute(sql, &[]) {
+        match conn.execute(sql.as_ref(), &[]) {
             Ok(stmt) => {
                 let _ = conn.commit();
                 Ok(QueryResult {
