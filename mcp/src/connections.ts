@@ -13,6 +13,7 @@ export interface ConnectionConfig {
   username: string;
   password: string;
   database?: string;
+  default_database?: string | null;
   url_params?: string;
   ssh_enabled: boolean;
   ssl: boolean;

@@ -21,6 +21,7 @@ import type { SqlCompletionColumn, SqlCompletionTable } from "@/lib/sqlCompletio
 import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
+import { isDefaultDatabase as isConfigDefaultDatabase } from "@/lib/defaultDatabase";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 
@@ -268,24 +269,24 @@ export const useConnectionStore = defineStore("connection", () => {
 
   async function setDefaultDatabase(connectionId: string, database: string) {
     const config = getConfig(connectionId);
-    if (!config || config.database === database) return;
+    if (!config || config.default_database === database) return;
     await updateConnection({
       ...config,
-      database,
+      default_database: database,
     });
   }
 
   async function clearDefaultDatabase(connectionId: string) {
     const config = getConfig(connectionId);
-    if (!config || !config.database) return;
+    if (!config || config.default_database === "") return;
     await updateConnection({
       ...config,
-      database: undefined,
+      default_database: "",
     });
   }
 
   function isDefaultDatabase(connectionId: string, database: string): boolean {
-    return getConfig(connectionId)?.database === database && database !== "";
+    return isConfigDefaultDatabase(getConfig(connectionId), database);
   }
 
   async function connect(config: ConnectionConfig) {

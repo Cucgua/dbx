@@ -11,6 +11,7 @@ import type {
 } from "@/types/database";
 import * as api from "@/lib/api";
 import { currentLocale } from "@/i18n";
+import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 
 export type AiAction = "generate" | "explain" | "optimize" | "fix" | "convert" | "sampleData";
 
@@ -327,7 +328,7 @@ async function loadCandidateSchemas(tab: QueryTab, connection: ConnectionConfig)
     const schemas = await api.listSchemas(tab.connectionId, tab.database);
     return prioritizeSchemas(schemas);
   }
-  return [tab.database || connection.database || "main"];
+  return [tab.database || resolveDefaultDatabase(connection, []) || "main"];
 }
 
 function prioritizeSchemas(schemas: string[]): string[] {

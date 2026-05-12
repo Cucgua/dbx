@@ -32,8 +32,14 @@ interface PoolEntry {
 
 const pools = new Map<string, PoolEntry>();
 
+function resolveDefaultDatabase(config: ConnectionConfig): string {
+  if (typeof config.default_database === "string") return config.default_database;
+  if (config.db_type === "oracle") return "";
+  return config.database || "";
+}
+
 function poolKey(config: ConnectionConfig): string {
-  return `${config.id}:${config.database || ""}`;
+  return `${config.id}:${resolveDefaultDatabase(config)}`;
 }
 
 function evictPool(key: string, entry: PoolEntry) {
@@ -94,7 +100,7 @@ async function getMysqlPool(config: ConnectionConfig): Promise<import("mysql2/pr
 }
 
 function buildConnectionUrl(config: ConnectionConfig): string {
-  const db = config.database || "";
+  const db = resolveDefaultDatabase(config);
   const params = config.url_params || "";
   const suffix = params ? `?${params}` : "";
   if (isMysqlType(config.db_type)) {

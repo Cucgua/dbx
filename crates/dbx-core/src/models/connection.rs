@@ -18,6 +18,8 @@ pub struct ConnectionConfig {
     pub password: String,
     pub database: Option<String>,
     #[serde(default)]
+    pub default_database: Option<String>,
+    #[serde(default)]
     pub color: Option<String>,
     #[serde(default)]
     pub ssh_enabled: bool,
@@ -372,6 +374,7 @@ mod tests {
             username: username.to_string(),
             password: password.to_string(),
             database: database.map(str::to_string),
+            default_database: None,
             color: None,
             ssh_enabled: false,
             ssh_host: String::new(),

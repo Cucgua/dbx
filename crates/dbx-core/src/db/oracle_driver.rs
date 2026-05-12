@@ -741,6 +741,7 @@ mod tests {
             username: "system".to_string(),
             password: "secret".to_string(),
             database: database.map(str::to_string),
+            default_database: None,
             color: None,
             ssh_enabled: false,
             ssh_host: String::new(),

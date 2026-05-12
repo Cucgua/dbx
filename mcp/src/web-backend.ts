@@ -84,12 +84,19 @@ async function ensureConnected(config: ConnectionConfig): Promise<void> {
   });
 }
 
+function resolveDefaultDatabase(config: ConnectionConfig): string {
+  if (typeof config.default_database === "string") return config.default_database;
+  if (config.db_type === "oracle") return "";
+  return config.database || "";
+}
+
 export async function listTables(config: ConnectionConfig, schema?: string): Promise<TableInfo[]> {
   await ensureConnected(config);
+  const database = resolveDefaultDatabase(config);
   const params = new URLSearchParams({
     connection_id: config.id,
-    database: config.database || "",
-    schema: schema || "",
+    database,
+    schema: schema || (config.db_type === "oracle" ? database : ""),
   });
   const res = await apiFetch(`/api/schema/tables?${params}`);
   return res.json();
@@ -97,10 +104,11 @@ export async function listTables(config: ConnectionConfig, schema?: string): Pro
 
 export async function describeTable(config: ConnectionConfig, table: string, schema?: string): Promise<ColumnInfo[]> {
   await ensureConnected(config);
+  const database = resolveDefaultDatabase(config);
   const params = new URLSearchParams({
     connection_id: config.id,
-    database: config.database || "",
-    schema: schema || "",
+    database,
+    schema: schema || (config.db_type === "oracle" ? database : ""),
     table,
   });
   const res = await apiFetch(`/api/schema/columns?${params}`);
@@ -113,7 +121,7 @@ export async function executeQuery(config: ConnectionConfig, sql: string): Promi
     method: "POST",
     body: JSON.stringify({
       connectionId: config.id,
-      database: config.database || "",
+      database: resolveDefaultDatabase(config),
       sql,
     }),
   });

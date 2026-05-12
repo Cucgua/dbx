@@ -276,6 +276,7 @@ mod tests {
             username: "postgres".to_string(),
             password: password.to_string(),
             database: Some("postgres".to_string()),
+            default_database: None,
             color: None,
             ssh_enabled: !ssh_password.is_empty(),
             ssh_host: String::new(),

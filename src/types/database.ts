@@ -27,6 +27,7 @@ export interface ConnectionConfig {
   username: string;
   password: string;
   database?: string;
+  default_database?: string | null;
   color?: string;
   ssh_enabled?: boolean;
   ssh_host?: string;

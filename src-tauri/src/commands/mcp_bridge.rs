@@ -5,6 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use super::connection::AppState;
+use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
 
 const BIND_ADDR: &str = "127.0.0.1:0";
 
@@ -86,10 +87,23 @@ pub fn start(app_handle: AppHandle, state: Arc<AppState>) {
 }
 
 fn find_config_by_name<'a>(
-    configs: &'a [crate::models::connection::ConnectionConfig],
+    configs: &'a [ConnectionConfig],
     name: &str,
-) -> Option<&'a crate::models::connection::ConnectionConfig> {
+) -> Option<&'a ConnectionConfig> {
     configs.iter().find(|c| c.name.eq_ignore_ascii_case(name))
+}
+
+fn resolve_event_database(config: &ConnectionConfig, requested: Option<String>) -> String {
+    requested
+        .or_else(|| config.default_database.clone())
+        .or_else(|| {
+            if config.db_type == DatabaseType::Oracle {
+                None
+            } else {
+                config.database.clone()
+            }
+        })
+        .unwrap_or_default()
 }
 
 async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
@@ -118,7 +132,7 @@ async fn handle_open_table(app: &AppHandle, state: &Arc<AppState>, body: &str, s
     };
     let event = McpOpenTableEvent {
         connection_id: config.id.clone(),
-        database: req.database.unwrap_or_else(|| config.database.clone().unwrap_or_default()),
+        database: resolve_event_database(config, req.database),
         schema: req.schema,
         table: req.table,
     };
@@ -147,7 +161,7 @@ async fn handle_execute_query(app: &AppHandle, state: &Arc<AppState>, body: &str
     };
     let event = McpExecuteQueryEvent {
         connection_id: config.id.clone(),
-        database: req.database.unwrap_or_else(|| config.database.clone().unwrap_or_default()),
+        database: resolve_event_database(config, req.database),
         sql: req.sql,
     };
     let _ = app.emit("mcp-execute-query", &event);
