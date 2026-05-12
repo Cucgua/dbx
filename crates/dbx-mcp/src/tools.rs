@@ -58,13 +58,7 @@ pub struct OpenTableArgs {
 pub fn resolve_database(config: &ConnectionConfig, requested: Option<String>) -> String {
     requested
         .or_else(|| config.default_database.clone())
-        .or_else(|| {
-            if config.db_type == DatabaseType::Oracle {
-                None
-            } else {
-                config.database.clone()
-            }
-        })
+        .or_else(|| if config.db_type == DatabaseType::Oracle { None } else { config.database.clone() })
         .unwrap_or_default()
 }
 
@@ -86,11 +80,7 @@ mod tests {
     use super::*;
     use dbx_core::models::connection::OracleConnectMethod;
 
-    fn config(
-        db_type: DatabaseType,
-        database: Option<&str>,
-        default_database: Option<&str>,
-    ) -> ConnectionConfig {
+    fn config(db_type: DatabaseType, database: Option<&str>, default_database: Option<&str>) -> ConnectionConfig {
         ConnectionConfig {
             id: "id".to_string(),
             name: "name".to_string(),
