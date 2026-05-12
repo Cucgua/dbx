@@ -36,11 +36,28 @@ export const connectDb = forward("connectDb");
 export const disconnectDb = forward("disconnectDb");
 export const saveConnections = forward("saveConnections");
 export const loadConnections = forward("loadConnections");
+export const listPlugins = forward("listPlugins");
+export const listJdbcDrivers = forward("listJdbcDrivers");
+export const importJdbcDrivers = forward("importJdbcDrivers");
+export const deleteJdbcDriver = forward("deleteJdbcDriver");
+export const jdbcPluginStatus = forward("jdbcPluginStatus");
+export const installJdbcPlugin = forward("installJdbcPlugin");
+export const uninstallJdbcPlugin = forward("uninstallJdbcPlugin");
+export const loadSavedSqlLibrary = forward("loadSavedSqlLibrary");
+export const saveSavedSqlFolder = forward("saveSavedSqlFolder");
+export const deleteSavedSqlFolder = forward("deleteSavedSqlFolder");
+export const saveSavedSqlFile = forward("saveSavedSqlFile");
+export const deleteSavedSqlFile = forward("deleteSavedSqlFile");
 
 // Schema
 export const listDatabases = forward("listDatabases");
+export const saveSchemaCache = forward("saveSchemaCache");
+export const loadSchemaCache = forward("loadSchemaCache");
+export const deleteSchemaCachePrefix = forward("deleteSchemaCachePrefix");
 export const listSchemas = forward("listSchemas");
 export const listTables = forward("listTables");
+export const listObjects = forward("listObjects");
+export const getObjectSource = forward("getObjectSource");
 export const getColumns = forward("getColumns");
 export const listIndexes = forward("listIndexes");
 export const listForeignKeys = forward("listForeignKeys");
@@ -98,6 +115,11 @@ export const redisListPush = forward("redisListPush");
 export const redisListRemove = forward("redisListRemove");
 export const redisSetAdd = forward("redisSetAdd");
 export const redisSetRemove = forward("redisSetRemove");
+export const redisZadd = forward("redisZadd");
+export const redisZrem = forward("redisZrem");
+export const redisSetTtl = forward("redisSetTtl");
+export const redisDeleteKeys = forward("redisDeleteKeys");
+export const redisLoadMore = forward("redisLoadMore");
 
 // MongoDB
 export const mongoListDatabases = forward("mongoListDatabases");

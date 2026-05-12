@@ -1,9 +1,11 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use futures::StreamExt;
 use rust_decimal::Decimal;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
 
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 fn quote_value(s: &str) -> String {
@@ -132,6 +134,8 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
         .map(serde_json::Value::String)
         .or_else(|_| row.try_get::<i64, _>(idx).map(super::safe_i64_to_json))
         .or_else(|_| row.try_get::<u64, _>(idx).map(super::safe_u64_to_json))
+        .or_else(|_| row.try_get::<i32, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<i16, _>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| {
             row.try_get::<f64, _>(idx).map(|v| {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
@@ -142,6 +146,11 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
             row.try_get::<Vec<u8>, _>(idx).map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
         })
         .or_else(|e| mysql_temporal_to_json_value(row, idx).ok_or(e))
+        .or_else(|_| row.try_get_unchecked::<String, _>(idx).map(serde_json::Value::String))
+        .or_else(|_| {
+            row.try_get_unchecked::<Vec<u8>, _>(idx)
+                .map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
+        })
         .unwrap_or(serde_json::Value::Null)
 }
 
@@ -175,10 +184,14 @@ pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
 }
 
 pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, String> {
-    let rows: Vec<MySqlRow> = sqlx::raw_sql("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows: Vec<MySqlRow> = sqlx::raw_sql(
+        "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA \
+         WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
+         ORDER BY SCHEMA_NAME",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(|row| DatabaseInfo { name: get_str(row, 0) }).collect())
 }
@@ -237,62 +250,73 @@ pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Resul
 
 pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("DESCRIBE")
-        || trimmed.starts_with("EXPLAIN")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN"]) {
         if bare {
-            let rows: Vec<MySqlRow> = sqlx::raw_sql(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+            let mut stream = sqlx::raw_sql(sql).fetch(&*pool);
+            let mut columns: Vec<String> = vec![];
+            let mut column_types: Vec<String> = vec![];
+            let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-            let (columns, column_types) = if let Some(first) = rows.first() {
-                let cols: Vec<String> = first.columns().iter().map(|c| c.name().to_string()).collect();
-                let types: Vec<String> = first.columns().iter().map(|c| c.type_info().name().to_string()).collect();
-                (cols, types)
-            } else {
-                (vec![], vec![])
-            };
-
-            let result_rows: Vec<Vec<serde_json::Value>> = rows
-                .iter()
-                .map(|row| {
+            while let Some(row) = stream.next().await {
+                let row: MySqlRow = row.map_err(|e| e.to_string())?;
+                if columns.is_empty() {
+                    columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+                    column_types = row.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+                }
+                result_rows.push(
                     (0..row.len())
-                        .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                        .collect()
-                })
-                .collect();
+                        .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                        .collect(),
+                );
+                if result_rows.len() > crate::query::MAX_ROWS {
+                    break;
+                }
+            }
+
+            let truncated = result_rows.len() > crate::query::MAX_ROWS;
+            if truncated {
+                result_rows.truncate(crate::query::MAX_ROWS);
+            }
 
             Ok(QueryResult {
                 columns,
                 rows: result_rows,
                 affected_rows: 0,
                 execution_time_ms: start.elapsed().as_millis(),
-                truncated: false,
+                truncated,
             })
         } else {
             let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
             let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
             let column_types: Vec<String> = desc.columns().iter().map(|c| c.type_info().name().to_string()).collect();
 
-            let rows: Vec<MySqlRow> = sqlx::query(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+            let mut stream = sqlx::query(sql).fetch(&*pool);
+            let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-            let result_rows: Vec<Vec<serde_json::Value>> = rows
-                .iter()
-                .map(|row| {
+            while let Some(row) = stream.next().await {
+                let row = row.map_err(|e| e.to_string())?;
+                result_rows.push(
                     (0..row.len())
-                        .map(|i| mysql_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                        .collect()
-                })
-                .collect();
+                        .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                        .collect(),
+                );
+                if result_rows.len() > crate::query::MAX_ROWS {
+                    break;
+                }
+            }
+
+            let truncated = result_rows.len() > crate::query::MAX_ROWS;
+            if truncated {
+                result_rows.truncate(crate::query::MAX_ROWS);
+            }
 
             Ok(QueryResult {
                 columns,
                 rows: result_rows,
                 affected_rows: 0,
                 execution_time_ms: start.elapsed().as_millis(),
-                truncated: false,
+                truncated,
             })
         }
     } else {

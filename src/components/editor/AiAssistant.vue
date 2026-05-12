@@ -16,7 +16,6 @@ import {
   MessageSquarePlus,
   Replace,
   Server,
-  Settings,
   Play,
   Square,
   Trash2,
@@ -27,7 +26,6 @@ import {
   TestTube,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu,
@@ -35,19 +33,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useSettingsStore, type AiProvider, type AiApiStyle } from "@/stores/settingsStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { connectionIconType } from "@/lib/connectionPresentation";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useQueryStore } from "@/stores/queryStore";
 import { useToast } from "@/composables/useToast";
 import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
+import { extractFirstSqlCodeBlock, shouldAttemptAiAutoExecute } from "@/lib/aiSqlExecutionPolicy";
 import { Marked } from "marked";
 import {
-  aiTestConnection,
   aiCancelStream,
   saveAiConversation,
   loadAiConversations,
@@ -80,13 +77,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   replaceSql: [sql: string];
   executeSql: [sql: string];
+  requestAutoExecuteSql: [sql: string];
   close: [];
 }>();
 
 const prompt = ref("");
 const messages = ref<ChatMessage[]>([]);
 const isGenerating = ref(false);
-const showSettings = ref(false);
 const scrollRef = ref<InstanceType<typeof ScrollArea> | null>(null);
 const activeAction = ref<AiAction>("generate");
 const currentSessionId = ref("");
@@ -165,18 +162,6 @@ function changeDatabase(database: string) {
   queryStore.updateDatabase(tab.id, database);
 }
 
-const tempProvider = ref<AiProvider>(settings.aiConfig.provider);
-const tempApiKey = ref(settings.aiConfig.apiKey);
-const tempEndpoint = ref(settings.aiConfig.endpoint);
-const tempModel = ref(settings.aiConfig.model);
-const tempApiStyle = ref<AiApiStyle>(settings.aiConfig.apiStyle || "completions");
-
-const providerDefaults: Record<AiProvider, { endpoint: string; model: string }> = {
-  claude: { endpoint: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514" },
-  openai: { endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o" },
-  custom: { endpoint: "", model: "" },
-};
-
 function appendAssistantDelta(assistantIdx: number, delta: string) {
   const msg = messages.value[assistantIdx];
   if (msg.isThinking) msg.isThinking = false;
@@ -204,57 +189,6 @@ function toggleReasoning(index: number) {
   expandedReasoning.value = next;
 }
 
-function openSettings() {
-  tempProvider.value = settings.aiConfig.provider;
-  tempApiKey.value = settings.aiConfig.apiKey;
-  tempEndpoint.value = settings.aiConfig.endpoint;
-  tempModel.value = settings.aiConfig.model;
-  tempApiStyle.value = settings.aiConfig.apiStyle || "completions";
-  showSettings.value = true;
-}
-
-function saveSettings() {
-  settings.updateAiConfig({
-    provider: tempProvider.value,
-    apiKey: tempApiKey.value,
-    endpoint: tempEndpoint.value,
-    model: tempModel.value,
-    apiStyle: tempApiStyle.value,
-  });
-  showSettings.value = false;
-}
-
-const testingAi = ref(false);
-const testResult = ref<"" | "success" | "error">("");
-const testError = ref("");
-
-async function testAiConnection() {
-  testingAi.value = true;
-  testResult.value = "";
-  testError.value = "";
-  try {
-    await aiTestConnection({
-      provider: tempProvider.value,
-      apiKey: tempApiKey.value,
-      endpoint: tempEndpoint.value,
-      model: tempModel.value,
-      apiStyle: tempApiStyle.value,
-    });
-    testResult.value = "success";
-  } catch (e: any) {
-    testResult.value = "error";
-    testError.value = e?.message || String(e);
-  } finally {
-    testingAi.value = false;
-  }
-}
-
-function selectProvider(provider: AiProvider) {
-  tempProvider.value = provider;
-  tempEndpoint.value = providerDefaults[provider].endpoint;
-  tempModel.value = providerDefaults[provider].model;
-}
-
 function scrollToBottom() {
   nextTick(() => {
     const root = scrollRef.value?.$el as HTMLElement | undefined;
@@ -272,7 +206,7 @@ async function send() {
 
   if (!props.connection || !props.tab) return;
   if (!settings.isConfigured()) {
-    openSettings();
+    toast(t("ai.noConfig"));
     return;
   }
 
@@ -280,6 +214,8 @@ async function send() {
   prompt.value = "";
   scrollToBottom();
 
+  const requestedAction = activeAction.value;
+  const shouldAutoExecute = shouldAttemptAiAutoExecute(text, requestedAction);
   isGenerating.value = true;
   messages.value.push({ role: "assistant", content: "" });
   const assistantIdx = messages.value.length - 1;
@@ -313,6 +249,10 @@ async function send() {
     const msg = messages.value[assistantIdx];
     if (msg) msg.isThinking = false;
     isGenerating.value = false;
+    if (shouldAutoExecute) {
+      const sql = extractFirstSqlCodeBlock(msg?.content || "");
+      if (sql) emit("requestAutoExecuteSql", sql);
+    }
     activeAction.value = "generate";
     currentSessionId.value = "";
     persistConversation();
@@ -368,9 +308,9 @@ async function persistConversation() {
   }).catch(() => {});
 }
 
-async function loadConversationList() {
-  conversations.value = await loadAiConversations().catch(() => []);
-  showConversationList.value = true;
+async function setConversationListOpen(open: boolean) {
+  showConversationList.value = open;
+  if (open) conversations.value = await loadAiConversations().catch(() => []);
 }
 
 function selectConversation(conv: AiConversation) {
@@ -462,51 +402,61 @@ function formatInlineText(text: string): string {
 
 <template>
   <div class="flex h-full min-h-0 flex-col overflow-hidden">
-    <div class="h-9 flex items-center gap-2 border-b px-3 shrink-0">
+    <div
+      class="flex items-center gap-2 border-b px-3 shrink-0"
+      :class="settings.editorSettings.appLayout === 'classic' ? 'h-9' : 'h-10'"
+    >
       <span class="flex-1 truncate text-xs font-medium">{{ chatTitle }}</span>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat" :title="t('ai.newChat')">
         <MessageSquarePlus class="h-3.5 w-3.5" />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        class="h-6 w-6"
-        :class="{ 'bg-accent': showConversationList }"
-        @click="loadConversationList"
-        :title="t('history.title')"
-      >
-        <History class="h-3.5 w-3.5" />
-      </Button>
+      <Popover :open="showConversationList" @update:open="setConversationListOpen">
+        <PopoverTrigger as-child>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6"
+            :class="{ 'bg-accent': showConversationList }"
+            :title="t('history.title')"
+          >
+            <History class="h-3.5 w-3.5" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" class="w-72 gap-0 p-0" @click.stop>
+          <div class="flex items-center border-b px-3 py-2">
+            <span class="flex-1 text-xs font-medium">{{ t("history.title") }}</span>
+            <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat">
+              <MessageSquarePlus class="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <div v-if="!conversations.length" class="p-3 text-center text-xs text-muted-foreground">
+            {{ t("history.empty") }}
+          </div>
+          <div v-else class="max-h-64 overflow-auto p-1">
+            <div
+              v-for="conv in conversations"
+              :key="conv.id"
+              class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted"
+              :class="{ 'bg-muted': conv.id === conversationId }"
+              @click="selectConversation(conv)"
+            >
+              <span class="min-w-0 flex-1 truncate">{{ conv.title }}</span>
+              <button
+                class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-destructive"
+                @click.stop="deleteConversation(conv.id)"
+              >
+                <X class="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="clearMessages" :title="t('ai.clear')">
         <Trash2 class="h-3.5 w-3.5" />
-      </Button>
-      <Button variant="ghost" size="icon" class="h-6 w-6" @click="openSettings">
-        <Settings class="h-3.5 w-3.5" />
       </Button>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="emit('close')">
         <X class="h-3.5 w-3.5" />
       </Button>
-    </div>
-
-    <div v-if="showConversationList" class="border-b max-h-48 overflow-auto">
-      <div v-if="!conversations.length" class="p-3 text-xs text-muted-foreground text-center">
-        {{ t("history.empty") }}
-      </div>
-      <div
-        v-for="conv in conversations"
-        :key="conv.id"
-        class="flex items-center gap-2 px-3 py-1.5 hover:bg-muted cursor-pointer text-xs"
-        :class="{ 'bg-muted': conv.id === conversationId }"
-        @click="selectConversation(conv)"
-      >
-        <span class="flex-1 truncate">{{ conv.title }}</span>
-        <button
-          class="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
-          @click.stop="deleteConversation(conv.id)"
-        >
-          <X class="h-3 w-3" />
-        </button>
-      </div>
     </div>
 
     <div
@@ -717,90 +667,6 @@ function formatInlineText(text: string): string {
       </div>
     </div>
   </div>
-
-  <Dialog v-model:open="showSettings">
-    <DialogContent class="sm:max-w-[420px]">
-      <DialogHeader>
-        <DialogTitle>{{ t("ai.settings") }}</DialogTitle>
-      </DialogHeader>
-      <div class="grid gap-3 py-2">
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">{{ t("ai.provider") }}</Label>
-          <Select :model-value="tempProvider" @update:model-value="(v: any) => selectProvider(v)">
-            <SelectTrigger class="col-span-2 h-8 text-xs"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="claude">Claude</SelectItem>
-              <SelectItem value="openai">OpenAI</SelectItem>
-              <SelectItem value="custom">Custom</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">API Key</Label>
-          <Input v-model="tempApiKey" type="password" autocomplete="off" class="col-span-2 h-8 text-xs" />
-        </div>
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">Endpoint</Label>
-          <Input
-            v-model="tempEndpoint"
-            placeholder="https://api.openai.com/v1"
-            autocomplete="off"
-            class="col-span-2 h-8 text-xs"
-          />
-        </div>
-        <div class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">Model</Label>
-          <Input v-model="tempModel" autocomplete="off" class="col-span-2 h-8 text-xs" />
-        </div>
-        <div v-if="tempProvider !== 'claude'" class="grid grid-cols-3 items-center gap-3">
-          <Label class="text-right text-xs">API</Label>
-          <div class="col-span-2 flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              class="h-8 flex-1 text-xs"
-              :class="{
-                'border-blue-300 border-2 ring-2 ring-blue-300/50': tempApiStyle === 'completions',
-              }"
-              @click="tempApiStyle = 'completions'"
-              >/chat/completions</Button
-            >
-            <Button
-              size="sm"
-              variant="outline"
-              class="h-8 flex-1 text-xs"
-              :class="{
-                'border-blue-300 border-2 ring-2 ring-blue-300/50': tempApiStyle === 'responses',
-              }"
-              @click="tempApiStyle = 'responses'"
-              >/responses</Button
-            >
-          </div>
-        </div>
-      </div>
-      <DialogFooter class="flex items-center gap-2">
-        <div class="flex-1 flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            :disabled="testingAi || !tempApiKey?.trim() || !tempEndpoint?.trim() || !tempModel?.trim()"
-            @click="testAiConnection"
-          >
-            <Loader2 v-if="testingAi" class="h-3 w-3 animate-spin mr-1" />
-            {{ t("connection.test") }}
-          </Button>
-          <span v-if="testResult === 'success'" class="text-xs text-green-500">{{ t("connection.testSuccess") }}</span>
-          <span
-            v-else-if="testResult === 'error'"
-            class="text-xs text-destructive truncate max-w-[200px]"
-            :title="testError"
-            >{{ testError }}</span
-          >
-        </div>
-        <Button size="sm" @click="saveSettings">{{ t("grid.save") }}</Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
 </template>
 
 <style scoped>

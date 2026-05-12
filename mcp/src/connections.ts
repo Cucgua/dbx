@@ -16,6 +16,12 @@ export interface ConnectionConfig {
   default_database?: string | null;
   url_params?: string;
   ssh_enabled: boolean;
+  proxy_enabled?: boolean;
+  proxy_type?: "socks5" | "http";
+  proxy_host?: string;
+  proxy_port?: number;
+  proxy_username?: string;
+  proxy_password?: string;
   ssl: boolean;
 }
 
@@ -51,6 +57,7 @@ export async function loadConnections(): Promise<ConnectionConfig[]> {
       const config: ConnectionConfig = JSON.parse(row.config_json);
       config.id = row.id;
       if (!config.password) config.password = getSecret(db, row.id, "password");
+      if (!config.proxy_password) config.proxy_password = getSecret(db, row.id, "proxy_password");
       configs.push(config);
     }
 
@@ -70,13 +77,46 @@ export async function addConnection(config: Omit<ConnectionConfig, "id">): Promi
   const id = randomUUID();
   const db = openDb();
 
-  const sanitized = { ...config, id, password: "" };
-  const configJson = JSON.stringify(sanitized);
+  const full = {
+    id,
+    name: config.name,
+    db_type: config.db_type,
+    driver_profile: config.driver_profile ?? config.db_type,
+    driver_label: null,
+    url_params: config.url_params ?? "",
+    host: config.host,
+    port: config.port,
+    username: config.username,
+    password: "",
+    database: config.database ?? null,
+    color: null,
+    ssh_enabled: config.ssh_enabled ?? false,
+    ssh_host: "",
+    ssh_port: 22,
+    ssh_user: "",
+    ssh_password: "",
+    ssh_key_path: "",
+    ssh_key_passphrase: "",
+    ssh_expose_lan: false,
+    proxy_enabled: config.proxy_enabled ?? false,
+    proxy_type: config.proxy_type ?? "socks5",
+    proxy_host: config.proxy_host ?? "",
+    proxy_port: config.proxy_port ?? 1080,
+    proxy_username: config.proxy_username ?? "",
+    proxy_password: "",
+    ssl: config.ssl ?? false,
+    sysdba: false,
+    connection_string: null,
+  };
+  const configJson = JSON.stringify(full);
 
   const insert = db.transaction(() => {
     db.prepare("INSERT INTO connections (id, config_json) VALUES (?, ?)").run(id, configJson);
     if (config.password) {
       db.prepare("INSERT INTO connection_secrets (connection_id, key, secret) VALUES (?, ?, ?)").run(id, "password", config.password);
+    }
+    if (config.proxy_password) {
+      db.prepare("INSERT INTO connection_secrets (connection_id, key, secret) VALUES (?, ?, ?)").run(id, "proxy_password", config.proxy_password);
     }
   });
   insert();

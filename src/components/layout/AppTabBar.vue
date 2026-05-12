@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
-import { X, Pin, ChevronRight } from "lucide-vue-next";
+import { X, Pin, ChevronRight, Table2, Code2, TableProperties } from "lucide-vue-next";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -11,11 +11,15 @@ import {
 } from "@/components/ui/context-menu";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useQueryStore } from "@/stores/queryStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useTabScroll } from "@/composables/useTabScroll";
-import { connectionColor, tabDisplayTitle, tabTooltipLines, tabModeLabel } from "@/lib/tabPresentation";
+import { connectionColor, tabDisplayTitle, tabTooltipLines } from "@/lib/tabPresentation";
+import { hexToRgba } from "@/lib/color";
+import type { QueryTab } from "@/types/database";
 
 const { t } = useI18n();
 const queryStore = useQueryStore();
+const settingsStore = useSettingsStore();
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const { canScrollLeft, canScrollRight, updateScrollButtons, scrollTabs } = useTabScroll(tabsContainerRef);
@@ -41,13 +45,54 @@ watch(
     });
   },
 );
+
+function tabColorStyle(tab: QueryTab) {
+  const color = connectionColor(tab.connectionId);
+  const isActive = tab.id === queryStore.activeTabId;
+  const isClassic = settingsStore.editorSettings.appLayout === "classic";
+  if (!color) {
+    if (isClassic) {
+      return isActive ? { boxShadow: "0 1px 0 0 var(--color-background)" } : undefined;
+    }
+    return isActive
+      ? {
+          borderColor: "var(--ring)",
+        }
+      : undefined;
+  }
+
+  if (isClassic) {
+    return {
+      backgroundColor: hexToRgba(color, isActive ? 0.16 : 0.07),
+      boxShadow: isActive ? `inset 0 -2px 0 ${color}` : undefined,
+    };
+  }
+
+  return {
+    backgroundColor: hexToRgba(color, isActive ? 0.16 : 0.09),
+    borderColor: isActive ? hexToRgba(color, 0.72) : hexToRgba(color, 0.18),
+  };
+}
+
+function tabIconClass(tab: QueryTab) {
+  if (tab.mode === "data" || tab.mode === "objects") return "text-emerald-600 dark:text-emerald-400";
+  return "text-blue-600 dark:text-blue-400";
+}
 </script>
 
 <template>
-  <div v-if="queryStore.tabs.length > 0" class="relative h-9 flex items-stretch border-b bg-muted shrink-0">
+  <div
+    v-if="queryStore.tabs.length > 0"
+    class="relative flex border-b shrink-0"
+    :class="
+      settingsStore.editorSettings.appLayout === 'classic'
+        ? 'h-9 items-stretch bg-muted'
+        : 'h-10 items-center bg-background px-2'
+    "
+  >
     <button
       v-if="canScrollLeft"
-      class="absolute left-0 z-10 h-full px-1 bg-linear-to-r from-background via-background/80 to-transparent text-muted-foreground hover:text-foreground"
+      class="absolute left-0 z-10 h-full pl-1 pr-6 bg-linear-to-r from-background from-40% to-transparent text-muted-foreground hover:text-foreground"
       :aria-label="t('tabs.scrollLeft')"
       @click="scrollTabs('left')"
     >
@@ -56,30 +101,41 @@ watch(
     <div
       ref="tabsContainerRef"
       class="flex-1 flex items-center overflow-x-auto min-w-0"
+      :class="settingsStore.editorSettings.appLayout === 'classic' ? '' : 'gap-1.5'"
       style="-ms-overflow-style: none; scrollbar-width: none; -webkit-overflow-scrolling: touch"
       @scroll="updateScrollButtons"
     >
       <ContextMenu v-for="tab in queryStore.tabs" :key="tab.id">
-        <ContextMenuTrigger as-child>
+        <ContextMenuTrigger :class="settingsStore.editorSettings.appLayout === 'classic' ? 'h-full' : ''">
           <Tooltip>
             <TooltipTrigger as-child>
               <div
-                class="group flex min-w-38 items-center gap-1 px-2 h-full text-xs cursor-pointer transition-colors whitespace-nowrap border-r border-border/50"
+                class="group flex min-w-38 items-center gap-1 px-2 text-xs cursor-pointer transition-colors whitespace-nowrap"
                 :class="
-                  tab.id === queryStore.activeTabId
-                    ? 'bg-background text-foreground font-medium'
-                    : 'text-foreground/70 hover:text-foreground/90'
+                  settingsStore.editorSettings.appLayout === 'classic'
+                    ? [
+                        'h-full border-r border-border/50',
+                        tab.id === queryStore.activeTabId
+                          ? 'bg-background text-foreground font-medium'
+                          : 'text-foreground/70 hover:text-foreground/90',
+                      ]
+                    : [
+                        'h-7 rounded-md border',
+                        tab.id === queryStore.activeTabId
+                          ? 'text-foreground font-medium'
+                          : 'border-border/60 text-foreground/70 hover:border-border hover:text-foreground/90',
+                      ]
                 "
-                :style="
-                  tab.id === queryStore.activeTabId ? { boxShadow: '0 1px 0 0 var(--color-background)' } : undefined
-                "
+                :style="tabColorStyle(tab)"
                 :data-active-tab="tab.id === queryStore.activeTabId"
                 @click="queryStore.activeTabId = tab.id"
+                @mousedown.middle.prevent="queryStore.closeTab(tab.id)"
               >
-                <span
-                  class="h-1.5 w-1.5 rounded-full shrink-0"
-                  :style="{ backgroundColor: connectionColor(tab.connectionId) || '#9ca3af' }"
-                />
+                <span class="shrink-0" :class="tabIconClass(tab)">
+                  <Table2 v-if="tab.mode === 'data'" class="h-3.5 w-3.5" />
+                  <TableProperties v-else-if="tab.mode === 'objects'" class="h-3.5 w-3.5" />
+                  <Code2 v-else class="h-3.5 w-3.5" />
+                </span>
                 <span class="min-w-0 truncate flex-1">{{ tabDisplayTitle(tab) }}</span>
                 <Tooltip>
                   <TooltipTrigger as-child>
@@ -93,16 +149,6 @@ watch(
                   </TooltipTrigger>
                   <TooltipContent>{{ tab.pinned ? t("contextMenu.unpin") : t("contextMenu.pin") }}</TooltipContent>
                 </Tooltip>
-                <span
-                  class="shrink-0 rounded border px-1 text-[10px] leading-4"
-                  :class="
-                    tab.mode === 'data'
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
-                      : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-300'
-                  "
-                >
-                  {{ tabModeLabel(tab) }}
-                </span>
                 <button
                   class="rounded hover:bg-muted-foreground/20 p-0.5 shrink-0"
                   @click.stop="queryStore.closeTab(tab.id)"
@@ -143,7 +189,7 @@ watch(
     </div>
     <button
       v-if="canScrollRight"
-      class="absolute right-0 z-10 h-full px-1 bg-linear-to-l from-background via-background/80 to-transparent text-muted-foreground hover:text-foreground"
+      class="absolute right-0 z-10 h-full pr-1 pl-6 bg-linear-to-l from-background from-40% to-transparent text-muted-foreground hover:text-foreground"
       :aria-label="t('tabs.scrollRight')"
       @click="scrollTabs('right')"
     >

@@ -86,23 +86,14 @@ pub fn start(app_handle: AppHandle, state: Arc<AppState>) {
     });
 }
 
-fn find_config_by_name<'a>(
-    configs: &'a [ConnectionConfig],
-    name: &str,
-) -> Option<&'a ConnectionConfig> {
+fn find_config_by_name<'a>(configs: &'a [ConnectionConfig], name: &str) -> Option<&'a ConnectionConfig> {
     configs.iter().find(|c| c.name.eq_ignore_ascii_case(name))
 }
 
 fn resolve_event_database(config: &ConnectionConfig, requested: Option<String>) -> String {
     requested
         .or_else(|| config.default_database.clone())
-        .or_else(|| {
-            if config.db_type == DatabaseType::Oracle {
-                None
-            } else {
-                config.database.clone()
-            }
-        })
+        .or_else(|| if config.db_type == DatabaseType::Oracle { None } else { config.database.clone() })
         .unwrap_or_default()
 }
 

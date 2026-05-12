@@ -2,12 +2,21 @@ import type {
   ConnectionConfig,
   DatabaseInfo,
   TableInfo,
+  ObjectInfo,
+  ObjectSource,
+  ObjectSourceKind,
   ColumnInfo,
   IndexInfo,
   ForeignKeyInfo,
   TriggerInfo,
   QueryResult,
+  InstalledPlugin,
+  JdbcDriverInfo,
+  JdbcPluginStatus,
   SidebarLayout,
+  SavedSqlFile,
+  SavedSqlFolder,
+  SavedSqlLibrary,
 } from "@/types/database";
 import type { AiConfig, AppSettings } from "@/stores/settingsStore";
 import type {
@@ -118,6 +127,54 @@ export async function loadMcpHttpStatus(): Promise<null> {
   return null;
 }
 
+export async function listPlugins(): Promise<InstalledPlugin[]> {
+  return get("/api/plugins");
+}
+
+export async function listJdbcDrivers(): Promise<JdbcDriverInfo[]> {
+  return [];
+}
+
+export async function importJdbcDrivers(_paths: string[]): Promise<JdbcDriverInfo[]> {
+  return [];
+}
+
+export async function deleteJdbcDriver(_path: string): Promise<JdbcDriverInfo[]> {
+  return [];
+}
+
+export async function jdbcPluginStatus(): Promise<JdbcPluginStatus> {
+  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
+}
+
+export async function installJdbcPlugin(): Promise<JdbcPluginStatus> {
+  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
+}
+
+export async function uninstallJdbcPlugin(): Promise<JdbcPluginStatus> {
+  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
+}
+
+export async function loadSavedSqlLibrary(): Promise<SavedSqlLibrary> {
+  return get("/api/saved-sql");
+}
+
+export async function saveSavedSqlFolder(folder: SavedSqlFolder): Promise<SavedSqlFolder> {
+  return post("/api/saved-sql/folders", folder);
+}
+
+export async function deleteSavedSqlFolder(id: string): Promise<void> {
+  return del(`/api/saved-sql/folders/${encodeURIComponent(id)}`);
+}
+
+export async function saveSavedSqlFile(file: SavedSqlFile): Promise<SavedSqlFile> {
+  return post("/api/saved-sql", file);
+}
+
+export async function deleteSavedSqlFile(id: string): Promise<void> {
+  return del(`/api/saved-sql/${encodeURIComponent(id)}`);
+}
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -126,12 +183,40 @@ export async function listDatabases(connectionId: string): Promise<DatabaseInfo[
   return get(`/api/schema/databases?${qs({ connection_id: connectionId })}`);
 }
 
+export async function saveSchemaCache(cacheKey: string, payload: unknown): Promise<void> {
+  return post("/api/schema/cache", { cacheKey, payload });
+}
+
+export async function loadSchemaCache<T = unknown>(cacheKey: string): Promise<T | null> {
+  return get(`/api/schema/cache?${qs({ cache_key: cacheKey })}`);
+}
+
+export async function deleteSchemaCachePrefix(prefix: string): Promise<void> {
+  return del(`/api/schema/cache-prefix?${qs({ prefix })}`);
+}
+
 export async function listSchemas(connectionId: string, database: string): Promise<string[]> {
   return get(`/api/schema/schemas?${qs({ connection_id: connectionId, database })}`);
 }
 
 export async function listTables(connectionId: string, database: string, schema: string): Promise<TableInfo[]> {
   return get(`/api/schema/tables?${qs({ connection_id: connectionId, database, schema })}`);
+}
+
+export async function listObjects(connectionId: string, database: string, schema: string): Promise<ObjectInfo[]> {
+  return get(`/api/schema/objects?${qs({ connection_id: connectionId, database, schema })}`);
+}
+
+export async function getObjectSource(
+  connectionId: string,
+  database: string,
+  schema: string,
+  name: string,
+  objectType: ObjectSourceKind,
+): Promise<ObjectSource> {
+  return get(
+    `/api/schema/object-source?${qs({ connection_id: connectionId, database, schema, table: name, object_type: objectType })}`,
+  );
 }
 
 export async function getColumns(
@@ -341,29 +426,8 @@ export async function listenSqlFileProgress(_handler: (progress: SqlFileProgress
   // For HTTP mode we need an executionId, but the tauri API does not take one.
   // The SSE endpoint requires a specific executionId. As a workaround we return
   // a no-op unlisten; callers that need progress in web mode should use
-  // listenSqlFileProgressById instead.
+  // the web-specific SQL file progress listener instead.
   return () => {};
-}
-
-/**
- * Web-specific: listen to SQL file execution progress for a given executionId via SSE.
- */
-export function listenSqlFileProgressById(
-  executionId: string,
-  handler: (progress: SqlFileProgress) => void,
-): () => void {
-  const es = new EventSource(`/api/sql-file/progress/${executionId}`);
-  es.onmessage = (e) => {
-    const progress: SqlFileProgress = JSON.parse(e.data);
-    handler(progress);
-    if (progress.status === "done" || progress.status === "error" || progress.status === "cancelled") {
-      es.close();
-    }
-  };
-  es.onerror = () => {
-    es.close();
-  };
-  return () => es.close();
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +590,39 @@ export async function redisSetAdd(connectionId: string, db: number, keyRaw: stri
 
 export async function redisSetRemove(connectionId: string, db: number, keyRaw: string, member: string): Promise<void> {
   return post("/api/redis/set-remove", { connectionId, db, keyRaw, member });
+}
+
+export async function redisZadd(
+  connectionId: string,
+  db: number,
+  keyRaw: string,
+  member: string,
+  score: number,
+): Promise<void> {
+  return post("/api/redis/zadd", { connectionId, db, keyRaw, member, score });
+}
+
+export async function redisZrem(connectionId: string, db: number, keyRaw: string, member: string): Promise<void> {
+  return post("/api/redis/zrem", { connectionId, db, keyRaw, member });
+}
+
+export async function redisSetTtl(connectionId: string, db: number, keyRaw: string, ttl: number): Promise<void> {
+  return post("/api/redis/set-ttl", { connectionId, db, keyRaw, ttl });
+}
+
+export async function redisDeleteKeys(connectionId: string, db: number, keyRaws: string[]): Promise<number> {
+  return post("/api/redis/delete-keys", { connectionId, db, keyRaws });
+}
+
+export async function redisLoadMore(
+  connectionId: string,
+  db: number,
+  keyRaw: string,
+  keyType: string,
+  cursor: number,
+  count: number,
+): Promise<RedisValue> {
+  return post("/api/redis/load-more", { connectionId, db, keyRaw, keyType, cursor, count });
 }
 
 // ---------------------------------------------------------------------------

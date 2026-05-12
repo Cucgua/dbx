@@ -10,7 +10,15 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
-import { diffColumns, diffIndexes, diffTables, generateSyncSql, type TableDiff } from "@/lib/schemaDiff";
+import {
+  diffColumns,
+  diffForeignKeys,
+  diffIndexes,
+  diffTables,
+  diffTriggers,
+  generateSyncSql,
+  type TableDiff,
+} from "@/lib/schemaDiff";
 import { useToast } from "@/composables/useToast";
 import { Loader2, Copy, Play, GitCompareArrows } from "lucide-vue-next";
 
@@ -22,21 +30,25 @@ const store = useConnectionStore();
 const props = defineProps<{
   prefillConnectionId?: string;
   prefillDatabase?: string;
+  prefillSchema?: string;
 }>();
 
 const sourceConnectionId = ref("");
 const sourceDatabase = ref("");
 const sourceDatabases = ref<string[]>([]);
 const sourceSchema = ref("");
+const sourceSchemas = ref<string[]>([]);
 
 const targetConnectionId = ref("");
 const targetDatabase = ref("");
 const targetDatabases = ref<string[]>([]);
 const targetSchema = ref("");
+const targetSchemas = ref<string[]>([]);
 
 const step = ref<"select" | "comparing" | "result">("select");
 const diffs = ref<TableDiff[]>([]);
 const syncSql = ref("");
+const loadingMeta = ref(false);
 const executing = ref(false);
 
 const sqlConnections = computed(() =>
@@ -44,7 +56,13 @@ const sqlConnections = computed(() =>
 );
 
 const canCompare = computed(
-  () => sourceConnectionId.value && sourceDatabase.value && targetConnectionId.value && targetDatabase.value,
+  () =>
+    sourceConnectionId.value &&
+    sourceDatabase.value &&
+    sourceSchema.value &&
+    targetConnectionId.value &&
+    targetDatabase.value &&
+    targetSchema.value,
 );
 
 function connectionIconType(connectionId: string) {
@@ -54,6 +72,7 @@ function connectionIconType(connectionId: string) {
 
 async function loadDatabases(connectionId: string, side: "source" | "target") {
   if (!connectionId) return;
+  loadingMeta.value = true;
   try {
     await store.ensureConnected(connectionId);
     const dbs = await api.listDatabases(connectionId);
@@ -61,24 +80,52 @@ async function loadDatabases(connectionId: string, side: "source" | "target") {
     if (side === "source") {
       sourceDatabases.value = names;
       sourceDatabase.value = names.length === 1 ? names[0] : "";
+      sourceSchemas.value = [];
+      sourceSchema.value = "";
     } else {
       targetDatabases.value = names;
       targetDatabase.value = names.length === 1 ? names[0] : "";
+      targetSchemas.value = [];
+      targetSchema.value = "";
     }
   } catch {
     if (side === "source") sourceDatabases.value = [];
     else targetDatabases.value = [];
+  } finally {
+    loadingMeta.value = false;
   }
 }
 
-async function resolveSchema(connectionId: string, database: string): Promise<string> {
+async function loadSchemas(side: "source" | "target", preferredSchema = "") {
+  const connectionId = side === "source" ? sourceConnectionId.value : targetConnectionId.value;
+  const database = side === "source" ? sourceDatabase.value : targetDatabase.value;
+  if (!connectionId || !database) return;
   const config = store.getConfig(connectionId);
-  const needsSchema = isSchemaAware(config?.db_type);
-  if (needsSchema) {
-    const schemas = await api.listSchemas(connectionId, database);
-    return schemas.includes("public") ? "public" : (schemas[0] ?? "");
+  if (!isSchemaAware(config?.db_type)) {
+    if (side === "source") {
+      sourceSchemas.value = [];
+      sourceSchema.value = database;
+    } else {
+      targetSchemas.value = [];
+      targetSchema.value = database;
+    }
+    return;
   }
-  return database;
+
+  const schemas = await api.listSchemas(connectionId, database);
+  const selected =
+    preferredSchema && schemas.includes(preferredSchema)
+      ? preferredSchema
+      : schemas.includes("public")
+        ? "public"
+        : (schemas[0] ?? "");
+  if (side === "source") {
+    sourceSchemas.value = schemas;
+    sourceSchema.value = selected;
+  } else {
+    targetSchemas.value = schemas;
+    targetSchema.value = selected;
+  }
 }
 
 async function startCompare() {
@@ -91,55 +138,83 @@ async function startCompare() {
     await store.ensureConnected(sourceConnectionId.value);
     await store.ensureConnected(targetConnectionId.value);
 
-    const srcSchema = await resolveSchema(sourceConnectionId.value, sourceDatabase.value);
-    const tgtSchema = await resolveSchema(targetConnectionId.value, targetDatabase.value);
-    sourceSchema.value = srcSchema;
-    targetSchema.value = tgtSchema;
-
     const [srcTables, tgtTables] = await Promise.all([
-      api.listTables(sourceConnectionId.value, sourceDatabase.value, srcSchema),
-      api.listTables(targetConnectionId.value, targetDatabase.value, tgtSchema),
+      api.listTables(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value),
+      api.listTables(targetConnectionId.value, targetDatabase.value, targetSchema.value),
     ]);
 
-    const srcNames = srcTables.filter((t) => t.table_type !== "VIEW").map((t) => t.name);
-    const tgtNames = tgtTables.filter((t) => t.table_type !== "VIEW").map((t) => t.name);
-    const { added, removed, common } = diffTables(srcNames, tgtNames);
+    const srcTableNames = srcTables.filter((t) => t.table_type !== "VIEW").map((t) => t.name);
+    const tgtTableNames = tgtTables.filter((t) => t.table_type !== "VIEW").map((t) => t.name);
+    const srcTableComments = new Map(srcTables.map((t) => [t.name, t.comment ?? null]));
+    const tgtTableComments = new Map(tgtTables.map((t) => [t.name, t.comment ?? null]));
+    const srcViewNames = srcTables.filter((t) => t.table_type === "VIEW").map((t) => t.name);
+    const tgtViewNames = tgtTables.filter((t) => t.table_type === "VIEW").map((t) => t.name);
+    const { added, removed, common } = diffTables(srcTableNames, tgtTableNames);
+    const { added: addedViews, removed: removedViews } = diffTables(srcViewNames, tgtViewNames);
 
     const result: TableDiff[] = [];
 
     for (const name of added) {
-      const ddl = await api.getTableDdl(sourceConnectionId.value, sourceDatabase.value, srcSchema, name);
-      result.push({ type: "added", name, ddl });
+      const ddl = await api.getTableDdl(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name);
+      result.push({ type: "added", objectType: "table", name, ddl });
     }
 
     for (const name of removed) {
-      result.push({ type: "removed", name });
+      result.push({ type: "removed", objectType: "table", name });
+    }
+
+    for (const name of addedViews) {
+      result.push({ type: "added", objectType: "view", name });
+    }
+
+    for (const name of removedViews) {
+      result.push({ type: "removed", objectType: "view", name });
     }
 
     for (const name of common) {
-      const [srcCols, tgtCols, srcIdx, tgtIdx] = await Promise.all([
-        api.getColumns(sourceConnectionId.value, sourceDatabase.value, srcSchema, name),
-        api.getColumns(targetConnectionId.value, targetDatabase.value, tgtSchema, name),
-        api.listIndexes(sourceConnectionId.value, sourceDatabase.value, srcSchema, name),
-        api.listIndexes(targetConnectionId.value, targetDatabase.value, tgtSchema, name),
+      const [srcCols, tgtCols, srcIdx, tgtIdx, srcFks, tgtFks, srcTriggers, tgtTriggers] = await Promise.all([
+        api.getColumns(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
+        api.getColumns(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
+        api.listIndexes(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
+        api.listIndexes(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
+        api.listForeignKeys(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
+        api.listForeignKeys(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
+        api.listTriggers(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
+        api.listTriggers(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
       ]);
 
       const colDiffs = diffColumns(srcCols, tgtCols);
       const idxDiffs = diffIndexes(srcIdx, tgtIdx);
+      const fkDiffs = diffForeignKeys(srcFks, tgtFks);
+      const triggerDiffs = diffTriggers(srcTriggers, tgtTriggers);
+      const srcComment = srcTableComments.get(name) ?? null;
+      const tgtComment = tgtTableComments.get(name) ?? null;
+      const commentChanged = (srcComment ?? "") !== (tgtComment ?? "");
 
-      if (colDiffs.length > 0 || idxDiffs.length > 0) {
+      if (
+        colDiffs.length > 0 ||
+        idxDiffs.length > 0 ||
+        fkDiffs.length > 0 ||
+        triggerDiffs.length > 0 ||
+        commentChanged
+      ) {
         result.push({
           type: "modified",
+          objectType: "table",
           name,
           columns: colDiffs.length > 0 ? colDiffs : undefined,
           indexes: idxDiffs.length > 0 ? idxDiffs : undefined,
+          foreignKeys: fkDiffs.length > 0 ? fkDiffs : undefined,
+          triggers: triggerDiffs.length > 0 ? triggerDiffs : undefined,
+          sourceTableComment: commentChanged ? srcComment : undefined,
+          targetTableComment: commentChanged ? tgtComment : undefined,
         });
       }
     }
 
     diffs.value = result;
     const srcConfig = store.getConfig(targetConnectionId.value);
-    syncSql.value = generateSyncSql(result, srcConfig?.db_type || "mysql");
+    syncSql.value = generateSyncSql(result, srcConfig?.db_type || "mysql", targetSchema.value);
     step.value = "result";
   } catch (e: any) {
     toast(e?.message || String(e), 5000);
@@ -152,7 +227,7 @@ async function executeSql() {
   executing.value = true;
   try {
     await store.ensureConnected(targetConnectionId.value);
-    await api.executeScript(targetConnectionId.value, targetDatabase.value, syncSql.value);
+    await api.executeScript(targetConnectionId.value, targetDatabase.value, syncSql.value, targetSchema.value);
     toast(t("diff.syncSuccess"), 2000);
     open.value = false;
   } catch (e: any) {
@@ -197,8 +272,20 @@ watch(targetConnectionId, (id) => {
   resetResult();
 });
 
-watch(sourceDatabase, () => resetResult());
-watch(targetDatabase, () => resetResult());
+watch(sourceDatabase, (database) => {
+  sourceSchema.value = "";
+  sourceSchemas.value = [];
+  resetResult();
+  if (database) loadSchemas("source", props.prefillSchema).catch((e) => toast(String(e), 5000));
+});
+watch(targetDatabase, (database) => {
+  targetSchema.value = "";
+  targetSchemas.value = [];
+  resetResult();
+  if (database) loadSchemas("target").catch((e) => toast(String(e), 5000));
+});
+watch(sourceSchema, () => resetResult());
+watch(targetSchema, () => resetResult());
 
 watch(open, async (val) => {
   if (val) {
@@ -210,6 +297,7 @@ watch(open, async (val) => {
       await loadDatabases(props.prefillConnectionId, "source");
       if (props.prefillDatabase) {
         sourceDatabase.value = props.prefillDatabase;
+        await loadSchemas("source", props.prefillSchema);
       }
     }
   }
@@ -266,6 +354,18 @@ watch(open, async (val) => {
                 <SelectItem v-for="db in sourceDatabases" :key="db" :value="db">{{ db }}</SelectItem>
               </SelectContent>
             </Select>
+            <Select
+              v-if="sourceSchemas.length"
+              :model-value="sourceSchema"
+              @update:model-value="(v: any) => (sourceSchema = String(v))"
+            >
+              <SelectTrigger class="h-8 text-xs">
+                <SelectValue :placeholder="t('diff.selectSchema')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="schema in sourceSchemas" :key="schema" :value="schema">{{ schema }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div class="space-y-2">
@@ -305,12 +405,25 @@ watch(open, async (val) => {
                 <SelectItem v-for="db in targetDatabases" :key="db" :value="db">{{ db }}</SelectItem>
               </SelectContent>
             </Select>
+            <Select
+              v-if="targetSchemas.length"
+              :model-value="targetSchema"
+              @update:model-value="(v: any) => (targetSchema = String(v))"
+            >
+              <SelectTrigger class="h-8 text-xs">
+                <SelectValue :placeholder="t('diff.selectSchema')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="schema in targetSchemas" :key="schema" :value="schema">{{ schema }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
-        <Button v-if="step === 'select'" size="sm" :disabled="!canCompare" @click="startCompare">
-          <GitCompareArrows class="w-3.5 h-3.5 mr-1" />
-          {{ t("diff.compare") }}
+        <Button v-if="step === 'select'" size="sm" :disabled="!canCompare || loadingMeta" @click="startCompare">
+          <Loader2 v-if="loadingMeta" class="w-3.5 h-3.5 mr-1 animate-spin" />
+          <GitCompareArrows v-else class="w-3.5 h-3.5 mr-1" />
+          {{ loadingMeta ? t("common.loading") : t("diff.compare") }}
         </Button>
 
         <!-- Comparing -->
@@ -347,7 +460,7 @@ watch(open, async (val) => {
                       </td>
                       <td class="px-3 py-1.5 text-muted-foreground">
                         <template v-if="d.type === 'modified' && d.columns">
-                          <span v-for="(col, ci) in d.columns" :key="ci">
+                          <span v-for="(col, ci) in d.columns" :key="`col-${ci}`">
                             <span
                               :class="{
                                 'text-green-500': col.type === 'added',
@@ -357,6 +470,52 @@ watch(open, async (val) => {
                               >{{ col.type === "added" ? "+" : col.type === "removed" ? "-" : "~" }}{{ col.name }}</span
                             >
                             <span v-if="ci < d.columns!.length - 1">, </span>
+                          </span>
+                        </template>
+                        <template v-if="d.type === 'modified' && d.indexes">
+                          <span v-if="d.columns?.length">; </span>
+                          <span>{{ t("diff.indexes") }}: </span>
+                          <span v-for="(idx, ii) in d.indexes" :key="`idx-${ii}`">
+                            <span
+                              :class="{
+                                'text-green-500': idx.type === 'added',
+                                'text-red-500': idx.type === 'removed',
+                                'text-yellow-500': idx.type === 'modified',
+                              }"
+                              >{{ idx.type === "added" ? "+" : idx.type === "removed" ? "-" : "~" }}{{ idx.name }}</span
+                            >
+                            <span v-if="ii < d.indexes!.length - 1">, </span>
+                          </span>
+                        </template>
+                        <template v-if="d.type === 'modified' && d.foreignKeys">
+                          <span v-if="d.columns?.length || d.indexes?.length">; </span>
+                          <span>{{ t("diff.foreignKeys") }}: </span>
+                          <span v-for="(fk, fi) in d.foreignKeys" :key="`fk-${fi}`">
+                            <span
+                              :class="{
+                                'text-green-500': fk.type === 'added',
+                                'text-red-500': fk.type === 'removed',
+                                'text-yellow-500': fk.type === 'modified',
+                              }"
+                              >{{ fk.type === "added" ? "+" : fk.type === "removed" ? "-" : "~" }}{{ fk.name }}</span
+                            >
+                            <span v-if="fi < d.foreignKeys!.length - 1">, </span>
+                          </span>
+                        </template>
+                        <template v-if="d.type === 'modified' && d.triggers">
+                          <span v-if="d.columns?.length || d.indexes?.length || d.foreignKeys?.length">; </span>
+                          <span>{{ t("diff.triggers") }}: </span>
+                          <span v-for="(trigger, ti) in d.triggers" :key="`trigger-${ti}`">
+                            <span
+                              :class="{
+                                'text-green-500': trigger.type === 'added',
+                                'text-red-500': trigger.type === 'removed',
+                                'text-yellow-500': trigger.type === 'modified',
+                              }"
+                              >{{ trigger.type === "added" ? "+" : trigger.type === "removed" ? "-" : "~"
+                              }}{{ trigger.name }}</span
+                            >
+                            <span v-if="ti < d.triggers!.length - 1">, </span>
                           </span>
                         </template>
                         <span v-else-if="d.type === 'added'" class="text-green-500">{{ t("diff.newTable") }}</span>

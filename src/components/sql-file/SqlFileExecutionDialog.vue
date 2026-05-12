@@ -34,6 +34,7 @@ const props = defineProps<{
 
 const store = useConnectionStore();
 
+const fileInput = ref<HTMLInputElement | null>(null);
 const filePath = ref("");
 const preview = ref<SqlFilePreview | null>(null);
 const selectingFile = ref(false);
@@ -198,11 +199,19 @@ async function loadDatabasesForConnection(id: string) {
   }
 }
 
-async function loadPreview(path: string) {
+async function previewSelectedSqlFile(fileOrPath: string | File) {
+  if (isTauriRuntime()) {
+    return previewSqlFile(fileOrPath as string);
+  }
+  const { previewSqlFile: previewWebSqlFile } = await import("@/lib/http");
+  return previewWebSqlFile(fileOrPath as File);
+}
+
+async function loadPreview(fileOrPath: string | File) {
   loadingPreview.value = true;
   preview.value = null;
   try {
-    preview.value = await previewSqlFile(path);
+    preview.value = await previewSelectedSqlFile(fileOrPath);
     filePath.value = preview.value.filePath;
     resetExecution();
   } catch (e: any) {
@@ -214,7 +223,10 @@ async function loadPreview(path: string) {
 
 async function selectFile() {
   if (running.value) return;
-  if (!isTauriRuntime()) return;
+  if (!isTauriRuntime()) {
+    fileInput.value?.click();
+    return;
+  }
   selectingFile.value = true;
   try {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -230,6 +242,27 @@ async function selectFile() {
   } finally {
     selectingFile.value = false;
   }
+}
+
+async function handleFileInputChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || running.value) return;
+  selectingFile.value = true;
+  try {
+    await loadPreview(file);
+  } finally {
+    selectingFile.value = false;
+  }
+}
+
+async function listenProgress(id: string, handler: (next: SqlFileProgress) => void): Promise<() => void> {
+  if (isTauriRuntime()) {
+    return listenSqlFileProgress(handler);
+  }
+  const { listenSqlFileProgressById } = await import("@/lib/httpSqlFileProgress");
+  return listenSqlFileProgressById(id, handler);
 }
 
 async function startExecution() {
@@ -253,7 +286,7 @@ async function startExecution() {
       return;
     }
 
-    unlisten = await listenSqlFileProgress((next) => {
+    unlisten = await listenProgress(id, (next) => {
       if (next.executionId !== id) return;
       progress.value = next;
       terminalStatus.value = next.status;
@@ -336,7 +369,7 @@ watch(open, (value) => {
 
 <template>
   <Dialog :open="open" @update:open="handleOpenChange">
-    <DialogScrollContent class="sm:max-w-[620px]" :trap-focus="false" @interact-outside.prevent>
+    <DialogScrollContent class="sm:max-w-[620px] min-w-0 overflow-hidden" :trap-focus="false" @interact-outside.prevent>
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <FileCode class="w-4 h-4" />
@@ -344,13 +377,14 @@ watch(open, (value) => {
         </DialogTitle>
       </DialogHeader>
 
-      <div class="grid gap-4 py-3">
-        <div class="space-y-3">
+      <div class="grid min-w-0 gap-4 py-3">
+        <div class="min-w-0 space-y-3">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             {{ t("sqlFile.file") }}
           </div>
 
           <div class="flex items-center gap-2">
+            <input ref="fileInput" type="file" accept=".sql,text/sql" class="hidden" @change="handleFileInputChange" />
             <Input
               :model-value="filePath"
               readonly
@@ -370,7 +404,7 @@ watch(open, (value) => {
             </Button>
           </div>
 
-          <div v-if="preview" class="border rounded-md overflow-hidden">
+          <div v-if="preview" class="min-w-0 max-w-full border rounded-md overflow-hidden">
             <div class="flex items-center justify-between gap-3 px-3 py-2 text-xs border-b bg-muted/40">
               <div class="min-w-0 flex items-center gap-2">
                 <FileCode class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -378,13 +412,13 @@ watch(open, (value) => {
               </div>
               <span class="text-muted-foreground shrink-0">{{ formatBytes(preview.sizeBytes) }}</span>
             </div>
-            <pre class="max-h-40 overflow-auto p-3 text-xs font-mono whitespace-pre-wrap bg-muted/15">{{
+            <pre class="max-h-40 max-w-full overflow-auto p-3 text-xs font-mono whitespace-pre bg-muted/15">{{
               preview.preview
             }}</pre>
           </div>
         </div>
 
-        <div class="space-y-3">
+        <div class="min-w-0 space-y-3">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             {{ t("sqlFile.target") }}
           </div>
@@ -437,7 +471,7 @@ watch(open, (value) => {
           </div>
         </div>
 
-        <div class="space-y-2.5">
+        <div class="min-w-0 space-y-2.5">
           <div class="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             {{ t("sqlFile.options") }}
           </div>
@@ -454,7 +488,7 @@ watch(open, (value) => {
           </button>
         </div>
 
-        <div v-if="running || terminalStatus !== 'idle' || progress" class="space-y-3">
+        <div v-if="running || terminalStatus !== 'idle' || progress" class="min-w-0 space-y-3">
           <div class="flex items-center justify-between gap-3 text-xs">
             <div class="flex items-center gap-1.5 min-w-0" :class="statusTone">
               <component :is="statusIcon" class="w-3.5 h-3.5 shrink-0" :class="{ 'animate-spin': running }" />
@@ -508,14 +542,16 @@ watch(open, (value) => {
 
           <div v-if="progress?.statementSummary" class="space-y-1">
             <Label class="text-xs">{{ t("sqlFile.currentStatement") }}</Label>
-            <div class="border rounded-md p-2 text-xs font-mono bg-muted/15 max-h-20 overflow-auto whitespace-pre-wrap">
+            <div
+              class="max-h-20 max-w-full overflow-auto rounded-md border bg-muted/15 p-2 text-xs font-mono whitespace-pre"
+            >
               {{ progress.statementSummary }}
             </div>
           </div>
 
           <div
             v-if="progress?.error || terminalError"
-            class="border rounded-md p-2 text-xs text-destructive bg-destructive/5"
+            class="max-w-full overflow-auto rounded-md border bg-destructive/5 p-2 text-xs text-destructive whitespace-pre-wrap"
           >
             {{ progress?.error || terminalError }}
           </div>

@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 use super::CONNECTION_TIMEOUT_SECS;
@@ -30,6 +31,7 @@ impl GaussdbClient {
 }
 
 pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &str) -> Result<GaussdbClient, String> {
+    let database = normalize_database(database);
     let dsn = format!("host={host} port={port} user={user} password={pass} dbname={database}");
 
     let result = tokio::time::timeout(std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS), async {
@@ -41,9 +43,22 @@ pub async fn connect(host: &str, port: u16, database: &str, user: &str, pass: &s
     result.map(|client| GaussdbClient { client })
 }
 
+fn normalize_database(database: &str) -> &str {
+    let database = database.trim();
+    if database.is_empty() {
+        "postgres"
+    } else {
+        database
+    }
+}
+
 pub async fn list_databases(client: &mut GaussdbClient) -> Result<Vec<DatabaseInfo>, String> {
     let rows = client
-        .query_single_column("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+        .query_single_column(
+            "SELECT datname FROM pg_database \
+             WHERE datistemplate = false AND datallowconn = true \
+             ORDER BY datname",
+        )
         .await?;
     Ok(rows.into_iter().map(|name| DatabaseInfo { name }).collect())
 }
@@ -55,7 +70,6 @@ pub async fn list_schemas(client: &mut GaussdbClient) -> Result<Vec<String>, Str
              WHERE nspname NOT LIKE 'pg_%' \
              AND nspname NOT IN ('information_schema', 'cstore', 'snapshot', 'db4ai', 'dbe_perf', \
                'dbe_pldebugger', 'dbe_pldeveloper', 'pkg_service', 'pkg_util', 'sqladvisor', 'blockchain') \
-             AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c WHERE c.relnamespace = n.oid AND c.relkind IN ('r', 'v', 'm')) \
              ORDER BY nspname",
         )
         .await
@@ -232,13 +246,8 @@ pub async fn list_triggers(client: &mut GaussdbClient, schema: &str, table: &str
 pub async fn execute_query(client: &mut GaussdbClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
-    let trimmed = sql.to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("EXPLAIN")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "WITH", "SHOW", "EXPLAIN"]) {
         let rows = client.client.query(sql, &[]).await.map_err(|e| e.to_string())?;
 
         let columns: Vec<String> = if let Some(first) = rows.first() {
@@ -275,5 +284,21 @@ pub async fn execute_query(client: &mut GaussdbClient, sql: &str) -> Result<Quer
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_database;
+
+    #[test]
+    fn normalize_database_defaults_blank_to_postgres() {
+        assert_eq!(normalize_database(""), "postgres");
+        assert_eq!(normalize_database("   "), "postgres");
+    }
+
+    #[test]
+    fn normalize_database_keeps_explicit_database() {
+        assert_eq!(normalize_database("app"), "app");
     }
 }

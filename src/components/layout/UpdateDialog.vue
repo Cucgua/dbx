@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Marked } from "marked";
 import { Loader2 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,12 +26,21 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const isDesktop = isTauriRuntime();
 
-const marked = new Marked({ breaks: true, gfm: true });
+const renderedNotes = ref("");
 
-const renderedNotes = computed(() => {
-  if (!props.updateInfo?.release_notes) return "";
-  return marked.parse(props.updateInfo.release_notes) as string;
-});
+watch(
+  () => props.updateInfo?.release_notes,
+  async (notes) => {
+    if (!notes) {
+      renderedNotes.value = "";
+      return;
+    }
+    const { Marked } = await import("marked");
+    const marked = new Marked({ breaks: true, gfm: true });
+    renderedNotes.value = marked.parse(notes) as string;
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -84,7 +92,7 @@ const renderedNotes = computed(() => {
           <Button variant="outline" @click="emit('open-latest-release')">{{ t("updates.openRelease") }}</Button>
           <template v-if="isDesktop">
             <div v-if="updateReady" class="flex flex-col items-end gap-1">
-              <Button @click="emit('restart')">{{ t("updates.exitAndUpdate") }}</Button>
+              <Button @click="emit('restart')">{{ t("updates.restart") }}</Button>
               <span class="text-xs text-muted-foreground">{{ t("updates.reopenHint") }}</span>
             </div>
             <Button v-else-if="isDownloadingUpdate" disabled>

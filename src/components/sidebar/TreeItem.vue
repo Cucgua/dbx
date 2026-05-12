@@ -37,6 +37,7 @@ import {
   Scissors,
   CopyPlus,
   Plus,
+  FileText,
 } from "lucide-vue-next";
 import {
   ContextMenu,
@@ -50,12 +51,14 @@ import {
 } from "@/components/ui/context-menu";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
+import { useSavedSqlStore } from "@/stores/savedSqlStore";
 import { useToast } from "@/composables/useToast";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import type { DatabaseType, QueryResult, TreeNode, TreeNodeType } from "@/types/database";
 import * as api from "@/lib/api";
 import { uuid } from "@/lib/utils";
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
+import { canTreeNodeShowExpander, treeItemPaddingLeft } from "@/lib/sidebarTreeItemLayout";
 import {
   DATABASE_EXPORT_PAGE_SIZE,
   DATABASE_EXPORT_ROW_LIMIT,
@@ -63,7 +66,12 @@ import {
   buildExportPageSql,
   type ExportedTableSql,
 } from "@/lib/databaseExport";
-import { qualifiedTableName as buildQualifiedTableName, quoteTableIdentifier } from "@/lib/tableSelectSql";
+import {
+  buildTableSelectSql,
+  qualifiedTableName as buildQualifiedTableName,
+  quoteTableIdentifier,
+} from "@/lib/tableSelectSql";
+import { editablePrimaryKeys, usesSyntheticRowIdKey } from "@/lib/tableEditing";
 import {
   SQL_FILE_UNSUPPORTED_TYPES,
   DIAGRAM_SUPPORTED_TYPES,
@@ -73,10 +81,13 @@ import {
   FIELD_LINEAGE_SUPPORTED_TYPES,
   TREE_SCHEMA_TYPES,
   PG_LIKE_STRUCTURE_TYPES,
+  CREATE_DATABASE_SUPPORTED_TYPES,
   isSchemaAware,
   usesFetchFirst,
 } from "@/lib/databaseCapabilities";
-import { treeNodeRowAction } from "@/lib/treeNodeClick";
+import { treeNodeRowAction, treeNodeRowDoubleClickAction } from "@/lib/treeNodeClick";
+import { formatCsv, formatJson, formatSqlInsert } from "@/lib/exportFormats";
+import { hexToRgba } from "@/lib/color";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
@@ -89,6 +100,7 @@ import { Input } from "@/components/ui/input";
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
+const savedSqlStore = useSavedSqlStore();
 const { toast } = useToast();
 const { getDatabaseOptions } = useDatabaseOptions();
 
@@ -101,6 +113,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "rename-started": [];
+  "search-toggle": [node: TreeNode];
 }>();
 
 const isExportingDatabase = ref(false);
@@ -149,6 +162,14 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: Link, colorClass: "text-blue-400" };
     case "group-triggers":
       return { icon: Zap, colorClass: "text-orange-400" };
+    case "object-browser":
+      return { icon: TableProperties, colorClass: "text-primary" };
+    case "saved-sql-root":
+      return { icon: FolderOpen, colorClass: "text-blue-500" };
+    case "saved-sql-folder":
+      return { icon: node.isExpanded ? FolderOpen : FolderClosed, colorClass: "text-blue-400" };
+    case "saved-sql-file":
+      return { icon: FileText, colorClass: "text-blue-300" };
     case "index":
       return { icon: Key, colorClass: "text-amber-400" };
     case "fkey":
@@ -158,7 +179,7 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
     case "redis-db":
       return { icon: Database, colorClass: "text-red-400" };
     case "mongo-db":
-      return { icon: Database, colorClass: "text-green-500" };
+      return { icon: Database, colorClass: "text-yellow-500" };
     case "mongo-collection":
       return { icon: Table, colorClass: "text-green-400" };
     default:
@@ -166,8 +187,14 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
   }
 }
 
-const leafTypes: Set<TreeNodeType> = new Set(["column", "index", "fkey", "trigger", "redis-db", "mongo-collection"]);
-const groupTypes: Set<TreeNodeType> = new Set(["group-columns", "group-indexes", "group-fkeys", "group-triggers"]);
+const groupTypes: Set<TreeNodeType> = new Set([
+  "group-columns",
+  "group-indexes",
+  "group-fkeys",
+  "group-triggers",
+  "saved-sql-root",
+  "saved-sql-folder",
+]);
 const pinnableTypes: Set<TreeNodeType> = new Set([
   "connection-group",
   "database",
@@ -183,13 +210,25 @@ function isGroupLabel(node: TreeNode): boolean {
   return groupTypes.has(node.type);
 }
 
+function displayLabel(node: TreeNode): string {
+  if (node.type === "object-browser") return t(node.label, { count: node.objectCount ?? 0 });
+  return isGroupLabel(node) ? t(node.label) : node.label;
+}
+
 async function toggle() {
   const node = props.node;
   if (node.isLoading) return;
+  emit("search-toggle", node);
+  const wasExpanded = !!node.isExpanded;
 
   if (node.type === "connection-group") {
     node.isExpanded = !node.isExpanded;
     connectionStore.toggleConnectionGroupCollapsed(node.id);
+    return;
+  }
+
+  if (node.type === "saved-sql-root" || node.type === "saved-sql-folder") {
+    node.isExpanded = !node.isExpanded;
     return;
   }
 
@@ -219,7 +258,9 @@ async function toggle() {
       queryStore.updateSql(tab, node.label);
     } else if (node.type === "database" && node.connectionId && node.database) {
       const config = connectionStore.getConfig(node.connectionId);
-      if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
+      if (config?.db_type === "sqlserver") {
+        await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database);
+      } else if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
         await connectionStore.loadSchemas(node.connectionId, node.database);
       } else {
         await connectionStore.loadTables(node.connectionId, node.database);
@@ -238,48 +279,130 @@ async function toggle() {
       await connectionStore.loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
     }
   } catch (e: any) {
+    if (!wasExpanded) node.isExpanded = false;
     toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
-function onClick() {
+function runRowClickAction() {
   const node = props.node;
-  const action = treeNodeRowAction(node.type, canExpand);
+  if (node.type === "object-browser") {
+    void openObjectBrowser();
+    return;
+  }
+  const action = treeNodeRowAction(node.type, canExpand.value);
   if (action === "open-data") {
     openData();
+  } else if (node.type === "saved-sql-file") {
+    openSavedSqlFile();
   } else if (action === "toggle") {
     toggle();
   }
+}
+
+function onClick(event: MouseEvent) {
+  if (event.detail > 1) return;
+  runRowClickAction();
+}
+
+function onDoubleClick() {
+  const action = treeNodeRowDoubleClickAction(props.node.type, canOpenObjectBrowser.value);
+  if (action === "open-object-browser") {
+    void openObjectBrowser();
+  }
+}
+
+async function openObjectBrowser() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    connectionStore.activeConnectionId = node.connectionId;
+
+    if (node.database) {
+      queryStore.openObjectBrowser(node.connectionId, node.database, node.schema);
+      return;
+    }
+
+    const connection = connectionStore.getConfig(node.connectionId);
+    if (!connection) return;
+    const options = await getDatabaseOptions(node.connectionId);
+    const database = resolveDefaultDatabase(connection, options);
+    if (database) {
+      queryStore.openObjectBrowser(node.connectionId, database);
+    } else {
+      await toggle();
+    }
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function openSavedSqlFile() {
+  const id = props.node.savedSqlId;
+  if (!id) return;
+  const file = savedSqlStore.getFile(id);
+  if (!file) return;
+  queryStore.openSavedSql(file);
+  connectionStore.activeConnectionId = file.connectionId;
 }
 
 async function openData() {
   const node = props.node;
   if (!(node.type === "table" || node.type === "view") || !node.connectionId || !node.database) return;
   const config = connectionStore.getConfig(node.connectionId);
+  const traceId = uuid().slice(0, 8);
+  const startedAt = performance.now();
+  const elapsed = () => `${Math.round(performance.now() - startedAt)}ms`;
+  console.info("[DBX][openData:start]", {
+    traceId,
+    type: node.type,
+    connectionId: node.connectionId,
+    database: node.database,
+    schema: node.schema,
+    table: node.label,
+    dbType: config?.db_type,
+  });
   const tabId = queryStore.createTab(node.connectionId, node.database, node.label, "data");
+  console.info("[DBX][openData:tab-created]", { traceId, tabId, elapsed: elapsed() });
   queryStore.setExecuting(tabId, true);
 
   try {
+    console.info("[DBX][openData:ensure-connected:start]", { traceId, elapsed: elapsed() });
     await connectionStore.ensureConnected(node.connectionId);
+    console.info("[DBX][openData:ensure-connected:done]", { traceId, elapsed: elapsed() });
     if (!config) throw new Error("Connection config not found");
 
-    const qualifiedName =
-      isSchemaAware(config.db_type) && node.schema
-        ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
-        : quoteIdent(node.label);
-
     const querySchema = node.schema || node.database;
+    console.info("[DBX][openData:get-columns:start]", {
+      traceId,
+      database: node.database,
+      schema: querySchema,
+      table: node.label,
+      elapsed: elapsed(),
+    });
     const columns = await api.getColumns(node.connectionId, node.database, querySchema, node.label);
-    const pks = columns.filter((c) => c.is_primary_key).map((c) => c.name);
-    const order = pks.length ? ` ORDER BY ${pks.map((pk) => `${quoteIdent(pk)} ASC`).join(", ")}` : "";
-    let sql: string;
-    if (usesFetchFirst(config.db_type)) {
-      sql = `SELECT * FROM ${qualifiedName}${order} FETCH FIRST 100 ROWS ONLY`;
-    } else if (config.db_type === "sqlserver") {
-      sql = `SELECT TOP 100 * FROM ${qualifiedName}${order}`;
-    } else {
-      sql = `SELECT * FROM ${qualifiedName}${order} LIMIT 100;`;
-    }
+    console.info("[DBX][openData:get-columns:done]", {
+      traceId,
+      columnCount: columns.length,
+      primaryKeys: columns.filter((column) => column.is_primary_key).map((column) => column.name),
+      elapsed: elapsed(),
+    });
+    const pks = editablePrimaryKeys(config.db_type, columns);
+    const sql = buildTableSelectSql({
+      databaseType: config.db_type,
+      schema: node.schema,
+      tableName: node.label,
+      primaryKeys: pks,
+      includeRowId: usesSyntheticRowIdKey(config.db_type, pks),
+    });
+    console.info("[DBX][openData:sql-built]", {
+      traceId,
+      primaryKeys: pks,
+      includeRowId: usesSyntheticRowIdKey(config.db_type, pks),
+      sql,
+      elapsed: elapsed(),
+    });
     queryStore.updateSql(tabId, sql);
     queryStore.setTableMeta(tabId, {
       schema: node.schema,
@@ -288,8 +411,11 @@ async function openData() {
       primaryKeys: pks,
     });
 
+    console.info("[DBX][openData:execute:start]", { traceId, tabId, elapsed: elapsed() });
     await queryStore.executeTabSql(tabId, sql);
+    console.info("[DBX][openData:execute:done]", { traceId, tabId, elapsed: elapsed() });
   } catch (e: any) {
+    console.error("[DBX][openData:error]", { traceId, elapsed: elapsed(), error: e });
     queryStore.setErrorResult(tabId, e);
   }
 }
@@ -334,10 +460,11 @@ async function clearNodeDefaultDatabase() {
 }
 
 async function refresh() {
-  const node = props.node;
-  node.isExpanded = false;
-  node.children = [];
-  await toggle();
+  try {
+    await connectionStore.refreshTreeNode(props.node);
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 const showDeleteConfirm = ref(false);
@@ -378,6 +505,13 @@ const showTruncateTableConfirm = ref(false);
 const showDuplicateDialog = ref(false);
 const duplicateTableName = ref("");
 
+const showCreateDatabaseDialog = ref(false);
+const createDatabaseName = ref("");
+const showDropDatabaseConfirm = ref(false);
+const showCreateSchemaDialog = ref(false);
+const createSchemaName = ref("");
+const showDropSchemaConfirm = ref(false);
+
 const isTableNotView = computed(() => props.node.type === "table");
 
 const supportsTruncate = computed(() => {
@@ -393,6 +527,26 @@ const canCreateTable = computed(() => {
     !!config &&
     TABLE_STRUCTURE_SUPPORTED_TYPES.has(config.db_type)
   );
+});
+
+const canCreateDatabase = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "connection" && !!config && CREATE_DATABASE_SUPPORTED_TYPES.has(config.db_type);
+});
+
+const canDropDatabase = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "database" && !!config && CREATE_DATABASE_SUPPORTED_TYPES.has(config.db_type);
+});
+
+const canCreateSchema = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "database" && !!config && TREE_SCHEMA_TYPES.has(config.db_type);
+});
+
+const canDropSchema = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "schema" && !!config && TREE_SCHEMA_TYPES.has(config.db_type);
 });
 
 function buildDropTableSql(): string {
@@ -414,6 +568,18 @@ function dropTable() {
   showDropTableConfirm.value = true;
 }
 
+async function refreshTableList(node: TreeNode) {
+  if (!node.connectionId || !node.database) return;
+  const config = connectionStore.getConfig(node.connectionId);
+  if (config?.db_type === "sqlserver" && node.schema?.toLowerCase() === "dbo") {
+    await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database, { force: true });
+  } else if (node.schema) {
+    await connectionStore.loadTables(node.connectionId, node.database, node.schema, { force: true });
+  } else {
+    await connectionStore.loadTables(node.connectionId, node.database, undefined, { force: true });
+  }
+}
+
 async function confirmDropTable() {
   const node = props.node;
   if (!node.connectionId || !node.database) return;
@@ -421,11 +587,7 @@ async function confirmDropTable() {
     await connectionStore.ensureConnected(node.connectionId);
     await api.executeQuery(node.connectionId, node.database, buildDropTableSql(), node.schema);
     toast(t("contextMenu.dropTableSuccess", { name: node.label }), 3000);
-    if (node.schema) {
-      await connectionStore.loadTables(node.connectionId, node.database, node.schema);
-    } else {
-      await connectionStore.loadTables(node.connectionId, node.database);
-    }
+    await refreshTableList(node);
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -463,6 +625,103 @@ async function confirmTruncateTable() {
   }
 }
 
+function buildDropDatabaseSql(): string {
+  return `DROP DATABASE ${quoteIdent(props.node.label)};`;
+}
+
+function buildDropSchemaSql(): string {
+  const dbType = currentDatabaseType();
+  const name = quoteIdent(props.node.label);
+  if (dbType === "postgres" || dbType === "gaussdb") return `DROP SCHEMA ${name} CASCADE;`;
+  return `DROP SCHEMA ${name};`;
+}
+
+function openCreateDatabaseDialog() {
+  createDatabaseName.value = "";
+  showCreateDatabaseDialog.value = true;
+}
+
+async function confirmCreateDatabase() {
+  const node = props.node;
+  const name = createDatabaseName.value.trim();
+  if (!name || !node.connectionId) return;
+  showCreateDatabaseDialog.value = false;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    const sql = `CREATE DATABASE ${quoteIdent(name)};`;
+    await api.executeQuery(node.connectionId, "", sql);
+    toast(t("contextMenu.createDatabaseSuccess", { name }), 3000);
+    await connectionStore.loadDatabases(node.connectionId, { force: true });
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function dropDatabase() {
+  showDropDatabaseConfirm.value = true;
+}
+
+async function confirmDropDatabase() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    await api.executeQuery(node.connectionId, "", buildDropDatabaseSql());
+    toast(t("contextMenu.dropDatabaseSuccess", { name: node.label }), 3000);
+    await connectionStore.loadDatabases(node.connectionId, { force: true });
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function openCreateSchemaDialog() {
+  createSchemaName.value = "";
+  showCreateSchemaDialog.value = true;
+}
+
+async function confirmCreateSchema() {
+  const node = props.node;
+  const name = createSchemaName.value.trim();
+  if (!name || !node.connectionId || !node.database) return;
+  showCreateSchemaDialog.value = false;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    const sql = `CREATE SCHEMA ${quoteIdent(name)};`;
+    await api.executeQuery(node.connectionId, node.database, sql);
+    toast(t("contextMenu.createSchemaSuccess", { name }), 3000);
+    const config = connectionStore.getConfig(node.connectionId);
+    if (config?.db_type === "sqlserver") {
+      await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database, { force: true });
+    } else {
+      await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
+    }
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+function dropSchema() {
+  showDropSchemaConfirm.value = true;
+}
+
+async function confirmDropSchema() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    await api.executeQuery(node.connectionId, node.database, buildDropSchemaSql());
+    toast(t("contextMenu.dropSchemaSuccess", { name: node.label }), 3000);
+    const config = connectionStore.getConfig(node.connectionId);
+    if (config?.db_type === "sqlserver") {
+      await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database, { force: true });
+    } else {
+      await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
+    }
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
 function duplicateStructure() {
   duplicateTableName.value = `${props.node.label}_copy`;
   showDuplicateDialog.value = true;
@@ -492,11 +751,7 @@ async function confirmDuplicateStructure() {
     }
     await api.executeQuery(node.connectionId, node.database, sql, node.schema);
     toast(t("contextMenu.duplicateStructureSuccess", { name: newName }), 3000);
-    if (node.schema) {
-      await connectionStore.loadTables(node.connectionId, node.database, node.schema);
-    } else {
-      await connectionStore.loadTables(node.connectionId, node.database);
-    }
+    await refreshTableList(node);
   } catch (e: any) {
     toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -605,6 +860,33 @@ async function saveFileContent(content: string, defaultFileName: string, filterN
   }
 }
 
+async function saveBinaryFileContent(
+  content: Uint8Array,
+  defaultFileName: string,
+  filterName: string,
+  filterExt: string,
+) {
+  if (isTauriRuntime()) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const { writeFile } = await import("@tauri-apps/plugin-fs");
+    const path = await save({
+      defaultPath: defaultFileName,
+      filters: [{ name: filterName, extensions: [filterExt] }],
+    });
+    if (path) await writeFile(path, content);
+  } else {
+    const blob = new Blob([content], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultFileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function exportDatabase() {
   const node = props.node;
   if (!(node.type === "database" || node.type === "schema") || !node.connectionId || !node.database) return;
@@ -686,39 +968,46 @@ async function exportData(format: "csv" | "json" | "sql") {
 
     if (format === "csv") {
       ext = "csv";
-      const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
-      const header = result.columns.map(esc).join(",");
-      const body = result.rows.map((row) => row.map((c) => esc(c === null ? "" : String(c))).join(",")).join("\n");
-      content = `${header}\n${body}`;
+      content = formatCsv(result.columns, result.rows);
     } else if (format === "json") {
       ext = "json";
-      const data = result.rows.map((row) => {
-        const obj: Record<string, unknown> = {};
-        result.columns.forEach((col, i) => {
-          obj[col] = row[i];
-        });
-        return obj;
-      });
-      content = JSON.stringify(data, null, 2);
+      content = formatJson(result.columns, result.rows);
     } else {
       ext = "sql";
-      const cols = result.columns.map((c) => quoteIdent(c)).join(", ");
-      const lines = result.rows.map((row) => {
-        const vals = row
-          .map((v) => {
-            if (v === null) return "NULL";
-            if (typeof v === "number" || typeof v === "boolean") return String(v);
-            return `'${String(v).replace(/'/g, "''")}'`;
-          })
-          .join(", ");
-        return `INSERT INTO ${qualifiedName} (${cols}) VALUES (${vals});`;
-      });
-      content = lines.join("\n");
+      content = formatSqlInsert(qualifiedName, result.columns, result.rows, quoteIdent);
     }
 
     await saveFileContent(content, `${node.label}.${ext}`, ext.toUpperCase(), ext);
+    toast(result.truncated ? t("grid.exported") + " (truncated)" : t("grid.exported"));
   } catch (e: any) {
-    console.error("Export data failed:", e);
+    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function exportDataXlsx() {
+  const node = props.node;
+  if (!node.connectionId || !node.database) return;
+  const config = connectionStore.getConfig(node.connectionId);
+  if (!config) return;
+
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    const qualifiedName =
+      isSchemaAware(config.db_type) && node.schema
+        ? `${quoteIdent(node.schema)}.${quoteIdent(node.label)}`
+        : quoteIdent(node.label);
+    const result = await api.executeQuery(node.connectionId, node.database, `SELECT * FROM ${qualifiedName}`);
+
+    const { buildXlsxWorkbook } = await import("@/lib/xlsxExport");
+    const workbook = buildXlsxWorkbook({
+      sheetName: node.label,
+      columns: result.columns,
+      rows: result.rows,
+    });
+    await saveBinaryFileContent(workbook, `${node.label}.xlsx`, "Excel", "xlsx");
+    toast(result.truncated ? t("grid.exported") + " (truncated)" : t("grid.exported"));
+  } catch (e: any) {
+    toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
@@ -750,6 +1039,18 @@ function openSchemaDiff() {
     connectionStore.schemaDiffSource = {
       connectionId: props.node.connectionId,
       database: props.node.database ?? "",
+      schema: props.node.schema,
+    };
+  }
+}
+
+function openDataCompare() {
+  if (props.node.connectionId) {
+    connectionStore.dataCompareSource = {
+      connectionId: props.node.connectionId,
+      database: props.node.database ?? "",
+      schema: props.node.schema,
+      tableName: props.node.type === "table" ? props.node.label : undefined,
     };
   }
 }
@@ -819,43 +1120,57 @@ function openFieldLineage() {
   };
 }
 
-const canExpand = !leafTypes.has(props.node.type);
+const canExpand = computed(() =>
+  canTreeNodeShowExpander({
+    type: props.node.type,
+    childCount: props.node.children?.length ?? 0,
+  }),
+);
+const nodeConfig = computed(() =>
+  props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined,
+);
 const canPin = computed(() => pinnableTypes.has(props.node.type));
 const canOpenSqlFileExecution = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!config && !SQL_FILE_UNSUPPORTED_TYPES.has(config.db_type);
+  return !!nodeConfig.value && !SQL_FILE_UNSUPPORTED_TYPES.has(nodeConfig.value.db_type);
 });
 const canOpenDiagram = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!props.node.database && !!config && DIAGRAM_SUPPORTED_TYPES.has(config.db_type);
+  return !!props.node.database && !!nodeConfig.value && DIAGRAM_SUPPORTED_TYPES.has(nodeConfig.value.db_type);
 });
 const canOpenDatabaseSearch = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return !!props.node.database && !!config && DATABASE_SEARCH_SUPPORTED_TYPES.has(config.db_type);
+  return !!props.node.database && !!nodeConfig.value && DATABASE_SEARCH_SUPPORTED_TYPES.has(nodeConfig.value.db_type);
 });
-const canOpenTableImport = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+const canOpenObjectBrowser = computed(() => {
   return (
-    props.node.type === "table" && !!props.node.database && !!config && TABLE_IMPORT_SUPPORTED_TYPES.has(config.db_type)
+    (props.node.type === "database" || props.node.type === "schema" || props.node.type === "object-browser") &&
+    !!nodeConfig.value &&
+    nodeConfig.value.db_type !== "redis" &&
+    nodeConfig.value.db_type !== "mongodb" &&
+    nodeConfig.value.db_type !== "elasticsearch"
   );
 });
-const canOpenStructureEditor = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+const canOpenTableImport = computed(() => {
   return (
     props.node.type === "table" &&
     !!props.node.database &&
-    !!config &&
-    TABLE_STRUCTURE_SUPPORTED_TYPES.has(config.db_type)
+    !!nodeConfig.value &&
+    TABLE_IMPORT_SUPPORTED_TYPES.has(nodeConfig.value.db_type)
+  );
+});
+const canOpenStructureEditor = computed(() => {
+  return (
+    props.node.type === "table" &&
+    !!props.node.database &&
+    !!nodeConfig.value &&
+    TABLE_STRUCTURE_SUPPORTED_TYPES.has(nodeConfig.value.db_type)
   );
 });
 const canOpenFieldLineage = computed(() => {
-  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
   return (
     props.node.type === "column" &&
     !!props.node.database &&
     !!props.node.tableName &&
-    !!config &&
-    FIELD_LINEAGE_SUPPORTED_TYPES.has(config.db_type)
+    !!nodeConfig.value &&
+    FIELD_LINEAGE_SUPPORTED_TYPES.has(nodeConfig.value.db_type)
   );
 });
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));
@@ -875,6 +1190,9 @@ const hasTypeMenu = computed(() => {
     t === "table" ||
     t === "view" ||
     t === "column" ||
+    t === "saved-sql-root" ||
+    t === "saved-sql-folder" ||
+    t === "saved-sql-file" ||
     isGroupLabel(props.node)
   );
 });
@@ -883,7 +1201,7 @@ const columnComment = computed(() =>
     ? (props.node.meta as any).comment
     : null,
 );
-const paddingLeft = `${props.depth * 16 + 8}px`;
+const paddingLeft = computed(() => treeItemPaddingLeft(props.depth));
 const isConnected = computed(
   () =>
     props.node.type === "connection" &&
@@ -900,27 +1218,19 @@ const connectionColor = computed(() => {
   const connectionId = props.node.connectionId;
   return connectionId ? connectionStore.getConfig(connectionId)?.color || "" : "";
 });
-
-const CHILDREN_PAGE_SIZE = 100;
-const displayLimit = ref(CHILDREN_PAGE_SIZE);
-
-const visibleChildren = computed(() => {
-  if (!props.node.children) return [];
-  return props.node.children.slice(0, displayLimit.value);
+const isActiveConnectionScope = computed(
+  () => !!props.node.connectionId && connectionStore.activeConnectionId === props.node.connectionId,
+);
+const rowStyle = computed(() => {
+  const color = connectionColor.value;
+  return {
+    paddingLeft: paddingLeft.value,
+    backgroundColor: hexToRgba(color, isActiveConnectionScope.value ? 0.14 : 0.08),
+  };
 });
-
-const hasMoreChildren = computed(() => (props.node.children?.length ?? 0) > displayLimit.value);
-
-const remainingCount = computed(() => (props.node.children?.length ?? 0) - displayLimit.value);
 
 function togglePin() {
   connectionStore.toggleTreeNodePin(props.node.id);
-}
-
-async function showMore() {
-  if ((props.node.children?.length ?? 0) > displayLimit.value) {
-    displayLimit.value += CHILDREN_PAGE_SIZE;
-  }
 }
 
 // --- Connection Group Management ---
@@ -957,6 +1267,10 @@ function finishRenameGroup() {
 
 function deleteConnectionGroup() {
   showDeleteGroupConfirm.value = true;
+}
+
+function newConnectionInGroup() {
+  connectionStore.startCreatingConnectionInGroup(props.node.id);
 }
 
 function confirmDeleteGroup() {
@@ -1001,6 +1315,70 @@ const currentGroupId = computed(() => {
   return null;
 });
 
+// --- Saved SQL Library ---
+const showSavedSqlNameDialog = ref(false);
+const savedSqlNameMode = ref<"folder-create" | "folder-rename" | "file-rename" | null>(null);
+const savedSqlNameInput = ref("");
+const showDeleteSavedSqlFileConfirm = ref(false);
+const showDeleteSavedSqlFolderConfirm = ref(false);
+
+function openCreateSavedSqlFolder() {
+  savedSqlNameMode.value = "folder-create";
+  savedSqlNameInput.value = t("savedSql.newFolderDefault");
+  showSavedSqlNameDialog.value = true;
+}
+
+function openRenameSavedSqlFolder() {
+  savedSqlNameMode.value = "folder-rename";
+  savedSqlNameInput.value = props.node.label;
+  showSavedSqlNameDialog.value = true;
+}
+
+function openRenameSavedSqlFile() {
+  savedSqlNameMode.value = "file-rename";
+  savedSqlNameInput.value = props.node.label.replace(/\.sql$/i, "");
+  showSavedSqlNameDialog.value = true;
+}
+
+async function confirmSavedSqlName() {
+  const name = savedSqlNameInput.value.trim();
+  if (!name || !props.node.connectionId || !savedSqlNameMode.value) return;
+
+  if (savedSqlNameMode.value === "folder-create") {
+    await savedSqlStore.createFolder(props.node.connectionId, name);
+  } else if (savedSqlNameMode.value === "folder-rename" && props.node.savedSqlFolderId) {
+    await savedSqlStore.renameFolder(props.node.savedSqlFolderId, name);
+  } else if (savedSqlNameMode.value === "file-rename" && props.node.savedSqlId) {
+    await savedSqlStore.renameFile(props.node.savedSqlId, name.endsWith(".sql") ? name : `${name}.sql`);
+  }
+
+  connectionStore.refreshSavedSqlTree(props.node.connectionId);
+  showSavedSqlNameDialog.value = false;
+  savedSqlNameMode.value = null;
+}
+
+function deleteSavedSqlFile() {
+  showDeleteSavedSqlFileConfirm.value = true;
+}
+
+async function confirmDeleteSavedSqlFile() {
+  if (!props.node.savedSqlId) return;
+  await savedSqlStore.deleteFile(props.node.savedSqlId);
+  connectionStore.refreshSavedSqlTree(props.node.connectionId);
+  showDeleteSavedSqlFileConfirm.value = false;
+}
+
+function deleteSavedSqlFolder() {
+  showDeleteSavedSqlFolderConfirm.value = true;
+}
+
+async function confirmDeleteSavedSqlFolder() {
+  if (!props.node.savedSqlFolderId) return;
+  await savedSqlStore.deleteFolder(props.node.savedSqlFolderId);
+  connectionStore.refreshSavedSqlTree(props.node.connectionId);
+  showDeleteSavedSqlFolderConfirm.value = false;
+}
+
 // --- Drag and Drop ---
 import { useDragSort } from "@/composables/useDragSort";
 
@@ -1035,13 +1413,16 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
     <ContextMenuTrigger as-child>
       <div>
         <div
-          class="group flex min-w-0 items-center gap-1.5 py-1 px-2 rounded-sm cursor-pointer hover:bg-accent transition-colors relative"
+          class="group flex min-w-0 items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent transition-colors relative"
           :class="{
             'ring-1 ring-primary/50 bg-primary/5': showDropInside,
             'opacity-50': isDragging,
+            'rounded-none': connectionColor,
+            'rounded-sm': !connectionColor,
           }"
-          :style="{ paddingLeft }"
+          :style="rowStyle"
           @click="onClick"
+          @dblclick="onDoubleClick"
           @mousedown="isDraggable ? startDrag($event, node.id, node.type) : undefined"
           @mousemove="isDropTarget ? updateTarget($event, node.id, node.type) : undefined"
           @mouseleave="clearTarget(node.id)"
@@ -1079,11 +1460,6 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             class="w-3.5 h-3.5 shrink-0"
             :class="getIconInfo(node)?.colorClass"
           />
-          <span
-            v-if="node.type === 'connection'"
-            class="h-3 w-1.5 rounded-full shrink-0"
-            :style="{ backgroundColor: connectionColor || '#9ca3af' }"
-          />
           <input
             v-if="isRenamingGroup"
             v-model="renameInput"
@@ -1094,7 +1470,7 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             @click.stop
             @vue:mounted="($event: any) => $event.el.focus()"
           />
-          <span v-else class="min-w-0 flex-1 truncate">{{ isGroupLabel(node) ? t(node.label) : node.label }}</span>
+          <span v-else class="min-w-0 flex-1 truncate">{{ displayLabel(node) }}</span>
           <Badge v-if="isNodeDefaultDatabase" variant="secondary" class="h-4 px-1.5 text-[10px]">
             {{ t("editor.defaultDatabase") }}
           </Badge>
@@ -1122,24 +1498,6 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             <Pin class="w-3 h-3" :class="{ 'fill-current': isPinned }" />
           </button>
         </div>
-        <template v-if="node.isExpanded && node.children">
-          <TreeItem
-            v-for="child in visibleChildren"
-            :key="child.id"
-            :node="child"
-            :depth="depth + 1"
-            :drag-disabled="dragDisabled"
-          />
-          <div
-            v-if="hasMoreChildren"
-            class="flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent text-xs text-muted-foreground"
-            :style="{ paddingLeft: `${(depth + 1) * 16 + 8}px` }"
-            @click="showMore"
-          >
-            <Loader2 v-if="node.isLoading" class="w-3 h-3 shrink-0 animate-spin" />
-            <span>{{ t("sidebar.showMore", { count: Math.min(CHILDREN_PAGE_SIZE, remainingCount) }) }}</span>
-          </div>
-        </template>
       </div>
     </ContextMenuTrigger>
 
@@ -1162,6 +1520,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
           <FileCode class="w-4 h-4" /> {{ t("sqlFile.title") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="canCreateDatabase" @click="openCreateDatabaseDialog">
+          <Plus class="w-4 h-4" /> {{ t("contextMenu.createDatabase") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub v-if="availableGroups.length > 0 || currentGroupId">
@@ -1206,6 +1567,10 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </template>
 
       <template v-if="node.type === 'connection-group'">
+        <ContextMenuItem @click="newConnectionInGroup">
+          <Plus class="w-4 h-4" /> {{ t("toolbar.newConnection") }}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
         <ContextMenuItem @click="startRenameGroup">
           <Pencil class="w-4 h-4" /> {{ t("connectionGroup.renameGroup") }}
         </ContextMenuItem>
@@ -1216,6 +1581,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </template>
 
       <template v-if="node.type === 'database' || node.type === 'schema'">
+        <ContextMenuItem v-if="canOpenObjectBrowser" @click="openObjectBrowser">
+          <TableProperties class="w-4 h-4" /> {{ t("contextMenu.openObjectBrowser") }}
+        </ContextMenuItem>
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
         </ContextMenuItem>
@@ -1227,6 +1595,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         </ContextMenuItem>
         <ContextMenuItem v-if="canCreateTable" @click="createTable">
           <Plus class="w-4 h-4" /> {{ t("contextMenu.createTable") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="canCreateSchema" @click="openCreateSchemaDialog">
+          <Plus class="w-4 h-4" /> {{ t("contextMenu.createSchema") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
           <FileCode class="w-4 h-4" /> {{ t("sqlFile.title") }}
@@ -1247,11 +1618,23 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem @click="openSchemaDiff">
           <ArrowRightLeft class="w-4 h-4" /> {{ t("diff.title") }}
         </ContextMenuItem>
+        <ContextMenuItem @click="openDataCompare">
+          <ArrowRightLeft class="w-4 h-4" /> {{ t("dataCompare.title") }}
+        </ContextMenuItem>
         <ContextMenuItem :disabled="isExportingDatabase" @click="exportDatabase">
           <Loader2 v-if="isExportingDatabase" class="w-4 h-4 animate-spin" />
           <Download v-else class="w-4 h-4" />
           {{ t("contextMenu.exportDatabase") }}
         </ContextMenuItem>
+        <template v-if="canDropDatabase || canDropSchema">
+          <ContextMenuSeparator />
+          <ContextMenuItem v-if="canDropDatabase" class="text-destructive" @click="dropDatabase">
+            <Trash2 class="w-4 h-4" /> {{ t("contextMenu.dropDatabase") }}
+          </ContextMenuItem>
+          <ContextMenuItem v-if="canDropSchema" class="text-destructive" @click="dropSchema">
+            <Trash2 class="w-4 h-4" /> {{ t("contextMenu.dropSchema") }}
+          </ContextMenuItem>
+        </template>
       </template>
 
       <template v-if="node.type === 'redis-db' || node.type === 'mongo-db'">
@@ -1282,6 +1665,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem v-if="canOpenTableImport" @click="openTableImport">
           <FileUp class="w-4 h-4" /> {{ t("contextMenu.importData") }}
         </ContextMenuItem>
+        <ContextMenuItem v-if="isTableNotView" @click="openDataCompare">
+          <ArrowRightLeft class="w-4 h-4" /> {{ t("dataCompare.title") }}
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub>
           <ContextMenuSubTrigger>
@@ -1291,6 +1677,7 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
             <ContextMenuItem @click="exportData('csv')">CSV</ContextMenuItem>
             <ContextMenuItem @click="exportData('json')">JSON</ContextMenuItem>
             <ContextMenuItem @click="exportData('sql')">SQL INSERT</ContextMenuItem>
+            <ContextMenuItem @click="exportDataXlsx">XLSX</ContextMenuItem>
           </ContextMenuSubContent>
         </ContextMenuSub>
         <ContextMenuItem @click="exportStructure">
@@ -1325,8 +1712,33 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </template>
 
       <template v-if="isGroupLabel(node)">
-        <ContextMenuItem @click="refresh">
+        <ContextMenuItem v-if="node.type === 'saved-sql-root'" @click="openCreateSavedSqlFolder">
+          <FolderPlus class="w-4 h-4" /> {{ t("savedSql.newFolder") }}
+        </ContextMenuItem>
+        <template v-if="node.type === 'saved-sql-folder'">
+          <ContextMenuItem @click="openRenameSavedSqlFolder">
+            <Pencil class="w-4 h-4" /> {{ t("savedSql.renameFolder") }}
+          </ContextMenuItem>
+          <ContextMenuItem class="text-destructive" @click="deleteSavedSqlFolder">
+            <Trash2 class="w-4 h-4" /> {{ t("savedSql.deleteFolder") }}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+        </template>
+        <ContextMenuItem v-if="node.type !== 'saved-sql-root' && node.type !== 'saved-sql-folder'" @click="refresh">
           <RefreshCw class="w-4 h-4" /> {{ t("contextMenu.refreshChildren") }}
+        </ContextMenuItem>
+      </template>
+
+      <template v-if="node.type === 'saved-sql-file'">
+        <ContextMenuItem @click="openSavedSqlFile">
+          <FileText class="w-4 h-4" /> {{ t("savedSql.open") }}
+        </ContextMenuItem>
+        <ContextMenuItem @click="openRenameSavedSqlFile">
+          <Pencil class="w-4 h-4" /> {{ t("savedSql.renameFile") }}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem class="text-destructive" @click="deleteSavedSqlFile">
+          <Trash2 class="w-4 h-4" /> {{ t("savedSql.deleteFile") }}
         </ContextMenuItem>
       </template>
 
@@ -1393,6 +1805,61 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
     </DialogContent>
   </Dialog>
 
+  <Dialog v-model:open="showSavedSqlNameDialog">
+    <DialogContent class="sm:max-w-[380px]">
+      <DialogHeader>
+        <DialogTitle>
+          {{
+            savedSqlNameMode === "folder-create"
+              ? t("savedSql.newFolder")
+              : savedSqlNameMode === "folder-rename"
+                ? t("savedSql.renameFolder")
+                : t("savedSql.renameFile")
+          }}
+        </DialogTitle>
+      </DialogHeader>
+      <Input v-model="savedSqlNameInput" @keydown.enter.prevent="confirmSavedSqlName" />
+      <DialogFooter>
+        <Button variant="outline" @click="showSavedSqlNameDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="!savedSqlNameInput.trim()" @click="confirmSavedSqlName">{{
+          t("dangerDialog.confirm")
+        }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="showDeleteSavedSqlFileConfirm">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("savedSql.deleteFile") }}</DialogTitle>
+      </DialogHeader>
+      <p class="text-sm text-muted-foreground">
+        {{ t("savedSql.deleteFileConfirm", { name: node.label }) }}
+      </p>
+      <DialogFooter>
+        <Button variant="outline" @click="showDeleteSavedSqlFileConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button variant="destructive" @click="confirmDeleteSavedSqlFile">{{ t("savedSql.deleteFile") }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="showDeleteSavedSqlFolderConfirm">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("savedSql.deleteFolder") }}</DialogTitle>
+      </DialogHeader>
+      <p class="text-sm text-muted-foreground">
+        {{ t("savedSql.deleteFolderConfirm", { name: node.label }) }}
+      </p>
+      <DialogFooter>
+        <Button variant="outline" @click="showDeleteSavedSqlFolderConfirm = false">{{
+          t("dangerDialog.cancel")
+        }}</Button>
+        <Button variant="destructive" @click="confirmDeleteSavedSqlFolder">{{ t("savedSql.deleteFolder") }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
   <DangerConfirmDialog
     v-model:open="showDropTableConfirm"
     :title="t('contextMenu.confirmDropTableTitle')"
@@ -1438,4 +1905,60 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </DialogFooter>
     </DialogContent>
   </Dialog>
+
+  <Dialog v-model:open="showCreateDatabaseDialog">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("contextMenu.createDatabase") }}</DialogTitle>
+      </DialogHeader>
+      <Input
+        v-model="createDatabaseName"
+        :placeholder="t('contextMenu.createDatabaseNamePlaceholder')"
+        @keydown.enter.prevent="confirmCreateDatabase"
+      />
+      <DialogFooter>
+        <Button variant="outline" @click="showCreateDatabaseDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="!createDatabaseName.trim()" @click="confirmCreateDatabase">{{
+          t("dangerDialog.confirm")
+        }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <DangerConfirmDialog
+    v-model:open="showDropDatabaseConfirm"
+    :title="t('contextMenu.confirmDropDatabaseTitle')"
+    :message="t('contextMenu.confirmDropDatabaseMessage', { name: node.label })"
+    :sql="buildDropDatabaseSql()"
+    :confirm-label="t('contextMenu.dropDatabase')"
+    @confirm="confirmDropDatabase"
+  />
+
+  <Dialog v-model:open="showCreateSchemaDialog">
+    <DialogContent class="sm:max-w-[400px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("contextMenu.createSchema") }}</DialogTitle>
+      </DialogHeader>
+      <Input
+        v-model="createSchemaName"
+        :placeholder="t('contextMenu.createSchemaNamePlaceholder')"
+        @keydown.enter.prevent="confirmCreateSchema"
+      />
+      <DialogFooter>
+        <Button variant="outline" @click="showCreateSchemaDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="!createSchemaName.trim()" @click="confirmCreateSchema">{{
+          t("dangerDialog.confirm")
+        }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <DangerConfirmDialog
+    v-model:open="showDropSchemaConfirm"
+    :title="t('contextMenu.confirmDropSchemaTitle')"
+    :message="t('contextMenu.confirmDropSchemaMessage', { name: node.label })"
+    :sql="buildDropSchemaSql()"
+    :confirm-label="t('contextMenu.dropSchema')"
+    @confirm="confirmDropSchema"
+  />
 </template>

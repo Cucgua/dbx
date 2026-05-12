@@ -17,3 +17,9 @@ pub struct WebState {
     pub sse_channels: RwLock<HashMap<String, broadcast::Sender<String>>>,
     pub login_rate_limit: Mutex<LoginRateLimit>,
 }
+
+impl WebState {
+    pub async fn remove_sse_channel(&self, id: &str) {
+        self.sse_channels.write().await.remove(id);
+    }
+}

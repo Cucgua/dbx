@@ -24,6 +24,8 @@ import { useSchemaOptions } from "@/composables/useSchemaOptions";
 import { connectionIconType } from "@/lib/connectionPresentation";
 import { isDefaultDatabase } from "@/lib/defaultDatabase";
 import { connectionDisplayName } from "@/lib/tabPresentation";
+import { isSingleDatabase } from "@/lib/databaseCapabilities";
+import { hexToRgba } from "@/lib/color";
 import type { QueryTab, ConnectionConfig } from "@/types/database";
 
 const props = defineProps<{
@@ -59,19 +61,29 @@ const activeDatabaseOptions = computed(() => {
 const activeDatabaseValue = computed(() => props.activeTab.database || "");
 const activeConnectionValue = computed(() => props.activeConnection?.id || "");
 const activeSchemaValue = computed(() => props.activeTab.schema || "");
+const isSingleDb = computed(() => isSingleDatabase(props.activeConnection?.db_type));
+const schemaDatabaseKey = computed(() => props.activeTab.database || (isSingleDb.value ? "_" : ""));
 
 const showSchemaSelector = computed(() => {
   const connection = props.activeConnection;
-  return connection && isSchemaAware(connection.id) && props.activeTab.database;
+  return connection && isSchemaAware(connection.id) && (props.activeTab.database || isSingleDb.value);
 });
 
 const activeSchemaOptions = computed(() => {
   const connection = props.activeConnection;
   if (!connection) return [];
-  return getSchemaOptionsForDb(connection.id, props.activeTab.database);
+  return getSchemaOptionsForDb(connection.id, schemaDatabaseKey.value);
 });
 
 const isActiveDatabaseDefault = computed(() => isDefaultDatabase(props.activeConnection, activeDatabaseValue.value));
+const toolbarStyle = computed(() => {
+  const color = props.activeConnection?.color;
+  if (!color) return undefined;
+  return {
+    backgroundColor: hexToRgba(color, 0.1),
+    boxShadow: `inset 0 1px 0 ${hexToRgba(color, 0.18)}`,
+  };
+});
 
 function databaseDisplayName(database: string): string {
   const connection = props.activeConnection;
@@ -83,6 +95,7 @@ function databaseDisplayName(database: string): string {
 <template>
   <div
     class="h-9 shrink-0 border-b bg-background/80 px-3 flex items-center gap-1 text-xs text-muted-foreground relative z-10"
+    :style="toolbarStyle"
   >
     <div class="flex items-center gap-0.5">
       <Tooltip>
@@ -91,6 +104,11 @@ function databaseDisplayName(database: string): string {
             :variant="activeTab.isExecuting ? 'destructive' : 'ghost'"
             size="icon"
             class="h-6 w-6"
+            :class="
+              activeTab.isExecuting
+                ? ''
+                : 'bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200'
+            "
             :disabled="
               activeTab.isCancelling || activeTab.isExplaining || (!activeTab.isExecuting && !executableSql.trim())
             "
@@ -111,6 +129,11 @@ function databaseDisplayName(database: string): string {
             :variant="activeTab.isExplaining ? 'destructive' : 'ghost'"
             size="icon"
             class="h-6 w-6"
+            :class="
+              activeTab.isExplaining
+                ? ''
+                : 'text-violet-600 hover:bg-violet-500/10 hover:text-violet-700 dark:text-violet-300 dark:hover:text-violet-200'
+            "
             :disabled="activeTab.isExecuting || (!activeTab.isExplaining && !executableSql.trim())"
             @click="activeTab.isExplaining ? emit('cancel') : emit('explain')"
           >
@@ -127,7 +150,7 @@ function databaseDisplayName(database: string): string {
           <Button
             variant="ghost"
             size="icon"
-            class="h-6 w-6"
+            class="h-6 w-6 text-amber-600 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-300 dark:hover:text-amber-200"
             :disabled="activeTab.isExecuting || activeTab.isExplaining || !activeTab.sql.trim()"
             @click="emit('formatSql')"
           >
@@ -141,7 +164,7 @@ function databaseDisplayName(database: string): string {
           <Button
             variant="ghost"
             size="icon"
-            class="h-6 w-6"
+            class="h-6 w-6 text-blue-600 hover:bg-blue-500/10 hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
             :disabled="!activeTab.sql.trim()"
             @click="emit('saveSql')"
           >
@@ -152,7 +175,12 @@ function databaseDisplayName(database: string): string {
       </Tooltip>
       <Tooltip>
         <TooltipTrigger as-child>
-          <Button variant="ghost" size="icon" class="h-6 w-6" @click="emit('openSql')">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6 text-sky-600 hover:bg-sky-500/10 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+            @click="emit('openSql')"
+          >
             <FolderOpen class="h-3.5 w-3.5" />
           </Button>
         </TooltipTrigger>
@@ -187,7 +215,7 @@ function databaseDisplayName(database: string): string {
           </SelectContent>
         </Select>
       </div>
-      <div v-if="activeConnection?.db_type !== 'elasticsearch'" class="flex items-center gap-1">
+      <div v-if="activeConnection?.db_type !== 'elasticsearch' && !isSingleDb" class="flex items-center gap-1">
         <Database class="h-3.5 w-3.5 shrink-0" />
         <Select
           :model-value="activeDatabaseValue"
@@ -234,14 +262,14 @@ function databaseDisplayName(database: string): string {
           @update:model-value="(v: any) => emit('changeSchema', v || undefined)"
           @update:open="
             (open: boolean) => {
-              if (open && activeConnection) loadSchemaOptions(activeConnection.id, activeTab.database).catch(() => {});
+              if (open && activeConnection) loadSchemaOptions(activeConnection.id, schemaDatabaseKey).catch(() => {});
             }
           "
         >
           <SelectTrigger class="h-6 w-auto max-w-56 border-0 bg-transparent px-1 text-xs shadow-none focus:ring-0">
             <SelectValue
               :placeholder="
-                activeConnection && isLoadingSchemas(activeConnection.id, activeTab.database)
+                activeConnection && isLoadingSchemas(activeConnection.id, schemaDatabaseKey)
                   ? t('common.loading')
                   : t('editor.selectSchema')
               "

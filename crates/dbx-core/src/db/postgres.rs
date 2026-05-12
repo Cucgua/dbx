@@ -1,4 +1,5 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use futures::StreamExt;
 use percent_encoding::percent_decode_str;
 use rust_decimal::Decimal;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
@@ -6,6 +7,7 @@ use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
 
 use super::file_validator::validate_file_path;
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 fn pg_temporal_to_json_value(row: &PgRow, idx: usize) -> Option<serde_json::Value> {
@@ -75,9 +77,33 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
         .or_else(|_| row.try_get::<i64, _>(idx).map(super::safe_i64_to_json))
         .or_else(|_| row.try_get::<i32, _>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| row.try_get::<i16, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<i8, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| {
+            row.try_get::<Vec<i8>, _>(idx)
+                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
+        })
+        .or_else(|_| {
+            row.try_get::<Vec<i16>, _>(idx)
+                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
+        })
+        .or_else(|_| {
+            row.try_get::<Vec<i32>, _>(idx)
+                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
+        })
+        .or_else(|_| {
+            row.try_get::<Vec<i64>, _>(idx)
+                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
+        })
         .or_else(|_| {
             row.try_get::<f64, _>(idx).map(|v| {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+            })
+        })
+        .or_else(|_| {
+            row.try_get::<f32, _>(idx).map(|v| {
+                serde_json::Number::from_f64((v as f64 * 1_000_000.0).round() / 1_000_000.0)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
             })
         })
         .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
@@ -152,10 +178,14 @@ fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
 }
 
 pub async fn list_databases(pool: &PgPool) -> Result<Vec<DatabaseInfo>, String> {
-    let rows: Vec<PgRow> = sqlx::query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows: Vec<PgRow> = sqlx::query(
+        "SELECT datname FROM pg_database \
+         WHERE datistemplate = false AND datallowconn = true \
+         ORDER BY datname",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(|row| DatabaseInfo { name: row.get::<String, _>("datname") }).collect())
 }
@@ -252,45 +282,46 @@ pub async fn get_columns(pool: &PgPool, schema: &str, table: &str) -> Result<Vec
 
 pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("TABLE")
-    {
-        let rows: Vec<PgRow> = sqlx::query(sql).persistent(false).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "TABLE"]) {
+        let mut stream = sqlx::query(sql).persistent(false).fetch(pool);
+        let mut columns: Vec<String> = vec![];
+        let mut column_types: Vec<String> = vec![];
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-        let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(first) = rows.first() {
-            let cols = first.columns();
-            (
-                cols.iter().map(|c| c.name().to_string()).collect(),
-                cols.iter().map(|c| c.type_info().name().to_string()).collect(),
-            )
-        } else {
-            let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
-            (
-                desc.columns().iter().map(|c| c.name().to_string()).collect(),
-                desc.columns().iter().map(|c| c.type_info().name().to_string()).collect(),
-            )
-        };
-
-        let result_rows: Vec<Vec<serde_json::Value>> = rows
-            .iter()
-            .map(|row| {
+        while let Some(row) = stream.next().await {
+            let row = row.map_err(|e| e.to_string())?;
+            if columns.is_empty() {
+                let cols = row.columns();
+                columns = cols.iter().map(|c| c.name().to_string()).collect();
+                column_types = cols.iter().map(|c| c.type_info().name().to_string()).collect();
+            }
+            result_rows.push(
                 (0..row.len())
-                    .map(|i| pg_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                    .collect()
-            })
-            .collect();
+                    .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                    .collect(),
+            );
+            if result_rows.len() > crate::query::MAX_ROWS {
+                break;
+            }
+        }
+
+        if columns.is_empty() {
+            let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
+            columns = desc.columns().iter().map(|c| c.name().to_string()).collect();
+        }
+
+        let truncated = result_rows.len() > crate::query::MAX_ROWS;
+        if truncated {
+            result_rows.truncate(crate::query::MAX_ROWS);
+        }
 
         Ok(QueryResult {
             columns,
             rows: result_rows,
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
+            truncated,
         })
     } else {
         let result = sqlx::query(sql).execute(pool).await.map_err(|e| e.to_string())?;
@@ -311,46 +342,47 @@ pub async fn execute_query_with_schema(pool: &PgPool, schema: &str, sql: &str) -
     sqlx::query(&set_path).execute(&mut *conn).await.map_err(|e| e.to_string())?;
 
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("TABLE")
-    {
-        let rows: Vec<PgRow> =
-            sqlx::query(sql).persistent(false).fetch_all(&mut *conn).await.map_err(|e| e.to_string())?;
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "TABLE"]) {
+        let mut stream = sqlx::query(sql).persistent(false).fetch(&mut *conn);
+        let mut columns: Vec<String> = vec![];
+        let mut column_types: Vec<String> = vec![];
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-        let (columns, column_types): (Vec<String>, Vec<String>) = if let Some(first) = rows.first() {
-            let cols = first.columns();
-            (
-                cols.iter().map(|c| c.name().to_string()).collect(),
-                cols.iter().map(|c| c.type_info().name().to_string()).collect(),
-            )
-        } else {
-            let desc = (&mut *conn).describe(sql).await.map_err(|e| e.to_string())?;
-            (
-                desc.columns().iter().map(|c| c.name().to_string()).collect(),
-                desc.columns().iter().map(|c| c.type_info().name().to_string()).collect(),
-            )
-        };
-
-        let result_rows: Vec<Vec<serde_json::Value>> = rows
-            .iter()
-            .map(|row| {
+        while let Some(row) = stream.next().await {
+            let row = row.map_err(|e| e.to_string())?;
+            if columns.is_empty() {
+                let cols = row.columns();
+                columns = cols.iter().map(|c| c.name().to_string()).collect();
+                column_types = cols.iter().map(|c| c.type_info().name().to_string()).collect();
+            }
+            result_rows.push(
                 (0..row.len())
-                    .map(|i| pg_value_to_json(row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                    .collect()
-            })
-            .collect();
+                    .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                    .collect(),
+            );
+            if result_rows.len() > crate::query::MAX_ROWS {
+                break;
+            }
+        }
+        drop(stream);
+
+        if columns.is_empty() {
+            let desc = (&mut *conn).describe(sql).await.map_err(|e| e.to_string())?;
+            columns = desc.columns().iter().map(|c| c.name().to_string()).collect();
+        }
+
+        let truncated = result_rows.len() > crate::query::MAX_ROWS;
+        if truncated {
+            result_rows.truncate(crate::query::MAX_ROWS);
+        }
 
         Ok(QueryResult {
             columns,
             rows: result_rows,
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
+            truncated,
         })
     } else {
         let result = sqlx::query(sql).execute(&mut *conn).await.map_err(|e| e.to_string())?;

@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use odbc_api::{buffers::TextRowSet, ConnectionOptions, Cursor, ResultSetMetadata};
 
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 use super::CONNECTION_TIMEOUT_SECS;
@@ -257,17 +258,20 @@ pub fn list_triggers(client: &DmClient, schema: &str, table: &str) -> Result<Vec
         .collect())
 }
 
+pub fn execute_query_with_schema_sync(client: &DmClient, schema: &str, sql: &str) -> Result<QueryResult, String> {
+    let set_schema = format!("SET SCHEMA \"{}\"", schema);
+    client.conn.execute(&set_schema, (), None).map_err(|e| {
+        log::error!("[dameng] set schema failed: {e}");
+        e.to_string()
+    })?;
+    execute_query_sync(client, sql)
+}
+
 pub fn execute_query_sync(client: &DmClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
-    let trimmed = sql.to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("DESCRIBE")
-        || trimmed.starts_with("EXPLAIN")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN"]) {
         match client.conn.execute(sql, (), None).map_err(|e| e.to_string())? {
             Some(mut cursor) => {
                 let col_count = cursor.num_result_cols().map_err(|e| e.to_string())? as u16;

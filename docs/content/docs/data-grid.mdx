@@ -1,49 +1,75 @@
 ---
 title: Data Grid
-description: Virtual scrolling for 100K+ rows, inline editing with SQL preview, multi-format export.
+description: Browse, filter, edit, preview SQL, and export table data in DBX.
 ---
 
+The data grid displays query results and table data. It is designed for two common workflows: inspecting data quickly and making small, reviewable edits.
+
+## Browse Data
+
+DBX uses virtual scrolling, rendering only the rows visible on screen. Large tables remain responsive because the grid does not render every row at once.
+
+Common browsing actions:
+
+- Drag column borders to resize columns
+- Double-click a column border to auto-fit width
+- Click column headers to sort
+- Use row numbers to locate records
+- Open cell details for long text, JSON, or other complex values
+
+## Filter and Sort
+
+| Feature | Best For |
+|---|---|
+| Search | Finding rows in the current result set |
+| WHERE | Database-level filtering for large tables or precise conditions |
+| ORDER BY | Database-level ordering for reproducible results |
+
 <Callout type="info">
-Virtual scrolling keeps it smooth at 100K+ rows. Inline editing with full SQL preview before committing any changes.
+For large tables, prefer `WHERE` and `ORDER BY`. They run in the database and are usually more reliable than client-side search.
 </Callout>
-
-## Virtual Scrolling
-
-The grid uses virtual scrolling — only the rows visible on screen are rendered at any given time, so performance remains consistent whether you are viewing 100 rows or 100,000 rows.
 
 ## Inline Editing
 
-Edit data directly in the grid without writing SQL:
+You can edit data directly in the grid:
 
-- **UPDATE** — Click a cell to modify its value. Changed cells are highlighted
-- **INSERT** — Add a new row at the bottom and fill in cell values
-- **DELETE** — Select rows and mark them for deletion
+- **Update a cell**: double-click a cell and edit its value
+- **Insert a row**: add a pending row in the grid
+- **Delete rows**: select rows and mark them for deletion
+- **Set NULL**: explicitly write `NULL` from the cell detail panel
 
-All changes are staged locally and not written to the database until you confirm.
+All changes are staged locally first. Before saving, DBX shows the SQL it is about to execute.
 
 ## SQL Preview
 
-<Callout type="info">
-Before saving, DBX shows a preview of the exact `UPDATE`, `INSERT`, or `DELETE` statements that will be executed. Review and confirm before committing.
+<Callout type="warn">
+Edits are not written to the database immediately. Before saving, review the SQL preview carefully, especially on production connections.
 </Callout>
 
-This prevents accidental data modifications and gives you full visibility into what will change.
+The preview shows `UPDATE`, `INSERT`, or `DELETE` statements. Use it to confirm:
 
-## Sorting and Filtering
+- Update conditions target the intended rows
+- Inserted rows contain the expected fields
+- Delete operations match the expected records
+- `NULL`, empty strings, and default values are handled correctly
 
-- **Sort** — Click a column header to sort ascending or descending
-- **Search** — Use the search bar to find text across all visible columns
-- **WHERE Filter** — Apply a custom `WHERE` clause for database-level filtering. More efficient than client-side search for large tables
+## Cell Details
 
-## Column Resize and Row Numbers
+Click a cell to open the detail panel. It is useful for values that are awkward to edit directly inside a table:
 
-- Drag column borders to resize columns
-- Row numbers are displayed in the leftmost column
+- Long text
+- JSON
+- SQL fragments
+- Multi-line content
+- Fields that should be explicitly set to `NULL`
 
-## Export
+## Export and Copy
 
-| Format | Description |
+| Format | Use Case |
 |---|---|
-| CSV | Comma-separated values, compatible with Excel and spreadsheet tools |
-| JSON | Array of objects, suitable for use in code or APIs |
-| Markdown | Markdown table, useful for pasting into documentation or chat |
+| CSV | Excel, Numbers, or spreadsheet tools |
+| JSON | Scripts, API debugging, or programmatic processing |
+| Markdown | Issues, PRs, documentation, or chat |
+| INSERT | Copy selected rows as executable `INSERT` statements |
+
+Before exporting, check the active filters and sort order so the exported data matches what you expect.

@@ -1,64 +1,33 @@
 import { defineStore } from "pinia";
 import { uuid } from "@/lib/utils";
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import type { DatabaseType, QueryTab } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
 import { canCancelQueryExecution } from "@/lib/queryExecutionState";
 import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
 import { analyzeEditableQuery, allPrimaryKeysPresent } from "@/lib/sqlAnalysis";
+import { restoreOpenTabsState, serializeOpenTabs } from "@/lib/openTabsPersistence";
 import * as api from "@/lib/api";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-
-interface SavedTab {
-  id: string;
-  title: string;
-  connectionId: string;
-  database: string;
-  sql: string;
-  pinned?: boolean;
-  mode: "data" | "query" | "redis" | "mongo";
-  tableMeta?: QueryTab["tableMeta"];
-}
+import type { SavedSqlFile } from "@/types/database";
 
 const STORAGE_KEY = "dbx-open-tabs";
 const ACTIVE_TAB_KEY = "dbx-active-tab";
 
 function saveTabs(tabs: QueryTab[], activeTabId: string | null) {
   try {
-    const saved: SavedTab[] = tabs.map((t) => ({
-      id: t.id,
-      title: t.title,
-      connectionId: t.connectionId,
-      database: t.database,
-      sql: t.sql,
-      pinned: t.pinned,
-      mode: t.mode,
-      tableMeta: t.tableMeta,
-    }));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeOpenTabs(tabs)));
     localStorage.setItem(ACTIVE_TAB_KEY, activeTabId || "");
   } catch {}
 }
 
 function loadSavedTabs(): { tabs: QueryTab[]; activeTabId: string | null } {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { tabs: [], activeTabId: null };
-    const saved: SavedTab[] = JSON.parse(raw);
-    const filtered = isTauriRuntime() ? saved.filter((s) => s.mode === "query") : saved;
-    const tabs: QueryTab[] = filtered.map((s) => ({
-      ...s,
-      isExecuting: false,
-      isCancelling: false,
-      isExplaining: false,
-    }));
-    const activeTabId = localStorage.getItem(ACTIVE_TAB_KEY) || null;
-    return {
-      tabs,
-      activeTabId: tabs.some((t) => t.id === activeTabId) ? activeTabId : tabs[0]?.id || null,
-    };
+    return restoreOpenTabsState(localStorage.getItem(STORAGE_KEY), localStorage.getItem(ACTIVE_TAB_KEY), {
+      queryOnly: isTauriRuntime(),
+    });
   } catch {
     return { tabs: [], activeTabId: null };
   }
@@ -70,18 +39,40 @@ export const useQueryStore = defineStore("query", () => {
   const activeTabId = ref<string | null>(restored.activeTabId);
   const MAX_CACHED_RESULTS = 10;
 
-  watch([tabs, activeTabId], () => saveTabs(tabs.value, activeTabId.value), { deep: true });
+  const _persistSnapshot = computed(() =>
+    tabs.value.map((t) => ({
+      id: t.id,
+      title: t.title,
+      connectionId: t.connectionId,
+      database: t.database,
+      schema: t.schema,
+      sql: t.sql,
+      savedSqlId: t.savedSqlId,
+      pinned: t.pinned,
+      mode: t.mode,
+      objectBrowser: t.objectBrowser,
+      tableMeta: t.tableMeta,
+    })),
+  );
+
+  let _persistTimer: ReturnType<typeof setTimeout> | null = null;
+  watch(
+    [_persistSnapshot, activeTabId],
+    () => {
+      if (_persistTimer) clearTimeout(_persistTimer);
+      _persistTimer = setTimeout(() => {
+        saveTabs(tabs.value, activeTabId.value);
+        _persistTimer = null;
+      }, 300);
+    },
+    { flush: "post" },
+  );
 
   function findTabByTitle(connectionId: string, database: string, title: string) {
     return tabs.value.find((t) => t.connectionId === connectionId && t.database === database && t.title === title);
   }
 
-  function createTab(
-    connectionId: string,
-    database: string,
-    title?: string,
-    mode: "data" | "query" | "redis" | "mongo" = "query",
-  ) {
+  function createTab(connectionId: string, database: string, title?: string, mode: QueryTab["mode"] = "query") {
     if (title) {
       const existing = findTabByTitle(connectionId, database, title);
       if (existing) {
@@ -107,11 +98,49 @@ export const useQueryStore = defineStore("query", () => {
     return id;
   }
 
+  function openObjectBrowser(connectionId: string, database: string, schema?: string) {
+    const title = schema ? `${schema} objects` : `${database} objects`;
+    const existing = tabs.value.find(
+      (tab) =>
+        tab.mode === "objects" &&
+        tab.connectionId === connectionId &&
+        tab.database === database &&
+        (tab.objectBrowser?.schema || "") === (schema || ""),
+    );
+    if (existing) {
+      activeTabId.value = existing.id;
+      return existing.id;
+    }
+
+    const id = uuid();
+    const tab: QueryTab = {
+      id,
+      title,
+      connectionId,
+      database,
+      schema,
+      sql: "",
+      isExecuting: false,
+      isCancelling: false,
+      isExplaining: false,
+      mode: "objects",
+      objectBrowser: {
+        schema,
+        objectType: "tables",
+      },
+    };
+    tabs.value.push(tab);
+    activeTabId.value = id;
+    return id;
+  }
+
   function closeTab(id: string) {
     const idx = tabs.value.findIndex((t) => t.id === id);
     if (idx < 0) return;
     if (tabs.value[idx].isExecuting) void cancelTabExecution(id);
     if (tabs.value[idx].isExplaining) void cancelTabExplain(id);
+    tabs.value[idx].result = undefined;
+    tabs.value[idx].results = undefined;
     tabs.value.splice(idx, 1);
     if (activeTabId.value === id) {
       activeTabId.value = tabs.value[Math.min(idx, tabs.value.length - 1)]?.id ?? null;
@@ -136,7 +165,44 @@ export const useQueryStore = defineStore("query", () => {
 
   function updateSql(id: string, sql: string) {
     const tab = tabs.value.find((t) => t.id === id);
-    if (tab) tab.sql = sql;
+    if (tab) {
+      tab.sql = sql;
+      tab.resultSortedSql = undefined;
+      tab.resultBaseSql = undefined;
+    }
+  }
+
+  function linkSavedSql(id: string, savedSqlId: string, title?: string) {
+    const tab = tabs.value.find((t) => t.id === id);
+    if (!tab) return;
+    tab.savedSqlId = savedSqlId;
+    if (title) tab.title = title;
+  }
+
+  function openSavedSql(file: SavedSqlFile) {
+    const existing = tabs.value.find((tab) => tab.savedSqlId === file.id);
+    if (existing) {
+      activeTabId.value = existing.id;
+      return existing.id;
+    }
+
+    const id = uuid();
+    const tab: QueryTab = {
+      id,
+      title: file.name,
+      connectionId: file.connectionId,
+      database: file.database,
+      schema: file.schema,
+      sql: file.sql,
+      savedSqlId: file.id,
+      isExecuting: false,
+      isCancelling: false,
+      isExplaining: false,
+      mode: "query",
+    };
+    tabs.value.push(tab);
+    activeTabId.value = id;
+    return id;
   }
 
   function togglePinnedTab(id: string) {
@@ -151,8 +217,11 @@ export const useQueryStore = defineStore("query", () => {
     if (!tab || tab.database === database) return;
     tab.database = database;
     tab.schema = undefined;
+    tab.objectBrowser = undefined;
     tab.result = undefined;
     tab.lastExecutedSql = undefined;
+    tab.resultBaseSql = undefined;
+    tab.resultSortedSql = undefined;
     clearExplain(tab);
     tab.tableMeta = undefined;
   }
@@ -161,6 +230,7 @@ export const useQueryStore = defineStore("query", () => {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || tab.schema === schema) return;
     tab.schema = schema;
+    if (tab.mode === "objects") tab.objectBrowser = { ...tab.objectBrowser, schema };
   }
 
   function updateConnection(id: string, connectionId: string, database = "") {
@@ -171,6 +241,8 @@ export const useQueryStore = defineStore("query", () => {
     tab.schema = undefined;
     tab.result = undefined;
     tab.lastExecutedSql = undefined;
+    tab.resultBaseSql = undefined;
+    tab.resultSortedSql = undefined;
     clearExplain(tab);
     tab.tableMeta = undefined;
   }
@@ -226,14 +298,13 @@ export const useQueryStore = defineStore("query", () => {
 
   async function executeCurrentSql(sql: string) {
     if (!activeTabId.value) return;
-    await executeTabSql(activeTabId.value, sql);
+    await executeTabSql(activeTabId.value, sql, { resultBaseSql: sql, resultSortedSql: undefined });
   }
 
   /**
-   * Analyze if the query result is editable (single-table SELECT with primary keys).
-   * If editable, fetches table metadata and sets queryAnalysis + tableMeta on the tab.
+   * Analyze query metadata for result tooltips and editability.
    */
-  async function analyzeQueryEditability(tab: QueryTab, sql: string) {
+  async function analyzeQueryMetadata(tab: QueryTab, sql: string) {
     if (tab.mode !== "query") return;
     if (!tab.result || !tab.result.columns.length) {
       tab.queryAnalysis = undefined;
@@ -268,43 +339,61 @@ export const useQueryStore = defineStore("query", () => {
       const columns = await api.getColumns(tab.connectionId, tab.database, schema, analysis.tableName);
       const primaryKeys = columns.filter((c) => c.is_primary_key).map((c) => c.name);
 
-      if (primaryKeys.length === 0) {
-        tab.queryAnalysis = undefined;
-        tab.tableMeta = undefined;
-        return;
-      }
-
-      if (!allPrimaryKeysPresent(primaryKeys, tab.result.columns)) {
-        tab.queryAnalysis = undefined;
-        tab.tableMeta = undefined;
-        return;
-      }
-
       tab.tableMeta = {
         schema: schema || undefined,
         tableName: analysis.tableName,
         columns,
         primaryKeys,
       };
+
+      if (primaryKeys.length === 0 || !allPrimaryKeysPresent(primaryKeys, tab.result.columns)) {
+        tab.queryAnalysis = undefined;
+        return;
+      }
+
       tab.queryAnalysis = analysis;
     } catch (err) {
-      console.error("[DBX] ERROR fetching columns for editable query:", err);
+      console.error("[DBX] ERROR fetching columns for query metadata:", err);
       tab.queryAnalysis = undefined;
       tab.tableMeta = undefined;
     }
   }
 
-  async function executeTabSql(id: string, sql: string) {
+  async function executeTabSql(
+    id: string,
+    sql: string,
+    options?: { resultBaseSql?: string; resultSortedSql?: string | undefined },
+  ) {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || !sql.trim()) return;
 
     const executionId = uuid();
+    const traceId = executionId.slice(0, 8);
+    const startedAt = performance.now();
+    const elapsed = () => `${Math.round(performance.now() - startedAt)}ms`;
     tab.isExecuting = true;
     tab.isCancelling = false;
     tab.executionId = executionId;
     tab.lastExecutedSql = sql;
+    console.info("[DBX][executeTabSql:start]", {
+      traceId,
+      tabId: id,
+      mode: tab.mode,
+      connectionId: tab.connectionId,
+      database: tab.database,
+      schema: tab.schema,
+      sql,
+    });
     try {
+      console.info("[DBX][executeTabSql:execute-multi:start]", { traceId, elapsed: elapsed() });
       const results = await api.executeMulti(tab.connectionId, tab.database, sql, tab.schema, executionId);
+      console.info("[DBX][executeTabSql:execute-multi:done]", {
+        traceId,
+        resultCount: results.length,
+        rowCounts: results.map((result) => result.rows.length),
+        columnCounts: results.map((result) => result.columns.length),
+        elapsed: elapsed(),
+      });
       const current = tabs.value.find((t) => t.id === id);
       if (current?.executionId === executionId) {
         if (results.length > 1) {
@@ -316,16 +405,29 @@ export const useQueryStore = defineStore("query", () => {
           current.activeResultIndex = undefined;
           current.result = results[0];
         }
-        // Analyze editability after successful execution
-        await analyzeQueryEditability(current, sql);
+        current.resultBaseSql = options?.resultBaseSql ?? sql;
+        current.resultSortedSql = options?.resultSortedSql;
+        console.info("[DBX][executeTabSql:metadata:start]", { traceId, elapsed: elapsed() });
+        await analyzeQueryMetadata(current, current.resultBaseSql);
+        console.info("[DBX][executeTabSql:metadata:done]", { traceId, elapsed: elapsed() });
+      } else {
+        console.warn("[DBX][executeTabSql:stale-result]", {
+          traceId,
+          currentExecutionId: current?.executionId,
+          elapsed: elapsed(),
+        });
       }
     } catch (e: any) {
+      console.error("[DBX][executeTabSql:error]", { traceId, elapsed: elapsed(), error: e });
       const current = tabs.value.find((t) => t.id === id);
       if (current?.executionId === executionId) {
         current.result = toErrorResult(e);
         current.results = undefined;
         current.activeResultIndex = undefined;
         current.queryAnalysis = undefined;
+        if (current.mode !== "data") current.tableMeta = undefined;
+        current.resultBaseSql = options?.resultBaseSql ?? sql;
+        current.resultSortedSql = options?.resultSortedSql;
       }
     } finally {
       const current = tabs.value.find((t) => t.id === id);
@@ -333,6 +435,13 @@ export const useQueryStore = defineStore("query", () => {
         current.isExecuting = false;
         current.isCancelling = false;
         current.executionId = undefined;
+        console.info("[DBX][executeTabSql:finish]", { traceId, elapsed: elapsed() });
+      } else {
+        console.warn("[DBX][executeTabSql:finish-stale]", {
+          traceId,
+          currentExecutionId: current?.executionId,
+          elapsed: elapsed(),
+        });
       }
     }
     trimResultCache();
@@ -449,6 +558,9 @@ export const useQueryStore = defineStore("query", () => {
     closeOtherTabs,
     closeAllTabs,
     updateSql,
+    openObjectBrowser,
+    linkSavedSql,
+    openSavedSql,
     togglePinnedTab,
     updateDatabase,
     updateSchema,

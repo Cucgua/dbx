@@ -8,6 +8,7 @@ import EditorSettingsDialog from "@/components/editor/EditorSettingsDialog.vue";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 const DataTransferDialog = defineAsyncComponent(() => import("@/components/transfer/DataTransferDialog.vue"));
 const SchemaDiffDialog = defineAsyncComponent(() => import("@/components/diff/SchemaDiffDialog.vue"));
+const DataCompareDialog = defineAsyncComponent(() => import("@/components/diff/DataCompareDialog.vue"));
 const SqlFileExecutionDialog = defineAsyncComponent(() => import("@/components/sql-file/SqlFileExecutionDialog.vue"));
 const SchemaDiagramDialog = defineAsyncComponent(() => import("@/components/diagram/SchemaDiagramDialog.vue"));
 const TableImportDialog = defineAsyncComponent(() => import("@/components/import/TableImportDialog.vue"));
@@ -23,6 +24,7 @@ import { useDialogSources } from "@/composables/useDialogSources";
 const props = defineProps<{
   showConnectionDialog: boolean;
   showSettingsDialog: boolean;
+  settingsInitialTab?: string;
   showDangerDialog: boolean;
   dangerSql: string;
 }>();
@@ -71,9 +73,19 @@ watch(editConfig, (v) => {
 });
 
 watch(
+  () => connectionStore.newConnectionGroupId,
+  (v) => {
+    if (v) emit("update:showConnectionDialog", true);
+  },
+);
+
+watch(
   () => props.showConnectionDialog,
   (v) => {
-    if (!v) connectionStore.stopEditing();
+    if (!v) {
+      connectionStore.stopEditing();
+      connectionStore.stopCreatingConnectionInGroup();
+    }
   },
 );
 </script>
@@ -87,7 +99,11 @@ watch(
     @connect-succeeded="emit('connectSucceeded', $event)"
     @connect-failed="emit('connectFailed', $event)"
   />
-  <EditorSettingsDialog :open="showSettingsDialog" @update:open="emit('update:showSettingsDialog', $event)" />
+  <EditorSettingsDialog
+    :open="showSettingsDialog"
+    :initial-tab="settingsInitialTab || 'editor'"
+    @update:open="emit('update:showSettingsDialog', $event)"
+  />
   <DangerConfirmDialog
     :open="showDangerDialog"
     :sql="dangerSql"
@@ -103,6 +119,14 @@ watch(
     v-model:open="dialogs.showSchemaDiffDialog.value"
     :prefill-connection-id="dialogs.schemaDiffPrefillConnectionId.value"
     :prefill-database="dialogs.schemaDiffPrefillDatabase.value"
+    :prefill-schema="dialogs.schemaDiffPrefillSchema.value"
+  />
+  <DataCompareDialog
+    v-model:open="dialogs.showDataCompareDialog.value"
+    :prefill-connection-id="dialogs.dataComparePrefillConnectionId.value"
+    :prefill-database="dialogs.dataComparePrefillDatabase.value"
+    :prefill-schema="dialogs.dataComparePrefillSchema.value"
+    :prefill-table="dialogs.dataComparePrefillTable.value"
   />
   <SqlFileExecutionDialog
     v-model:open="dialogs.showSqlFileDialog.value"

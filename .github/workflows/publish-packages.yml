@@ -1,6 +1,8 @@
 name: Publish Packages
 
 on:
+  release:
+    types: [published, released]
   workflow_dispatch:
     inputs:
       tag:
@@ -19,11 +21,12 @@ jobs:
   publish:
     name: Publish to Homebrew & Scoop
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || (!github.event.release.draft && !github.event.release.prerelease) }}
     steps:
       - name: Extract version from tag
         id: version
         run: |
-          TAG="${{ github.event.inputs.tag }}"
+          TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
           TAG="$(echo "${TAG}" | xargs)"
           VERSION="${TAG#v}"
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then

@@ -1,4 +1,5 @@
 import type { ConnectionConfig } from "./connections.js";
+import { createServer, connect as netConnect, type Server, type Socket } from "node:net";
 
 export interface TableInfo {
   name: string;
@@ -31,6 +32,7 @@ interface PoolEntry {
 }
 
 const pools = new Map<string, PoolEntry>();
+const proxyTunnels = new Map<string, { server: Server; port: number }>();
 
 function resolveDefaultDatabase(config: ConnectionConfig): string {
   if (typeof config.default_database === "string") return config.default_database;
@@ -65,8 +67,9 @@ async function getPgPool(config: ConnectionConfig): Promise<import("pg").Pool> {
   }
 
   const pg = await import("pg");
+  const endpoint = await connectionEndpoint(config);
   const pool = new pg.default.Pool({
-    connectionString: buildConnectionUrl(config),
+    connectionString: buildConnectionUrl(config, endpoint),
     max: 3,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
@@ -87,8 +90,9 @@ async function getMysqlPool(config: ConnectionConfig): Promise<import("mysql2/pr
   }
 
   const mysql = await import("mysql2/promise");
+  const endpoint = await connectionEndpoint(config);
   const pool = mysql.default.createPool({
-    uri: buildConnectionUrl(config),
+    uri: buildConnectionUrl(config, endpoint),
     connectionLimit: 3,
     idleTimeout: 30_000,
     connectTimeout: 10_000,
@@ -99,14 +103,128 @@ async function getMysqlPool(config: ConnectionConfig): Promise<import("mysql2/pr
   return pool;
 }
 
-function buildConnectionUrl(config: ConnectionConfig): string {
+async function connectionEndpoint(config: ConnectionConfig): Promise<{ host: string; port: number }> {
+  if (!config.proxy_enabled || !config.proxy_host) return { host: config.host, port: config.port };
+  const existing = proxyTunnels.get(config.id);
+  if (existing) return { host: "127.0.0.1", port: existing.port };
+
+  const server = createServer((inbound) => {
+    connectViaProxy(config)
+      .then((outbound) => {
+        inbound.pipe(outbound);
+        outbound.pipe(inbound);
+      })
+      .catch(() => inbound.destroy());
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address && typeof address === "object") resolve(address.port);
+      else reject(new Error("Failed to bind proxy tunnel"));
+    });
+  });
+  proxyTunnels.set(config.id, { server, port });
+  return { host: "127.0.0.1", port };
+}
+
+function buildConnectionUrl(config: ConnectionConfig, endpoint: { host: string; port: number }): string {
   const db = resolveDefaultDatabase(config);
   const params = config.url_params || "";
   const suffix = params ? `?${params}` : "";
   if (isMysqlType(config.db_type)) {
-    return `mysql://${encodeURIComponent(config.username)}:${encodeURIComponent(config.password)}@${config.host}:${config.port}/${db}${suffix}`;
+    return `mysql://${encodeURIComponent(config.username)}:${encodeURIComponent(config.password)}@${endpoint.host}:${endpoint.port}/${db}${suffix}`;
   }
-  return `postgres://${encodeURIComponent(config.username)}:${encodeURIComponent(config.password)}@${config.host}:${config.port}/${db}${suffix}`;
+  return `postgres://${encodeURIComponent(config.username)}:${encodeURIComponent(config.password)}@${endpoint.host}:${endpoint.port}/${db}${suffix}`;
+}
+
+function connectViaProxy(config: ConnectionConfig): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = netConnect(config.proxy_port || 1080, config.proxy_host || "127.0.0.1");
+    socket.once("error", reject);
+    socket.once("connect", () => {
+      if ((config.proxy_type || "socks5") === "http") {
+        httpConnect(socket, config, resolve, reject);
+      } else {
+        socks5Connect(socket, config, resolve, reject);
+      }
+    });
+  });
+}
+
+function httpConnect(socket: Socket, config: ConnectionConfig, resolve: (socket: Socket) => void, reject: (err: Error) => void) {
+  const target = `${config.host}:${config.port}`;
+  const lines = [`CONNECT ${target} HTTP/1.1`, `Host: ${target}`];
+  if (config.proxy_username || config.proxy_password) {
+    const token = Buffer.from(`${config.proxy_username || ""}:${config.proxy_password || ""}`).toString("base64");
+    lines.push(`Proxy-Authorization: Basic ${token}`);
+  }
+  socket.write(`${lines.join("\r\n")}\r\n\r\n`);
+  let buffer = Buffer.alloc(0);
+  socket.on("data", function onData(chunk: Buffer) {
+    buffer = Buffer.concat([buffer, chunk]);
+    const end = buffer.indexOf("\r\n\r\n");
+    if (end < 0) return;
+    socket.off("data", onData);
+    const head = buffer.subarray(0, end).toString("utf8");
+    if (!/^HTTP\/1\.[01] 200\b/.test(head)) {
+      reject(new Error(`HTTP proxy CONNECT failed: ${head.split("\r\n")[0] || "invalid response"}`));
+      socket.destroy();
+      return;
+    }
+    const rest = buffer.subarray(end + 4);
+    if (rest.length) socket.unshift(rest);
+    resolve(socket);
+  });
+}
+
+function socks5Connect(socket: Socket, config: ConnectionConfig, resolve: (socket: Socket) => void, reject: (err: Error) => void) {
+  const wantsAuth = !!(config.proxy_username || config.proxy_password);
+  socket.write(Buffer.from(wantsAuth ? [0x05, 0x02, 0x00, 0x02] : [0x05, 0x01, 0x00]));
+  socket.once("data", (method) => {
+    if (method.length < 2 || method[0] !== 0x05) {
+      reject(new Error("Invalid SOCKS greeting"));
+      socket.destroy();
+      return;
+    }
+    if (method[1] === 0x02) {
+      const user = Buffer.from(config.proxy_username || "");
+      const pass = Buffer.from(config.proxy_password || "");
+      socket.write(Buffer.concat([Buffer.from([0x01, user.length]), user, Buffer.from([pass.length]), pass]));
+      socket.once("data", (auth) => {
+        if (auth.length < 2 || auth[1] !== 0x00) {
+          reject(new Error("SOCKS proxy authentication failed"));
+          socket.destroy();
+          return;
+        }
+        sendSocksConnect(socket, config, resolve, reject);
+      });
+    } else if (method[1] === 0x00) {
+      sendSocksConnect(socket, config, resolve, reject);
+    } else {
+      reject(new Error("SOCKS proxy rejected authentication methods"));
+      socket.destroy();
+    }
+  });
+}
+
+function sendSocksConnect(socket: Socket, config: ConnectionConfig, resolve: (socket: Socket) => void, reject: (err: Error) => void) {
+  const host = Buffer.from(config.host);
+  socket.write(Buffer.concat([Buffer.from([0x05, 0x01, 0x00, 0x03, host.length]), host, portBytes(config.port)]));
+  socket.once("data", (res) => {
+    if (res.length < 4 || res[0] !== 0x05 || res[1] !== 0x00) {
+      reject(new Error(`SOCKS proxy connect failed with code ${res[1] ?? "unknown"}`));
+      socket.destroy();
+      return;
+    }
+    resolve(socket);
+  });
+}
+
+function portBytes(port: number): Buffer {
+  const buf = Buffer.alloc(2);
+  buf.writeUInt16BE(port);
+  return buf;
 }
 
 function isMysqlType(dbType: string): boolean {

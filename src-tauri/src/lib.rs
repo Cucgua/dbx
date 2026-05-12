@@ -52,21 +52,29 @@ pub fn run() {
                 s
             });
 
-            let state = Arc::new(AppState::new(storage));
+            let state = Arc::new(AppState::new_with_plugin_dir(storage, data_dir.join("plugins")));
             app.manage(state.clone());
 
             let app_handle = app.handle().clone();
             commands::mcp_bridge::start(app_handle.clone(), state.clone());
             let mcp_options = dbx_mcp::McpRuntimeOptions {
-                app_data_dir: data_dir,
-                state,
-                events: Arc::new(TauriMcpEvents { app: app_handle }),
+                app_data_dir: data_dir.clone(),
+                state: state.clone(),
+                events: Arc::new(TauriMcpEvents { app: app_handle.clone() }),
             };
             tauri::async_runtime::spawn(async move {
                 if let Err(err) = dbx_mcp::run(mcp_options).await {
                     log::warn!("DBX MCP HTTP server stopped: {err}");
                 }
             });
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_decorations(false);
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -96,14 +104,26 @@ pub fn run() {
             commands::settings::save_app_settings,
             commands::settings::load_app_settings,
             commands::settings::load_mcp_http_status,
+            commands::plugins::list_plugins,
+            commands::plugins::list_jdbc_drivers,
+            commands::plugins::import_jdbc_drivers,
+            commands::plugins::delete_jdbc_driver,
+            commands::plugins::jdbc_plugin_status,
+            commands::plugins::install_jdbc_plugin,
+            commands::plugins::uninstall_jdbc_plugin,
             commands::schema::list_databases,
             commands::schema::list_tables,
+            commands::schema::list_objects,
+            commands::schema::get_object_source,
             commands::schema::list_schemas,
             commands::schema::get_columns,
             commands::schema::list_indexes,
             commands::schema::list_foreign_keys,
             commands::schema::list_triggers,
             commands::schema::get_table_ddl,
+            commands::schema_cache::save_schema_cache,
+            commands::schema_cache::load_schema_cache,
+            commands::schema_cache::delete_schema_cache_prefix,
             commands::query::execute_query,
             commands::query::execute_multi,
             commands::query::cancel_query,
@@ -127,6 +147,16 @@ pub fn run() {
             commands::redis_cmd::redis_list_remove,
             commands::redis_cmd::redis_set_add,
             commands::redis_cmd::redis_set_remove,
+            commands::redis_cmd::redis_zadd,
+            commands::redis_cmd::redis_zrem,
+            commands::redis_cmd::redis_set_ttl,
+            commands::redis_cmd::redis_delete_keys,
+            commands::redis_cmd::redis_load_more,
+            commands::saved_sql::load_saved_sql_library,
+            commands::saved_sql::save_saved_sql_folder,
+            commands::saved_sql::delete_saved_sql_folder,
+            commands::saved_sql::save_saved_sql_file,
+            commands::saved_sql::delete_saved_sql_file,
             commands::mongo_cmd::mongo_list_databases,
             commands::mongo_cmd::mongo_list_collections,
             commands::mongo_cmd::mongo_find_documents,

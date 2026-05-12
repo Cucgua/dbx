@@ -119,3 +119,61 @@ pub async fn redis_set_remove(
 ) -> Result<(), String> {
     dbx_core::redis_ops::redis_set_remove_in_db_core(&state, &connection_id, db, &key_raw, &member).await
 }
+
+#[tauri::command]
+pub async fn redis_zadd(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    db: u32,
+    key_raw: String,
+    member: String,
+    score: f64,
+) -> Result<(), String> {
+    dbx_core::redis_ops::redis_zadd_in_db_core(&state, &connection_id, db, &key_raw, &member, score).await
+}
+
+#[tauri::command]
+pub async fn redis_zrem(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    db: u32,
+    key_raw: String,
+    member: String,
+) -> Result<(), String> {
+    dbx_core::redis_ops::redis_zrem_in_db_core(&state, &connection_id, db, &key_raw, &member).await
+}
+
+#[tauri::command]
+pub async fn redis_set_ttl(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    db: u32,
+    key_raw: String,
+    ttl: i64,
+) -> Result<(), String> {
+    dbx_core::redis_ops::redis_set_ttl_in_db_core(&state, &connection_id, db, &key_raw, ttl).await
+}
+
+#[tauri::command]
+pub async fn redis_delete_keys(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    db: u32,
+    key_raws: Vec<String>,
+) -> Result<u64, String> {
+    dbx_core::redis_ops::redis_delete_keys_in_db_core(&state, &connection_id, db, &key_raws).await
+}
+
+#[tauri::command]
+pub async fn redis_load_more(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    db: u32,
+    key_raw: String,
+    key_type: String,
+    cursor: u64,
+    count: usize,
+) -> Result<RedisValue, String> {
+    dbx_core::redis_ops::redis_load_more_in_db_core(&state, &connection_id, db, &key_raw, &key_type, cursor, count)
+        .await
+}

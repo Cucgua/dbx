@@ -37,6 +37,20 @@ pub struct ConnectionConfig {
     pub ssh_key_passphrase: String,
     #[serde(default)]
     pub ssh_expose_lan: bool,
+    #[serde(default = "default_ssh_connect_timeout_secs")]
+    pub ssh_connect_timeout_secs: u64,
+    #[serde(default)]
+    pub proxy_enabled: bool,
+    #[serde(default)]
+    pub proxy_type: ProxyType,
+    #[serde(default)]
+    pub proxy_host: String,
+    #[serde(default = "default_proxy_port")]
+    pub proxy_port: u16,
+    #[serde(default)]
+    pub proxy_username: String,
+    #[serde(default)]
+    pub proxy_password: String,
     #[serde(default)]
     pub ssl: bool,
     #[serde(default)]
@@ -45,13 +59,41 @@ pub struct ConnectionConfig {
     pub oracle_connect_method: OracleConnectMethod,
     #[serde(default)]
     pub connection_string: Option<String>,
+    /// Typed configuration for external tabular sources.
+    #[serde(default)]
+    pub external_config: Option<serde_json::Value>,
+    #[serde(default)]
+    pub jdbc_driver_class: Option<String>,
+    #[serde(default)]
+    pub jdbc_driver_paths: Vec<String>,
 }
 
 fn default_ssh_port() -> u16 {
     22
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub fn default_ssh_connect_timeout_secs() -> u64 {
+    5
+}
+
+fn default_proxy_port() -> u16 {
+    1080
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyType {
+    Socks5,
+    Http,
+}
+
+impl Default for ProxyType {
+    fn default() -> Self {
+        Self::Socks5
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseType {
     Mysql,
@@ -76,6 +118,7 @@ pub enum DatabaseType {
     Redshift,
     Dameng,
     Gaussdb,
+    Jdbc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -98,6 +141,35 @@ impl ConnectionConfig {
             && self.driver_profile.as_deref().is_some_and(|profile| profile.eq_ignore_ascii_case("oracle_oci"))
     }
 
+    pub fn effective_ssh_connect_timeout_secs(&self) -> u64 {
+        if self.ssh_connect_timeout_secs == 0 {
+            default_ssh_connect_timeout_secs()
+        } else {
+            self.ssh_connect_timeout_secs
+        }
+    }
+
+    pub fn effective_database(&self) -> Option<&str> {
+        self.database
+            .as_deref()
+            .map(str::trim)
+            .filter(|database| !database.is_empty())
+            .or_else(|| self.default_database.as_deref().map(str::trim).filter(|database| !database.is_empty()))
+            .or_else(|| self.builtin_default_database())
+    }
+
+    fn builtin_default_database(&self) -> Option<&'static str> {
+        match self.db_type {
+            DatabaseType::Postgres => match self.driver_profile.as_deref() {
+                Some("cockroachdb") => Some("defaultdb"),
+                _ => Some("postgres"),
+            },
+            DatabaseType::Redshift => Some("dev"),
+            DatabaseType::Gaussdb => Some("postgres"),
+            _ => None,
+        }
+    }
+
     pub fn needs_bare_mysql(&self) -> bool {
         matches!(self.db_type, DatabaseType::Doris | DatabaseType::StarRocks)
             || self
@@ -117,12 +189,7 @@ impl ConnectionConfig {
 
     pub fn redacted_connection_url_with_host(&self, host: &str, port: u16) -> String {
         let host = bracket_ipv6(host);
-        let db_part = self
-            .database
-            .as_deref()
-            .filter(|d| !d.is_empty())
-            .map(|d| format!("/{}", encode_url_part(d)))
-            .unwrap_or_default();
+        let db_part = self.effective_database().map(|d| format!("/{}", encode_url_part(d))).unwrap_or_default();
         let params = self.normalized_url_params();
 
         match self.db_type {
@@ -166,17 +233,13 @@ impl ConnectionConfig {
             DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
             DatabaseType::Dameng => format!("dm://{host}:{port}{db_part}"),
             DatabaseType::Gaussdb => format!("gaussdb://{host}:{port}{db_part}"),
+            DatabaseType::Jdbc => "jdbc:<redacted>".to_string(),
         }
     }
 
     pub fn connection_url_with_host(&self, host: &str, port: u16) -> String {
         let host = bracket_ipv6(host);
-        let db_part = self
-            .database
-            .as_deref()
-            .filter(|d| !d.is_empty())
-            .map(|d| format!("/{}", encode_url_part(d)))
-            .unwrap_or_default();
+        let db_part = self.effective_database().map(|d| format!("/{}", encode_url_part(d))).unwrap_or_default();
         let username = encode_url_part(&self.username);
         let password = encode_url_part(&self.password);
         let params = self.normalized_url_params();
@@ -240,6 +303,9 @@ impl ConnectionConfig {
             }
             DatabaseType::Gaussdb => {
                 format!("gaussdb://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Jdbc => {
+                self.connection_string.as_deref().filter(|value| !value.is_empty()).unwrap_or("jdbc:").to_string()
             }
         }
     }
@@ -359,7 +425,7 @@ fn bracket_ipv6(host: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionConfig, DatabaseType};
+    use super::{default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, ProxyType};
 
     fn mysql_config(username: &str, password: &str, database: Option<&str>) -> ConnectionConfig {
         ConnectionConfig {
@@ -384,10 +450,20 @@ mod tests {
             ssh_key_path: String::new(),
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
+            ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
+            proxy_enabled: false,
+            proxy_type: ProxyType::Socks5,
+            proxy_host: String::new(),
+            proxy_port: 1080,
+            proxy_username: String::new(),
+            proxy_password: String::new(),
             ssl: false,
             sysdba: false,
             oracle_connect_method: Default::default(),
             connection_string: None,
+            external_config: None,
+            jdbc_driver_class: None,
+            jdbc_driver_paths: Vec::new(),
         }
     }
 
@@ -405,6 +481,62 @@ mod tests {
         config.driver_profile = Some("oracle_oci".to_string());
 
         assert!(config.is_oracle_oci());
+    }
+
+    #[test]
+    fn effective_database_uses_explicit_default_database() {
+        let mut config = mysql_config("root", "", None);
+        config.default_database = Some("analytics".to_string());
+
+        assert_eq!(config.effective_database(), Some("analytics"));
+    }
+
+    #[test]
+    fn ssh_connect_timeout_defaults_for_legacy_config() {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "id",
+            "name": "name",
+            "db_type": "mysql",
+            "host": "10.1.2.3",
+            "port": 3306,
+            "username": "root",
+            "password": "",
+            "database": null
+        }))
+        .unwrap();
+
+        assert_eq!(config.ssh_connect_timeout_secs, default_ssh_connect_timeout_secs());
+        assert_eq!(config.effective_ssh_connect_timeout_secs(), default_ssh_connect_timeout_secs());
+    }
+
+    #[test]
+    fn proxy_fields_default_for_legacy_config() {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "id",
+            "name": "name",
+            "db_type": "mysql",
+            "host": "10.1.2.3",
+            "port": 3306,
+            "username": "root",
+            "password": "",
+            "database": null
+        }))
+        .unwrap();
+
+        assert_eq!(config.proxy_enabled, false);
+        assert_eq!(config.proxy_type, ProxyType::Socks5);
+        assert_eq!(config.proxy_host, "");
+        assert_eq!(config.proxy_port, 1080);
+        assert_eq!(config.proxy_username, "");
+        assert_eq!(config.proxy_password, "");
+    }
+
+    #[test]
+    fn ssh_connect_timeout_zero_uses_default() {
+        let mut config = mysql_config("root", "", None);
+        config.ssh_connect_timeout_secs = 0;
+
+        assert_eq!(config.effective_ssh_connect_timeout_secs(), default_ssh_connect_timeout_secs());
     }
 
     #[test]
@@ -445,6 +577,47 @@ mod tests {
         config.url_params = Some("sslmode=disable".to_string());
 
         assert_eq!(config.connection_url(), "postgres://postgres:secret@10.1.2.3:2883/test?sslmode=disable");
+    }
+
+    #[test]
+    fn postgres_url_defaults_to_postgres_database_when_omitted() {
+        let mut config = mysql_config("root", "secret", None);
+        config.db_type = DatabaseType::Postgres;
+
+        assert_eq!(config.connection_url(), "postgres://root:secret@10.1.2.3:2883/postgres");
+    }
+
+    #[test]
+    fn postgres_url_defaults_to_postgres_database_when_empty() {
+        let mut config = mysql_config("root", "secret", Some(""));
+        config.db_type = DatabaseType::Postgres;
+
+        assert_eq!(config.connection_url(), "postgres://root:secret@10.1.2.3:2883/postgres");
+    }
+
+    #[test]
+    fn redshift_url_defaults_to_dev_database_when_empty() {
+        let mut config = mysql_config("awsuser", "secret", Some(""));
+        config.db_type = DatabaseType::Redshift;
+
+        assert_eq!(config.connection_url(), "postgres://awsuser:secret@10.1.2.3:2883/dev");
+    }
+
+    #[test]
+    fn cockroachdb_url_defaults_to_defaultdb_database() {
+        let mut config = mysql_config("root", "secret", None);
+        config.db_type = DatabaseType::Postgres;
+        config.driver_profile = Some("cockroachdb".to_string());
+
+        assert_eq!(config.connection_url(), "postgres://root:secret@10.1.2.3:2883/defaultdb");
+    }
+
+    #[test]
+    fn gaussdb_url_defaults_to_postgres_database() {
+        let mut config = mysql_config("gaussdb", "secret", None);
+        config.db_type = DatabaseType::Gaussdb;
+
+        assert_eq!(config.connection_url(), "gaussdb://gaussdb:secret@10.1.2.3:2883/postgres");
     }
 
     #[test]

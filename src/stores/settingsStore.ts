@@ -11,6 +11,8 @@ export interface AiConfig {
   endpoint: string;
   model: string;
   apiStyle: AiApiStyle;
+  proxyEnabled?: boolean;
+  proxyUrl?: string;
 }
 
 const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = {
@@ -45,6 +47,8 @@ export interface EditorSettings {
   fontSize: number;
   theme: EditorTheme;
   executeMode: "all" | "current";
+  wordWrap: boolean;
+  appLayout: "separated" | "classic";
 }
 
 export interface AppSettings {
@@ -82,6 +86,8 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   fontSize: 13,
   theme: "one-dark",
   executeMode: "all",
+  wordWrap: false,
+  appLayout: "classic",
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -106,6 +112,8 @@ function loadEditorSettings(): EditorSettings {
         fontSize: parsed.fontSize ?? DEFAULT_EDITOR_SETTINGS.fontSize,
         theme: parsed.theme ?? DEFAULT_EDITOR_SETTINGS.theme,
         executeMode: parsed.executeMode ?? DEFAULT_EDITOR_SETTINGS.executeMode,
+        wordWrap: parsed.wordWrap ?? DEFAULT_EDITOR_SETTINGS.wordWrap,
+        appLayout: parsed.appLayout ?? DEFAULT_EDITOR_SETTINGS.appLayout,
       };
     }
   } catch {

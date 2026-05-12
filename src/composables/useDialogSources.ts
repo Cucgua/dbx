@@ -6,6 +6,7 @@ import type { SidebarLayout } from "@/types/database";
 
 const showTransferDialog = ref(false);
 const showSchemaDiffDialog = ref(false);
+const showDataCompareDialog = ref(false);
 const showSqlFileDialog = ref(false);
 const showDiagramDialog = ref(false);
 const showTableImportDialog = ref(false);
@@ -23,6 +24,11 @@ const transferPrefillConnectionId = ref("");
 const transferPrefillDatabase = ref("");
 const schemaDiffPrefillConnectionId = ref("");
 const schemaDiffPrefillDatabase = ref("");
+const schemaDiffPrefillSchema = ref("");
+const dataComparePrefillConnectionId = ref("");
+const dataComparePrefillDatabase = ref("");
+const dataComparePrefillSchema = ref("");
+const dataComparePrefillTable = ref("");
 const sqlFilePrefillConnectionId = ref("");
 const sqlFilePrefillDatabase = ref("");
 const diagramPrefillConnectionId = ref("");
@@ -75,8 +81,23 @@ export function useDialogSources() {
         if (v) {
           schemaDiffPrefillConnectionId.value = v.connectionId;
           schemaDiffPrefillDatabase.value = v.database;
+          schemaDiffPrefillSchema.value = v.schema ?? "";
           showSchemaDiffDialog.value = true;
           connectionStore.schemaDiffSource = null;
+        }
+      },
+    );
+
+    watch(
+      () => connectionStore.dataCompareSource,
+      (v) => {
+        if (v) {
+          dataComparePrefillConnectionId.value = v.connectionId;
+          dataComparePrefillDatabase.value = v.database;
+          dataComparePrefillSchema.value = v.schema ?? "";
+          dataComparePrefillTable.value = v.tableName ?? "";
+          showDataCompareDialog.value = true;
+          connectionStore.dataCompareSource = null;
         }
       },
     );
@@ -181,9 +202,9 @@ export function useDialogSources() {
     }
   }
 
-  async function onImportClick() {
+  async function onImportClick(source: "dbx" | "navicat" | "dbeaver" = "dbx") {
     try {
-      const result = await connectionStore.readImportFile();
+      const result = await connectionStore.readImportFile(source);
       if (!result) return;
       pendingImportContent.value = result.content;
       if (result.encrypted) {
@@ -192,7 +213,16 @@ export function useDialogSources() {
         showConfigPassphraseDialog.value = true;
       } else {
         const { count, layout } = await connectionStore.importConnectionsFromFile(result.content, null);
-        toast(count > 0 ? t("configExport.importSuccess", { count }) : t("configExport.importNone"), 2000);
+        toast(
+          count > 0
+            ? source === "navicat"
+              ? t("configExport.importNavicatSuccess", { count })
+              : source === "dbeaver"
+                ? t("configExport.importDbeaverSuccess", { count })
+                : t("configExport.importSuccess", { count })
+            : t("configExport.importNone"),
+          4000,
+        );
         if (layout && count > 0) {
           pendingImportLayout.value = layout;
           showImportLayoutConfirm.value = true;
@@ -221,6 +251,7 @@ export function useDialogSources() {
   return {
     showTransferDialog,
     showSchemaDiffDialog,
+    showDataCompareDialog,
     showSqlFileDialog,
     showDiagramDialog,
     showTableImportDialog,
@@ -237,6 +268,11 @@ export function useDialogSources() {
     transferPrefillDatabase,
     schemaDiffPrefillConnectionId,
     schemaDiffPrefillDatabase,
+    schemaDiffPrefillSchema,
+    dataComparePrefillConnectionId,
+    dataComparePrefillDatabase,
+    dataComparePrefillSchema,
+    dataComparePrefillTable,
     sqlFilePrefillConnectionId,
     sqlFilePrefillDatabase,
     diagramPrefillConnectionId,

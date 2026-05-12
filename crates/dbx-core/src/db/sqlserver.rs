@@ -5,9 +5,11 @@ use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub type SqlServerClient = Client<Compat<TcpStream>>;
+const SIMPLE_QUERY_MODULE_KEYWORDS: &[&str] = &["FUNCTION", "PROC", "PROCEDURE", "TRIGGER", "VIEW"];
 
 pub async fn connect(
     host: &str,
@@ -75,7 +77,17 @@ fn row_to_json(row: &tiberius::Row) -> Vec<serde_json::Value> {
 }
 
 pub async fn list_databases(client: &mut SqlServerClient) -> Result<Vec<DatabaseInfo>, String> {
-    let stream = client.query("SELECT name FROM sys.databases ORDER BY name", &[]).await.map_err(|e| e.to_string())?;
+    let stream = client
+        .query(
+            "SELECT name \
+             FROM sys.databases \
+             WHERE database_id > 4 \
+               AND state = 0 \
+             ORDER BY name",
+            &[],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
     let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows.iter().map(|row| DatabaseInfo { name: row.get::<&str, _>(0).unwrap_or("").to_string() }).collect())
 }
@@ -83,9 +95,16 @@ pub async fn list_databases(client: &mut SqlServerClient) -> Result<Vec<Database
 pub async fn list_schemas(client: &mut SqlServerClient) -> Result<Vec<String>, String> {
     let stream = client
         .query(
-            "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA \
-         WHERE SCHEMA_NAME NOT IN ('guest','INFORMATION_SCHEMA','sys') \
-         ORDER BY SCHEMA_NAME",
+            "SELECT s.name \
+         FROM sys.schemas s \
+         WHERE s.name NOT IN ('guest','INFORMATION_SCHEMA','sys') \
+           AND EXISTS ( \
+             SELECT 1 FROM sys.objects o \
+             WHERE o.schema_id = s.schema_id \
+               AND o.type IN ('U','V') \
+               AND o.is_ms_shipped = 0 \
+           ) \
+         ORDER BY CASE WHEN s.name = 'dbo' THEN 0 ELSE 1 END, s.name",
             &[],
         )
         .await
@@ -96,7 +115,13 @@ pub async fn list_schemas(client: &mut SqlServerClient) -> Result<Vec<String>, S
 
 pub async fn list_tables(client: &mut SqlServerClient, schema: &str) -> Result<Vec<TableInfo>, String> {
     let sql = format!(
-        "SELECT TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{}' ORDER BY TABLE_NAME",
+        "SELECT o.name, CASE WHEN o.type = 'V' THEN 'VIEW' ELSE 'BASE TABLE' END \
+         FROM sys.objects o \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         WHERE s.name = '{}' \
+           AND o.type IN ('U','V') \
+           AND o.is_ms_shipped = 0 \
+         ORDER BY o.name",
         schema.replace('\'', "''")
     );
     let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
@@ -106,6 +131,46 @@ pub async fn list_tables(client: &mut SqlServerClient, schema: &str) -> Result<V
         .map(|row| TableInfo {
             name: row.get::<&str, _>(0).unwrap_or("").to_string(),
             table_type: row.get::<&str, _>(1).unwrap_or("BASE TABLE").to_string(),
+            comment: None,
+        })
+        .collect())
+}
+
+pub async fn list_objects(client: &mut SqlServerClient, schema: &str) -> Result<Vec<crate::types::ObjectInfo>, String> {
+    let sql = format!(
+        "SELECT o.name, \
+         CASE o.type \
+           WHEN 'U' THEN 'TABLE' \
+           WHEN 'V' THEN 'VIEW' \
+           WHEN 'P' THEN 'PROCEDURE' \
+           WHEN 'FN' THEN 'FUNCTION' \
+           WHEN 'IF' THEN 'FUNCTION' \
+           WHEN 'TF' THEN 'FUNCTION' \
+           WHEN 'FS' THEN 'FUNCTION' \
+           WHEN 'FT' THEN 'FUNCTION' \
+           ELSE o.type_desc \
+         END AS object_type \
+         FROM sys.objects o \
+         JOIN sys.schemas s ON s.schema_id = o.schema_id \
+         WHERE s.name = '{}' \
+           AND o.type IN ('U','V','P','FN','IF','TF','FS','FT') \
+           AND o.is_ms_shipped = 0 \
+         ORDER BY CASE o.type \
+           WHEN 'U' THEN 0 \
+           WHEN 'V' THEN 1 \
+           WHEN 'P' THEN 2 \
+           ELSE 3 \
+         END, o.name",
+        schema.replace('\'', "''")
+    );
+    let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| crate::types::ObjectInfo {
+            name: row.get::<&str, _>(0).unwrap_or("").to_string(),
+            object_type: row.get::<&str, _>(1).unwrap_or("TABLE").to_string(),
+            schema: Some(schema.to_string()),
             comment: None,
         })
         .collect())
@@ -294,13 +359,8 @@ pub async fn list_triggers(
 
 pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("EXEC")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("TABLE")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "EXEC", "WITH", "TABLE"]) {
         let mut stream = client.query(sql, &[]).await.map_err(|e| e.to_string())?;
         let columns_meta = stream
             .columns()
@@ -319,6 +379,15 @@ pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<Qu
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
         })
+    } else if requires_simple_query_batch(sql) {
+        client.simple_query(sql).await.map_err(|e| e.to_string())?.into_results().await.map_err(|e| e.to_string())?;
+        Ok(QueryResult {
+            columns: vec![],
+            rows: vec![],
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+        })
     } else {
         let result = client.execute(sql, &[]).await.map_err(|e| e.to_string())?;
         Ok(QueryResult {
@@ -328,5 +397,86 @@ pub async fn execute_query(client: &mut SqlServerClient, sql: &str) -> Result<Qu
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
         })
+    }
+}
+
+fn requires_simple_query_batch(sql: &str) -> bool {
+    let tokens = first_sql_tokens(sql, 4);
+    if tokens.len() >= 4
+        && tokens[0].eq_ignore_ascii_case("CREATE")
+        && tokens[1].eq_ignore_ascii_case("OR")
+        && tokens[2].eq_ignore_ascii_case("ALTER")
+    {
+        return SIMPLE_QUERY_MODULE_KEYWORDS.iter().any(|keyword| tokens[3].eq_ignore_ascii_case(keyword));
+    }
+
+    if tokens.len() >= 2 && (tokens[0].eq_ignore_ascii_case("CREATE") || tokens[0].eq_ignore_ascii_case("ALTER")) {
+        return SIMPLE_QUERY_MODULE_KEYWORDS.iter().any(|keyword| tokens[1].eq_ignore_ascii_case(keyword));
+    }
+
+    false
+}
+
+fn first_sql_tokens(sql: &str, limit: usize) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() && tokens.len() < limit {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+
+        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+
+        if i > start {
+            tokens.push(sql[start..i].to_string());
+        } else {
+            i += 1;
+        }
+    }
+
+    tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requires_simple_query_batch;
+
+    #[test]
+    fn sqlserver_module_definitions_require_simple_query_batch() {
+        assert!(requires_simple_query_batch("CREATE FUNCTION dbo.fn_demo() RETURNS INT AS BEGIN RETURN 1; END;"));
+        assert!(requires_simple_query_batch("ALTER PROCEDURE dbo.usp_demo AS SELECT 1;"));
+        assert!(requires_simple_query_batch("CREATE OR ALTER VIEW dbo.vw_demo AS SELECT 1 AS id;"));
+        assert!(requires_simple_query_batch(
+            "-- comment\nALTER TRIGGER dbo.tr_demo ON dbo.t AFTER INSERT AS SELECT 1;"
+        ));
+    }
+
+    #[test]
+    fn sqlserver_regular_ddl_can_use_execute() {
+        assert!(!requires_simple_query_batch("ALTER TABLE dbo.t ADD name NVARCHAR(20);"));
+        assert!(!requires_simple_query_batch("CREATE TABLE dbo.t(id INT);"));
+        assert!(!requires_simple_query_batch("UPDATE dbo.t SET id = 1;"));
     }
 }

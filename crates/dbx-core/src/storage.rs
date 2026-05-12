@@ -7,6 +7,7 @@ use crate::ai::{AiChatMessage, AiConfig, AiConversation};
 use crate::history::HistoryEntry;
 use crate::models::app_settings::AppSettings;
 use crate::models::connection::ConnectionConfig;
+use crate::saved_sql::{SavedSqlFile, SavedSqlFolder, SavedSqlLibrary};
 
 pub struct Storage {
     db: SqlitePool,
@@ -25,13 +26,20 @@ const SCHEMA_STATEMENTS: &[&str] = &[
     )",
     "CREATE TABLE IF NOT EXISTS history (
         id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL DEFAULT '',
         connection_name TEXT NOT NULL DEFAULT '',
         database TEXT NOT NULL DEFAULT '',
         sql_text TEXT NOT NULL DEFAULT '',
         executed_at TEXT NOT NULL DEFAULT '',
         execution_time_ms INTEGER NOT NULL DEFAULT 0,
         success INTEGER NOT NULL DEFAULT 1,
-        error TEXT
+        error TEXT,
+        activity_kind TEXT NOT NULL DEFAULT 'query',
+        operation TEXT NOT NULL DEFAULT '',
+        target TEXT NOT NULL DEFAULT '',
+        affected_rows INTEGER,
+        rollback_sql TEXT,
+        details_json TEXT
     )",
     "CREATE TABLE IF NOT EXISTS ai_config (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -54,6 +62,29 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         id INTEGER PRIMARY KEY CHECK (id = 1),
         settings_json TEXT NOT NULL
     )",
+    "CREATE TABLE IF NOT EXISTS schema_cache (
+        cache_key TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )",
+    "CREATE TABLE IF NOT EXISTS saved_sql_folders (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+    )",
+    "CREATE TABLE IF NOT EXISTS saved_sql_files (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL,
+        folder_id TEXT,
+        name TEXT NOT NULL DEFAULT '',
+        database_name TEXT NOT NULL DEFAULT '',
+        schema_name TEXT,
+        sql_text TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT ''
+    )",
 ];
 
 // ---------------------------------------------------------------------------
@@ -70,9 +101,38 @@ impl Storage {
         for statement in SCHEMA_STATEMENTS {
             sqlx::query(statement).execute(&pool).await.map_err(|e| e.to_string())?;
         }
+        ensure_history_columns(&pool).await?;
 
         Ok(Self { db: pool })
     }
+}
+
+async fn ensure_history_columns(pool: &SqlitePool) -> Result<(), String> {
+    const COLUMNS: &[(&str, &str)] = &[
+        ("activity_kind", "TEXT NOT NULL DEFAULT 'query'"),
+        ("connection_id", "TEXT NOT NULL DEFAULT ''"),
+        ("operation", "TEXT NOT NULL DEFAULT ''"),
+        ("target", "TEXT NOT NULL DEFAULT ''"),
+        ("affected_rows", "INTEGER"),
+        ("rollback_sql", "TEXT"),
+        ("details_json", "TEXT"),
+    ];
+
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('history')")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let existing: std::collections::HashSet<String> = rows.into_iter().map(|(name,)| name).collect();
+    for (name, definition) in COLUMNS {
+        if existing.contains(*name) {
+            continue;
+        }
+        sqlx::query(&format!("ALTER TABLE history ADD COLUMN {name} {definition}"))
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +142,7 @@ impl Storage {
 #[derive(sqlx::FromRow)]
 struct HistoryRow {
     id: String,
+    connection_id: String,
     connection_name: String,
     database: String,
     sql_text: String,
@@ -89,14 +150,21 @@ struct HistoryRow {
     execution_time_ms: i64,
     success: bool,
     error: Option<String>,
+    activity_kind: String,
+    operation: String,
+    target: String,
+    affected_rows: Option<i64>,
+    rollback_sql: Option<String>,
+    details_json: Option<String>,
 }
 
 impl Storage {
     pub async fn save_history_entry(&self, entry: &HistoryEntry) -> Result<(), String> {
         sqlx::query(
             "INSERT OR REPLACE INTO history \
-             (id, connection_name, database, sql_text, executed_at, execution_time_ms, success, error) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, connection_name, database, sql_text, executed_at, execution_time_ms, success, error, \
+              activity_kind, connection_id, operation, target, affected_rows, rollback_sql, details_json) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&entry.id)
         .bind(&entry.connection_name)
@@ -106,6 +174,13 @@ impl Storage {
         .bind(entry.execution_time_ms as i64)
         .bind(entry.success)
         .bind(&entry.error)
+        .bind(&entry.activity_kind)
+        .bind(&entry.connection_id)
+        .bind(&entry.operation)
+        .bind(&entry.target)
+        .bind(entry.affected_rows)
+        .bind(&entry.rollback_sql)
+        .bind(&entry.details_json)
         .execute(&self.db)
         .await
         .map_err(|e| e.to_string())?;
@@ -125,7 +200,8 @@ impl Storage {
     pub async fn load_history_entries(&self, limit: usize, offset: usize) -> Result<Vec<HistoryEntry>, String> {
         let rows: Vec<HistoryRow> = sqlx::query_as(
             "SELECT id, connection_name, database, sql_text, executed_at, \
-             execution_time_ms, success, error \
+             execution_time_ms, success, error, activity_kind, connection_id, operation, target, \
+             affected_rows, rollback_sql, details_json \
              FROM history ORDER BY executed_at DESC LIMIT ? OFFSET ?",
         )
         .bind(limit as i64)
@@ -138,6 +214,7 @@ impl Storage {
             .into_iter()
             .map(|r| HistoryEntry {
                 id: r.id,
+                connection_id: r.connection_id,
                 connection_name: r.connection_name,
                 database: r.database,
                 sql: r.sql_text,
@@ -145,6 +222,12 @@ impl Storage {
                 execution_time_ms: r.execution_time_ms as u128,
                 success: r.success,
                 error: r.error,
+                activity_kind: if r.activity_kind.is_empty() { "query".to_string() } else { r.activity_kind },
+                operation: r.operation,
+                target: r.target,
+                affected_rows: r.affected_rows,
+                rollback_sql: r.rollback_sql,
+                details_json: r.details_json,
             })
             .collect())
     }
@@ -384,6 +467,7 @@ impl Storage {
             sanitized.password = String::new();
             sanitized.ssh_password = String::new();
             sanitized.ssh_key_passphrase = String::new();
+            sanitized.proxy_password = String::new();
             sanitized.connection_string = None;
             let json = serde_json::to_string(&sanitized).map_err(|e| e.to_string())?;
 
@@ -398,6 +482,7 @@ impl Storage {
             persist_secret_in_tx(&mut tx, &config.id, "password", &config.password).await?;
             persist_secret_in_tx(&mut tx, &config.id, "ssh_password", &config.ssh_password).await?;
             persist_secret_in_tx(&mut tx, &config.id, "ssh_key_passphrase", &config.ssh_key_passphrase).await?;
+            persist_secret_in_tx(&mut tx, &config.id, "proxy_password", &config.proxy_password).await?;
             if let Some(cs) = &config.connection_string {
                 persist_secret_in_tx(&mut tx, &config.id, "connection_string", cs).await?;
             } else {
@@ -439,10 +524,164 @@ impl Storage {
             config.password = self.get_secret(&id, "password").await?.unwrap_or_default();
             config.ssh_password = self.get_secret(&id, "ssh_password").await?.unwrap_or_default();
             config.ssh_key_passphrase = self.get_secret(&id, "ssh_key_passphrase").await?.unwrap_or_default();
+            config.proxy_password = self.get_secret(&id, "proxy_password").await?.unwrap_or_default();
             config.connection_string = self.get_secret(&id, "connection_string").await?;
             configs.push(config);
         }
         Ok(configs)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Saved SQL Library
+// ---------------------------------------------------------------------------
+
+#[derive(sqlx::FromRow)]
+struct SavedSqlFolderRow {
+    id: String,
+    connection_id: String,
+    name: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct SavedSqlFileRow {
+    id: String,
+    connection_id: String,
+    folder_id: Option<String>,
+    name: String,
+    database_name: String,
+    schema_name: Option<String>,
+    sql_text: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<SavedSqlFolderRow> for SavedSqlFolder {
+    fn from(row: SavedSqlFolderRow) -> Self {
+        Self {
+            id: row.id,
+            connection_id: row.connection_id,
+            name: row.name,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+impl From<SavedSqlFileRow> for SavedSqlFile {
+    fn from(row: SavedSqlFileRow) -> Self {
+        Self {
+            id: row.id,
+            connection_id: row.connection_id,
+            folder_id: row.folder_id,
+            name: row.name,
+            database: row.database_name,
+            schema: row.schema_name,
+            sql: row.sql_text,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+impl Storage {
+    pub async fn load_saved_sql_library(&self) -> Result<SavedSqlLibrary, String> {
+        let folder_rows: Vec<SavedSqlFolderRow> = sqlx::query_as(
+            "SELECT id, connection_id, name, created_at, updated_at \
+             FROM saved_sql_folders ORDER BY connection_id, name COLLATE NOCASE",
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let file_rows: Vec<SavedSqlFileRow> = sqlx::query_as(
+            "SELECT id, connection_id, folder_id, name, database_name, schema_name, sql_text, created_at, updated_at \
+             FROM saved_sql_files ORDER BY connection_id, folder_id, name COLLATE NOCASE",
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(SavedSqlLibrary {
+            folders: folder_rows.into_iter().map(Into::into).collect(),
+            files: file_rows.into_iter().map(Into::into).collect(),
+        })
+    }
+
+    pub async fn save_saved_sql_folder(&self, folder: &SavedSqlFolder) -> Result<(), String> {
+        sqlx::query(
+            "INSERT INTO saved_sql_folders (id, connection_id, name, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET \
+             connection_id = excluded.connection_id, \
+             name = excluded.name, \
+             updated_at = excluded.updated_at",
+        )
+        .bind(&folder.id)
+        .bind(&folder.connection_id)
+        .bind(&folder.name)
+        .bind(&folder.created_at)
+        .bind(&folder.updated_at)
+        .execute(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_saved_sql_folder(&self, id: &str) -> Result<(), String> {
+        let mut tx = self.db.begin().await.map_err(|e| e.to_string())?;
+        sqlx::query("DELETE FROM saved_sql_files WHERE folder_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        sqlx::query("DELETE FROM saved_sql_folders WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn save_saved_sql_file(&self, file: &SavedSqlFile) -> Result<(), String> {
+        sqlx::query(
+            "INSERT INTO saved_sql_files \
+             (id, connection_id, folder_id, name, database_name, schema_name, sql_text, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET \
+             connection_id = excluded.connection_id, \
+             folder_id = excluded.folder_id, \
+             name = excluded.name, \
+             database_name = excluded.database_name, \
+             schema_name = excluded.schema_name, \
+             sql_text = excluded.sql_text, \
+             updated_at = excluded.updated_at",
+        )
+        .bind(&file.id)
+        .bind(&file.connection_id)
+        .bind(&file.folder_id)
+        .bind(&file.name)
+        .bind(&file.database)
+        .bind(&file.schema)
+        .bind(&file.sql)
+        .bind(&file.created_at)
+        .bind(&file.updated_at)
+        .execute(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn delete_saved_sql_file(&self, id: &str) -> Result<(), String> {
+        sqlx::query("DELETE FROM saved_sql_files WHERE id = ?")
+            .bind(id)
+            .execute(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 
@@ -511,6 +750,49 @@ impl Storage {
             Some((json,)) => serde_json::from_str(&json).map(Some).map_err(|e| e.to_string()),
             None => Ok(None),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Schema cache
+// ---------------------------------------------------------------------------
+
+impl Storage {
+    pub async fn save_schema_cache(&self, cache_key: &str, payload: &serde_json::Value) -> Result<(), String> {
+        let json = serde_json::to_string(payload).map_err(|e| e.to_string())?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO schema_cache (cache_key, payload_json, updated_at) \
+             VALUES (?, ?, datetime('now'))",
+        )
+        .bind(cache_key)
+        .bind(&json)
+        .execute(&self.db)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub async fn load_schema_cache(&self, cache_key: &str) -> Result<Option<serde_json::Value>, String> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT payload_json FROM schema_cache WHERE cache_key = ?")
+            .bind(cache_key)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        match row {
+            Some((json,)) => serde_json::from_str(&json).map(Some).map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn delete_schema_cache_prefix(&self, prefix: &str) -> Result<(), String> {
+        sqlx::query("DELETE FROM schema_cache WHERE cache_key = ? OR substr(cache_key, 1, ?) = ?")
+            .bind(prefix)
+            .bind(prefix.len() as i64)
+            .bind(prefix)
+            .execute(&self.db)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 
@@ -587,8 +869,9 @@ impl Storage {
             sqlx::query(
                 "INSERT OR IGNORE INTO history \
                  (id, connection_name, database, sql_text, executed_at, \
-                  execution_time_ms, success, error) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  execution_time_ms, success, error, activity_kind, connection_id, operation, target, \
+                  affected_rows, rollback_sql, details_json) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&entry.id)
             .bind(&entry.connection_name)
@@ -598,6 +881,13 @@ impl Storage {
             .bind(entry.execution_time_ms as i64)
             .bind(entry.success)
             .bind(&entry.error)
+            .bind(&entry.activity_kind)
+            .bind(&entry.connection_id)
+            .bind(&entry.operation)
+            .bind(&entry.target)
+            .bind(entry.affected_rows)
+            .bind(&entry.rollback_sql)
+            .bind(&entry.details_json)
             .execute(&self.db)
             .await
             .map_err(|e| e.to_string())?;

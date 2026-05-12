@@ -81,6 +81,21 @@ const SQL_KEYWORDS = [
   "LAST_VALUE",
   "NTILE",
   "CROSS",
+  "APPLY",
+  "CROSS APPLY",
+  "OUTER APPLY",
+  "ISJSON",
+  "JSON_ARRAY",
+  "JSON_ARRAYAGG",
+  "JSON_MODIFY",
+  "JSON_OBJECT",
+  "JSON_OBJECTAGG",
+  "JSON_PATH_EXISTS",
+  "JSON_QUERY",
+  "JSON_VALUE",
+  "OPENJSON",
+  "OPENXML",
+  "OPENROWSET",
   "FULL",
   "NATURAL",
   "USING",
@@ -116,7 +131,7 @@ const SQL_KEYWORDS = [
   "PRAGMA",
 ];
 
-const TABLE_TRIGGER_KEYWORDS = new Set(["from", "join", "update", "into", "table", "describe", "explain"]);
+const TABLE_TRIGGER_KEYWORDS = new Set(["from", "join", "update", "into", "table", "describe", "explain", "apply"]);
 const JOIN_MODIFIERS = new Set(["left", "right", "inner", "outer", "cross", "full", "natural"]);
 
 export interface SqlCompletionTable {
@@ -293,7 +308,7 @@ function isInColumnContext(beforeCursor: string): boolean {
   for (let i = lastWords.length - 1; i >= Math.max(0, lastWords.length - 3); i--) {
     const word = lastWords[i]?.toLowerCase().replace(/[^a-z0-9.]/g, "") ?? "";
     // Operators that indicate column context
-    if (/^[=<>!\+\-\*\/(,]$/.test(word)) return true;
+    if (/^[=<>!+\-*/(,]$/.test(word)) return true;
     // Keywords that directly precede column expressions
     if (["where", "on", "having", "set", "and", "or", "not", "is", "like", "in", "between", "select"].includes(word)) {
       return true;
@@ -336,6 +351,7 @@ function extractReferencedTables(sql: string): SqlCompletionReferencedTable[] {
     "inner",
     "outer",
     "cross",
+    "apply",
     "full",
     "natural",
     "on",
@@ -413,7 +429,7 @@ function extractReferencedTables(sql: string): SqlCompletionReferencedTable[] {
   ]);
 
   const pattern =
-    /\b(?:from|join|update|into)\s+((?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*))?)(?:\s+(?:as\s+)?([A-Za-z_][\w$]*))?/gi;
+    /\b(?:from|join|update|into|apply)\s+((?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)(?:\.(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*))?)(?:\s+(?:as\s+)?([A-Za-z_][\w$]*))?/gi;
   const referenced: SqlCompletionReferencedTable[] = [];
   for (const match of sql.matchAll(pattern)) {
     const rawName = match[1];

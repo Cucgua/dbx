@@ -247,6 +247,19 @@ test("appendConnectionToLayout adds to the end", () => {
   assert.deepEqual(layout.order[0], { type: "connection", id: "x" });
 });
 
+test("appendConnectionToLayout adds to target group and expands it", () => {
+  const layout: SidebarLayout = {
+    groups: [{ id: "g1", name: "G", collapsed: true }],
+    order: [{ type: "group", id: "g1", connectionIds: ["a"] }],
+  };
+  const result = appendConnectionToLayout(layout, "b", "g1");
+  const groupEntry = result.order[0];
+
+  assert.equal(result.groups[0].collapsed, false);
+  assert.ok(groupEntry.type === "group");
+  assert.deepEqual(groupEntry.connectionIds, ["a", "b"]);
+});
+
 test("removeConnectionFromSidebarLayout removes from ungrouped", () => {
   let layout = appendConnectionToLayout(emptyLayout(), "x");
   layout = removeConnectionFromSidebarLayout(layout, "x");

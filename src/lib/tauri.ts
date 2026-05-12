@@ -4,11 +4,20 @@ import type {
   ConnectionConfig,
   DatabaseInfo,
   TableInfo,
+  ObjectInfo,
+  ObjectSource,
+  ObjectSourceKind,
   ColumnInfo,
   IndexInfo,
   ForeignKeyInfo,
   TriggerInfo,
   QueryResult,
+  InstalledPlugin,
+  JdbcDriverInfo,
+  JdbcPluginStatus,
+  SavedSqlFile,
+  SavedSqlFolder,
+  SavedSqlLibrary,
 } from "@/types/database";
 import type { AiConfig, AppSettings } from "@/stores/settingsStore";
 
@@ -138,8 +147,34 @@ export async function listDatabases(connectionId: string): Promise<DatabaseInfo[
   return invoke("list_databases", { connectionId });
 }
 
+export async function saveSchemaCache(cacheKey: string, payload: unknown): Promise<void> {
+  return invoke("save_schema_cache", { cacheKey, payload });
+}
+
+export async function loadSchemaCache<T = unknown>(cacheKey: string): Promise<T | null> {
+  return invoke("load_schema_cache", { cacheKey });
+}
+
+export async function deleteSchemaCachePrefix(prefix: string): Promise<void> {
+  return invoke("delete_schema_cache_prefix", { prefix });
+}
+
 export async function listTables(connectionId: string, database: string, schema: string): Promise<TableInfo[]> {
   return invoke("list_tables", { connectionId, database, schema });
+}
+
+export async function listObjects(connectionId: string, database: string, schema: string): Promise<ObjectInfo[]> {
+  return invoke("list_objects", { connectionId, database, schema });
+}
+
+export async function getObjectSource(
+  connectionId: string,
+  database: string,
+  schema: string,
+  name: string,
+  objectType: ObjectSourceKind,
+): Promise<ObjectSource> {
+  return invoke("get_object_source", { connectionId, database, schema, name, objectType });
 }
 
 export async function listSchemas(connectionId: string, database: string): Promise<string[]> {
@@ -250,6 +285,54 @@ export async function loadConnections(): Promise<ConnectionConfig[]> {
   return invoke("load_connections");
 }
 
+export async function listPlugins(): Promise<InstalledPlugin[]> {
+  return invoke("list_plugins");
+}
+
+export async function listJdbcDrivers(): Promise<JdbcDriverInfo[]> {
+  return invoke("list_jdbc_drivers");
+}
+
+export async function importJdbcDrivers(paths: string[]): Promise<JdbcDriverInfo[]> {
+  return invoke("import_jdbc_drivers", { paths });
+}
+
+export async function deleteJdbcDriver(path: string): Promise<JdbcDriverInfo[]> {
+  return invoke("delete_jdbc_driver", { path });
+}
+
+export async function jdbcPluginStatus(): Promise<JdbcPluginStatus> {
+  return invoke("jdbc_plugin_status");
+}
+
+export async function installJdbcPlugin(): Promise<JdbcPluginStatus> {
+  return invoke("install_jdbc_plugin");
+}
+
+export async function uninstallJdbcPlugin(): Promise<JdbcPluginStatus> {
+  return invoke("uninstall_jdbc_plugin");
+}
+
+export async function loadSavedSqlLibrary(): Promise<SavedSqlLibrary> {
+  return invoke("load_saved_sql_library");
+}
+
+export async function saveSavedSqlFolder(folder: SavedSqlFolder): Promise<SavedSqlFolder> {
+  return invoke("save_saved_sql_folder", { folder });
+}
+
+export async function deleteSavedSqlFolder(id: string): Promise<void> {
+  return invoke("delete_saved_sql_folder", { id });
+}
+
+export async function saveSavedSqlFile(file: SavedSqlFile): Promise<SavedSqlFile> {
+  return invoke("save_saved_sql_file", { file });
+}
+
+export async function deleteSavedSqlFile(id: string): Promise<void> {
+  return invoke("delete_saved_sql_file", { id });
+}
+
 export async function saveSidebarLayout(layout: import("@/types/database").SidebarLayout): Promise<void> {
   return invoke("save_sidebar_layout", { layout });
 }
@@ -283,6 +366,8 @@ export interface RedisKeyInfo {
   key_raw: string;
   key_type: string;
   ttl: number;
+  size: number;
+  value_preview: string;
 }
 
 export interface RedisValue {
@@ -292,6 +377,8 @@ export interface RedisValue {
   ttl: number;
   value_is_binary: boolean;
   value: any;
+  total?: number;
+  scan_cursor?: number;
 }
 
 export interface RedisScanResult {
@@ -361,6 +448,39 @@ export async function redisSetRemove(connectionId: string, db: number, keyRaw: s
   return invoke("redis_set_remove", { connectionId, db, keyRaw, member });
 }
 
+export async function redisZadd(
+  connectionId: string,
+  db: number,
+  keyRaw: string,
+  member: string,
+  score: number,
+): Promise<void> {
+  return invoke("redis_zadd", { connectionId, db, keyRaw, member, score });
+}
+
+export async function redisZrem(connectionId: string, db: number, keyRaw: string, member: string): Promise<void> {
+  return invoke("redis_zrem", { connectionId, db, keyRaw, member });
+}
+
+export async function redisSetTtl(connectionId: string, db: number, keyRaw: string, ttl: number): Promise<void> {
+  return invoke("redis_set_ttl", { connectionId, db, keyRaw, ttl });
+}
+
+export async function redisDeleteKeys(connectionId: string, db: number, keyRaws: string[]): Promise<number> {
+  return invoke("redis_delete_keys", { connectionId, db, keyRaws });
+}
+
+export async function redisLoadMore(
+  connectionId: string,
+  db: number,
+  keyRaw: string,
+  keyType: string,
+  cursor: number,
+  count: number,
+): Promise<RedisValue> {
+  return invoke("redis_load_more", { connectionId, db, keyRaw, keyType, cursor, count });
+}
+
 // --- MongoDB ---
 export interface MongoDocumentResult {
   documents: any[];
@@ -416,6 +536,7 @@ export async function mongoDeleteDocument(
 // --- History ---
 export interface HistoryEntry {
   id: string;
+  connection_id?: string;
   connection_name: string;
   database: string;
   sql: string;
@@ -423,6 +544,12 @@ export interface HistoryEntry {
   execution_time_ms: number;
   success: boolean;
   error?: string;
+  activity_kind?: "query" | "data_change" | "schema_change" | "import" | "transfer";
+  operation?: string;
+  target?: string;
+  affected_rows?: number | null;
+  rollback_sql?: string | null;
+  details_json?: string | null;
 }
 
 export async function saveHistory(entry: HistoryEntry): Promise<void> {

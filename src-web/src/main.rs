@@ -11,6 +11,7 @@ use std::sync::Arc;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
+use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{delete, get, post};
 use axum::Router;
@@ -43,7 +44,7 @@ async fn main() {
         let db_path = data_dir.join("dbx.db");
         let storage = Storage::open(&db_path).await.expect("Failed to open storage");
         storage.migrate_from_json(&data_dir).await.expect("Failed to migrate JSON data");
-        Arc::new(AppState::new(storage))
+        Arc::new(AppState::new_with_plugin_dir(storage, data_dir.join("plugins")))
     };
 
     // Password hash: env var takes priority, then database
@@ -80,15 +81,23 @@ async fn main() {
         .route("/connection/disconnect", post(routes::connection::disconnect_db))
         .route("/connection/save", post(routes::connection::save_connections))
         .route("/connection/list", get(routes::connection::load_connections))
+        .route("/plugins", get(routes::plugins::list_plugins))
         // Schema
         .route("/schema/databases", get(routes::schema::list_databases))
         .route("/schema/schemas", get(routes::schema::list_schemas))
         .route("/schema/tables", get(routes::schema::list_tables))
+        .route("/schema/objects", get(routes::schema::list_objects))
+        .route("/schema/object-source", get(routes::schema::get_object_source))
         .route("/schema/columns", get(routes::schema::list_columns))
         .route("/schema/indexes", get(routes::schema::list_indexes))
         .route("/schema/foreign-keys", get(routes::schema::list_foreign_keys))
         .route("/schema/triggers", get(routes::schema::list_triggers))
         .route("/schema/ddl", get(routes::schema::get_ddl))
+        .route(
+            "/schema/cache",
+            post(routes::schema_cache::save_schema_cache).get(routes::schema_cache::load_schema_cache),
+        )
+        .route("/schema/cache-prefix", delete(routes::schema_cache::delete_schema_cache_prefix))
         // Query
         .route("/query/execute", post(routes::query::execute_query))
         .route("/query/execute-multi", post(routes::query::execute_multi))
@@ -119,6 +128,14 @@ async fn main() {
         .route("/history", get(routes::history::load_history).delete(routes::history::clear_history))
         .route("/history/save", post(routes::history::save_history))
         .route("/history/{id}", delete(routes::history::delete_history_entry))
+        // Saved SQL
+        .route(
+            "/saved-sql",
+            get(routes::saved_sql::load_saved_sql_library).post(routes::saved_sql::save_saved_sql_file),
+        )
+        .route("/saved-sql/{id}", delete(routes::saved_sql::delete_saved_sql_file))
+        .route("/saved-sql/folders", post(routes::saved_sql::save_saved_sql_folder))
+        .route("/saved-sql/folders/{id}", delete(routes::saved_sql::delete_saved_sql_folder))
         // AI
         .route("/ai/config", post(routes::ai::save_ai_config).get(routes::ai::load_ai_config))
         .route("/ai/conversation", post(routes::ai::save_ai_conversation))
@@ -151,7 +168,11 @@ async fn main() {
         .with_state(web_state.clone());
 
     // Build app
-    let mut app = Router::new().nest("/api", api).layer(tower_http::trace::TraceLayer::new_for_http()).layer(cors);
+    let mut app = Router::new()
+        .nest("/api", api)
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024))
+        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(cors);
 
     // Static file serving
     if let Ok(static_dir) = std::env::var("DBX_STATIC_DIR") {

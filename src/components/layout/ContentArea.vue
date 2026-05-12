@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, defineAsyncComponent } from "vue";
 import { useI18n } from "vue-i18n";
-import { Loader2, Square, Bot, Table2, GitBranch, BarChart3, RefreshCcw, Save, RotateCcw } from "lucide-vue-next";
+import { Loader2, Square, Bot, Table2, GitBranch, BarChart3, Code2 } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import QueryEditor from "@/components/editor/QueryEditor.vue";
 import DataGrid from "@/components/grid/DataGrid.vue";
 import RedisKeyBrowser from "@/components/redis/RedisKeyBrowser.vue";
 import MongoDocBrowser from "@/components/mongo/MongoDocBrowser.vue";
+import ObjectBrowser from "@/components/objects/ObjectBrowser.vue";
 import ColumnInfoPanel from "@/components/editor/ColumnInfoPanel.vue";
 import type { ColumnInfo } from "@/components/editor/ColumnInfoPanel.vue";
 const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
@@ -39,11 +40,13 @@ const emit = defineEmits<{
   editorSelectionChange: [value: string];
   editorCursorChange: [pos: number];
   formatError: [];
-  reload: [];
-  paginate: [offset: number, limit: number, orderBy?: string];
-  sort: [column: string, direction: "asc" | "desc" | null];
+  reload: [sql?: string, searchText?: string, whereInput?: string, orderBy?: string];
+  paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
+  sort: [column: string, columnIndex: number, direction: "asc" | "desc" | null, whereInput?: string];
   executeSql: [sql: string];
   clickTable: [tableName: string];
+  openObjectTable: [target: { tableName: string; schema?: string }];
+  objectSchemaChange: [schema: string | undefined];
 }>();
 
 const { t } = useI18n();
@@ -71,9 +74,13 @@ const activeSqlFormatDialect = computed<SqlFormatDialect>(() => {
   }
 });
 
-const editorDialect = computed<"mysql" | "postgres">(() =>
-  props.activeConnection?.db_type === "postgres" ? "postgres" : "mysql",
-);
+const editorDialect = computed<"mysql" | "postgres" | "sqlserver">(() => {
+  if (props.activeConnection?.db_type === "postgres") return "postgres";
+  if (props.activeConnection?.db_type === "sqlserver") return "sqlserver";
+  return "mysql";
+});
+
+const shortcutModifier = computed(() => (navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl"));
 
 const hasNumericData = computed(() => {
   const r = props.activeTab.result;
@@ -269,16 +276,24 @@ function onHandleCloseColumnPanel() {
                 :sql="activeTab.lastExecutedSql || activeTab.sql"
                 :loading="activeTab.isExecuting"
                 :editable="!!activeTab.queryAnalysis"
+                context="results"
                 :database-type="activeConnection?.db_type"
                 :connection-id="activeTab.connectionId"
                 :database="activeTab.database"
                 :table-meta="activeTab.tableMeta"
                 :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
-                @reload="emit('reload')"
-                @paginate="
-                  (offset: number, limit: number, orderBy?: string) => emit('paginate', offset, limit, orderBy)
+                @reload="
+                  (sql?: string, searchText?: string, whereInput?: string, orderBy?: string) =>
+                    emit('reload', sql, searchText, whereInput, orderBy)
                 "
-                @sort="(column: string, direction: 'asc' | 'desc' | null) => emit('sort', column, direction)"
+                @paginate="
+                  (offset: number, limit: number, whereInput?: string, orderBy?: string) =>
+                    emit('paginate', offset, limit, whereInput, orderBy)
+                "
+                @sort="
+                  (column: string, columnIndex: number, direction: 'asc' | 'desc' | null, whereInput?: string) =>
+                    emit('sort', column, columnIndex, direction, whereInput)
+                "
               />
               <div
                 v-if="activeTab.result?.columns.includes('Error')"
@@ -303,9 +318,10 @@ function onHandleCloseColumnPanel() {
               </div>
               <div
                 v-else-if="!activeTab.result"
-                class="flex-1 min-h-0 flex items-center justify-center text-muted-foreground text-sm"
+                class="flex-1 min-h-0 flex flex-col items-center justify-center gap-1 text-muted-foreground text-sm"
               >
-                {{ t("editor.pressToExecute") }}
+                <div>{{ t("editor.pressToExecute", { mod: shortcutModifier }) }}</div>
+                <div>{{ t("editor.pressToSaveSql", { mod: shortcutModifier }) }}</div>
               </div>
             </template>
           </div>
@@ -331,45 +347,22 @@ function onHandleCloseColumnPanel() {
           <span
             class="inline-flex items-center rounded border border-border bg-muted/30 px-2 py-0.5 text-muted-foreground truncate"
           >
-            {{ databaseDisplayNameForTab(activeTab.connectionId, activeTab.database) }}
-            <template v-if="activeTab.tableMeta?.schema"> &middot; {{ activeTab.tableMeta.schema }}</template>
+            <template v-if="activeTab.tableMeta?.schema">{{ activeTab.tableMeta.schema }}@</template
+            >{{ databaseDisplayNameForTab(activeTab.connectionId, activeTab.database) }}
           </span>
-          <span v-if="activeTab.tableMeta" class="ml-auto flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-5 text-xs px-1.5"
-              :disabled="dataGridRef?.isSaving"
-              @click="dataGridRef?.onToolbarRefresh()"
-            >
-              <Loader2 v-if="activeTab.isExecuting" class="w-3 h-3 mr-1 animate-spin" />
-              <RefreshCcw v-else class="w-3 h-3 mr-1" />
-              {{ t("grid.refresh") }}
-            </Button>
-            <template v-if="dataGridRef?.useTransaction">
-              <Button
-                :variant="dataGridRef?.transactionActive ? 'default' : 'secondary'"
-                size="sm"
-                class="h-5 text-xs px-1.5"
-                :disabled="!dataGridRef?.transactionActive || dataGridRef?.isSaving"
-                @click="dataGridRef?.onToolbarCommit()"
-              >
-                <Loader2 v-if="dataGridRef?.isSaving" class="w-3 h-3 mr-1 animate-spin" />
-                <Save v-else class="w-3 h-3 mr-1" />
-                {{ t("grid.commit") }}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                class="h-5 text-xs px-1.5"
-                :disabled="!dataGridRef?.transactionActive"
-                @click="dataGridRef?.onToolbarRollback()"
-              >
-                <RotateCcw class="w-3 h-3 mr-1" />
-                {{ t("grid.rollback") }}
-              </Button>
-            </template>
+          <span v-if="activeTab.tableMeta" class="ml-auto text-muted-foreground">
+            {{ activeTab.tableMeta.columns.length }} {{ t("tree.columns") }}
           </span>
+          <Button
+            v-if="activeTab.tableMeta && activeTab.connectionId"
+            variant="ghost"
+            size="sm"
+            class="h-5 text-xs px-1.5 shrink-0"
+            :class="{ 'bg-accent': dataGridRef?.showDdl }"
+            @click="dataGridRef?.toggleDdl()"
+          >
+            <Code2 class="h-3.5 w-3.5" /> DDL
+          </Button>
         </div>
         <DataGrid
           v-if="activeTab.result"
@@ -380,14 +373,25 @@ function onHandleCloseColumnPanel() {
           :sql="activeTab.sql"
           :loading="activeTab.isExecuting"
           :editable="!!activeTab.tableMeta?.primaryKeys?.length"
+          context="table-data"
+          :initial-where-input="activeTab.whereInput"
           :database-type="activeConnection?.db_type"
           :connection-id="activeTab.connectionId"
           :database="activeTab.database"
           :table-meta="activeTab.tableMeta"
           :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
-          @reload="emit('reload')"
-          @paginate="(offset: number, limit: number, orderBy?: string) => emit('paginate', offset, limit, orderBy)"
-          @sort="(column: string, direction: 'asc' | 'desc' | null) => emit('sort', column, direction)"
+          @reload="
+            (sql?: string, searchText?: string, whereInput?: string, orderBy?: string) =>
+              emit('reload', sql, searchText, whereInput, orderBy)
+          "
+          @paginate="
+            (offset: number, limit: number, whereInput?: string, orderBy?: string) =>
+              emit('paginate', offset, limit, whereInput, orderBy)
+          "
+          @sort="
+            (column: string, columnIndex: number, direction: 'asc' | 'desc' | null, whereInput?: string) =>
+              emit('sort', column, columnIndex, direction, whereInput)
+          "
         />
         <div
           v-else-if="activeTab.isExecuting"
@@ -429,6 +433,18 @@ function onHandleCloseColumnPanel() {
           :collection="activeTab.sql"
         />
       </div>
+    </template>
+
+    <!-- Objects mode: virtualized database object browser -->
+    <template v-else-if="activeTab.mode === 'objects' && activeConnection">
+      <ObjectBrowser
+        :key="`${activeTab.id}-${activeTab.objectBrowser?.schema || ''}`"
+        :connection="activeConnection"
+        :database="activeTab.database"
+        :schema="activeTab.objectBrowser?.schema"
+        @open-table="emit('openObjectTable', $event)"
+        @schema-change="emit('objectSchemaChange', $event)"
+      />
     </template>
   </div>
 </template>

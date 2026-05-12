@@ -34,12 +34,17 @@ pub async fn preview_import(
         let file_name = field.file_name().unwrap_or("upload.csv").to_string();
         let data = field.bytes().await.map_err(|e| AppError(e.to_string()))?;
 
+        if data.len() > 100 * 1024 * 1024 {
+            return Err(AppError(format!("File too large: {} bytes (max {} bytes)", data.len(), 100 * 1024 * 1024)));
+        }
+
         let file_path = tmp_dir.join(&file_name);
         std::fs::write(&file_path, &data).map_err(|e| AppError(e.to_string()))?;
 
         let file_path_str = file_path.to_string_lossy().to_string();
-        let preview = table_import::preview_table_import_file_core(&file_path_str).map_err(AppError)?;
-
+        let preview = table_import::preview_table_import_file_core(&file_path_str);
+        let _ = std::fs::remove_file(&file_path);
+        let preview = preview.map_err(AppError)?;
         return Ok(Json(serde_json::to_value(preview).map_err(|e| AppError(e.to_string()))?));
     }
 

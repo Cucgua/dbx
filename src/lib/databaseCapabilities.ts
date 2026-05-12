@@ -7,6 +7,7 @@ export const SCHEMA_AWARE_TYPES = new Set<DatabaseType>([
   "redshift",
   "dameng",
   "gaussdb",
+  "jdbc",
 ]);
 
 export const SQL_FILE_UNSUPPORTED_TYPES = new Set<DatabaseType>(["redis", "mongodb", "elasticsearch"]);
@@ -52,6 +53,19 @@ export const TABLE_IMPORT_SUPPORTED_TYPES = new Set<DatabaseType>([
 
 export const TABLE_STRUCTURE_SUPPORTED_TYPES = new Set<DatabaseType>(["mysql", "postgres", "sqlite", "sqlserver"]);
 
+export const CREATE_DATABASE_SUPPORTED_TYPES = new Set<DatabaseType>([
+  "mysql",
+  "postgres",
+  "sqlserver",
+  "clickhouse",
+  "oracle",
+  "dameng",
+  "gaussdb",
+  "doris",
+  "starrocks",
+  "redshift",
+]);
+
 export const FIELD_LINEAGE_SUPPORTED_TYPES = new Set<DatabaseType>([
   "mysql",
   "postgres",
@@ -63,9 +77,11 @@ export const FIELD_LINEAGE_SUPPORTED_TYPES = new Set<DatabaseType>([
   "gaussdb",
 ]);
 
+export const SINGLE_DATABASE_TYPES = new Set<DatabaseType>(["oracle", "dameng"]);
+
 export const FETCH_FIRST_TYPES = new Set<DatabaseType>(["oracle", "dameng"]);
 
-export const TREE_SCHEMA_TYPES = new Set<DatabaseType>(["postgres", "sqlserver", "gaussdb"]);
+export const TREE_SCHEMA_TYPES = new Set<DatabaseType>(["postgres", "redshift", "sqlserver", "gaussdb", "jdbc"]);
 
 export const PG_LIKE_STRUCTURE_TYPES = new Set<DatabaseType>(["postgres", "redshift", "gaussdb"]);
 
@@ -94,6 +110,10 @@ export const DIAGRAM_SQL_TYPES = new Set<DatabaseType>([
 
 export function isSchemaAware(dbType?: DatabaseType): boolean {
   return !!dbType && SCHEMA_AWARE_TYPES.has(dbType);
+}
+
+export function isSingleDatabase(dbType?: DatabaseType): boolean {
+  return !!dbType && SINGLE_DATABASE_TYPES.has(dbType);
 }
 
 export function usesFetchFirst(dbType?: DatabaseType): boolean {

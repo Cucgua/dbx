@@ -30,16 +30,21 @@ export function tabDisplayTitle(tab: QueryTab): string {
   const database = databaseDisplayNameForTab(tab.connectionId, tab.database);
   if (isPreviewTab(tab)) return tab.title;
   if (tab.mode === "data" && tab.tableMeta?.tableName) {
-    return tab.tableMeta.tableName;
+    const suffix = tab.tableMeta.schema ? `@${database}.${tab.tableMeta.schema}` : `@${database}`;
+    return `${tab.tableMeta.tableName}${suffix}`;
   }
   if (tab.mode === "query") {
-    return `${connectionDisplayName(tab.connectionId)} | ${database}`;
+    return `${connectionDisplayName(tab.connectionId)}@${database}`;
   }
   if (tab.mode === "mongo" && tab.sql) {
-    return `${database} | ${tab.sql}`;
+    return `${tab.sql}@${database}`;
   }
   if (tab.mode === "redis") {
-    return `${connectionDisplayName(tab.connectionId)} | ${database}`;
+    return `${connectionDisplayName(tab.connectionId)}@${database}`;
+  }
+  if (tab.mode === "objects") {
+    const schema = tab.objectBrowser?.schema;
+    return schema ? `${schema}@${database}` : `${tab.title}@${database}`;
   }
   return tab.title;
 }
@@ -58,6 +63,9 @@ export function tabTooltipLines(tab: QueryTab): { label: string; value: string }
   if (tab.mode === "mongo" && tab.sql) {
     lines.push({ label: t("tabs.tooltipCollection"), value: tab.sql });
   }
+  if (tab.mode === "objects" && tab.objectBrowser?.schema) {
+    lines.push({ label: t("tabs.tooltipSchema"), value: tab.objectBrowser.schema });
+  }
   return lines;
 }
 
@@ -67,5 +75,6 @@ export function tabModeLabel(tab: QueryTab): string {
   if (tab.mode === "query") return t("tabs.sql");
   if (tab.mode === "mongo") return t("tabs.mongo");
   if (tab.mode === "redis") return t("tabs.redis");
+  if (tab.mode === "objects") return t("tabs.objects");
   return tab.mode;
 }

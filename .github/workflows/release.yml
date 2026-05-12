@@ -32,11 +32,26 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Compute Rust dependency hash
+        id: deps-hash
+        shell: bash
+        run: |
+          {
+            find . -name Cargo.toml -not -path './target/*' -print0 \
+              | sort -z \
+              | xargs -0 sed -E '/^version = /d'
+            grep -v '^version = ' Cargo.lock
+          } | sha256sum | cut -d' ' -f1 | {
+            read -r hash
+            echo "hash=${hash:0:20}" >> "$GITHUB_OUTPUT"
+          }
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './ -> target'
-          shared-key: release-x86_64-pc-windows-msvc
+          shared-key: release-x86_64-pc-windows-msvc-${{ steps.deps-hash.outputs.hash }}
+          add-rust-environment-hash-key: false
           cache-on-failure: true
 
       - name: Setup Tauri signing key
@@ -62,3 +77,27 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --target x86_64-pc-windows-msvc
+
+      - name: Upload Windows portable ZIP
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = "${env:GITHUB_REF_NAME}".TrimStart("v")
+          $portableRoot = "portable"
+          $portableDir = Join-Path $portableRoot "DBX_${version}_x64"
+          $zipName = "DBX_${version}_x64-portable.zip"
+          $exePath = "target/x86_64-pc-windows-msvc/release/dbx.exe"
+
+          if (!(Test-Path $exePath)) {
+            Write-Error "Missing Windows executable: $exePath"
+            exit 1
+          }
+
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item $exePath (Join-Path $portableDir "DBX.exe") -Force
+          Copy-Item "LICENSE" (Join-Path $portableDir "LICENSE") -Force
+          Copy-Item "README.md" (Join-Path $portableDir "README.md") -Force
+
+          Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $zipName -Force
+          gh release upload "${env:GITHUB_REF_NAME}" $zipName --repo "${env:GITHUB_REPOSITORY}" --clobber

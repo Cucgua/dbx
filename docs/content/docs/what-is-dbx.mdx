@@ -1,79 +1,68 @@
 ---
 title: What is DBX?
-description: Open-source, lightweight, AI-powered database management tool. 15 MB for 25+ databases.
+description: DBX is an open-source database workspace for connections, SQL editing, data grids, schema tools, AI assistance, and self-hosted access.
 ---
 
-<Callout type="info">
-15 MB install size. 25+ database engines. Built-in AI assistant. Desktop + Docker deployment.
-</Callout>
+DBX is an open-source database workspace. It brings the daily database workflow into one place: connecting to databases, writing SQL, browsing and editing data, exploring schemas, comparing structures, importing and exporting data, and using AI assistance when it helps.
 
-DBX is an open-source, lightweight, cross-platform database management tool built with [Tauri 2](https://tauri.app/) and Rust. No bundled Chromium — just a 15 MB installer that manages MySQL, PostgreSQL, MongoDB, Redis, and 25+ more databases.
+DBX is available as both a desktop app and a Docker deployment. Use the desktop app for local daily work, or self-host the Docker version when you want browser-based access from a server.
 
 ![DBX Screenshot](/screenshot-dark.png)
 
-## Why DBX?
+## Where DBX Fits
 
 <Cards>
-  <Card title="Ultra-Lightweight" href="/en/docs/getting-started">
-    ~15 MB installer, no Chromium. Tauri 2 + Rust for native performance and instant startup.
+  <Card title="Daily Query Work" href="/en/docs/query-editor">
+    Write, format, and execute SQL, then use query history to return to previous investigation steps.
   </Card>
-  <Card title="25+ Databases" href="/en/docs/databases">
-    One tool for MySQL, PostgreSQL, SQLite, Redis, MongoDB, ClickHouse, SQL Server, Oracle, and more.
+  <Card title="Browse and Edit Data" href="/en/docs/data-grid">
+    Filter, sort, edit, preview SQL, and decide when changes should be committed to the database.
   </Card>
-  <Card title="AI-Powered" href="/en/docs/ai-assistant">
-    Built-in AI assistant: natural language to SQL, query optimization, error fixing. MCP Server lets Claude/Cursor query your databases directly.
+  <Card title="Understand Schemas" href="/en/docs/schema-browser">
+    Browse databases, schemas, tables, columns, indexes, foreign keys, and triggers from the sidebar.
   </Card>
-  <Card title="Secure by Default" href="/en/docs/ssh-tunnel">
-    Passwords in system keyring (macOS Keychain / Windows Credential Manager). SSH tunnels and AES-256-GCM encrypted config export.
+  <Card title="Compare Environments" href="/en/docs/schema-diff">
+    Compare dev, staging, and production schemas, then generate SQL you can review before syncing.
   </Card>
 </Cards>
 
-## Key Features
+## Core Capabilities
 
-<Cards>
-  <Card title="Query Editor" href="/en/docs/query-editor">
-    Powered by CodeMirror 6. Syntax highlighting, smart autocomplete, JOIN suggestions, query history.
-  </Card>
-  <Card title="Data Grid" href="/en/docs/data-grid">
-    Virtual scrolling for 100K+ rows. Inline editing with SQL preview before saving.
-  </Card>
-  <Card title="Schema Browser" href="/en/docs/schema-browser">
-    Tree view with search, pin, context menus, column comments, and connection colors.
-  </Card>
-  <Card title="Schema Diff" href="/en/docs/schema-diff">
-    Compare schemas across databases and generate sync SQL. Dev vs Production in one click.
-  </Card>
-  <Card title="Data Transfer" href="/en/docs/data-transfer">
-    Cross-engine migration — MySQL to PostgreSQL with automatic type mapping.
-  </Card>
-  <Card title="Field Lineage" href="/en/docs/field-lineage">
-    Trace column relationships across foreign keys, views, and query history with confidence levels.
-  </Card>
-</Cards>
-
-## How DBX Compares
-
-| | DBX | DBeaver | Navicat | TablePlus |
-|---|---|---|---|---|
-| **Install Size** | ~15 MB | ~300 MB | ~200 MB | ~80 MB |
-| **Price** | Free (AGPL) | Free / $230 | $180+ | $99+ |
-| **Database Support** | 25+ | 80+ | 15+ | 20+ |
-| **Built-in AI** | ✅ | ❌ | ✅ | ❌ |
-| **MCP Integration** | ✅ | ❌ | ❌ | ❌ |
-| **Docker Self-Host** | ✅ | ❌ | ❌ | ❌ |
-| **Field Lineage** | ✅ | ❌ | ❌ | ❌ |
-| **Schema Diff** | ✅ | ✅ | ✅ | ❌ |
-
-## Tech Stack
-
-| Layer | Technology |
+| Capability | Details |
 |---|---|
-| Framework | [Tauri 2](https://tauri.app/) |
-| Frontend | [Vue 3](https://vuejs.org/) + TypeScript |
-| UI | [shadcn-vue](https://www.shadcn-vue.com/) + Tailwind CSS |
-| Editor | [CodeMirror 6](https://codemirror.net/) |
-| Backend | Rust + sqlx / tiberius / redis-rs / mongodb |
+| Database connections | MySQL, PostgreSQL, SQLite, Redis, MongoDB, DuckDB, ClickHouse, SQL Server, Oracle, and more |
+| SQL editor | CodeMirror 6, syntax highlighting, metadata completion, formatting, selected execution, and query history |
+| Data grid | Virtual scrolling, inline editing, WHERE/ORDER BY controls, SQL preview, and export tools |
+| Schema tools | Table structure editing, schema diff, ER diagrams, field lineage, database export, and SQL file execution |
+| AI assistance | Generate SQL, explain queries, suggest optimizations, and help fix errors using connection metadata |
+| Self-hosted access | Run DBX with Docker and access it from a browser |
 
-## License
+## Product Principles
 
-[AGPL-3.0](https://github.com/t8y2/dbx/blob/main/LICENSE)
+DBX focuses on the core work of a database client instead of turning every operation into a separate tool. A few details shape the product:
+
+- **Less context switching**: schema browsing, SQL editing, data grids, and results stay close together.
+- **Reviewable operations**: data and schema changes show the SQL before they are applied where possible.
+- **Clear environment separation**: connection colors, pins, search, and context menus help separate dev, test, and production.
+- **Flexible deployment**: the desktop app fits personal workflows; the Docker version fits shared or server-hosted access.
+
+## Data and Security
+
+- Connection configuration is stored in a local SQLite database under the app data directory. Sensitive fields such as passwords, SSH passwords, SSH key passphrases, and connection strings are removed from the normal connection JSON and stored separately in the `connection_secrets` table.
+- Config export can be encrypted with AES-GCM for migration between machines.
+- SSH tunnels can connect to databases behind firewalls or private networks.
+- DBX does not automatically execute AI-generated SQL; the user still reviews and runs it.
+
+## Next Steps
+
+<Cards>
+  <Card title="Install and Connect" href="/en/docs/getting-started">
+    Start with the desktop app or Docker version, then create your first database connection.
+  </Card>
+  <Card title="Review Database Support" href="/en/docs/databases">
+    Check supported engines, compatible protocols, and ODBC-specific setup.
+  </Card>
+  <Card title="Set Up AI Assistant" href="/en/docs/ai-assistant">
+    Add an API key and use natural language in the SQL editor.
+  </Card>
+</Cards>

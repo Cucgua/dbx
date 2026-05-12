@@ -13,7 +13,8 @@ export type DatabaseType =
   | "starrocks"
   | "redshift"
   | "dameng"
-  | "gaussdb";
+  | "gaussdb"
+  | "jdbc";
 
 export interface ConnectionConfig {
   id: string;
@@ -37,10 +38,55 @@ export interface ConnectionConfig {
   ssh_key_path?: string;
   ssh_key_passphrase?: string;
   ssh_expose_lan?: boolean;
+  ssh_connect_timeout_secs?: number;
+  proxy_enabled?: boolean;
+  proxy_type?: "socks5" | "http";
+  proxy_host?: string;
+  proxy_port?: number;
+  proxy_username?: string;
+  proxy_password?: string;
   ssl?: boolean;
   sysdba?: boolean;
   oracle_connect_method?: "service_name" | "sid" | "connect_string";
   connection_string?: string;
+  jdbc_driver_class?: string;
+  jdbc_driver_paths?: string[];
+}
+
+export interface PluginDriverManifest {
+  id: string;
+  label: string;
+  kind: string;
+  database_type?: string;
+}
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version?: string;
+  protocol_version?: number;
+  description?: string;
+  executable?: string;
+  drivers: PluginDriverManifest[];
+}
+
+export interface InstalledPlugin {
+  manifest: PluginManifest;
+  path: string;
+}
+
+export interface JdbcDriverInfo {
+  name: string;
+  path: string;
+  size: number;
+}
+
+export interface JdbcPluginStatus {
+  installed: boolean;
+  version?: string | null;
+  protocol_version?: number | null;
+  compatible: boolean;
+  path: string;
 }
 
 export interface DatabaseInfo {
@@ -50,6 +96,25 @@ export interface DatabaseInfo {
 export interface TableInfo {
   name: string;
   table_type: string;
+  comment?: string | null;
+}
+
+export type DatabaseObjectType = "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
+
+export interface ObjectInfo {
+  name: string;
+  object_type: DatabaseObjectType | string;
+  schema?: string | null;
+  comment?: string | null;
+}
+
+export type ObjectSourceKind = "VIEW" | "PROCEDURE" | "FUNCTION";
+
+export interface ObjectSource {
+  name: string;
+  object_type: ObjectSourceKind;
+  schema?: string | null;
+  source: string;
 }
 
 export interface ColumnInfo {
@@ -108,6 +173,10 @@ export type TreeNodeType =
   | "group-indexes"
   | "group-fkeys"
   | "group-triggers"
+  | "object-browser"
+  | "saved-sql-root"
+  | "saved-sql-folder"
+  | "saved-sql-file"
   | "column"
   | "index"
   | "fkey"
@@ -143,6 +212,10 @@ export interface TreeNode {
   database?: string;
   schema?: string;
   tableName?: string;
+  objectCount?: number;
+  hiddenChildren?: TreeNode[];
+  savedSqlId?: string;
+  savedSqlFolderId?: string;
   meta?: ColumnInfo | IndexInfo | ForeignKeyInfo | TriggerInfo;
 }
 
@@ -153,7 +226,10 @@ export interface QueryTab {
   database: string;
   schema?: string;
   sql: string;
+  savedSqlId?: string;
   lastExecutedSql?: string;
+  resultBaseSql?: string;
+  resultSortedSql?: string;
   pinned?: boolean;
   result?: QueryResult;
   results?: QueryResult[];
@@ -167,7 +243,11 @@ export interface QueryTab {
   executionId?: string;
   isExplaining?: boolean;
   explainExecutionId?: string;
-  mode: "data" | "query" | "redis" | "mongo";
+  mode: "data" | "query" | "redis" | "mongo" | "objects";
+  objectBrowser?: {
+    schema?: string;
+    objectType?: "tables";
+  };
   tableMeta?: {
     schema?: string;
     tableName: string;
@@ -180,4 +260,30 @@ export interface QueryTab {
     selectStar: boolean;
     columns: string[];
   };
+  whereInput?: string;
+}
+
+export interface SavedSqlFolder {
+  id: string;
+  connectionId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedSqlFile {
+  id: string;
+  connectionId: string;
+  folderId?: string;
+  name: string;
+  database: string;
+  schema?: string;
+  sql: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedSqlLibrary {
+  folders: SavedSqlFolder[];
+  files: SavedSqlFile[];
 }

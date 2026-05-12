@@ -1,43 +1,61 @@
 ---
 title: Table Structure Editor
-description: Visually manage columns and indexes without writing DDL. Preview ALTER TABLE statements before applying.
+description: Edit table columns and indexes visually, then preview DDL before applying changes.
 ---
 
-<Callout type="info">
-Edit table structure visually — no `ALTER TABLE` by hand. All changes are previewed as SQL before execution.
-</Callout>
+The table structure editor modifies columns, indexes, and some constraints for a single table. Use it for focused structure changes or to generate reviewable DDL without writing it by hand.
 
-## Column Editor
+## What You Can Edit
 
-Manage columns through a visual interface:
-
-- **Add column** — Set name, type, nullable, default, and comment
-- **Modify column** — Rename, change type, adjust defaults
-- **Delete column** — Mark for removal
-
-All changes are staged locally until you confirm.
-
-## Index Management
-
-Manage indexes in the same interface:
-
-- Create new indexes (unique, non-unique) with selected columns
-- Modify existing index configurations
-- Remove indexes
-
-## SQL Preview
-
-<Callout type="info">
-Before applying, DBX shows the exact `ALTER TABLE` statements — `ADD COLUMN`, `MODIFY COLUMN`, `DROP COLUMN`, `CREATE INDEX`, etc. Review and confirm before committing.
-</Callout>
-
-## Database Support
-
-| Engine | Support |
+| Object | Supported Actions |
 |---|---|
-| MySQL | Full |
-| PostgreSQL | Full |
-| SQLite | Full |
-| SQL Server | Full |
+| Columns | Add and delete columns; MySQL/PostgreSQL can modify existing columns, and SQLite can rename columns |
+| Indexes | Add indexes and delete existing non-primary indexes |
+| Comments | MySQL/PostgreSQL can write column comments; PostgreSQL can write index comments |
 
-Behavior adapts to the capabilities of each engine. For example, SQLite's limited `ALTER TABLE` support is handled transparently by DBX.
+Database engines differ in DDL capabilities. DBX generates SQL for the active connection type.
+
+## Workflow
+
+<Steps>
+  <Step>
+    ### Open Table Structure
+
+    Right-click a table in the sidebar and open its structure view.
+  </Step>
+  <Step>
+    ### Edit Columns or Indexes
+
+    Add, modify, or remove columns and indexes in the visual editor. Changes are staged locally first.
+  </Step>
+  <Step>
+    ### Review SQL Preview
+
+    Before saving, review generated statements such as `ALTER TABLE`, `CREATE INDEX`, and `DROP INDEX`.
+  </Step>
+  <Step>
+    ### Apply Changes
+
+    Execute the SQL only after confirming it matches your intent.
+  </Step>
+</Steps>
+
+<Callout type="warn">
+Dropping columns, changing column types, and changing nullable constraints can affect existing data. Back up production databases first and confirm application code does not depend on the old structure.
+</Callout>
+
+## Engine Differences
+
+| Engine | Notes |
+|---|---|
+| MySQL / MariaDB | Add, delete, and modify columns; add and delete indexes |
+| PostgreSQL | Rename columns, change type/default/nullability/comments, and add/delete indexes |
+| SQLite | Add, delete, and rename columns; more complex existing-column edits are blocked with a warning |
+| SQL Server / Oracle and others | Adding columns and indexes is available; editing existing columns is currently blocked by the editor |
+
+## Recommendations
+
+- Use the editor for small, focused changes
+- For large migrations, generate SQL and review it in your code repository
+- For environment sync, use [Schema Diff](/en/docs/schema-diff)
+- When impact is uncertain, back up first with [Database Export](/en/docs/database-export)

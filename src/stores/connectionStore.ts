@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { uuid } from "@/lib/utils";
-import { ref, watch } from "vue";
+import { ref, computed, watch } from "vue";
 import type { ColumnInfo, ConnectionConfig, SidebarLayout, TreeNode } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
 import {
@@ -20,10 +20,19 @@ import {
 import type { SqlCompletionColumn, SqlCompletionTable } from "@/lib/sqlCompletion";
 import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { isSchemaAware } from "@/lib/databaseCapabilities";
+import { isSchemaAware, TREE_SCHEMA_TYPES } from "@/lib/databaseCapabilities";
 import { isDefaultDatabase as isConfigDefaultDatabase } from "@/lib/defaultDatabase";
+import { buildDatabaseTreeNodes } from "@/lib/databaseTree";
+import { buildSqlServerDatabaseTreeNodes, SQLSERVER_DEFAULT_SCHEMA } from "@/lib/sqlServerTree";
+import { buildTableTreeNodes, expandCachedObjectBrowserNodes } from "@/lib/tableTree";
+import { useSavedSqlStore } from "@/stores/savedSqlStore";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
+type ImportSource = "dbx" | "navicat" | "dbeaver";
+
+interface LoadTreeOptions {
+  force?: boolean;
+}
 
 export const useConnectionStore = defineStore("connection", () => {
   const connections = ref<ConnectionConfig[]>([]);
@@ -38,12 +47,20 @@ export const useConnectionStore = defineStore("connection", () => {
   const treeNodes = ref<TreeNode[]>([]);
   const pinnedTreeNodeIds = ref<Set<string>>(loadPinnedTreeNodeIds());
   const connectedIds = ref<Set<string>>(new Set());
+  const loadedTreeNodeChildrenIds = ref<Set<string>>(new Set());
   const connectionErrors = ref<Record<string, string>>({});
   const editingConnectionId = ref<string | null>(null);
+  const newConnectionGroupId = ref<string | null>(null);
   const completionTablesCache = ref<Record<string, SqlCompletionTable[]>>({});
   const completionColumnsCache = ref<Record<string, ColumnInfo[]>>({});
   const transferSource = ref<{ connectionId: string; database: string } | null>(null);
-  const schemaDiffSource = ref<{ connectionId: string; database: string } | null>(null);
+  const schemaDiffSource = ref<{ connectionId: string; database: string; schema?: string } | null>(null);
+  const dataCompareSource = ref<{
+    connectionId: string;
+    database: string;
+    schema?: string;
+    tableName?: string;
+  } | null>(null);
   const sqlFileSource = ref<{ connectionId: string; database: string } | null>(null);
   const diagramSource = ref<{
     connectionId: string;
@@ -86,8 +103,19 @@ export const useConnectionStore = defineStore("connection", () => {
     editingConnectionId.value = null;
   }
 
+  function startCreatingConnectionInGroup(groupId: string) {
+    stopEditing();
+    newConnectionGroupId.value = groupId;
+  }
+
+  function stopCreatingConnectionInGroup() {
+    newConnectionGroupId.value = null;
+  }
+
+  const configById = computed(() => new Map(connections.value.map((c) => [c.id, c])));
+
   function getConfig(connectionId: string) {
-    return connections.value.find((c) => c.id === connectionId);
+    return configById.value.get(connectionId);
   }
 
   function connectionErrorMessage(error: unknown): string {
@@ -96,17 +124,12 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   function setConnectionError(connectionId: string, message: string) {
-    connectionErrors.value = {
-      ...connectionErrors.value,
-      [connectionId]: message,
-    };
+    connectionErrors.value[connectionId] = message;
   }
 
   function clearConnectionError(connectionId: string) {
     if (!connectionErrors.value[connectionId]) return;
-    const next = { ...connectionErrors.value };
-    delete next[connectionId];
-    connectionErrors.value = next;
+    delete connectionErrors.value[connectionId];
   }
 
   function recordConnectionError(connectionId: string, error: unknown): string {
@@ -139,6 +162,8 @@ export const useConnectionStore = defineStore("connection", () => {
     let dbType = config.db_type;
     if ((profile === "gaussdb" || profile === "opengauss") && dbType === "postgres") {
       dbType = "gaussdb" as ConnectionConfig["db_type"];
+    } else if (profile === "redshift" && dbType === "postgres") {
+      dbType = "redshift" as ConnectionConfig["db_type"];
     }
 
     return {
@@ -148,6 +173,9 @@ export const useConnectionStore = defineStore("connection", () => {
       driver_label: config.driver_label || labelMap[profile] || config.db_type,
       url_params: config.url_params || "",
       oracle_connect_method: config.oracle_connect_method || "service_name",
+      ssh_connect_timeout_secs: config.ssh_connect_timeout_secs || 5,
+      proxy_type: config.proxy_type || "socks5",
+      proxy_port: config.proxy_port || 1080,
     };
   }
 
@@ -178,6 +206,138 @@ export const useConnectionStore = defineStore("connection", () => {
 
   function setChildren(parent: TreeNode, children: TreeNode[]) {
     parent.children = orderPinnedFirst(children.map(pinTreeNode), (node) => !!node.pinned);
+    loadedTreeNodeChildrenIds.value.add(parent.id);
+  }
+
+  function buildSavedSqlRootNode(connectionId: string, existingRoot?: TreeNode): TreeNode {
+    const savedSqlStore = useSavedSqlStore();
+    const existingById = new Map<string, TreeNode>();
+    const collectExisting = (node?: TreeNode) => {
+      if (!node) return;
+      existingById.set(node.id, node);
+      node.children?.forEach(collectExisting);
+    };
+    collectExisting(existingRoot);
+
+    const fileNode = (file: ReturnType<typeof savedSqlStore.listFiles>[number]): TreeNode => ({
+      id: `${connectionId}:__saved_sql:file:${file.id}`,
+      label: file.name,
+      type: "saved-sql-file",
+      connectionId,
+      database: file.database,
+      schema: file.schema,
+      savedSqlId: file.id,
+    });
+
+    const folderNodes = savedSqlStore.listFolders(connectionId).map((folder) => {
+      const id = `${connectionId}:__saved_sql:folder:${folder.id}`;
+      const existing = existingById.get(id);
+      return {
+        id,
+        label: folder.name,
+        type: "saved-sql-folder" as const,
+        connectionId,
+        savedSqlFolderId: folder.id,
+        isExpanded: existing?.isExpanded ?? true,
+        children: savedSqlStore.listFiles(connectionId, folder.id).map(fileNode),
+      };
+    });
+
+    const rootId = `${connectionId}:__saved_sql`;
+    return {
+      id: rootId,
+      label: "tree.savedSql",
+      type: "saved-sql-root",
+      connectionId,
+      isExpanded: existingRoot?.isExpanded ?? true,
+      children: [...folderNodes, ...savedSqlStore.listFiles(connectionId).map(fileNode)],
+    };
+  }
+
+  function withSavedSqlRoot(connectionId: string, children: TreeNode[], existingConnectionNode?: TreeNode): TreeNode[] {
+    const existingRoot = existingConnectionNode?.children?.find((child) => child.type === "saved-sql-root");
+    const nonSavedChildren = children.filter((child) => child.type !== "saved-sql-root");
+    return [buildSavedSqlRootNode(connectionId, existingRoot), ...nonSavedChildren];
+  }
+
+  function refreshSavedSqlTree(connectionId?: string) {
+    const refresh = (nodes: TreeNode[]) => {
+      for (const node of nodes) {
+        if (node.type === "connection" && node.connectionId && (!connectionId || node.connectionId === connectionId)) {
+          node.children = withSavedSqlRoot(
+            node.connectionId,
+            (node.children || []).filter((child) => child.type !== "saved-sql-root"),
+            node,
+          );
+        }
+        if (node.children) refresh(node.children);
+      }
+    };
+    refresh(treeNodes.value);
+  }
+
+  function schemaCacheKey(...parts: string[]): string {
+    return parts.map((part) => encodeURIComponent(part)).join(":");
+  }
+
+  async function loadPersistedTreeChildren(node: TreeNode, cacheKey: string): Promise<boolean> {
+    const children = await api.loadSchemaCache<TreeNode[]>(cacheKey).catch(() => null);
+    if (!children) return false;
+    const normalizedChildren = expandCachedObjectBrowserNodes(children);
+    setChildren(
+      node,
+      node.type === "connection" && node.connectionId
+        ? withSavedSqlRoot(node.connectionId, normalizedChildren, node)
+        : normalizedChildren,
+    );
+    node.isExpanded = true;
+    return true;
+  }
+
+  async function savePersistedTreeChildren(cacheKey: string, children: TreeNode[]) {
+    await api.saveSchemaCache(cacheKey, children).catch(() => undefined);
+  }
+
+  function useCachedChildren(node: TreeNode, options?: LoadTreeOptions): boolean {
+    if (options?.force || !loadedTreeNodeChildrenIds.value.has(node.id)) return false;
+    node.isExpanded = true;
+    return true;
+  }
+
+  function clearLoadedChildrenCache(prefix: string) {
+    for (const id of loadedTreeNodeChildrenIds.value) {
+      if (id === prefix || id.startsWith(`${prefix}:`)) {
+        loadedTreeNodeChildrenIds.value.delete(id);
+      }
+    }
+    const rawPrefix = `${prefix}:`;
+    const encodedPrefix = `${schemaCacheKey(prefix)}:`;
+    if (rawPrefix === encodedPrefix) {
+      api.deleteSchemaCachePrefix(rawPrefix).catch(() => undefined);
+    } else {
+      Promise.all([api.deleteSchemaCachePrefix(rawPrefix), api.deleteSchemaCachePrefix(encodedPrefix)]).catch(
+        () => undefined,
+      );
+    }
+  }
+
+  function schemaCachePrefixForNode(node: TreeNode): string | null {
+    if (node.type === "connection" && node.connectionId) {
+      return `${schemaCacheKey(node.connectionId)}:`;
+    }
+    if (node.type === "database" && node.connectionId && node.database) {
+      return `${schemaCacheKey(node.connectionId, node.database)}:`;
+    }
+    if (node.type === "schema" && node.connectionId && node.database && node.schema) {
+      return `${schemaCacheKey(node.connectionId, node.database, node.schema)}:`;
+    }
+    return null;
+  }
+
+  async function clearPersistedTreeCacheForNode(node: TreeNode) {
+    const prefix = schemaCachePrefixForNode(node);
+    if (!prefix) return;
+    await api.deleteSchemaCachePrefix(prefix).catch(() => undefined);
   }
 
   function findParentNode(nodes: TreeNode[], id: string, parent: TreeNode | null = null): TreeNode | null {
@@ -222,22 +382,23 @@ export const useConnectionStore = defineStore("connection", () => {
       nextConnections[existing] = normalized;
     } else {
       nextConnections.push(normalized);
-      sidebarLayout.value = appendConnectionToLayout(sidebarLayout.value, normalized.id);
+      sidebarLayout.value = appendConnectionToLayout(sidebarLayout.value, normalized.id, newConnectionGroupId.value);
     }
     await persistConnections(nextConnections);
     connections.value = nextConnections;
     rebuildTreeNodes();
     persistSidebarLayoutDebounced();
+    stopCreatingConnectionInGroup();
   }
 
   function invalidateCompletionCache(connectionId: string) {
     const cachePrefix = `${connectionId}:`;
-    completionTablesCache.value = Object.fromEntries(
-      Object.entries(completionTablesCache.value).filter(([key]) => !key.startsWith(cachePrefix)),
-    );
-    completionColumnsCache.value = Object.fromEntries(
-      Object.entries(completionColumnsCache.value).filter(([key]) => !key.startsWith(cachePrefix)),
-    );
+    for (const key of Object.keys(completionTablesCache.value)) {
+      if (key.startsWith(cachePrefix)) delete completionTablesCache.value[key];
+    }
+    for (const key of Object.keys(completionColumnsCache.value)) {
+      if (key.startsWith(cachePrefix)) delete completionColumnsCache.value[key];
+    }
   }
 
   async function removeConnection(id: string) {
@@ -252,6 +413,7 @@ export const useConnectionStore = defineStore("connection", () => {
       activeConnectionId.value = null;
     }
     invalidateCompletionCache(id);
+    clearLoadedChildrenCache(id);
   }
 
   async function updateConnection(config: ConnectionConfig) {
@@ -265,6 +427,7 @@ export const useConnectionStore = defineStore("connection", () => {
     rebuildTreeNodes();
     connectedIds.value.delete(config.id);
     invalidateCompletionCache(config.id);
+    clearLoadedChildrenCache(config.id);
   }
 
   async function setDefaultDatabase(connectionId: string, database: string) {
@@ -332,6 +495,7 @@ export const useConnectionStore = defineStore("connection", () => {
       node.isExpanded = false;
       node.children = [];
     }
+    clearLoadedChildrenCache(connectionId);
     if (activeConnectionId.value === connectionId) {
       activeConnectionId.value = null;
     }
@@ -357,26 +521,20 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function loadDatabases(connectionId: string) {
+  async function loadDatabases(connectionId: string, options?: LoadTreeOptions) {
     const node = findNode(treeNodes.value, connectionId);
     if (!node) return;
-
     node.isLoading = true;
     try {
       await ensureConnected(connectionId);
+      if (useCachedChildren(node, options)) return;
+      const cacheKey = schemaCacheKey(connectionId, "databases");
+      if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
       const databases = await api.listDatabases(connectionId);
-      setChildren(
-        node,
-        databases.map((db) => ({
-          id: `${connectionId}:${db.name}`,
-          label: db.name,
-          type: "database" as const,
-          connectionId,
-          database: db.name,
-          isExpanded: false,
-          children: [],
-        })),
-      );
+      const children = withSavedSqlRoot(connectionId, buildDatabaseTreeNodes(connectionId, databases), node);
+      setChildren(node, children);
+      await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -393,15 +551,19 @@ export const useConnectionStore = defineStore("connection", () => {
       const dbs = await api.redisListDatabases(connectionId);
       setChildren(
         node,
-        dbs.map((db) => ({
-          id: `${connectionId}:db${db}`,
-          label: `db${db}`,
-          type: "redis-db" as const,
+        withSavedSqlRoot(
           connectionId,
-          database: String(db),
-          isExpanded: false,
-          children: [],
-        })),
+          dbs.map((db) => ({
+            id: `${connectionId}:db${db}`,
+            label: `db${db}`,
+            type: "redis-db" as const,
+            connectionId,
+            database: String(db),
+            isExpanded: false,
+            children: [],
+          })),
+          node,
+        ),
       );
       node.isExpanded = true;
     } finally {
@@ -419,15 +581,19 @@ export const useConnectionStore = defineStore("connection", () => {
       const dbs = await api.mongoListDatabases(connectionId);
       setChildren(
         node,
-        dbs.map((db) => ({
-          id: `${connectionId}:${db}`,
-          label: db,
-          type: "mongo-db" as const,
+        withSavedSqlRoot(
           connectionId,
-          database: db,
-          isExpanded: false,
-          children: [],
-        })),
+          dbs.map((db) => ({
+            id: `${connectionId}:${db}`,
+            label: db,
+            type: "mongo-db" as const,
+            connectionId,
+            database: db,
+            isExpanded: false,
+            children: [],
+          })),
+          node,
+        ),
       );
       node.isExpanded = true;
     } finally {
@@ -460,55 +626,84 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function loadSchemas(connectionId: string, database: string) {
+  async function loadSchemas(connectionId: string, database: string, options?: LoadTreeOptions) {
     const nodeId = `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
     if (!node) return;
-
     node.isLoading = true;
     try {
+      await ensureConnected(connectionId);
+      if (useCachedChildren(node, options)) return;
+      const cacheKey = schemaCacheKey(connectionId, database, "schemas");
+      if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
       const schemas = await api.listSchemas(connectionId, database);
-      setChildren(
-        node,
-        schemas.map((s) => ({
-          id: `${connectionId}:${database}:${s}`,
-          label: s,
-          type: "schema" as const,
-          connectionId,
-          database,
-          schema: s,
-          isExpanded: false,
-          children: [],
-        })),
-      );
+      const children = schemas.map((s) => ({
+        id: `${connectionId}:${database}:${s}`,
+        label: s,
+        type: "schema" as const,
+        connectionId,
+        database,
+        schema: s,
+        isExpanded: false,
+        children: [],
+      }));
+      setChildren(node, children);
+      await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
     }
   }
 
-  async function loadTables(connectionId: string, database: string, schema?: string) {
+  async function loadSqlServerDatabaseObjects(connectionId: string, database: string, options?: LoadTreeOptions) {
+    const nodeId = `${connectionId}:${database}`;
+    const node = findNode(treeNodes.value, nodeId);
+    if (!node) return;
+    node.isLoading = true;
+    try {
+      await ensureConnected(connectionId);
+      if (useCachedChildren(node, options)) return;
+      const cacheKey = schemaCacheKey(connectionId, database, "sqlserver-objects");
+      if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
+      const [schemas, defaultSchemaTables] = await Promise.all([
+        api.listSchemas(connectionId, database),
+        api.listTables(connectionId, database, SQLSERVER_DEFAULT_SCHEMA),
+      ]);
+      const children = buildSqlServerDatabaseTreeNodes(connectionId, database, schemas, defaultSchemaTables);
+      setChildren(node, children);
+      await savePersistedTreeChildren(cacheKey, children);
+      node.isExpanded = true;
+    } finally {
+      node.isLoading = false;
+    }
+  }
+
+  async function loadTables(connectionId: string, database: string, schema?: string, options?: LoadTreeOptions) {
     const nodeId = schema ? `${connectionId}:${database}:${schema}` : `${connectionId}:${database}`;
     const node = findNode(treeNodes.value, nodeId);
     if (!node) return;
-
     node.isLoading = true;
     try {
+      await ensureConnected(connectionId);
+      if (useCachedChildren(node, options)) return;
+      const cacheKey = schemaCacheKey(connectionId, database, schema || "", "tables");
+      if (!options?.force && (await loadPersistedTreeChildren(node, cacheKey))) return;
+
       const querySchema = schema || database;
       const tables = await api.listTables(connectionId, database, querySchema);
-      setChildren(
-        node,
-        tables.map((t) => ({
-          id: `${nodeId}:${t.name}`,
-          label: t.name,
-          type: (t.table_type === "VIEW" ? "view" : "table") as "view" | "table",
-          connectionId,
-          database,
-          schema,
-          isExpanded: false,
-          children: [],
-        })),
-      );
+      const config = getConfig(connectionId);
+      const effectiveSchema = schema || (config?.db_type && isSchemaAware(config.db_type) ? database : undefined);
+      const children = buildTableTreeNodes({
+        nodeId,
+        connectionId,
+        database,
+        schema: effectiveSchema,
+        tables,
+      });
+      setChildren(node, children);
+      await savePersistedTreeChildren(cacheKey, children);
       node.isExpanded = true;
     } finally {
       node.isLoading = false;
@@ -686,8 +881,84 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
+  function collectExpandedNodeIds(nodes: TreeNode[], ids = new Set<string>()): Set<string> {
+    for (const node of nodes) {
+      if (node.isExpanded) ids.add(node.id);
+      if (node.children) collectExpandedNodeIds(node.children, ids);
+    }
+    return ids;
+  }
+
+  async function loadTreeNodeChildren(node: TreeNode, options?: LoadTreeOptions) {
+    if (node.type === "connection" && node.connectionId) {
+      const config = getConfig(node.connectionId);
+      if (config?.db_type === "redis") {
+        await loadRedisDatabases(node.connectionId);
+      } else if (config?.db_type === "mongodb" || config?.db_type === "elasticsearch") {
+        await loadMongoDatabases(node.connectionId);
+      } else {
+        await loadDatabases(node.connectionId, options);
+      }
+    } else if (node.type === "mongo-db" && node.connectionId && node.database) {
+      await loadMongoCollections(node.connectionId, node.database);
+    } else if (node.type === "database" && node.connectionId && node.database) {
+      const config = getConfig(node.connectionId);
+      if (config?.db_type === "sqlserver") {
+        await loadSqlServerDatabaseObjects(node.connectionId, node.database, options);
+      } else if (config?.db_type && TREE_SCHEMA_TYPES.has(config.db_type)) {
+        await loadSchemas(node.connectionId, node.database, options);
+      } else {
+        await loadTables(node.connectionId, node.database, undefined, options);
+      }
+    } else if (node.type === "schema" && node.connectionId && node.database && node.schema) {
+      await loadTables(node.connectionId, node.database, node.schema, options);
+    } else if ((node.type === "table" || node.type === "view") && node.connectionId && node.database) {
+      await loadTableGroups(node.connectionId, node.database, node.label, node.schema);
+    } else if (node.type === "group-columns" && node.connectionId && node.database && node.tableName) {
+      await loadColumns(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-indexes" && node.connectionId && node.database && node.tableName) {
+      await loadIndexes(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-fkeys" && node.connectionId && node.database && node.tableName) {
+      await loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (node.type === "group-triggers" && node.connectionId && node.database && node.tableName) {
+      await loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
+    }
+  }
+
+  async function restoreExpandedChildren(node: TreeNode, expandedIds: Set<string>, options?: LoadTreeOptions) {
+    if (!node.children) return;
+    for (const child of node.children) {
+      if (!expandedIds.has(child.id)) continue;
+      await loadTreeNodeChildren(child, options);
+      await restoreExpandedChildren(child, expandedIds, options);
+    }
+  }
+
+  async function refreshTreeNode(node: TreeNode) {
+    const expandedIds = collectExpandedNodeIds([node]);
+    expandedIds.add(node.id);
+    await clearPersistedTreeCacheForNode(node);
+    clearLoadedChildrenCache(node.id);
+    if (node.type !== "connection-group") {
+      node.children = [];
+    }
+    await loadTreeNodeChildren(node, { force: true });
+    await restoreExpandedChildren(node, expandedIds, { force: true });
+  }
+
   function isSchemaAwareDatabase(connectionId: string): boolean {
     return isSchemaAware(getConfig(connectionId)?.db_type);
+  }
+
+  const COMPLETION_CACHE_MAX = 50;
+
+  function evictOldestCacheEntries(cache: Record<string, unknown>, max: number) {
+    const keys = Object.keys(cache);
+    if (keys.length <= max) return;
+    const toRemove = keys.slice(0, keys.length - max);
+    for (const key of toRemove) {
+      delete cache[key];
+    }
   }
 
   async function listCompletionTables(connectionId: string, database: string): Promise<SqlCompletionTable[]> {
@@ -715,6 +986,7 @@ export const useConnectionStore = defineStore("connection", () => {
         }),
       );
       completionTablesCache.value[cacheKey] = tableGroups.flat();
+      evictOldestCacheEntries(completionTablesCache.value, COMPLETION_CACHE_MAX);
       return completionTablesCache.value[cacheKey];
     }
 
@@ -723,6 +995,7 @@ export const useConnectionStore = defineStore("connection", () => {
       name: table.name,
       type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
     }));
+    evictOldestCacheEntries(completionTablesCache.value, COMPLETION_CACHE_MAX);
     return completionTablesCache.value[cacheKey];
   }
 
@@ -737,6 +1010,7 @@ export const useConnectionStore = defineStore("connection", () => {
       await ensureConnected(connectionId);
       const querySchema = schema || database;
       completionColumnsCache.value[cacheKey] = await api.getColumns(connectionId, database, querySchema, table);
+      evictOldestCacheEntries(completionColumnsCache.value, COMPLETION_CACHE_MAX);
     }
 
     return completionColumnsCache.value[cacheKey].map((column) => ({
@@ -788,7 +1062,15 @@ export const useConnectionStore = defineStore("connection", () => {
           return { ...node, children: mergeState(node.children || []) };
         }
         if (existing && node.type === "connection") {
-          return { ...existing, label: node.label, pinned: node.pinned };
+          return {
+            ...existing,
+            label: node.label,
+            pinned: node.pinned,
+            children: withSavedSqlRoot(node.connectionId!, existing.children || [], existing),
+          };
+        }
+        if (node.type === "connection" && node.connectionId) {
+          return { ...node, children: withSavedSqlRoot(node.connectionId, node.children || []) };
         }
         return node;
       });
@@ -799,6 +1081,23 @@ export const useConnectionStore = defineStore("connection", () => {
     sidebarLayout.value = nextLayout;
     rebuildTreeNodes();
     persistSidebarLayoutDebounced();
+  }
+
+  async function refreshAllTree() {
+    const expandedIds = collectExpandedNodeIds(treeNodes.value);
+    const refreshExpandedNodes = async (nodes: TreeNode[]) => {
+      for (const node of nodes) {
+        if (node.type === "connection-group") {
+          if (node.children) await refreshExpandedNodes(node.children);
+          continue;
+        }
+        if (!expandedIds.has(node.id)) continue;
+        node.children = [];
+        await loadTreeNodeChildren(node, { force: true });
+        await restoreExpandedChildren(node, expandedIds, { force: true });
+      }
+    };
+    await refreshExpandedNodes(treeNodes.value);
   }
 
   async function exportConnectionsToFile(passphrase: string) {
@@ -828,14 +1127,88 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function readImportFile(): Promise<{ content: string; encrypted: boolean } | null> {
+  function bytesToBase64(bytes: Uint8Array) {
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function siblingCredentialsPath(path: string) {
+    const fileName = path.split(/[\\/]/).pop() || "";
+    const credentialsFile = fileName.startsWith("data-sources-")
+      ? fileName.replace(/^data-sources/, "credentials-config")
+      : "credentials-config.json";
+    return path.replace(/[^\\/]+$/, credentialsFile);
+  }
+
+  async function readDbeaverImportFile(): Promise<{ content: string; encrypted: boolean } | null> {
+    let dataSources: string;
+    let credentialsBase64 = "";
+
+    if (isTauriRuntime()) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const { readTextFile, readFile } = await import("@tauri-apps/plugin-fs");
+      const path = await open({
+        filters: [{ name: "DBeaver Data Sources", extensions: ["json"] }],
+        multiple: false,
+      });
+      if (!path) return null;
+      const dataSourcesPath = path as string;
+      dataSources = await readTextFile(dataSourcesPath);
+      try {
+        credentialsBase64 = bytesToBase64(await readFile(siblingCredentialsPath(dataSourcesPath)));
+      } catch {
+        credentialsBase64 = "";
+      }
+    } else {
+      const files = await new Promise<FileList>((resolve, reject) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json";
+        input.multiple = true;
+        input.onchange = () => {
+          if (!input.files?.length) {
+            reject(new Error("No file selected"));
+            return;
+          }
+          resolve(input.files);
+        };
+        input.click();
+      });
+      const fileList = Array.from(files);
+      const dataSourcesFile =
+        fileList.find((file) => /^data-sources.*\.json$/i.test(file.name)) ||
+        fileList.find((file) => !/^credentials-config.*\.json$/i.test(file.name));
+      const credentialsFile = fileList.find((file) => /^credentials-config.*\.json$/i.test(file.name));
+      if (!dataSourcesFile) throw new Error("Select DBeaver data-sources.json");
+      dataSources = await dataSourcesFile.text();
+      if (credentialsFile) {
+        credentialsBase64 = bytesToBase64(new Uint8Array(await credentialsFile.arrayBuffer()));
+      }
+    }
+
+    return {
+      content: JSON.stringify({ format: "dbeaver-import", dataSources, credentialsBase64 }),
+      encrypted: false,
+    };
+  }
+
+  async function readImportFile(source: ImportSource = "dbx"): Promise<{ content: string; encrypted: boolean } | null> {
+    if (source === "dbeaver") return readDbeaverImportFile();
+
     let content: string;
 
     if (isTauriRuntime()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const { readTextFile } = await import("@tauri-apps/plugin-fs");
       const path = await open({
-        filters: [{ name: "JSON", extensions: ["json"] }],
+        filters:
+          source === "navicat"
+            ? [{ name: "Navicat Connection Export", extensions: ["ncx", "xml"] }]
+            : [{ name: "DBX JSON", extensions: ["json"] }],
         multiple: false,
       });
       if (!path) return null;
@@ -844,7 +1217,7 @@ export const useConnectionStore = defineStore("connection", () => {
       content = await new Promise<string>((resolve, reject) => {
         const input = document.createElement("input");
         input.type = "file";
-        input.accept = ".json";
+        input.accept = source === "navicat" ? ".ncx,.xml" : ".json";
         input.onchange = () => {
           const file = input.files?.[0];
           if (!file) {
@@ -860,6 +1233,10 @@ export const useConnectionStore = defineStore("connection", () => {
       });
     }
 
+    if (content.trimStart().startsWith("<")) {
+      return { content, encrypted: false };
+    }
+
     const { isEncryptedConfig } = await import("@/lib/configCrypto");
     const parsed = JSON.parse(content);
     return { content, encrypted: isEncryptedConfig(parsed) };
@@ -869,35 +1246,50 @@ export const useConnectionStore = defineStore("connection", () => {
     content: string,
     passphrase: string | null,
   ): Promise<{ count: number; layout?: SidebarLayout }> {
-    let imported: ConnectionConfig[];
+    let imported: ConnectionConfig[] = [];
     let importedLayout: SidebarLayout | undefined;
-    const parsed = JSON.parse(content);
 
-    if (passphrase) {
-      const { decryptConfig } = await import("@/lib/configCrypto");
-      const json = await decryptConfig(parsed, passphrase);
-      const decrypted = JSON.parse(json);
-      if (Array.isArray(decrypted)) {
-        imported = decrypted;
-      } else if (decrypted.connections) {
-        imported = decrypted.connections;
-        if (decrypted.layout?.groups && decrypted.layout?.order) {
-          importedLayout = decrypted.layout;
-        }
+    if (!passphrase && content.trimStart().startsWith("<")) {
+      const { parseNavicatConnections } = await import("@/lib/navicatImport");
+      imported = await parseNavicatConnections(content);
+    } else if (!passphrase) {
+      const { isDbeaverImportPayload, parseDbeaverConnections } = await import("@/lib/dbeaverImport");
+      if (isDbeaverImportPayload(content)) {
+        imported = await parseDbeaverConnections(content);
       } else {
-        imported = [];
-      }
-    } else if (Array.isArray(parsed)) {
-      imported = parsed;
-    } else if (parsed.format === "dbx-config" && Array.isArray(parsed.connections)) {
-      imported = parsed.connections;
-    } else if (parsed.connections && Array.isArray(parsed.connections)) {
-      imported = parsed.connections;
-      if (parsed.layout?.groups && parsed.layout?.order) {
-        importedLayout = parsed.layout;
+        const parsed = JSON.parse(content);
+
+        if (Array.isArray(parsed)) {
+          imported = parsed;
+        } else if (parsed.format === "dbx-config" && Array.isArray(parsed.connections)) {
+          imported = parsed.connections;
+        } else if (parsed.connections && Array.isArray(parsed.connections)) {
+          imported = parsed.connections;
+          if (parsed.layout?.groups && parsed.layout?.order) {
+            importedLayout = parsed.layout;
+          }
+        } else {
+          imported = [];
+        }
       }
     } else {
-      imported = [];
+      const parsed = JSON.parse(content);
+
+      if (passphrase) {
+        const { decryptConfig } = await import("@/lib/configCrypto");
+        const json = await decryptConfig(parsed, passphrase);
+        const decrypted = JSON.parse(json);
+        if (Array.isArray(decrypted)) {
+          imported = decrypted;
+        } else if (decrypted.connections) {
+          imported = decrypted.connections;
+          if (decrypted.layout?.groups && decrypted.layout?.order) {
+            importedLayout = decrypted.layout;
+          }
+        } else {
+          imported = [];
+        }
+      }
     }
 
     let count = 0;
@@ -947,6 +1339,9 @@ export const useConnectionStore = defineStore("connection", () => {
     connections,
     activeConnectionId,
     treeNodes,
+    refreshAllTree,
+    refreshSavedSqlTree,
+    refreshTreeNode,
     connectedIds,
     connectionErrors,
     setConnectionError,
@@ -964,8 +1359,11 @@ export const useConnectionStore = defineStore("connection", () => {
     isDefaultDatabase,
     removeConnection,
     editingConnectionId,
+    newConnectionGroupId,
     startEditing,
     stopEditing,
+    startCreatingConnectionInGroup,
+    stopCreatingConnectionInGroup,
     connect,
     disconnect,
     ensureConnected,
@@ -975,6 +1373,7 @@ export const useConnectionStore = defineStore("connection", () => {
     loadMongoDatabases,
     loadMongoCollections,
     loadSchemas,
+    loadSqlServerDatabaseObjects,
     loadTables,
     loadTableGroups,
     loadColumns,
@@ -989,6 +1388,7 @@ export const useConnectionStore = defineStore("connection", () => {
     applySidebarLayout,
     transferSource,
     schemaDiffSource,
+    dataCompareSource,
     sqlFileSource,
     diagramSource,
     tableImportSource,

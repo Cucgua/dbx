@@ -1,14 +1,20 @@
 # Dependencies
 node_modules/
-.claude
+.claude/
+.codex/
 .mcp.json
 
 # Build output
 dist/
 /target/
+plugins/jdbc/target/
+plugins/jdbc/dependency-reduced-pom.xml
+plugins/jdbc/lib/*.jar
+plugins/jdbc/dist/
 docs/.next/
 docs/out/
 docs/.source/
+docs/superpowers/
 src-tauri/*.dylib
 
 # OS files
@@ -20,6 +26,7 @@ Thumbs.db
 *.swo
 *~
 .vscode/
+.idea/
 
 # GitHub (keep workflows)
 .github/*

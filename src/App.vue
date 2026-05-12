@@ -16,6 +16,7 @@ import LoginPage from "@/components/auth/LoginPage.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useSavedSqlStore } from "@/stores/savedSqlStore";
 import { useToast } from "@/composables/useToast";
 import { useTheme } from "@/composables/useTheme";
 import { useAppUpdater } from "@/composables/useAppUpdater";
@@ -27,7 +28,7 @@ import { useDialogSources } from "@/composables/useDialogSources";
 import { useNavigationTargets } from "@/composables/useNavigationTargets";
 import { useDataGridActions } from "@/composables/useDataGridActions";
 import { useTauriEvents } from "@/composables/useTauriEvents";
-import { setLocale, currentLocale } from "@/i18n";
+import "@/i18n";
 import * as api from "@/lib/api";
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
@@ -35,11 +36,18 @@ import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isCloseTabShortcut, isExecuteSqlShortcut } from "@/lib/keyboardShortcuts";
 import { isPreviewTab } from "@/lib/tabPresentation";
 import { SQL_FILE_UNSUPPORTED_TYPES } from "@/lib/databaseCapabilities";
+import { classifyAiSqlExecution } from "@/lib/aiSqlExecutionPolicy";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { HistoryEntry } from "@/lib/tauri";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const settingsStore = useSettingsStore();
+const savedSqlStore = useSavedSqlStore();
 const { message: toastMessage, visible: toastVisible, toast } = useToast();
 const { isDark, applyTheme, toggleTheme } = useTheme();
 const {
@@ -75,6 +83,10 @@ const selectedSql = ref("");
 const cursorPos = ref(0);
 const formatSqlRequestId = ref(0);
 const activeOutputView = ref<"result" | "explain" | "chart">("result");
+const showSaveSqlDialog = ref(false);
+const saveSqlName = ref("");
+const saveSqlFolderId = ref("");
+const ROOT_SAVED_SQL_FOLDER = "__root__";
 
 const activeTab = computed(() => queryStore.tabs.find((t) => t.id === queryStore.activeTabId));
 
@@ -82,6 +94,21 @@ const activeConnection = computed(() => {
   const tab = activeTab.value;
   return tab ? connectionStore.getConfig(tab.connectionId) : undefined;
 });
+
+function restoreHistorySql(sql: string, entry: HistoryEntry) {
+  const tab = activeTab.value;
+  if (tab?.mode === "query") {
+    queryStore.updateSql(tab.id, sql);
+    return;
+  }
+
+  const connectionId = entry.connection_id || tab?.connectionId || connectionStore.connections[0]?.id;
+  if (!connectionId) return;
+  const config = connectionStore.getConfig(connectionId);
+  const database = entry.database || tab?.database || (config ? resolveDefaultDatabase(config, []) : "");
+  const tabId = queryStore.createTab(connectionId, database || "", t("tabs.sql"));
+  queryStore.updateSql(tabId, sql);
+}
 
 const executableSql = computed(() => {
   const tab = activeTab.value;
@@ -93,18 +120,26 @@ const executableSql = computed(() => {
     : "";
 });
 
-const { dangerSql, showDangerDialog, tryExecute, cancelActiveExecution, tryExplain, onDangerConfirm } = useSqlExecution(
-  { activeTab, activeConnection, executableSql, activeOutputView },
-);
+const {
+  dangerSql,
+  pendingDangerSql,
+  showDangerDialog,
+  tryExecute,
+  doExecute,
+  cancelActiveExecution,
+  tryExplain,
+  onDangerConfirm,
+} = useSqlExecution({ activeTab, activeConnection, executableSql, activeOutputView });
 
 const dialogs = useDialogSources();
 const { getDatabaseOptions } = useDatabaseOptions();
 const { openLineageTarget, openDatabaseSearchTarget, onStructureEditorSaved, openTableTarget } =
   useNavigationTargets(dialogs);
 const { onExecuteSql, onReloadData, onPaginate, onSort } = useDataGridActions(activeTab);
-const { setupTauriListeners } = useTauriEvents({ openTableTarget });
+const { setupTauriListeners, cleanupTauriListeners } = useTauriEvents({ openTableTarget });
 
 const appVersion = ref("");
+const isClassicLayout = computed(() => settingsStore.editorSettings.appLayout === "classic");
 const hasSqlFileConnections = computed(() =>
   connectionStore.connections.some((c) => !SQL_FILE_UNSUPPORTED_TYPES.has(c.db_type)),
 );
@@ -114,6 +149,10 @@ const connectionStats = computed(() => ({
   types: new Set(connectionStore.connections.map((c) => c.driver_profile || c.db_type)).size,
 }));
 const recentConnections = computed(() => connectionStore.connections.slice(0, 5));
+const saveSqlFolders = computed(() => {
+  const tab = activeTab.value;
+  return tab ? savedSqlStore.listFolders(tab.connectionId) : [];
+});
 
 watch(
   () => queryStore.activeTabId,
@@ -142,32 +181,56 @@ function formatActiveSql() {
   formatSqlRequestId.value++;
 }
 
-async function saveSqlToFile() {
+function defaultSavedSqlName(title: string) {
+  const trimmed = title.trim() || "Query";
+  return trimmed.endsWith(".sql") ? trimmed : `${trimmed}.sql`;
+}
+
+async function openSaveSqlDialog() {
   const tab = activeTab.value;
   if (!tab || !tab.sql.trim()) return;
+  const existing = tab.savedSqlId ? savedSqlStore.getFile(tab.savedSqlId) : undefined;
+  if (existing) {
+    const updated = await savedSqlStore.saveFile({
+      id: existing.id,
+      connectionId: tab.connectionId,
+      folderId: existing.folderId,
+      name: existing.name,
+      database: tab.database,
+      schema: tab.schema,
+      sql: tab.sql,
+    });
+    queryStore.linkSavedSql(tab.id, updated.id, updated.name);
+    connectionStore.refreshSavedSqlTree(tab.connectionId);
+    toast(t("savedSql.saved"), 2000);
+    return;
+  }
+
+  saveSqlName.value = defaultSavedSqlName(tab.title);
+  saveSqlFolderId.value = ROOT_SAVED_SQL_FOLDER;
+  showSaveSqlDialog.value = true;
+}
+
+async function confirmSaveSqlToLibrary() {
+  const tab = activeTab.value;
+  const name = saveSqlName.value.trim();
+  if (!tab || !tab.sql.trim() || !name) return;
   try {
-    if (isTauriRuntime()) {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await save({
-        defaultPath: `${tab.title}.sql`,
-        filters: [{ name: "SQL", extensions: ["sql"] }],
-      });
-      if (path) {
-        await writeTextFile(path, tab.sql);
-        toast(t("toolbar.sqlSaved"), 2000);
-      }
-    } else {
-      const blob = new Blob([tab.sql], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${tab.title}.sql`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
+    const saved = await savedSqlStore.saveFile({
+      id: tab.savedSqlId,
+      connectionId: tab.connectionId,
+      folderId: saveSqlFolderId.value === ROOT_SAVED_SQL_FOLDER ? undefined : saveSqlFolderId.value,
+      name: defaultSavedSqlName(name),
+      database: tab.database,
+      schema: tab.schema,
+      sql: tab.sql,
+    });
+    queryStore.linkSavedSql(tab.id, saved.id, saved.name);
+    connectionStore.refreshSavedSqlTree(tab.connectionId);
+    showSaveSqlDialog.value = false;
+    toast(t("savedSql.saved"), 2000);
   } catch (e: any) {
-    toast(t("toolbar.sqlSaveFailed", { message: e?.message || String(e) }), 5000);
+    toast(t("savedSql.saveFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
@@ -293,10 +356,6 @@ function changeActiveSchema(schema: string | undefined) {
   const tab = activeTab.value;
   if (tab) queryStore.updateSchema(tab.id, schema);
 }
-
-function toggleLocale() {
-  setLocale(currentLocale() === "zh-CN" ? "en" : "zh-CN");
-}
 function openGitHub() {
   openUrl("https://github.com/t8y2/dbx");
 }
@@ -320,13 +379,49 @@ function onAiReplaceSql(sql: string) {
 function onAiExecuteSql(sql: string) {
   const tabId = ensureQueryTab();
   queryStore.updateSql(tabId, sql);
-  nextTick(() => tryExecute());
+  selectedSql.value = "";
+  nextTick(() => tryExecute(sql));
+}
+
+function onAiRequestAutoExecuteSql(sql: string) {
+  const tabId = ensureQueryTab();
+  queryStore.updateSql(tabId, sql);
+  selectedSql.value = "";
+
+  const decision = classifyAiSqlExecution(sql, activeConnection.value);
+  if (decision.action === "block") {
+    toast(t("ai.autoSqlBlocked"), 5000);
+    return;
+  }
+
+  nextTick(() => {
+    if (decision.action === "auto_execute") {
+      void doExecute(sql);
+      return;
+    }
+    dangerSql.value = sql;
+    pendingDangerSql.value = sql;
+    showDangerDialog.value = true;
+  });
 }
 
 function handleKeydown(e: KeyboardEvent) {
   if (isCloseTabShortcut(e)) {
     e.preventDefault();
     if (queryStore.activeTabId) queryStore.closeTab(queryStore.activeTabId);
+    return;
+  }
+  if (
+    activeTab.value?.mode === "query" &&
+    !showSaveSqlDialog.value &&
+    !e.isComposing &&
+    !e.altKey &&
+    (e.metaKey || e.ctrlKey) &&
+    e.key.toLowerCase() === "s"
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    void openSaveSqlDialog();
     return;
   }
   if (
@@ -350,8 +445,9 @@ function onLoginSuccess() {
 }
 
 function initApp() {
-  connectionStore
-    .initFromDisk()
+  savedSqlStore
+    .initFromStorage()
+    .then(() => connectionStore.initFromDisk())
     .then(() => {
       reconnectRestoredTabs();
     })
@@ -377,9 +473,19 @@ async function reconnectRestoredTabs() {
   }
 }
 
+function handleContextMenu(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+  if (target.closest("[data-radix-vue-collection-item], [data-context-menu]")) return;
+  e.preventDefault();
+}
+
 onMounted(async () => {
   applyTheme();
   window.addEventListener("keydown", handleKeydown, true);
+  if (isDesktop) {
+    document.addEventListener("contextmenu", handleContextMenu);
+  }
   if (!isDesktop) {
     try {
       const res = await fetch("/api/auth/check");
@@ -415,7 +521,9 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  cleanupTauriListeners();
   window.removeEventListener("keydown", handleKeydown, true);
+  document.removeEventListener("contextmenu", handleContextMenu);
 });
 </script>
 
@@ -438,7 +546,6 @@ onUnmounted(() => {
           @new-connection="showConnectionDialog = true"
           @new-query="newQuery"
           @toggle-theme="toggleTheme"
-          @toggle-locale="toggleLocale"
           @toggle-ai="toggleAiPanel"
           @toggle-history="showHistory = !showHistory"
           @open-github="openGitHub"
@@ -448,15 +555,28 @@ onUnmounted(() => {
           @open-sql-file="dialogs.showSqlFileDialog.value = true"
         />
 
-        <div class="flex-1 flex min-h-0">
+        <div
+          :class="
+            isClassicLayout
+              ? 'app-layout-classic flex-1 flex min-h-0'
+              : 'app-panel-gutter flex-1 flex min-h-0 gap-1 p-1'
+          "
+        >
           <AppSidebar
             :sidebar-width="sidebarWidth"
+            :classic-layout="isClassicLayout"
             @import="dialogs.onImportClick"
             @export="dialogs.onExportClick"
             @start-resize="startSidebarResize"
           />
 
-          <div class="flex-1 min-w-0">
+          <div
+            :class="
+              isClassicLayout
+                ? 'flex-1 min-w-0'
+                : 'flex-1 min-w-0 overflow-hidden rounded-md border border-border/80 bg-background'
+            "
+          >
             <div class="h-full flex flex-col min-w-0">
               <AppTabBar />
               <div v-if="activeTab" class="flex flex-col flex-1 min-h-0">
@@ -469,7 +589,7 @@ onUnmounted(() => {
                   @cancel="cancelActiveExecution()"
                   @explain="tryExplain()"
                   @format-sql="formatActiveSql"
-                  @save-sql="saveSqlToFile"
+                  @save-sql="void openSaveSqlDialog()"
                   @open-sql="openSqlFile"
                   @change-connection="changeActiveConnection"
                   @change-database="changeActiveDatabase"
@@ -498,11 +618,25 @@ onUnmounted(() => {
                   @editor-selection-change="(v: string) => (selectedSql = v)"
                   @editor-cursor-change="(p: number) => (cursorPos = p)"
                   @format-error="toast(t('toolbar.formatSqlFailed'))"
-                  @reload="onReloadData"
+                  @reload="
+                    (sql?: string, searchText?: string, whereInput?: string, orderBy?: string) =>
+                      onReloadData(sql, searchText, whereInput, orderBy)
+                  "
                   @paginate="onPaginate"
                   @sort="onSort"
                   @execute-sql="onExecuteSql"
                   @click-table="onClickTable"
+                  @open-object-table="
+                    (target) =>
+                      activeTab &&
+                      openTableTarget({
+                        connectionId: activeTab.connectionId,
+                        database: activeTab.database,
+                        schema: target.schema,
+                        tableName: target.tableName,
+                      })
+                  "
+                  @object-schema-change="(schema) => activeTab && queryStore.updateSchema(activeTab.id, schema)"
                 />
               </div>
               <WelcomeScreen
@@ -524,7 +658,11 @@ onUnmounted(() => {
 
           <div
             v-if="showAiPanel"
-            class="h-full shrink-0 relative bg-background"
+            :class="
+              isClassicLayout
+                ? 'h-full shrink-0 relative bg-background'
+                : 'h-full shrink-0 relative rounded-md border border-border/80 bg-background'
+            "
             :style="{ width: aiPanelWidth + 'px' }"
           >
             <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startAiPanelResize" />
@@ -535,6 +673,7 @@ onUnmounted(() => {
                 :connection="activeConnection"
                 @replace-sql="onAiReplaceSql"
                 @execute-sql="onAiExecuteSql"
+                @request-auto-execute-sql="onAiRequestAutoExecuteSql"
                 @close="toggleAiPanel"
               />
             </div>
@@ -542,18 +681,15 @@ onUnmounted(() => {
 
           <div
             v-if="showHistory"
-            class="h-full shrink-0 relative bg-background"
+            :class="
+              isClassicLayout
+                ? 'h-full shrink-0 relative bg-background'
+                : 'h-full shrink-0 relative rounded-md border border-border/80 bg-background'
+            "
             :style="{ width: historyWidth + 'px' }"
           >
             <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startHistoryResize" />
-            <QueryHistory
-              @restore="
-                (sql: string) => {
-                  if (queryStore.activeTabId) queryStore.updateSql(queryStore.activeTabId, sql);
-                }
-              "
-              @close="showHistory = false"
-            />
+            <QueryHistory @restore="restoreHistorySql" @close="showHistory = false" />
           </div>
         </div>
 
@@ -594,6 +730,38 @@ onUnmounted(() => {
           </div>
         </Transition>
       </div>
+
+      <Dialog v-model:open="showSaveSqlDialog">
+        <DialogContent class="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>{{ t("savedSql.saveToLibrary") }}</DialogTitle>
+          </DialogHeader>
+          <div class="space-y-3">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">{{ t("savedSql.fileName") }}</label>
+              <Input v-model="saveSqlName" @keydown.enter.prevent="confirmSaveSqlToLibrary" />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">{{ t("savedSql.folder") }}</label>
+              <Select v-model="saveSqlFolderId">
+                <SelectTrigger class="h-8 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper">
+                  <SelectItem :value="ROOT_SAVED_SQL_FOLDER">{{ t("savedSql.rootFolder") }}</SelectItem>
+                  <SelectItem v-for="folder in saveSqlFolders" :key="folder.id" :value="folder.id">
+                    {{ folder.name }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" @click="showSaveSqlDialog = false">{{ t("dangerDialog.cancel") }}</Button>
+            <Button :disabled="!saveSqlName.trim()" @click="confirmSaveSqlToLibrary">{{ t("savedSql.save") }}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </TooltipProvider>
   </div>
 </template>

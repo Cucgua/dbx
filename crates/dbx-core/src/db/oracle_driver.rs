@@ -9,7 +9,14 @@ use std::time::{Duration, Instant};
 use super::{connection_timeout, CONNECTION_TIMEOUT_SECS};
 use crate::models::app_settings::AppSettings;
 use crate::models::connection::{ConnectionConfig, OracleConnectMethod};
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
+
+const ORACLE_QUERY_LIMIT: usize = crate::query::MAX_ROWS + 1;
+
+fn quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
 
 pub enum OracleClient {
     Thin(ThinConnection),
@@ -93,13 +100,14 @@ async fn connect_thin(
     sysdba: bool,
     method: OracleConnectMethod,
 ) -> Result<OracleClient, String> {
-    let mut config = match method {
+    let config = match method {
         OracleConnectMethod::Sid => Config::with_sid(host, port, identifier, user, pass),
         OracleConnectMethod::ServiceName | OracleConnectMethod::ConnectString => {
             Config::new(host, port, identifier, user, pass)
         }
-    };
-    config.sysdba = sysdba;
+    }
+    .with_statement_cache_size(0)
+    .sysdba_flag(sysdba);
     tokio::time::timeout(connection_timeout(), ThinConnection::connect_with_config(config))
         .await
         .map_err(|_| format!("Oracle connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
@@ -196,6 +204,18 @@ fn value_to_json_thin(val: &rust_oracle::Value) -> serde_json::Value {
         rust_oracle::Value::Integer(n) => serde_json::Value::Number((*n).into()),
         rust_oracle::Value::Float(f) => {
             serde_json::Number::from_f64(*f).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+        }
+        rust_oracle::Value::Date(d) => serde_json::Value::String(format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            d.year, d.month, d.day, d.hour, d.minute, d.second
+        )),
+        rust_oracle::Value::Timestamp(ts) => {
+            let base = format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second
+            );
+            let value = if ts.microsecond > 0 { format!("{base}.{:06}", ts.microsecond) } else { base };
+            serde_json::Value::String(value)
         }
         rust_oracle::Value::Boolean(b) => serde_json::Value::Bool(*b),
         rust_oracle::Value::Json(v) => v.clone(),
@@ -305,12 +325,15 @@ pub async fn list_schemas(conn: &OracleClient) -> Result<Vec<String>, String> {
 }
 
 pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableInfo>, String> {
+    let s = quote_literal(schema);
     let sql = format!(
-        "SELECT table_name, 'TABLE' AS table_type FROM all_tables WHERE owner = '{s}' \
-         UNION ALL \
-         SELECT view_name, 'VIEW' FROM all_views WHERE owner = '{s}' \
-         ORDER BY 1",
-        s = schema.replace('\'', "''")
+        "SELECT o.OBJECT_NAME, \
+         CASE o.OBJECT_TYPE WHEN 'VIEW' THEN 'VIEW' ELSE 'TABLE' END AS TABLE_TYPE, \
+         c.COMMENTS \
+         FROM ALL_OBJECTS o \
+         LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME \
+         WHERE o.OWNER = {s} AND o.OBJECT_TYPE IN ('TABLE','VIEW') \
+         ORDER BY o.OBJECT_NAME"
     );
     log::debug!("[oracle] list_tables: schema={schema}, sql={sql}");
     match conn {
@@ -325,7 +348,7 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
                 .map(|row| TableInfo {
                     name: row.get_string(0).unwrap_or("").to_string(),
                     table_type: row.get_string(1).unwrap_or("TABLE").to_string(),
-                    comment: None,
+                    comment: row.get_string(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
                 })
                 .collect())
         }
@@ -338,7 +361,7 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
                     tables.push(TableInfo {
                         name: oci_string(&row, 0),
                         table_type: oci_string(&row, 1),
-                        comment: None,
+                        comment: Some(oci_string(&row, 2)).filter(|s| !s.is_empty()),
                     });
                 }
                 Ok(tables)
@@ -348,36 +371,92 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
     }
 }
 
-pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    log::debug!("[oracle] get_columns: schema={schema}, table={table}");
-    let s = schema.replace('\'', "''");
-    let t = table.replace('\'', "''");
-    let pk_sql = format!(
-        "SELECT cols.COLUMN_NAME FROM ALL_CONS_COLUMNS cols \
-         JOIN ALL_CONSTRAINTS cons ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME AND cols.OWNER = cons.OWNER \
-         WHERE cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = '{s}' AND cons.TABLE_NAME = '{t}'"
+pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate::types::ObjectInfo>, String> {
+    let s = quote_literal(schema);
+    let sql = format!(
+        "SELECT o.OBJECT_NAME, \
+         CASE o.OBJECT_TYPE \
+           WHEN 'TABLE' THEN 'TABLE' \
+           WHEN 'VIEW' THEN 'VIEW' \
+           WHEN 'PROCEDURE' THEN 'PROCEDURE' \
+           WHEN 'FUNCTION' THEN 'FUNCTION' \
+           ELSE o.OBJECT_TYPE \
+         END AS OBJECT_TYPE, \
+         c.COMMENTS \
+         FROM ALL_OBJECTS o \
+         LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME \
+         WHERE o.OWNER = {s} \
+           AND o.OBJECT_TYPE IN ('TABLE','VIEW','PROCEDURE','FUNCTION') \
+           AND o.OBJECT_NAME NOT LIKE 'BIN$%' \
+         ORDER BY CASE o.OBJECT_TYPE \
+           WHEN 'TABLE' THEN 0 \
+           WHEN 'VIEW' THEN 1 \
+           WHEN 'PROCEDURE' THEN 2 \
+           WHEN 'FUNCTION' THEN 3 \
+           ELSE 4 \
+         END, o.OBJECT_NAME"
     );
-    let col_sql = format!(
-        "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_PRECISION, DATA_SCALE, DATA_LENGTH, CHAR_LENGTH \
-         FROM ALL_TAB_COLUMNS \
-         WHERE OWNER = '{s}' AND TABLE_NAME = '{t}' \
-         ORDER BY COLUMN_ID"
-    );
-
     match conn {
-        OracleClient::Thin(conn) => get_columns_thin(conn, &pk_sql, &col_sql).await,
-        OracleClient::Oci(conn) => run_oci(conn, move |conn| get_columns_oci(conn, &pk_sql, &col_sql)).await,
+        OracleClient::Thin(conn) => {
+            let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
+            Ok(result
+                .rows
+                .iter()
+                .map(|row| crate::types::ObjectInfo {
+                    name: row.get_string(0).unwrap_or("").to_string(),
+                    object_type: row.get_string(1).unwrap_or("TABLE").to_string(),
+                    schema: Some(schema.to_string()),
+                    comment: row.get_string(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                })
+                .collect())
+        }
+        OracleClient::Oci(conn) => {
+            let schema = schema.to_string();
+            run_oci(conn, move |conn| {
+                let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
+                let mut objects = Vec::new();
+                for row in rows {
+                    let row = row.map_err(|e| e.to_string())?;
+                    objects.push(crate::types::ObjectInfo {
+                        name: oci_string(&row, 0),
+                        object_type: oci_string(&row, 1),
+                        schema: Some(schema.clone()),
+                        comment: Some(oci_string(&row, 2)).filter(|s| !s.is_empty()),
+                    });
+                }
+                Ok(objects)
+            })
+            .await
+        }
     }
 }
 
-async fn get_columns_thin(conn: &ThinConnection, pk_sql: &str, col_sql: &str) -> Result<Vec<ColumnInfo>, String> {
-    let pk_result = conn.query(pk_sql, &[]).await.map_err(|e| {
-        log::error!("[oracle] get_columns pk query failed: {e}");
-        e.to_string()
-    })?;
-    let pk_names: std::collections::HashSet<String> =
-        pk_result.rows.iter().filter_map(|row| row.get_string(0).map(|s| s.to_string())).collect();
+pub async fn get_columns(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+    log::debug!("[oracle] get_columns: schema={schema}, table={table}");
+    let s = quote_literal(schema);
+    let t = quote_literal(table);
+    let col_sql = format!(
+        "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_PRECISION, c.DATA_SCALE, c.DATA_LENGTH, \
+                c.CHAR_LENGTH, cc.COMMENTS, CASE WHEN pk.COLUMN_NAME IS NULL THEN 0 ELSE 1 END AS IS_PK \
+         FROM ALL_TAB_COLUMNS c \
+         LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME \
+         LEFT JOIN ( \
+           SELECT cols.COLUMN_NAME \
+           FROM ALL_CONS_COLUMNS cols \
+           JOIN ALL_CONSTRAINTS cons ON cols.CONSTRAINT_NAME = cons.CONSTRAINT_NAME AND cols.OWNER = cons.OWNER \
+           WHERE cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = {s} AND cons.TABLE_NAME = {t} \
+         ) pk ON pk.COLUMN_NAME = c.COLUMN_NAME \
+         WHERE c.OWNER = {s} AND c.TABLE_NAME = {t} \
+         ORDER BY c.COLUMN_ID"
+    );
 
+    match conn {
+        OracleClient::Thin(conn) => get_columns_thin(conn, &col_sql).await,
+        OracleClient::Oci(conn) => run_oci(conn, move |conn| get_columns_oci(conn, &col_sql)).await,
+    }
+}
+
+async fn get_columns_thin(conn: &ThinConnection, col_sql: &str) -> Result<Vec<ColumnInfo>, String> {
     let col_result = conn.query(col_sql, &[]).await.map_err(|e| e.to_string())?;
     Ok(col_result
         .rows
@@ -390,13 +469,13 @@ async fn get_columns_thin(conn: &ThinConnection, pk_sql: &str, col_sql: &str) ->
             let num_prec = row.get_i64(3).map(|v| v as i32);
             let num_scale = row.get_i64(4).map(|v| v as i32);
             ColumnInfo {
-                is_primary_key: pk_names.contains(&name),
+                is_primary_key: row.get_i64(8).unwrap_or(0) == 1,
                 name,
                 data_type: format_oracle_data_type(&base, data_len, char_len, num_prec, num_scale),
                 is_nullable: row.get_string(2).unwrap_or("N") == "Y",
                 column_default: None,
                 extra: None,
-                comment: None,
+                comment: row.get_string(7).filter(|s| !s.is_empty()).map(|s| s.to_string()),
                 numeric_precision: num_prec,
                 numeric_scale: num_scale,
                 character_maximum_length: char_len,
@@ -405,8 +484,7 @@ async fn get_columns_thin(conn: &ThinConnection, pk_sql: &str, col_sql: &str) ->
         .collect())
 }
 
-fn get_columns_oci(conn: &oracle_oci::Connection, pk_sql: &str, col_sql: &str) -> Result<Vec<ColumnInfo>, String> {
-    let pk_names: std::collections::HashSet<String> = oci_query_strings(conn, pk_sql)?.into_iter().collect();
+fn get_columns_oci(conn: &oracle_oci::Connection, col_sql: &str) -> Result<Vec<ColumnInfo>, String> {
     let rows = conn.query(col_sql, &[]).map_err(|e| e.to_string())?;
     let mut columns = Vec::new();
     for row in rows {
@@ -418,13 +496,13 @@ fn get_columns_oci(conn: &oracle_oci::Connection, pk_sql: &str, col_sql: &str) -
         let num_prec = oci_i64(&row, 3).map(|v| v as i32);
         let num_scale = oci_i64(&row, 4).map(|v| v as i32);
         columns.push(ColumnInfo {
-            is_primary_key: pk_names.contains(&name),
+            is_primary_key: oci_i64(&row, 8).unwrap_or(0) == 1,
             name,
             data_type: format_oracle_data_type(&base, data_len, char_len, num_prec, num_scale),
             is_nullable: oci_string(&row, 2) == "Y",
             column_default: None,
             extra: None,
-            comment: None,
+            comment: Some(oci_string(&row, 7)).filter(|s| !s.is_empty()),
             numeric_precision: num_prec,
             numeric_scale: num_scale,
             character_maximum_length: char_len,
@@ -451,6 +529,30 @@ fn format_oracle_data_type(
         },
         "RAW" => data_len.map(|n| format!("RAW({n})")).unwrap_or_else(|| "RAW".to_string()),
         _ => base.to_string(),
+    }
+}
+
+pub async fn get_table_comment(conn: &OracleClient, schema: &str, table: &str) -> Result<Option<String>, String> {
+    let s = quote_literal(schema);
+    let t = quote_literal(table);
+    let sql = format!("SELECT COMMENTS FROM ALL_TAB_COMMENTS WHERE OWNER = {s} AND TABLE_NAME = {t}");
+    match conn {
+        OracleClient::Thin(conn) => {
+            let result = conn.query(&sql, &[]).await.map_err(|e| e.to_string())?;
+            Ok(result.rows.first().and_then(|row| row.get_string(0)).filter(|s| !s.is_empty()).map(|s| s.to_string()))
+        }
+        OracleClient::Oci(conn) => {
+            run_oci(conn, move |conn| {
+                let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
+                for row in rows {
+                    let row = row.map_err(|e| e.to_string())?;
+                    let comment = oci_string(&row, 0);
+                    return Ok(Some(comment).filter(|s| !s.is_empty()));
+                }
+                Ok(None)
+            })
+            .await
+        }
     }
 }
 
@@ -606,6 +708,31 @@ fn trigger_from_oci_row(row: &oracle_oci::Row) -> TriggerInfo {
     TriggerInfo { name: oci_string(row, 0), event: oci_string(row, 1), timing: oci_string(row, 2) }
 }
 
+pub async fn execute_query_with_schema(conn: &OracleClient, schema: &str, sql: &str) -> Result<QueryResult, String> {
+    let set_schema = format!("ALTER SESSION SET CURRENT_SCHEMA = \"{}\"", schema);
+    log::info!("[oracle][set-schema:start] schema={schema}");
+    match conn {
+        OracleClient::Thin(conn) => {
+            conn.execute(&set_schema, &[]).await.map_err(|e| {
+                log::error!("[oracle] set current_schema failed: {e}");
+                e.to_string()
+            })?;
+        }
+        OracleClient::Oci(conn) => {
+            run_oci(conn, move |conn| {
+                conn.execute(&set_schema, &[]).map_err(|e| {
+                    log::error!("[oracle-oci] set current_schema failed: {e}");
+                    e.to_string()
+                })?;
+                Ok(())
+            })
+            .await?;
+        }
+    }
+    log::info!("[oracle][set-schema:done] schema={schema}");
+    execute_query(conn, sql).await
+}
+
 pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult, String> {
     match conn {
         OracleClient::Thin(conn) => execute_query_thin(conn, sql).await,
@@ -619,16 +746,34 @@ pub async fn execute_query(conn: &OracleClient, sql: &str) -> Result<QueryResult
 async fn execute_query_thin(conn: &ThinConnection, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
-    let trimmed = sql.to_uppercase();
-    log::debug!("[oracle] execute_query: sql={}", &sql[..sql.len().min(200)]);
+    let explicit_limit = explicit_select_row_limit(sql);
+    log::info!("[oracle][execute:start] explicit_limit={:?} sql={}", explicit_limit, sql);
 
-    if is_query_statement(&trimmed) {
-        let result = conn.query(sql, &[]).await.map_err(|e| {
+    // Rewrite FETCH FIRST N ROWS ONLY to ROWNUM for Oracle 11g compatibility.
+    let sql = rewrite_fetch_first(sql);
+    log::info!("[oracle][execute:rewritten] sql={}", sql.as_ref());
+
+    if starts_with_executable_sql_keyword(sql.as_ref(), &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN"]) {
+        let capped_sql = cap_select_rows(sql.as_ref());
+        let query_limit = explicit_limit.unwrap_or(ORACLE_QUERY_LIMIT).min(ORACLE_QUERY_LIMIT);
+        log::info!(
+            "[oracle][query_with_limit:start] query_limit={} fetch_size=500 sql={}",
+            query_limit,
+            capped_sql.as_ref()
+        );
+        let result = conn.query_with_limit(capped_sql.as_ref(), &[], query_limit, 500).await.map_err(|e| {
             log::error!("[oracle] execute_query SELECT failed: {e}");
             e.to_string()
         })?;
+        log::info!(
+            "[oracle][query_with_limit:done] column_count={} row_count={} has_more_rows={} elapsed_ms={}",
+            result.columns.len(),
+            result.rows.len(),
+            result.has_more_rows,
+            start.elapsed().as_millis()
+        );
         let columns: Vec<String> = result.columns.iter().map(|c| c.name.clone()).collect();
-        let rows: Vec<Vec<serde_json::Value>> = result
+        let mut rows: Vec<Vec<serde_json::Value>> = result
             .rows
             .iter()
             .map(|row| {
@@ -637,18 +782,29 @@ async fn execute_query_thin(conn: &ThinConnection, sql: &str) -> Result<QueryRes
                     .collect()
             })
             .collect();
+        let truncated = rows.len() > crate::query::MAX_ROWS || result.has_more_rows;
+        if rows.len() > crate::query::MAX_ROWS {
+            rows.truncate(crate::query::MAX_ROWS);
+        }
 
-        Ok(QueryResult {
-            columns,
-            rows,
-            affected_rows: 0,
-            execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
-        })
+        log::info!(
+            "[oracle][execute:done] column_count={} row_count={} truncated={} elapsed_ms={}",
+            columns.len(),
+            rows.len(),
+            truncated,
+            start.elapsed().as_millis()
+        );
+        Ok(QueryResult { columns, rows, affected_rows: 0, execution_time_ms: start.elapsed().as_millis(), truncated })
     } else {
-        match conn.execute(sql, &[]).await {
+        log::info!("[oracle][execute-non-select:start] sql={}", sql.as_ref());
+        match conn.execute(sql.as_ref(), &[]).await {
             Ok(result) => {
                 let _ = conn.commit().await;
+                log::info!(
+                    "[oracle][execute-non-select:done] affected_rows={} elapsed_ms={}",
+                    result.rows_affected,
+                    start.elapsed().as_millis()
+                );
                 Ok(QueryResult {
                     columns: vec![],
                     rows: vec![],
@@ -657,7 +813,11 @@ async fn execute_query_thin(conn: &ThinConnection, sql: &str) -> Result<QueryRes
                     truncated: false,
                 })
             }
-            Err(e) => map_oracle_execute_error(e.to_string()),
+            Err(e) => {
+                let msg = e.to_string();
+                log::error!("[oracle][execute-non-select:error] {msg}");
+                map_oracle_execute_error(msg)
+            }
         }
     }
 }
@@ -665,27 +825,39 @@ async fn execute_query_thin(conn: &ThinConnection, sql: &str) -> Result<QueryRes
 fn execute_query_oci(conn: &oracle_oci::Connection, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
     let sql = sql.trim().trim_end_matches(';');
-    let trimmed = sql.to_uppercase();
-    log::debug!("[oracle-oci] execute_query: sql={}", &sql[..sql.len().min(200)]);
+    let explicit_limit = explicit_select_row_limit(sql);
+    log::info!("[oracle-oci][execute:start] explicit_limit={:?} sql={}", explicit_limit, sql);
 
-    if is_query_statement(&trimmed) {
-        let rows = conn.query(sql, &[]).map_err(|e| {
+    let sql = rewrite_fetch_first(sql);
+    log::info!("[oracle-oci][execute:rewritten] sql={}", sql.as_ref());
+
+    if starts_with_executable_sql_keyword(sql.as_ref(), &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN"]) {
+        let capped_sql = cap_select_rows(sql.as_ref());
+        let rows = conn.query(capped_sql.as_ref(), &[]).map_err(|e| {
             log::error!("[oracle-oci] execute_query SELECT failed: {e}");
             e.to_string()
         })?;
         let columns: Vec<String> = rows.column_info().iter().map(|c| c.name().to_string()).collect();
         let mut result_rows = Vec::new();
+        let query_limit = explicit_limit.unwrap_or(ORACLE_QUERY_LIMIT).min(ORACLE_QUERY_LIMIT);
         for row in rows {
             let row = row.map_err(|e| e.to_string())?;
             let values = row.sql_values().iter().map(value_to_json_oci).collect();
             result_rows.push(values);
+            if result_rows.len() >= query_limit {
+                break;
+            }
+        }
+        let truncated = result_rows.len() > crate::query::MAX_ROWS;
+        if result_rows.len() > crate::query::MAX_ROWS {
+            result_rows.truncate(crate::query::MAX_ROWS);
         }
         Ok(QueryResult {
             columns,
             rows: result_rows,
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
+            truncated,
         })
     } else {
         match conn.execute(sql, &[]) {
@@ -704,28 +876,112 @@ fn execute_query_oci(conn: &oracle_oci::Connection, sql: &str) -> Result<QueryRe
     }
 }
 
-fn is_query_statement(trimmed_uppercase_sql: &str) -> bool {
-    trimmed_uppercase_sql.starts_with("SELECT")
-        || trimmed_uppercase_sql.starts_with("WITH")
-        || trimmed_uppercase_sql.starts_with("SHOW")
-        || trimmed_uppercase_sql.starts_with("DESCRIBE")
-        || trimmed_uppercase_sql.starts_with("EXPLAIN")
-}
-
 fn map_oracle_execute_error<T>(msg: String) -> Result<T, String> {
     if msg.contains("Server rejected") || msg.contains("closed the connection") {
-        Err(
-            "Operation failed (connection closed) — possibly a constraint violation (foreign key, unique, or check constraint)."
-                .to_string(),
-        )
+        Err(format!("Operation failed (connection closed). Original driver error: {msg}"))
     } else {
         Err(msg)
     }
 }
 
+fn cap_select_rows(sql: &str) -> std::borrow::Cow<'_, str> {
+    if !starts_with_executable_sql_keyword(sql, &["SELECT", "WITH"]) || has_for_update_clause(sql) {
+        return std::borrow::Cow::Borrowed(sql);
+    }
+
+    std::borrow::Cow::Owned(format!("SELECT * FROM ({sql}) WHERE ROWNUM <= {ORACLE_QUERY_LIMIT}"))
+}
+
+fn has_for_update_clause(sql: &str) -> bool {
+    sql.to_uppercase().contains(" FOR UPDATE")
+}
+
+fn explicit_select_row_limit(sql: &str) -> Option<usize> {
+    fetch_first_row_limit(sql).or_else(|| rownum_row_limit(sql))
+}
+
+fn fetch_first_row_limit(sql: &str) -> Option<usize> {
+    let upper = sql.to_uppercase();
+    let fetch_pos = upper.find("FETCH FIRST").or_else(|| upper.find("FETCH NEXT"))?;
+    let after_fetch = &upper[fetch_pos..];
+    let end = after_fetch.find("ROWS ONLY")?;
+    let keyword_len = if after_fetch.starts_with("FETCH FIRST") { 11 } else { 10 };
+    sql[fetch_pos + keyword_len..fetch_pos + end].trim().parse::<usize>().ok()
+}
+
+fn rownum_row_limit(sql: &str) -> Option<usize> {
+    let upper = sql.to_uppercase();
+    let mut rest = upper.as_str();
+    let mut best: Option<usize> = None;
+
+    while let Some(pos) = rest.find("ROWNUM") {
+        rest = &rest[pos + "ROWNUM".len()..];
+        let trimmed = rest.trim_start();
+        let value_start = if let Some(after) = trimmed.strip_prefix("<=") {
+            after.trim_start()
+        } else if let Some(after) = trimmed.strip_prefix('<') {
+            if let Some(n) = parse_leading_usize(after.trim_start()) {
+                let exclusive = n.saturating_sub(1);
+                best = Some(best.map_or(exclusive, |current| current.min(exclusive)));
+            }
+            continue;
+        } else {
+            continue;
+        };
+
+        if let Some(n) = parse_leading_usize(value_start) {
+            best = Some(best.map_or(n, |current| current.min(n)));
+        }
+    }
+
+    best
+}
+
+fn parse_leading_usize(value: &str) -> Option<usize> {
+    let digits: String = value.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+fn rewrite_fetch_first(sql: &str) -> std::borrow::Cow<'_, str> {
+    let upper = sql.to_uppercase();
+    // Match: ... [OFFSET M ROWS] FETCH FIRST|NEXT N ROWS ONLY
+    let fetch_pos = upper.find("FETCH FIRST").or_else(|| upper.find("FETCH NEXT"));
+    let Some(fpos) = fetch_pos else { return std::borrow::Cow::Borrowed(sql) };
+    let after_fetch = &upper[fpos..];
+    let Some(end) = after_fetch.find("ROWS ONLY") else { return std::borrow::Cow::Borrowed(sql) };
+    let keyword_len = if after_fetch.starts_with("FETCH FIRST") { 11 } else { 10 };
+    let between = sql[fpos + keyword_len..fpos + end].trim();
+    let Ok(n) = between.parse::<u64>() else { return std::borrow::Cow::Borrowed(sql) };
+
+    // Check for OFFSET M ROWS before FETCH
+    let mut base = &sql[..fpos];
+    let base_upper = base.to_uppercase();
+    if let Some(opos) = base_upper.rfind("OFFSET ") {
+        let after_offset = base_upper[opos + 7..].trim();
+        if let Some(rpos) = after_offset.find(" ROWS") {
+            let offset_str = after_offset[..rpos].trim();
+            if let Ok(offset) = offset_str.parse::<u64>() {
+                let inner = sql[..opos].trim_end();
+                return std::borrow::Cow::Owned(format!(
+                    "SELECT * FROM (SELECT a.*, ROWNUM rn__ FROM ({inner}) a WHERE ROWNUM <= {}) WHERE rn__ > {offset}",
+                    offset + n
+                ));
+            }
+        }
+        base = sql[..opos].trim_end();
+    } else {
+        base = base.trim_end();
+    }
+
+    std::borrow::Cow::Owned(format!("SELECT * FROM ({base}) WHERE ROWNUM <= {n}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::build_oci_connect_string;
+    use super::*;
     use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMethod};
 
     fn oracle_oci_config(database: Option<&str>) -> ConnectionConfig {
@@ -751,10 +1007,20 @@ mod tests {
             ssh_key_path: String::new(),
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
+            ssh_connect_timeout_secs: crate::models::connection::default_ssh_connect_timeout_secs(),
+            proxy_enabled: false,
+            proxy_type: crate::models::connection::ProxyType::Socks5,
+            proxy_host: String::new(),
+            proxy_port: 1080,
+            proxy_username: String::new(),
+            proxy_password: String::new(),
             ssl: false,
             sysdba: false,
             oracle_connect_method: OracleConnectMethod::ServiceName,
             connection_string: None,
+            external_config: None,
+            jdbc_driver_class: None,
+            jdbc_driver_paths: Vec::new(),
         }
     }
 
@@ -779,5 +1045,47 @@ mod tests {
         config.connection_string = Some("MY_TNS_ALIAS".to_string());
 
         assert_eq!(build_oci_connect_string(&config, "127.0.0.1", 1521), "MY_TNS_ALIAS");
+    }
+
+    #[test]
+    fn cap_select_rows_wraps_selects() {
+        let sql = "SELECT * FROM users ORDER BY id";
+        assert_eq!(cap_select_rows(sql), format!("SELECT * FROM ({sql}) WHERE ROWNUM <= {ORACLE_QUERY_LIMIT}"));
+    }
+
+    #[test]
+    fn cap_select_rows_wraps_ctes() {
+        let sql = "WITH recent AS (SELECT * FROM users) SELECT * FROM recent";
+        assert_eq!(cap_select_rows(sql), format!("SELECT * FROM ({sql}) WHERE ROWNUM <= {ORACLE_QUERY_LIMIT}"));
+    }
+
+    #[test]
+    fn cap_select_rows_keeps_for_update_queries() {
+        let sql = "SELECT * FROM users FOR UPDATE";
+        assert_eq!(cap_select_rows(sql), sql);
+    }
+
+    #[test]
+    fn rewrite_fetch_first_to_rownum() {
+        assert_eq!(
+            rewrite_fetch_first("SELECT * FROM users FETCH FIRST 20 ROWS ONLY"),
+            "SELECT * FROM (SELECT * FROM users) WHERE ROWNUM <= 20"
+        );
+    }
+
+    #[test]
+    fn explicit_select_row_limit_reads_fetch_first() {
+        assert_eq!(explicit_select_row_limit("SELECT * FROM users FETCH FIRST 100 ROWS ONLY"), Some(100));
+        assert_eq!(explicit_select_row_limit("SELECT * FROM users OFFSET 20 ROWS FETCH NEXT 50 ROWS ONLY"), Some(50));
+    }
+
+    #[test]
+    fn explicit_select_row_limit_reads_rownum() {
+        assert_eq!(explicit_select_row_limit("SELECT * FROM users WHERE ROWNUM <= 100"), Some(100));
+        assert_eq!(explicit_select_row_limit("SELECT * FROM users WHERE ROWNUM < 101"), Some(100));
+        assert_eq!(
+            explicit_select_row_limit("SELECT * FROM (SELECT * FROM users WHERE ROWNUM <= 500) WHERE ROWNUM <= 100"),
+            Some(100)
+        );
     }
 }

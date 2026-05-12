@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { Copy, Trash2, Save, RefreshCw, Plus } from "lucide-vue-next";
+import { Copy, Trash2, Save, RefreshCw, Plus, Loader2 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -22,17 +22,24 @@ const emit = defineEmits<{ deleted: [] }>();
 
 const data = ref<RedisValue | null>(null);
 const loading = ref(false);
+const loadingMore = ref(false);
 const editValue = ref("");
 const isEditing = ref(false);
 const newField = ref("");
 const newValue = ref("");
+const newScore = ref("");
 const showDeleteConfirm = ref(false);
+const editingTtl = ref(false);
+const ttlInput = ref("");
+const collectionItems = ref<any[]>([]);
+const scanCursor = ref<number | undefined>(undefined);
 
 type PendingDelete =
   | { kind: "key" }
   | { kind: "hash"; field: string }
   | { kind: "list"; index: number }
-  | { kind: "set"; member: string };
+  | { kind: "set"; member: string }
+  | { kind: "zset"; member: string };
 
 const pendingDelete = ref<PendingDelete | null>(null);
 
@@ -44,20 +51,46 @@ const deleteDetails = computed(() => {
     return t("dangerDialog.redisHashFieldDetails", { key: props.keyDisplay, field: pending.field });
   if (pending.kind === "list")
     return t("dangerDialog.redisListItemDetails", { key: props.keyDisplay, index: pending.index });
+  if (pending.kind === "zset")
+    return t("dangerDialog.redisSetMemberDetails", { key: props.keyDisplay, member: pending.member });
   return t("dangerDialog.redisSetMemberDetails", { key: props.keyDisplay, member: pending.member });
 });
 
 const isBinaryStringValue = computed(() => data.value?.key_type === "string" && data.value?.value_is_binary);
+const hasMore = computed(() => scanCursor.value != null && scanCursor.value > 0);
 
 async function load() {
   loading.value = true;
   try {
     data.value = await api.redisGetValue(props.connectionId, props.db, props.keyRaw);
+    scanCursor.value = data.value.scan_cursor ?? undefined;
     if (data.value.key_type === "string") {
       editValue.value = String(data.value.value);
+    } else if (["list", "set", "zset", "hash"].includes(data.value.key_type)) {
+      collectionItems.value = Array.isArray(data.value.value) ? [...data.value.value] : [];
     }
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadMore() {
+  if (!data.value || !hasMore.value || loadingMore.value) return;
+  loadingMore.value = true;
+  try {
+    const result = await api.redisLoadMore(
+      props.connectionId,
+      props.db,
+      props.keyRaw,
+      data.value.key_type,
+      scanCursor.value!,
+      200,
+    );
+    const newItems = Array.isArray(result.value) ? result.value : [];
+    collectionItems.value = [...collectionItems.value, ...newItems];
+    scanCursor.value = result.scan_cursor ?? undefined;
+  } finally {
+    loadingMore.value = false;
   }
 }
 
@@ -88,6 +121,26 @@ function copyValue() {
   if (!data.value) return;
   const text = typeof data.value.value === "string" ? data.value.value : JSON.stringify(data.value.value, null, 2);
   navigator.clipboard.writeText(text);
+}
+
+// TTL
+function startEditTtl() {
+  if (!data.value) return;
+  ttlInput.value = data.value.ttl > 0 ? String(data.value.ttl) : "";
+  editingTtl.value = true;
+}
+
+async function saveTtl() {
+  const val = ttlInput.value.trim();
+  const ttl = val === "" || val === "-1" ? -1 : parseInt(val, 10);
+  if (isNaN(ttl)) return;
+  await api.redisSetTtl(props.connectionId, props.db, props.keyRaw, ttl);
+  editingTtl.value = false;
+  await load();
+}
+
+function cancelEditTtl() {
+  editingTtl.value = false;
 }
 
 // Hash
@@ -139,13 +192,32 @@ function requestSetRemove(member: string) {
   showDeleteConfirm.value = true;
 }
 
+// ZSet
+async function zsetAdd() {
+  if (!newValue.value) return;
+  const score = parseFloat(newScore.value || "0");
+  await api.redisZadd(props.connectionId, props.db, props.keyRaw, newValue.value, score);
+  newValue.value = "";
+  newScore.value = "";
+  await load();
+}
+async function applyZsetRemove(member: string) {
+  await api.redisZrem(props.connectionId, props.db, props.keyRaw, member);
+  await load();
+}
+function requestZsetRemove(member: string) {
+  pendingDelete.value = { kind: "zset", member };
+  showDeleteConfirm.value = true;
+}
+
 async function confirmDelete() {
   const pending = pendingDelete.value;
   if (!pending) return;
   if (pending.kind === "key") await applyDeleteKey();
   else if (pending.kind === "hash") await applyHashDel(pending.field);
   else if (pending.kind === "list") await applyListRemove(pending.index);
-  else await applySetRemove(pending.member);
+  else if (pending.kind === "set") await applySetRemove(pending.member);
+  else if (pending.kind === "zset") await applyZsetRemove(pending.member);
   pendingDelete.value = null;
 }
 
@@ -168,10 +240,33 @@ onMounted(load);
       <div class="h-9 flex items-center gap-2 px-4 border-b bg-muted/30 shrink-0">
         <span class="font-mono text-sm font-medium truncate">{{ data.key_display }}</span>
         <Badge variant="secondary" class="text-xs">{{ data.key_type }}</Badge>
-        <Badge v-if="data.ttl > 0" variant="outline" class="text-xs">TTL: {{ data.ttl }}s</Badge>
-        <Badge v-else-if="data.ttl === -1" variant="outline" class="text-xs opacity-50">{{
-          t("redis.noExpiry")
-        }}</Badge>
+        <template v-if="!editingTtl">
+          <Badge
+            v-if="data.ttl > 0"
+            variant="outline"
+            class="text-xs cursor-pointer hover:bg-accent"
+            @click="startEditTtl"
+            >TTL: {{ data.ttl }}s</Badge
+          >
+          <Badge
+            v-else-if="data.ttl === -1"
+            variant="outline"
+            class="text-xs opacity-50 cursor-pointer hover:bg-accent hover:opacity-100"
+            @click="startEditTtl"
+            >{{ t("redis.noExpiry") }}</Badge
+          >
+        </template>
+        <div v-else class="flex items-center gap-1">
+          <Input
+            v-model="ttlInput"
+            class="h-6 w-20 text-xs"
+            placeholder="seconds (-1=no expiry)"
+            autofocus
+            @keydown.enter="saveTtl"
+            @keydown.escape="cancelEditTtl"
+          />
+          <Button variant="ghost" size="icon" class="h-6 w-6" @click="saveTtl"><Save class="h-3 w-3" /></Button>
+        </div>
         <span class="flex-1" />
         <Button variant="ghost" size="icon" class="h-7 w-7" @click="load"><RefreshCw class="h-3.5 w-3.5" /></Button>
         <Button variant="ghost" size="icon" class="h-7 w-7" @click="copyValue"><Copy class="h-3.5 w-3.5" /></Button>
@@ -209,7 +304,7 @@ onMounted(load);
       <div v-else-if="data.key_type === 'list'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
           <span class="text-xs text-muted-foreground">{{
-            t("redis.items", { count: Array.isArray(data.value) ? data.value.length : 0 })
+            t("redis.items", { count: collectionItems.length }) + (data.total != null ? ` / ${data.total}` : "")
           }}</span>
           <span class="flex-1" />
           <Input v-model="newValue" class="h-6 w-40 text-xs" placeholder="value" @keydown.enter="listPush" />
@@ -217,21 +312,34 @@ onMounted(load);
             ><Plus class="w-3 h-3 mr-1" />Push</Button
           >
         </div>
+        <div class="grid grid-cols-[60px_1fr_32px] border-b bg-muted/50 shrink-0">
+          <div class="px-3 py-1 text-xs font-medium text-muted-foreground border-r">#</div>
+          <div class="px-3 py-1 text-xs font-medium text-muted-foreground">Value</div>
+          <div />
+        </div>
         <div class="flex-1 overflow-y-auto">
           <div
-            v-for="(item, idx) in data.value"
+            v-for="(item, idx) in collectionItems"
             :key="idx"
-            class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-2 group"
+            class="grid grid-cols-[60px_1fr_32px] border-b text-sm font-mono hover:bg-accent/50 group"
           >
-            <span class="text-muted-foreground text-xs w-8 shrink-0">{{ idx }}</span>
-            <span class="truncate flex-1">{{ item }}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
-              @click="requestListRemove(Number(idx))"
-              ><Trash2 class="w-3 h-3"
-            /></Button>
+            <div class="px-3 py-1.5 text-xs text-muted-foreground border-r">{{ idx }}</div>
+            <div class="px-3 py-1.5 truncate">{{ item }}</div>
+            <div class="flex items-center justify-center">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+                @click="requestListRemove(Number(idx))"
+                ><Trash2 class="w-3 h-3"
+              /></Button>
+            </div>
+          </div>
+          <div v-if="hasMore" class="p-2">
+            <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
+              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+              {{ t("redis.loadMoreKeys") }}
+            </Button>
           </div>
         </div>
       </div>
@@ -240,7 +348,7 @@ onMounted(load);
       <div v-else-if="data.key_type === 'set'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
           <span class="text-xs text-muted-foreground">{{
-            t("redis.items", { count: Array.isArray(data.value) ? data.value.length : 0 })
+            t("redis.items", { count: collectionItems.length }) + (data.total != null ? ` / ${data.total}` : "")
           }}</span>
           <span class="flex-1" />
           <Input v-model="newValue" class="h-6 w-40 text-xs" placeholder="member" @keydown.enter="setAdd" />
@@ -248,20 +356,32 @@ onMounted(load);
             ><Plus class="w-3 h-3 mr-1" />Add</Button
           >
         </div>
+        <div class="grid grid-cols-[1fr_32px] border-b bg-muted/50 shrink-0">
+          <div class="px-3 py-1 text-xs font-medium text-muted-foreground">Member</div>
+          <div />
+        </div>
         <div class="flex-1 overflow-y-auto">
           <div
-            v-for="(item, idx) in data.value"
+            v-for="(item, idx) in collectionItems"
             :key="idx"
-            class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-2 group"
+            class="grid grid-cols-[1fr_32px] border-b text-sm font-mono hover:bg-accent/50 group"
           >
-            <span class="truncate flex-1">{{ item }}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
-              @click="requestSetRemove(String(item))"
-              ><Trash2 class="w-3 h-3"
-            /></Button>
+            <div class="px-3 py-1.5 truncate">{{ item }}</div>
+            <div class="flex items-center justify-center">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+                @click="requestSetRemove(String(item))"
+                ><Trash2 class="w-3 h-3"
+              /></Button>
+            </div>
+          </div>
+          <div v-if="hasMore" class="p-2">
+            <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
+              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+              {{ t("redis.loadMoreKeys") }}
+            </Button>
           </div>
         </div>
       </div>
@@ -270,7 +390,7 @@ onMounted(load);
       <div v-else-if="data.key_type === 'hash'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
           <span class="text-xs text-muted-foreground">{{
-            t("redis.fields", { count: Object.keys(data.value || {}).length })
+            t("redis.fields", { count: collectionItems.length }) + (data.total != null ? ` / ${data.total}` : "")
           }}</span>
           <span class="flex-1" />
           <Input v-model="newField" class="h-6 w-24 text-xs" placeholder="field" />
@@ -279,37 +399,80 @@ onMounted(load);
             ><Plus class="w-3 h-3 mr-1" />Set</Button
           >
         </div>
+        <div class="grid grid-cols-[minmax(8rem,0.3fr)_1fr_32px] border-b bg-muted/50 shrink-0">
+          <div class="px-3 py-1 text-xs font-medium text-muted-foreground border-r">Field</div>
+          <div class="px-3 py-1 text-xs font-medium text-muted-foreground">Value</div>
+          <div />
+        </div>
         <div class="flex-1 overflow-y-auto">
           <div
-            v-for="(val, field) in data.value"
-            :key="String(field)"
-            class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-3 group"
+            v-for="(item, idx) in collectionItems"
+            :key="idx"
+            class="grid grid-cols-[minmax(8rem,0.3fr)_1fr_32px] border-b text-sm font-mono hover:bg-accent/50 group"
           >
-            <span class="text-blue-500 shrink-0 min-w-24">{{ field }}</span>
-            <span class="truncate text-muted-foreground flex-1">{{ val }}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
-              @click="requestHashDel(String(field))"
-              ><Trash2 class="w-3 h-3"
-            /></Button>
+            <div class="px-3 py-1.5 text-blue-500 truncate border-r">{{ item.field }}</div>
+            <div class="px-3 py-1.5 truncate text-muted-foreground">{{ item.value }}</div>
+            <div class="flex items-center justify-center">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+                @click="requestHashDel(String(item.field))"
+                ><Trash2 class="w-3 h-3"
+              /></Button>
+            </div>
+          </div>
+          <div v-if="hasMore" class="p-2">
+            <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
+              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+              {{ t("redis.loadMoreKeys") }}
+            </Button>
           </div>
         </div>
       </div>
 
-      <!-- Sorted Set (readonly) -->
-      <div v-else-if="data.key_type === 'zset'" class="flex-1 overflow-auto">
-        <div class="px-4 py-1 text-xs text-muted-foreground border-b">
-          {{ t("redis.members", { count: Array.isArray(data.value) ? data.value.length : 0 }) }}
+      <!-- Sorted Set -->
+      <div v-else-if="data.key_type === 'zset'" class="flex-1 flex flex-col overflow-hidden">
+        <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
+          <span class="text-xs text-muted-foreground">{{
+            t("redis.members", { count: collectionItems.length }) + (data.total != null ? ` / ${data.total}` : "")
+          }}</span>
+          <span class="flex-1" />
+          <Input v-model="newScore" class="h-6 w-20 text-xs" placeholder="score" />
+          <Input v-model="newValue" class="h-6 w-32 text-xs" placeholder="member" @keydown.enter="zsetAdd" />
+          <Button variant="ghost" size="sm" class="h-6 text-xs" @click="zsetAdd"
+            ><Plus class="w-3 h-3 mr-1" />Add</Button
+          >
         </div>
-        <div
-          v-for="(item, idx) in data.value"
-          :key="idx"
-          class="px-4 py-1.5 border-b text-sm font-mono hover:bg-accent/50 flex items-center gap-3"
-        >
-          <span class="text-muted-foreground text-xs w-16 shrink-0">{{ item.score }}</span>
-          <span class="truncate">{{ item.member }}</span>
+        <div class="grid grid-cols-[100px_1fr_32px] border-b bg-muted/50 shrink-0">
+          <div class="px-3 py-1 text-xs font-medium text-muted-foreground border-r">Score</div>
+          <div class="px-3 py-1 text-xs font-medium text-muted-foreground">Member</div>
+          <div />
+        </div>
+        <div class="flex-1 overflow-y-auto">
+          <div
+            v-for="(item, idx) in collectionItems"
+            :key="idx"
+            class="grid grid-cols-[100px_1fr_32px] border-b text-sm font-mono hover:bg-accent/50 group"
+          >
+            <div class="px-3 py-1.5 text-muted-foreground text-xs border-r">{{ item.score }}</div>
+            <div class="px-3 py-1.5 truncate">{{ item.member }}</div>
+            <div class="flex items-center justify-center">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+                @click="requestZsetRemove(String(item.member))"
+                ><Trash2 class="w-3 h-3"
+              /></Button>
+            </div>
+          </div>
+          <div v-if="hasMore" class="p-2">
+            <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
+              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+              {{ t("redis.loadMoreKeys") }}
+            </Button>
+          </div>
         </div>
       </div>
 

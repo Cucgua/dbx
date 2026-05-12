@@ -1,49 +1,81 @@
 ---
 title: Query Editor
-description: CodeMirror 6-powered SQL editor with syntax highlighting, smart autocomplete, JOIN suggestions, and query history.
+description: Write, complete, format, execute, and reuse SQL in DBX.
 ---
 
+The query editor is where daily SQL work happens: writing queries, using completion, formatting statements, executing selected fragments, and returning to previous SQL through history.
+
+## Basic Workflow
+
+<Steps>
+  <Step>
+    ### Open a Connection
+
+    Select a database connection from the sidebar. DBX loads the database type and metadata for the active connection.
+  </Step>
+  <Step>
+    ### Write SQL
+
+    Type SQL in the editor. Completion suggestions use SQL keywords, tables, views, columns, and available relationship metadata.
+  </Step>
+  <Step>
+    ### Execute the Query
+
+    Use the shortcut to execute all SQL or only the selected fragment. Results appear in the data grid below the editor.
+  </Step>
+  <Step>
+    ### Reuse History
+
+    Open query history to bring back previously executed SQL for repeated debugging or analysis.
+  </Step>
+</Steps>
+
+## Execute SQL
+
+| Action | macOS | Windows / Linux |
+|---|---|---|
+| Execute all SQL | `Cmd+Enter` | `Ctrl+Enter` |
+| Execute selected SQL | Select text, then `Cmd+Enter` | Select text, then `Ctrl+Enter` |
+
 <Callout type="info">
-Built on CodeMirror 6 with deep database metadata awareness. A SQL editing experience that rivals a full IDE.
+When text is selected, DBX executes only the selected SQL. When nothing is selected, it executes the full editor content.
 </Callout>
 
-## Syntax Highlighting
-
-The editor applies language-aware syntax highlighting for SQL. Keywords, identifiers, strings, numbers, and comments are visually distinguished, making queries easier to read and write. Highlighting rules adapt automatically based on the connected database type.
+After execution, the result area shows returned rows, duration, affected row count, or the error message. For multi-statement scripts, select the exact fragment you want to run to reduce mistakes.
 
 ## Autocomplete
 
-As you type, the editor suggests completions drawn from your actual database metadata:
+Completion suggestions come from the active database context:
 
-- **Keywords** — standard SQL keywords (`SELECT`, `FROM`, `WHERE`, etc.)
-- **Table names** — all tables and views visible in the current connection
-- **Column names** — columns scoped to the tables referenced in your query
-- **JOIN suggestions** — when typing a `JOIN` clause, the editor suggests related tables and join conditions based on foreign key relationships
-
-Completions appear automatically and can also be triggered manually with the platform shortcut.
-
-## Executing Queries
+- **SQL keywords**: `SELECT`, `FROM`, `WHERE`, `GROUP BY`, and more
+- **Object names**: tables, views, schemas, and databases
+- **Column names**: inferred from referenced tables and aliases
+- **JOIN suggestions**: related tables and join conditions from foreign keys or known relationships
+- **SQL Server syntax**: `CROSS APPLY`, `OUTER APPLY`, and related completions for SQL Server connections
 
 <Callout type="info">
-Shortcut: `Cmd+Enter` (macOS) / `Ctrl+Enter` (Windows/Linux). When text is selected, only the selection is executed.
+Completion accuracy depends on connection metadata. If you just created a table or changed columns, refresh the connection metadata and try again.
 </Callout>
 
-| Action | Shortcut |
-|---|---|
-| Execute all SQL | `Cmd+Enter` / `Ctrl+Enter` |
-| Execute selected SQL | Select text, then `Cmd+Enter` / `Ctrl+Enter` |
+## Format SQL
 
-Results appear immediately below the editor in the Data Grid, showing returned rows, execution time, and affected row count.
+Use the format button in the toolbar to standardize indentation, line breaks, and keyword style. Formatting is useful before sharing a query, reviewing a migration script, or debugging a complex statement.
 
-## SQL Formatting
-
-Use the format button in the toolbar to auto-format your SQL. The formatter standardizes indentation, keyword casing, and line breaks so that complex queries are easier to read and review.
+Formatting only changes the editor text. It does not execute SQL or modify the database.
 
 ## Query History
 
-Every executed query is recorded in your local query history:
+DBX records executed SQL so you can reuse it later:
 
-- Browse previously executed queries in the history panel
-- Click any past query to load it back into the editor
-- Search through past queries by keyword
-- History is stored per connection — switching connections shows only the relevant history
+- History is stored per connection
+- Previous statements can be reviewed by time
+- Clicking a history item loads it back into the editor
+- Useful for investigation queries, reports, and repair statements
+
+<Callout type="warn">
+Query history may include business fields, table names, or filter values. Be mindful of sensitive information on shared machines or demo environments.
+</Callout>
+
+## Working With the Data Grid
+
+Query results open in the [Data Grid](/en/docs/data-grid). If the result is editable, DBX shows the SQL before saving changes. For analysis-only results, you can export CSV, JSON, or Markdown.

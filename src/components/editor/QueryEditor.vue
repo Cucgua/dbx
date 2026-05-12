@@ -15,9 +15,11 @@ const props = defineProps<{
   modelValue: string;
   connectionId?: string;
   database?: string;
-  dialect?: "mysql" | "postgres";
+  dialect?: "mysql" | "postgres" | "sqlserver";
   formatDialect?: SqlFormatDialect;
   formatRequestId?: number;
+  readOnly?: boolean;
+  forceWordWrap?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -40,6 +42,8 @@ const MAX_FONT_SIZE = 24;
 let editorViewModule: typeof import("@codemirror/view") | null = null;
 let fontThemeComp: import("@codemirror/state").Compartment | null = null;
 let codeMirrorTheme: import("@codemirror/state").Compartment | null = null;
+let wordWrapComp: import("@codemirror/state").Compartment | null = null;
+let readOnlyComp: import("@codemirror/state").Compartment | null = null;
 
 // Completion cache
 let cachedTables: Array<{ name: string; schema?: string; type?: "table" | "view" }> = [];
@@ -75,6 +79,11 @@ function zoomOut() {
 
 function resetZoom() {
   setFontSize(13);
+}
+
+function wordWrapExtension() {
+  if (!editorViewModule) return [];
+  return props.forceWordWrap || settingsStore.editorSettings.wordWrap ? editorViewModule.EditorView.lineWrapping : [];
 }
 
 function selectedSqlFromView(currentView: EditorViewType): string {
@@ -206,24 +215,30 @@ onMounted(async () => {
 
   const [
     { EditorView, keymap },
-    { EditorState, Compartment },
-    { sql, MySQL, PostgreSQL, SQLDialect },
+    { EditorState, Compartment, Prec },
+    { sql, MSSQL, MySQL, PostgreSQL, SQLDialect },
     { basicSetup },
-    { autocompletion, startCompletion },
+    { autocompletion, startCompletion, closeBrackets, closeBracketsKeymap },
+    { indentWithTab },
+    { bracketMatching },
   ] = await Promise.all([
     import("@codemirror/view"),
     import("@codemirror/state"),
     import("@codemirror/lang-sql"),
     import("codemirror"),
     import("@codemirror/autocomplete"),
+    import("@codemirror/commands"),
+    import("@codemirror/language"),
   ]);
   editorViewModule = { EditorView, keymap } as typeof import("@codemirror/view");
   fontThemeComp = new Compartment();
   codeMirrorTheme = new Compartment();
+  wordWrapComp = new Compartment();
+  readOnlyComp = new Compartment();
 
   const ss = settingsStore.editorSettings;
 
-  const baseDialect = props.dialect === "postgres" ? PostgreSQL : MySQL;
+  const baseDialect = props.dialect === "postgres" ? PostgreSQL : props.dialect === "sqlserver" ? MSSQL : MySQL;
   const extraKeywords =
     "PIVOT UNPIVOT EXCLUDE REPLACE QUALIFY ASOF POSITIONAL ANTI SEMI SAMPLE TABLESAMPLE STRUCT MAP LIST ARRAY LAMBDA UNNEST LATERAL FILTER RECURSIVE SUMMARIZE PRAGMA READ_CSV READ_PARQUET READ_JSON DESCRIBE SHOW COPY EXPORT IMPORT";
   const dialect = SQLDialect.define({
@@ -281,7 +296,12 @@ onMounted(async () => {
         override: [async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos)],
       }),
       codeMirrorTheme.of(theme),
+      closeBrackets(),
+      bracketMatching(),
+      Prec.highest(keymap.of([...closeBracketsKeymap, indentWithTab])),
       runKeymap,
+      wordWrapComp.of(props.forceWordWrap || ss.wordWrap ? EditorView.lineWrapping : []),
+      readOnlyComp.of([EditorState.readOnly.of(!!props.readOnly), EditorView.editable.of(!props.readOnly)]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           emit("update:modelValue", update.state.doc.toString());
@@ -479,15 +499,26 @@ watch(
   },
 );
 
+watch(
+  () => props.forceWordWrap,
+  () => {
+    if (!view.value || !wordWrapComp) return;
+    view.value.dispatch({
+      effects: wordWrapComp.reconfigure(wordWrapExtension()),
+    });
+  },
+);
+
 // Reactively apply editor settings changes
 watch(
   () => settingsStore.editorSettings,
   async (ss) => {
-    if (!view.value || !codeMirrorTheme || !fontThemeComp || !editorViewModule) return;
+    if (!view.value || !codeMirrorTheme || !fontThemeComp || !wordWrapComp || !editorViewModule) return;
     const themeExt = await loadEditorTheme(ss.theme);
     view.value.dispatch({
       effects: [
         codeMirrorTheme.reconfigure(themeExt),
+        wordWrapComp.reconfigure(props.forceWordWrap || ss.wordWrap ? editorViewModule.EditorView.lineWrapping : []),
         fontThemeComp.reconfigure(
           editorFontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily, {
             fixedHeight: true,

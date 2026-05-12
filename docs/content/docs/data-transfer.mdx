@@ -1,47 +1,88 @@
 ---
 title: Data Transfer
-description: Cross-engine data migration with automatic type mapping. MySQL to PostgreSQL, SQLite to SQL Server.
+description: Move table data between connections or database engines.
 ---
 
-<Callout type="info">
-Cross-engine data migration with automatic type mapping and syntax adaptation. MySQL to PostgreSQL, SQLite to SQL Server — it just works.
-</Callout>
+Data Transfer copies table data from one connection to another. Use it for development, testing, migration, and consolidation workflows. It is not a replacement for a production-grade replication pipeline.
 
 ## Use Cases
 
-- **Cross-engine migration** — MySQL → PostgreSQL, SQLite → SQL Server
-- **Environment sync** — Pull production data into your dev environment
-- **Data consolidation** — Merge data from multiple sources into one database
+- Copy part of production data into a development environment
+- Move data between engines such as MySQL, PostgreSQL, SQLite, and SQL Server
+- Consolidate multiple sources into an analysis database
+- Prepare reproducible datasets for testing
+
+<Callout type="warn">
+Cross-engine transfer involves type mapping, defaults, constraints, and auto-increment differences. Validate transferred data afterward, and rehearse important migrations in a test environment first.
+</Callout>
 
 ## Workflow
 
 <Steps>
   <Step>
-    ### Select Source and Target
-    Choose the **source** and **target** connections. They can be different database engines.
+    ### Select the Source
+
+    The source connection is where data is read from. Confirm the account can read the selected tables.
+  </Step>
+  <Step>
+    ### Select the Target
+
+    The target connection is where data is written. Confirm write permissions and verify the target environment.
   </Step>
   <Step>
     ### Choose Tables
-    Transfer all tables at once, or pick a subset.
+
+    Transfer all tables or select only the tables you need. For large tables, consider transferring in smaller batches.
   </Step>
   <Step>
     ### Start Transfer
-    Click "Start Transfer". DBX handles type mapping and syntax differences automatically.
+
+    DBX reads rows table by table and writes them to the target database using the selected mode. You can also choose whether target tables should be created.
+  </Step>
+  <Step>
+    ### Check Results
+
+    After transfer, inspect row counts, errors, and key fields.
   </Step>
 </Steps>
 
-## Progress Tracking
+## During Transfer
 
-During the transfer, a progress indicator shows:
+DBX shows:
 
-- Which table is currently being transferred
-- How many rows have been transferred so far
-- The overall progress across all selected tables
+- Current table
+- Rows transferred
+- Overall progress
+- Errors and the table that caused each error
 
-## Error Handling
+If a table fails, the current transfer stops and shows the error. Fix the structure, permission, or constraint issue, then start the transfer again.
 
-If an error occurs during transfer (type incompatibility, constraint violation, etc.), DBX:
+## Transfer Options
 
-- Logs the error with details about which table caused the problem
-- Continues transferring other tables without stopping the entire job
-- Shows a summary of all errors after the transfer completes
+| Option | Details |
+|---|---|
+| Create target table | Try to create the target table from the source structure when it does not exist |
+| Append | Insert data after existing target rows |
+| Truncate then import | Clear the target table before writing source rows |
+| Batch size | Control how many rows are written per batch |
+
+## Before You Transfer
+
+| Check | Why It Matters |
+|---|---|
+| Target environment | Avoid writing to the wrong database |
+| Table structure | Field names, types, primary keys, and unique constraints affect inserts |
+| Data volume | Large tables may take longer or hit timeouts |
+| Constraints | Foreign keys, unique constraints, and NOT NULL fields may fail writes |
+| Sensitive data | Production data may need masking before copying into lower environments |
+
+## Related Features
+
+<Cards>
+  <Card title="Table Import" href="/en/docs/table-import">
+    Import CSV, TSV, JSON, or Excel into a single table.
+  </Card>
+  <Card title="Database Export" href="/en/docs/database-export">
+    Export a database as SQL for backup or offline migration.
+  </Card>
+</Cards>

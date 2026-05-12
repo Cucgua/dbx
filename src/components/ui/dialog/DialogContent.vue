@@ -4,7 +4,14 @@ import type { DialogContentEmits, DialogContentProps } from "reka-ui";
 import type { HTMLAttributes } from "vue";
 import { reactiveOmit } from "@vueuse/core";
 import { XIcon } from "lucide-vue-next";
-import { DialogClose, DialogContent, DialogPortal, useForwardPropsEmits } from "reka-ui";
+import {
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogPortal,
+  VisuallyHidden,
+  useForwardPropsEmits,
+} from "reka-ui";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import DialogOverlay from "./DialogOverlay.vue";
@@ -39,6 +46,10 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
         )
       "
     >
+      <VisuallyHidden as-child>
+        <DialogDescription />
+      </VisuallyHidden>
+
       <slot />
 
       <DialogClose v-if="showCloseButton" data-slot="dialog-close" as-child>

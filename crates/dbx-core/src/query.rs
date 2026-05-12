@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::connection::{AppState, PoolKind};
 use crate::db;
-use crate::sql::split_sql_statements;
+use crate::sql::{split_sql_statements, starts_with_executable_sql_keyword};
 
 pub const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_ROWS: usize = 10000;
@@ -13,15 +13,8 @@ pub const QUERY_CANCELED: &str = "Query canceled";
 
 pub fn duckdb_execute(con: &duckdb::Connection, sql: &str) -> Result<db::QueryResult, String> {
     let start = std::time::Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("SHOW")
-        || trimmed.starts_with("DESCRIBE")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-        || trimmed.starts_with("PRAGMA")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH", "PRAGMA"]) {
         let mut stmt = con.prepare(sql).map_err(|e| e.to_string())?;
         let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
         let stmt_ref = rows.as_ref().ok_or("DuckDB statement unavailable")?;
@@ -90,6 +83,18 @@ pub fn is_connection_error(err: &str) -> bool {
         || lower.contains("timed out")
         || lower.contains("closed")
         || lower.contains("eof")
+        || lower.contains("i/o error")
+        || is_os_connection_error(&lower)
+}
+
+fn is_os_connection_error(lower: &str) -> bool {
+    let os_error_codes = ["10053", "10054", "10057", "10058", "10060", "10061"];
+    if let Some(pos) = lower.find("os error ") {
+        let after = &lower[pos + 9..];
+        let code: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+        return os_error_codes.contains(&code.as_str());
+    }
+    false
 }
 
 pub fn timeout_error() -> String {
@@ -137,7 +142,7 @@ pub async fn do_execute(
     schema: Option<&str>,
     cancel_token: Option<CancellationToken>,
 ) -> Result<db::QueryResult, String> {
-    let connections = state.connections.lock().await;
+    let connections = state.connections.read().await;
     let pool = connections.get(pool_key).ok_or("Connection not found")?;
 
     match pool {
@@ -154,28 +159,26 @@ pub async fn do_execute(
             })
             .await
         }
-        PoolKind::Mysql(p, bare) => {
+        PoolKind::Mysql(p, mode) => {
             let p = p.clone();
-            let bare = *bare;
+            let bare = *mode == crate::connection::MysqlMode::Bare;
             drop(connections);
-            wait_for_query(cancel_token, db::mysql::execute_query(&p, sql, bare)).await.map(truncate_result)
+            wait_for_query(cancel_token, db::mysql::execute_query(&p, sql, bare)).await
         }
         PoolKind::Postgres(p) => {
             let p = p.clone();
             let schema = schema.map(|s| s.to_string());
             drop(connections);
             if let Some(schema) = schema {
-                wait_for_query(cancel_token, db::postgres::execute_query_with_schema(&p, &schema, sql))
-                    .await
-                    .map(truncate_result)
+                wait_for_query(cancel_token, db::postgres::execute_query_with_schema(&p, &schema, sql)).await
             } else {
-                wait_for_query(cancel_token, db::postgres::execute_query(&p, sql)).await.map(truncate_result)
+                wait_for_query(cancel_token, db::postgres::execute_query(&p, sql)).await
             }
         }
         PoolKind::Sqlite(p) => {
             let p = p.clone();
             drop(connections);
-            wait_for_query(cancel_token, db::sqlite::execute_query(&p, sql)).await.map(truncate_result)
+            wait_for_query(cancel_token, db::sqlite::execute_query(&p, sql)).await
         }
         PoolKind::ClickHouse(client) => {
             let client = client.clone();
@@ -198,9 +201,11 @@ pub async fn do_execute(
             };
             wait_for_query(cancel_token, db::sqlserver::execute_query(&mut client, sql)).await.map(truncate_result)
         }
-        PoolKind::Oracle(client) => {
-            let client = client.clone();
+        PoolKind::Oracle(pool) => {
+            let client = pool.client();
+            let schema = schema.map(|s| s.to_string());
             drop(connections);
+            log::info!("[query][oracle:lock:start] schema={:?} sql={}", schema, sql);
             let client = match cancel_token.as_ref() {
                 Some(token) => tokio::select! {
                     biased;
@@ -209,7 +214,14 @@ pub async fn do_execute(
                 },
                 None => client.lock().await,
             };
-            wait_for_query(cancel_token, db::oracle_driver::execute_query(&*client, sql)).await.map(truncate_result)
+            log::info!("[query][oracle:lock:done] schema={:?}", schema);
+            if let Some(schema) = schema {
+                wait_for_query(cancel_token, db::oracle_driver::execute_query_with_schema(&*client, &schema, sql))
+                    .await
+                    .map(truncate_result)
+            } else {
+                wait_for_query(cancel_token, db::oracle_driver::execute_query(&*client, sql)).await.map(truncate_result)
+            }
         }
         PoolKind::Elasticsearch(client) => {
             let client = client.clone();
@@ -224,11 +236,16 @@ pub async fn do_execute(
         PoolKind::Dameng(client) => {
             let client = client.clone();
             let sql = sql.to_string();
+            let schema = schema.map(|s| s.to_string());
             drop(connections);
             wait_for_query(cancel_token, async move {
                 let task = tokio::task::spawn_blocking(move || {
                     let client = client.lock().map_err(|e| e.to_string())?;
-                    db::dm_driver::execute_query_sync(&client, &sql)
+                    if let Some(schema) = schema {
+                        db::dm_driver::execute_query_with_schema_sync(&client, &schema, &sql)
+                    } else {
+                        db::dm_driver::execute_query_sync(&client, &sql)
+                    }
                 });
                 task.await.map_err(|e| e.to_string())?
             })
@@ -242,6 +259,39 @@ pub async fn do_execute(
             wait_for_query(cancel_token, async move {
                 let mut client = client.lock().await;
                 db::gaussdb_driver::execute_query(&mut client, &sql).await
+            })
+            .await
+            .map(truncate_result)
+        }
+        PoolKind::ExternalTabular(ext_pool) => {
+            if !starts_with_executable_sql_keyword(sql, &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN", "PRAGMA"]) {
+                return Err("External data sources are read-only. Only SELECT queries are supported.".to_string());
+            }
+            let con = ext_pool.cache.clone();
+            let sql = sql.to_string();
+            drop(connections);
+            wait_for_query(cancel_token, async move {
+                let task = tokio::task::spawn_blocking(move || {
+                    let con = con.lock().map_err(|e| e.to_string())?;
+                    duckdb_execute(&con, &sql)
+                });
+                task.await.map_err(|e| e.to_string())?
+            })
+            .await
+        }
+        PoolKind::ExternalDriver { config, session, .. } => {
+            let config = config.clone();
+            let session = session.clone();
+            let sql = sql.to_string();
+            let schema = schema.map(str::to_string);
+            drop(connections);
+            wait_for_query(cancel_token, async move {
+                let params = serde_json::json!({
+                    "connection": config,
+                    "sql": sql,
+                    "schema": schema,
+                });
+                session.invoke::<db::QueryResult>("executeQuery", params).await
             })
             .await
             .map(truncate_result)
@@ -393,10 +443,10 @@ pub async fn execute_statements_in_transaction(
 
     // Clone the pool handle within the lock, then drop it before any async work.
     let path = {
-        let conns = state.connections.lock().await;
+        let conns = state.connections.read().await;
         conns.get(&pool_key).map(|p| match p {
             PoolKind::Postgres(pg) => TxPath::Pg(pg.clone()),
-            PoolKind::Mysql(mp, bare) => TxPath::Mysql(mp.clone(), *bare),
+            PoolKind::Mysql(mp, _mode) => TxPath::Mysql(mp.clone(), false),
             PoolKind::Sqlite(sq) => TxPath::Sqlite(sq.clone()),
             PoolKind::ClickHouse(_) | PoolKind::SqlServer(_) | PoolKind::Dameng(_) | PoolKind::Gaussdb(_) => {
                 TxPath::Explicit
@@ -405,7 +455,9 @@ pub async fn execute_statements_in_transaction(
             | PoolKind::Redis(_)
             | PoolKind::MongoDb(_)
             | PoolKind::Oracle(_)
-            | PoolKind::Elasticsearch(_) => TxPath::None,
+            | PoolKind::Elasticsearch(_)
+            | PoolKind::ExternalTabular(_)
+            | PoolKind::ExternalDriver { .. } => TxPath::None,
         })
     };
 
@@ -470,22 +522,39 @@ async fn exec_tx_mysql_inner(
     statements: &[String],
     start: std::time::Instant,
 ) -> Result<db::QueryResult, String> {
+    let statements = statements.to_vec();
+    tokio::task::spawn_blocking(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to start MySQL transaction runtime: {}", e))?
+            .block_on(exec_tx_mysql_raw_inner(pool, statements, start))
+    })
+    .await
+    .map_err(|e| format!("MySQL transaction task failed: {}", e))?
+}
+
+async fn exec_tx_mysql_raw_inner(
+    pool: sqlx::mysql::MySqlPool,
+    statements: Vec<String>,
+    start: std::time::Instant,
+) -> Result<db::QueryResult, String> {
     let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
-    sqlx::query("START TRANSACTION")
+    sqlx::raw_sql("START TRANSACTION")
         .execute(&mut *conn)
         .await
         .map_err(|e| format!("Failed to begin transaction: {}", e))?;
     let mut total_affected: u64 = 0;
     for (i, sql) in statements.iter().enumerate() {
-        match sqlx::query(sql).execute(&mut *conn).await {
+        match sqlx::raw_sql(sql).execute(&mut *conn).await {
             Ok(r) => total_affected += r.rows_affected(),
             Err(e) => {
-                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                let _ = sqlx::raw_sql("ROLLBACK").execute(&mut *conn).await;
                 return Err(format!("Statement {} failed: {}", i + 1, e));
             }
         }
     }
-    sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| format!("COMMIT failed: {}", e))?;
+    sqlx::raw_sql("COMMIT").execute(&mut *conn).await.map_err(|e| format!("COMMIT failed: {}", e))?;
     Ok(db::QueryResult {
         columns: vec![],
         rows: vec![],
@@ -568,9 +637,11 @@ async fn exec_tx_none_inner(
 ) -> Result<db::QueryResult, String> {
     let mut total_affected: u64 = 0;
     for (i, sql) in statements.iter().enumerate() {
+        log::info!("[query][tx-none:statement:start] index={} sql={}", i + 1, sql);
         match do_execute(state, pool_key, sql, schema, None).await {
             Ok(result) => {
                 total_affected += result.affected_rows;
+                log::info!("[query][tx-none:statement:done] index={} affected_rows={}", i + 1, result.affected_rows);
             }
             Err(e) => {
                 log::warn!("Statement {} failed (no transaction support): {}", i + 1, e);
@@ -631,5 +702,38 @@ mod tests {
         .await;
 
         assert_eq!(result.unwrap_err(), timeout_error());
+    }
+
+    #[test]
+    fn is_connection_error_detects_english_messages() {
+        assert!(is_connection_error("connection reset"));
+        assert!(is_connection_error("broken pipe"));
+        assert!(is_connection_error("reset by peer"));
+        assert!(is_connection_error("Connection timed out"));
+        assert!(is_connection_error("socket closed"));
+        assert!(is_connection_error("unexpected eof"));
+    }
+
+    #[test]
+    fn is_connection_error_detects_localized_io_errors() {
+        assert!(is_connection_error("I/O error: 远程主机强迫关闭了一个现有的连接。 (os error 10054)"));
+        assert!(is_connection_error(
+            "I/O error: 由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。 (os error 10060)"
+        ));
+    }
+
+    #[test]
+    fn is_connection_error_detects_os_error_codes() {
+        assert!(is_connection_error("os error 10053"));
+        assert!(is_connection_error("os error 10054"));
+        assert!(is_connection_error("os error 10060"));
+        assert!(is_connection_error("os error 10061"));
+    }
+
+    #[test]
+    fn is_connection_error_rejects_non_connection_errors() {
+        assert!(!is_connection_error("ORA-00942: table or view does not exist"));
+        assert!(!is_connection_error("syntax error at position 5"));
+        assert!(!is_connection_error("os error 13"));
     }
 }

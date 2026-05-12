@@ -1,0 +1,357 @@
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::Mutex;
+use tokio::time::timeout;
+
+const PLUGIN_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub const SUPPORTED_PLUGIN_PROTOCOL_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginManifest {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default = "default_plugin_protocol_version")]
+    pub protocol_version: u32,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub executable: Option<String>,
+    #[serde(default)]
+    pub drivers: Vec<PluginDriverManifest>,
+}
+
+fn default_plugin_protocol_version() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginDriverManifest {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    #[serde(default)]
+    pub database_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InstalledPlugin {
+    pub manifest: PluginManifest,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct PluginRegistry {
+    root_dir: PathBuf,
+}
+
+impl PluginRegistry {
+    pub fn new(root_dir: PathBuf) -> Self {
+        Self { root_dir }
+    }
+
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
+    }
+
+    pub fn list_installed(&self) -> Result<Vec<InstalledPlugin>, String> {
+        let entries = match std::fs::read_dir(&self.root_dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(err) => return Err(err.to_string()),
+        };
+
+        let mut plugins = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|err| err.to_string())?;
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let manifest_path = path.join("manifest.json");
+            if !manifest_path.exists() {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&manifest_path).map_err(|err| err.to_string())?;
+            let manifest: PluginManifest = serde_json::from_str(&raw)
+                .map_err(|err| format!("Failed to parse plugin manifest {}: {err}", manifest_path.display()))?;
+            plugins.push(InstalledPlugin { manifest, path });
+        }
+        plugins.sort_by(|a, b| a.manifest.id.cmp(&b.manifest.id));
+        Ok(plugins)
+    }
+
+    pub fn find_driver(&self, driver_id: &str) -> Result<Option<InstalledPlugin>, String> {
+        Ok(self.list_installed()?.into_iter().find(|plugin| {
+            plugin
+                .manifest
+                .drivers
+                .iter()
+                .any(|driver| driver.id == driver_id || driver.database_type.as_deref() == Some(driver_id))
+        }))
+    }
+
+    pub async fn invoke_driver<T>(&self, driver_id: &str, method: &str, params: serde_json::Value) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+    {
+        let plugin =
+            self.find_driver(driver_id)?.ok_or_else(|| format!("Plugin driver '{driver_id}' is not installed"))?;
+        ensure_plugin_protocol_compatible(&plugin.manifest)?;
+        timeout(PLUGIN_REQUEST_TIMEOUT, invoke_plugin(&plugin, driver_id, method, params)).await.map_err(|_| {
+            format!("Plugin '{}' timed out after {} seconds", plugin.manifest.id, PLUGIN_REQUEST_TIMEOUT.as_secs())
+        })?
+    }
+
+    pub async fn start_driver_session(&self, driver_id: &str) -> Result<Arc<PluginDriverSession>, String> {
+        let plugin =
+            self.find_driver(driver_id)?.ok_or_else(|| format!("Plugin driver '{driver_id}' is not installed"))?;
+        ensure_plugin_protocol_compatible(&plugin.manifest)?;
+        PluginDriverSession::start(plugin, driver_id.to_string()).await.map(Arc::new)
+    }
+}
+
+fn ensure_plugin_protocol_compatible(manifest: &PluginManifest) -> Result<(), String> {
+    if manifest.protocol_version == SUPPORTED_PLUGIN_PROTOCOL_VERSION {
+        return Ok(());
+    }
+    Err(format!(
+        "Plugin '{}' uses protocol version {}, but this DBX build supports protocol version {}",
+        manifest.id, manifest.protocol_version, SUPPORTED_PLUGIN_PROTOCOL_VERSION
+    ))
+}
+
+#[derive(Debug, Serialize)]
+struct PluginRequest {
+    jsonrpc: &'static str,
+    id: u64,
+    driver: String,
+    method: String,
+    params: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct PluginResponse {
+    id: u64,
+    #[serde(default)]
+    result: Option<serde_json::Value>,
+    #[serde(default)]
+    error: Option<PluginError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PluginError {
+    message: String,
+}
+
+pub struct PluginDriverSession {
+    plugin: InstalledPlugin,
+    driver_id: String,
+    process: Mutex<PluginProcess>,
+    next_request_id: AtomicU64,
+}
+
+struct PluginProcess {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl PluginDriverSession {
+    async fn start(plugin: InstalledPlugin, driver_id: String) -> Result<Self, String> {
+        let mut child = spawn_plugin_child(&plugin)?;
+        let stdin = child.stdin.take().ok_or("Plugin stdin unavailable")?;
+        let stdout = child.stdout.take().ok_or("Plugin stdout unavailable")?;
+        if let Some(stderr) = child.stderr.take() {
+            let plugin_id = plugin.manifest.id.clone();
+            tokio::spawn(async move {
+                let mut stderr = BufReader::new(stderr);
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match stderr.read_line(&mut line).await {
+                        Ok(0) => break,
+                        Ok(_) => log::warn!("[plugin:{plugin_id}] {}", line.trim_end()),
+                        Err(err) => {
+                            log::warn!("[plugin:{plugin_id}] failed to read stderr: {err}");
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        Ok(Self {
+            plugin,
+            driver_id,
+            process: Mutex::new(PluginProcess { child, stdin, stdout: BufReader::new(stdout) }),
+            next_request_id: AtomicU64::new(1),
+        })
+    }
+
+    pub async fn invoke<T>(&self, method: &str, params: serde_json::Value) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+    {
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let result = timeout(PLUGIN_REQUEST_TIMEOUT, async {
+            let mut process = self.process.lock().await;
+            self.invoke_locked(&mut process, request_id, method, params).await
+        })
+        .await;
+
+        match result {
+            Ok(result) => result,
+            Err(_) => {
+                self.kill().await;
+                Err(format!(
+                    "Plugin '{}' timed out after {} seconds",
+                    self.plugin.manifest.id,
+                    PLUGIN_REQUEST_TIMEOUT.as_secs()
+                ))
+            }
+        }
+    }
+
+    async fn invoke_locked<T>(
+        &self,
+        process: &mut PluginProcess,
+        request_id: u64,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+    {
+        let request = PluginRequest {
+            jsonrpc: "2.0",
+            id: request_id,
+            driver: self.driver_id.clone(),
+            method: method.to_string(),
+            params,
+        };
+        let line = serde_json::to_string(&request).map_err(|err| err.to_string())?;
+        process.stdin.write_all(line.as_bytes()).await.map_err(|err| err.to_string())?;
+        process.stdin.write_all(b"\n").await.map_err(|err| err.to_string())?;
+        process.stdin.flush().await.map_err(|err| err.to_string())?;
+
+        let mut response_line = String::new();
+        let read = process.stdout.read_line(&mut response_line).await.map_err(|err| err.to_string())?;
+        if read == 0 {
+            let status = process.child.try_wait().map_err(|err| err.to_string())?;
+            return Err(match status {
+                Some(status) => format!("Plugin '{}' exited with status {}", self.plugin.manifest.id, status),
+                None => format!("Plugin '{}' closed stdout without a response", self.plugin.manifest.id),
+            });
+        }
+        decode_plugin_response(&self.plugin, request_id, &response_line)
+    }
+
+    async fn kill(&self) {
+        let mut process = self.process.lock().await;
+        let _ = process.child.kill().await;
+    }
+}
+
+async fn invoke_plugin<T>(
+    plugin: &InstalledPlugin,
+    driver_id: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<T, String>
+where
+    T: DeserializeOwned,
+{
+    let mut child = spawn_plugin_child(plugin)?;
+
+    let request =
+        PluginRequest { jsonrpc: "2.0", id: 1, driver: driver_id.to_string(), method: method.to_string(), params };
+    let line = serde_json::to_string(&request).map_err(|err| err.to_string())?;
+
+    let mut stdin = child.stdin.take().ok_or("Plugin stdin unavailable")?;
+    stdin.write_all(line.as_bytes()).await.map_err(|err| err.to_string())?;
+    stdin.write_all(b"\n").await.map_err(|err| err.to_string())?;
+    drop(stdin);
+
+    let stdout = child.stdout.take().ok_or("Plugin stdout unavailable")?;
+    let mut stderr = child.stderr.take().ok_or("Plugin stderr unavailable")?;
+    let mut reader = BufReader::new(stdout);
+    let mut response_line = String::new();
+    let read = reader.read_line(&mut response_line).await.map_err(|err| err.to_string())?;
+    let mut stderr_text = String::new();
+    stderr.read_to_string(&mut stderr_text).await.map_err(|err| err.to_string())?;
+    let status = child.wait().await.map_err(|err| err.to_string())?;
+
+    if read == 0 {
+        let stderr = stderr_text.trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("Plugin '{}' exited without a response", plugin.manifest.id)
+        } else {
+            format!("Plugin '{}' exited without a response: {stderr}", plugin.manifest.id)
+        });
+    }
+    if !status.success() {
+        let stderr = stderr_text.trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("Plugin '{}' exited with status {}", plugin.manifest.id, status)
+        } else {
+            format!("Plugin '{}' failed: {stderr}", plugin.manifest.id)
+        });
+    }
+
+    decode_plugin_response(plugin, request.id, &response_line)
+}
+
+fn spawn_plugin_child(plugin: &InstalledPlugin) -> Result<Child, String> {
+    let executable = plugin
+        .manifest
+        .executable
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Plugin '{}' does not declare an executable", plugin.manifest.id))?;
+    let executable_path = resolve_plugin_executable(&plugin.path, executable);
+
+    Command::new(&executable_path)
+        .current_dir(&plugin.path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|err| format!("Failed to start plugin '{}': {err}", plugin.manifest.id))
+}
+
+fn decode_plugin_response<T>(plugin: &InstalledPlugin, request_id: u64, response_line: &str) -> Result<T, String>
+where
+    T: DeserializeOwned,
+{
+    let response: PluginResponse = serde_json::from_str(response_line)
+        .map_err(|err| format!("Failed to parse plugin '{}' response: {err}", plugin.manifest.id))?;
+    if response.id != request_id {
+        return Err(format!("Plugin '{}' returned mismatched response id", plugin.manifest.id));
+    }
+    if let Some(error) = response.error {
+        return Err(error.message);
+    }
+    let result = response.result.unwrap_or(serde_json::Value::Null);
+    serde_json::from_value(result)
+        .map_err(|err| format!("Failed to decode plugin '{}' result: {err}", plugin.manifest.id))
+}
+
+fn resolve_plugin_executable(plugin_dir: &Path, executable: &str) -> PathBuf {
+    let path = PathBuf::from(executable);
+    if path.is_absolute() {
+        path
+    } else {
+        plugin_dir.join(path)
+    }
+}

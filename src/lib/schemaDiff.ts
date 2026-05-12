@@ -1,4 +1,4 @@
-import type { ColumnInfo, IndexInfo, DatabaseType } from "@/types/database";
+import type { ColumnInfo, IndexInfo, ForeignKeyInfo, TriggerInfo, DatabaseType } from "@/types/database";
 
 export interface ColumnDiff {
   type: "added" | "removed" | "modified";
@@ -9,18 +9,40 @@ export interface ColumnDiff {
 }
 
 export interface IndexDiff {
-  type: "added" | "removed";
+  type: "added" | "removed" | "modified";
   name: string;
   source?: IndexInfo;
   target?: IndexInfo;
+  changes?: string[];
+}
+
+export interface ForeignKeyDiff {
+  type: "added" | "removed" | "modified";
+  name: string;
+  source?: ForeignKeyInfo;
+  target?: ForeignKeyInfo;
+  changes?: string[];
+}
+
+export interface TriggerDiff {
+  type: "added" | "removed" | "modified";
+  name: string;
+  source?: TriggerInfo;
+  target?: TriggerInfo;
+  changes?: string[];
 }
 
 export interface TableDiff {
   type: "added" | "removed" | "modified";
+  objectType?: "table" | "view";
   name: string;
   columns?: ColumnDiff[];
   indexes?: IndexDiff[];
+  foreignKeys?: ForeignKeyDiff[];
+  triggers?: TriggerDiff[];
   ddl?: string;
+  sourceTableComment?: string | null;
+  targetTableComment?: string | null;
 }
 
 export function diffColumns(source: ColumnInfo[], target: ColumnInfo[]): ColumnDiff[] {
@@ -42,6 +64,9 @@ export function diffColumns(source: ColumnInfo[], target: ColumnInfo[]): ColumnD
       }
       if ((sc.column_default ?? "") !== (tc.column_default ?? "")) {
         changes.push(`default: ${tc.column_default ?? "NULL"} → ${sc.column_default ?? "NULL"}`);
+      }
+      if ((sc.comment ?? "") !== (tc.comment ?? "")) {
+        changes.push(`comment: ${tc.comment ?? ""} → ${sc.comment ?? ""}`);
       }
       if (changes.length > 0) {
         diffs.push({ type: "modified", name: sc.name, source: sc, target: tc, changes });
@@ -65,8 +90,33 @@ export function diffIndexes(source: IndexInfo[], target: IndexInfo[]): IndexDiff
 
   for (const si of source) {
     if (si.is_primary) continue;
-    if (!targetMap.has(si.name)) {
+    const ti = targetMap.get(si.name);
+    if (!ti) {
       diffs.push({ type: "added", name: si.name, source: si });
+      continue;
+    }
+
+    const changes: string[] = [];
+    if (si.is_unique !== ti.is_unique) {
+      changes.push(`unique: ${ti.is_unique ? "YES" : "NO"} → ${si.is_unique ? "YES" : "NO"}`);
+    }
+    if (si.columns.join(",") !== ti.columns.join(",")) {
+      changes.push(`columns: ${ti.columns.join(", ")} → ${si.columns.join(", ")}`);
+    }
+    if ((si.index_type ?? "") !== (ti.index_type ?? "")) {
+      changes.push(`type: ${ti.index_type ?? "default"} → ${si.index_type ?? "default"}`);
+    }
+    if ((si.filter ?? "") !== (ti.filter ?? "")) {
+      changes.push(`filter: ${ti.filter ?? "none"} → ${si.filter ?? "none"}`);
+    }
+    if ((si.included_columns ?? []).join(",") !== (ti.included_columns ?? []).join(",")) {
+      changes.push(
+        `include: ${(ti.included_columns ?? []).join(", ") || "none"} → ${(si.included_columns ?? []).join(", ") || "none"}`,
+      );
+    }
+
+    if (changes.length > 0) {
+      diffs.push({ type: "modified", name: si.name, source: si, target: ti, changes });
     }
   }
 
@@ -74,6 +124,71 @@ export function diffIndexes(source: IndexInfo[], target: IndexInfo[]): IndexDiff
     if (ti.is_primary) continue;
     if (!sourceMap.has(ti.name)) {
       diffs.push({ type: "removed", name: ti.name, target: ti });
+    }
+  }
+
+  return diffs;
+}
+
+export function diffForeignKeys(source: ForeignKeyInfo[], target: ForeignKeyInfo[]): ForeignKeyDiff[] {
+  const diffs: ForeignKeyDiff[] = [];
+  const targetMap = new Map(target.map((fk) => [fk.name, fk]));
+  const sourceMap = new Map(source.map((fk) => [fk.name, fk]));
+
+  for (const sfk of source) {
+    const tfk = targetMap.get(sfk.name);
+    if (!tfk) {
+      diffs.push({ type: "added", name: sfk.name, source: sfk });
+      continue;
+    }
+
+    const changes: string[] = [];
+    if (sfk.column !== tfk.column) changes.push(`column: ${tfk.column} → ${sfk.column}`);
+    if (sfk.ref_table !== tfk.ref_table) changes.push(`ref table: ${tfk.ref_table} → ${sfk.ref_table}`);
+    if (sfk.ref_column !== tfk.ref_column) changes.push(`ref column: ${tfk.ref_column} → ${sfk.ref_column}`);
+
+    if (changes.length > 0) {
+      diffs.push({ type: "modified", name: sfk.name, source: sfk, target: tfk, changes });
+    }
+  }
+
+  for (const tfk of target) {
+    if (!sourceMap.has(tfk.name)) {
+      diffs.push({ type: "removed", name: tfk.name, target: tfk });
+    }
+  }
+
+  return diffs;
+}
+
+export function diffTriggers(source: TriggerInfo[], target: TriggerInfo[]): TriggerDiff[] {
+  const diffs: TriggerDiff[] = [];
+  const targetMap = new Map(target.map((trigger) => [trigger.name, trigger]));
+  const sourceMap = new Map(source.map((trigger) => [trigger.name, trigger]));
+
+  for (const sourceTrigger of source) {
+    const targetTrigger = targetMap.get(sourceTrigger.name);
+    if (!targetTrigger) {
+      diffs.push({ type: "added", name: sourceTrigger.name, source: sourceTrigger });
+      continue;
+    }
+
+    const changes: string[] = [];
+    if (sourceTrigger.event !== targetTrigger.event) {
+      changes.push(`event: ${targetTrigger.event} → ${sourceTrigger.event}`);
+    }
+    if (sourceTrigger.timing !== targetTrigger.timing) {
+      changes.push(`timing: ${targetTrigger.timing} → ${sourceTrigger.timing}`);
+    }
+
+    if (changes.length > 0) {
+      diffs.push({ type: "modified", name: sourceTrigger.name, source: sourceTrigger, target: targetTrigger, changes });
+    }
+  }
+
+  for (const targetTrigger of target) {
+    if (!sourceMap.has(targetTrigger.name)) {
+      diffs.push({ type: "removed", name: targetTrigger.name, target: targetTrigger });
     }
   }
 
@@ -109,29 +224,121 @@ function columnDef(col: ColumnInfo, dbType: DatabaseType): string {
   return def;
 }
 
-export function generateSyncSql(diffs: TableDiff[], dbType: DatabaseType): string {
+function qualifiedName(name: string, dbType: DatabaseType, schema?: string): string {
+  return schema ? `${quoteId(schema, dbType)}.${quoteId(name, dbType)}` : quoteId(name, dbType);
+}
+
+function dropIndexSql(tableName: string, indexName: string, dbType: DatabaseType, schema?: string): string {
+  const qt = qualifiedName(tableName, dbType, schema);
+  const qi = qualifiedName(indexName, dbType, schema);
+  if (dbType === "mysql" || dbType === "doris" || dbType === "starrocks") {
+    return `DROP INDEX ${quoteId(indexName, dbType)} ON ${qt};`;
+  }
+  return `DROP INDEX IF EXISTS ${qi};`;
+}
+
+function createIndexSql(tableName: string, idx: IndexInfo, dbType: DatabaseType, schema?: string): string {
+  const qt = qualifiedName(tableName, dbType, schema);
+  const cols = idx.columns.map((c) => quoteId(c, dbType)).join(", ");
+  const unique = idx.is_unique ? "UNIQUE " : "";
+  const idxType = idx.index_type ?? "";
+  const usingClause = idxType && dbType === "postgres" ? ` USING ${idxType}` : "";
+  const typePrefix = idxType && dbType === "sqlserver" ? `${idxType} ` : "";
+  const incCols = idx.included_columns ?? [];
+  const includeClause =
+    incCols.length > 0 && (dbType === "postgres" || dbType === "sqlserver")
+      ? ` INCLUDE (${incCols.map((c) => quoteId(c, dbType)).join(", ")})`
+      : "";
+  const supportsWhere = dbType === "postgres" || dbType === "sqlserver" || dbType === "sqlite";
+  const filter = idx.filter && supportsWhere ? ` WHERE ${idx.filter}` : "";
+  return `CREATE ${unique}${typePrefix}INDEX ${quoteId(idx.name, dbType)} ON ${qt}${usingClause} (${cols})${includeClause}${filter};`;
+}
+
+function dropForeignKeySql(tableName: string, fkName: string, dbType: DatabaseType, schema?: string): string {
+  const qt = qualifiedName(tableName, dbType, schema);
+  const qf = quoteId(fkName, dbType);
+  if (dbType === "mysql" || dbType === "doris" || dbType === "starrocks") {
+    return `ALTER TABLE ${qt} DROP FOREIGN KEY ${qf};`;
+  }
+  return `ALTER TABLE ${qt} DROP CONSTRAINT ${qf};`;
+}
+
+function addForeignKeySql(tableName: string, fk: ForeignKeyInfo, dbType: DatabaseType, schema?: string): string {
+  const qt = qualifiedName(tableName, dbType, schema);
+  return `ALTER TABLE ${qt} ADD CONSTRAINT ${quoteId(fk.name, dbType)} FOREIGN KEY (${quoteId(fk.column, dbType)}) REFERENCES ${quoteId(fk.ref_table, dbType)} (${quoteId(fk.ref_column, dbType)});`;
+}
+
+function dropObjectSql(diff: TableDiff, dbType: DatabaseType, schema?: string): string {
+  const objectType = diff.objectType === "view" ? "VIEW" : "TABLE";
+  return `DROP ${objectType} IF EXISTS ${qualifiedName(diff.name, dbType, schema)};`;
+}
+
+function commentLiteral(comment: string): string {
+  return `'${comment.replace(/'/g, "''")}'`;
+}
+
+function columnCommentSql(
+  tableName: string,
+  colName: string,
+  comment: string,
+  dbType: DatabaseType,
+  schema?: string,
+): string {
+  const isMySQL = dbType === "mysql" || dbType === "doris" || dbType === "starrocks";
+  if (isMySQL) {
+    return `-- Column comment for ${colName}: use ALTER TABLE ... MODIFY COLUMN to set comment in MySQL`;
+  }
+  const qt = qualifiedName(tableName, dbType, schema);
+  return `COMMENT ON COLUMN ${qt}.${quoteId(colName, dbType)} IS ${commentLiteral(comment)};`;
+}
+
+function tableCommentSql(tableName: string, comment: string, dbType: DatabaseType, schema?: string): string {
+  const isMySQL = dbType === "mysql" || dbType === "doris" || dbType === "starrocks";
+  const qt = qualifiedName(tableName, dbType, schema);
+  if (isMySQL) {
+    return `ALTER TABLE ${qt} COMMENT = ${commentLiteral(comment)};`;
+  }
+  return `COMMENT ON TABLE ${qt} IS ${commentLiteral(comment)};`;
+}
+
+export function generateSyncSql(diffs: TableDiff[], dbType: DatabaseType, schema?: string): string {
   const lines: string[] = [];
   const isMySQL = dbType === "mysql" || dbType === "doris" || dbType === "starrocks";
 
   for (const diff of diffs) {
-    const qt = quoteId(diff.name, dbType);
+    const qt = qualifiedName(diff.name, dbType, schema);
 
     if (diff.type === "added" && diff.ddl) {
-      lines.push(`-- Create table: ${diff.name}`);
+      lines.push(`-- Create ${diff.objectType ?? "table"}: ${diff.name}`);
       lines.push(diff.ddl + ";");
       lines.push("");
       continue;
     }
 
+    if (diff.type === "added" && diff.objectType === "view") {
+      lines.push(`-- View exists only in source: ${diff.name}`);
+      lines.push("-- Source view definition is not available from this driver yet.");
+      lines.push("");
+      continue;
+    }
+
     if (diff.type === "removed") {
-      lines.push(`-- Drop table: ${diff.name}`);
-      lines.push(`DROP TABLE IF EXISTS ${qt};`);
+      lines.push(`-- Drop ${diff.objectType ?? "table"}: ${diff.name}`);
+      lines.push(dropObjectSql(diff, dbType, schema));
       lines.push("");
       continue;
     }
 
     if (diff.type === "modified") {
       const parts: string[] = [];
+
+      if (diff.foreignKeys) {
+        for (const fk of diff.foreignKeys) {
+          if (fk.type === "removed" || fk.type === "modified") {
+            lines.push(dropForeignKeySql(diff.name, fk.name, dbType, schema));
+          }
+        }
+      }
 
       if (diff.columns) {
         for (const col of diff.columns) {
@@ -164,34 +371,6 @@ export function generateSyncSql(diffs: TableDiff[], dbType: DatabaseType): strin
         }
       }
 
-      if (diff.indexes) {
-        for (const idx of diff.indexes) {
-          if (idx.type === "added" && idx.source) {
-            const cols = idx.source.columns.map((c) => quoteId(c, dbType)).join(", ");
-            const unique = idx.source.is_unique ? "UNIQUE " : "";
-            const idxType = idx.source.index_type ?? "";
-            const usingClause = idxType && dbType === "postgres" ? ` USING ${idxType}` : "";
-            const typePrefix = idxType && dbType === "sqlserver" ? `${idxType} ` : "";
-            const incCols = idx.source.included_columns ?? [];
-            const includeClause =
-              incCols.length > 0 && (dbType === "postgres" || dbType === "sqlserver")
-                ? ` INCLUDE (${incCols.map((c) => quoteId(c, dbType)).join(", ")})`
-                : "";
-            const supportsWhere = dbType === "postgres" || dbType === "sqlserver" || dbType === "sqlite";
-            const filter = idx.source.filter && supportsWhere ? ` WHERE ${idx.source.filter}` : "";
-            lines.push(
-              `CREATE ${unique}${typePrefix}INDEX ${quoteId(idx.name, dbType)} ON ${qt}${usingClause} (${cols})${includeClause}${filter};`,
-            );
-          } else if (idx.type === "removed") {
-            if (isMySQL) {
-              lines.push(`DROP INDEX ${quoteId(idx.name, dbType)} ON ${qt};`);
-            } else {
-              lines.push(`DROP INDEX IF EXISTS ${quoteId(idx.name, dbType)};`);
-            }
-          }
-        }
-      }
-
       if (parts.length > 0) {
         lines.push(`-- Alter table: ${diff.name}`);
         if (isMySQL) {
@@ -202,6 +381,67 @@ export function generateSyncSql(diffs: TableDiff[], dbType: DatabaseType): strin
             lines.push(`ALTER TABLE ${qt}${part};`);
           }
         }
+        lines.push("");
+      }
+
+      if (diff.columns) {
+        for (const col of diff.columns) {
+          if (col.source && col.changes?.some((c) => c.startsWith("comment:"))) {
+            lines.push(columnCommentSql(diff.name, col.name, col.source.comment ?? "", dbType, schema));
+          }
+          if (col.type === "added" && col.source?.comment) {
+            lines.push(columnCommentSql(diff.name, col.name, col.source.comment, dbType, schema));
+          }
+        }
+      }
+
+      if (diff.sourceTableComment !== undefined && diff.sourceTableComment !== diff.targetTableComment) {
+        lines.push(tableCommentSql(diff.name, diff.sourceTableComment ?? "", dbType, schema));
+      }
+
+      if (diff.indexes) {
+        for (const idx of diff.indexes) {
+          if (idx.type === "added" && idx.source) {
+            lines.push(createIndexSql(diff.name, idx.source, dbType, schema));
+          } else if (idx.type === "removed") {
+            lines.push(dropIndexSql(diff.name, idx.name, dbType, schema));
+          } else if (idx.type === "modified" && idx.source) {
+            lines.push(dropIndexSql(diff.name, idx.name, dbType, schema));
+            lines.push(createIndexSql(diff.name, idx.source, dbType, schema));
+          }
+        }
+      }
+
+      if (diff.foreignKeys) {
+        for (const fk of diff.foreignKeys) {
+          if (fk.type === "added" && fk.source) {
+            lines.push(addForeignKeySql(diff.name, fk.source, dbType, schema));
+          } else if (fk.type === "modified" && fk.source) {
+            lines.push(addForeignKeySql(diff.name, fk.source, dbType, schema));
+          }
+        }
+      }
+
+      if (diff.triggers) {
+        for (const trigger of diff.triggers) {
+          lines.push(
+            `-- Trigger ${trigger.type}: ${trigger.name} on ${diff.name}; review trigger definition manually.`,
+          );
+        }
+      }
+
+      if (diff.indexes || diff.foreignKeys || diff.triggers) {
+        if (
+          (diff.indexes?.length ?? 0) > 0 ||
+          (diff.foreignKeys?.length ?? 0) > 0 ||
+          (diff.triggers?.length ?? 0) > 0
+        ) {
+          lines.push("");
+        }
+      }
+
+      if (dbType === "sqlite" && diff.foreignKeys?.length) {
+        lines.push(`-- SQLite foreign key synchronization may require table rebuild for: ${diff.name}`);
         lines.push("");
       }
     }

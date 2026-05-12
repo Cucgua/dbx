@@ -56,11 +56,11 @@ test("suggests columns for an explicit alias qualifier", () => {
     columnsByTable,
   });
 
+  const columnItems = items.filter((item) => item.type === "column");
   assert.deepEqual(
-    items.map((item) => item.label),
+    columnItems.map((item) => item.label),
     ["id", "name", "email"],
   );
-  assert.ok(items.every((item) => item.type === "column"));
 });
 
 test("suggests columns from referenced tables in select list", () => {
@@ -96,15 +96,14 @@ test("suggests tables after comma in FROM clause", () => {
   assert.ok(items.some((item) => item.label === "orders" && item.type === "table"));
 });
 
-test("suggests tables as fallback when typing an identifier", () => {
+test("suggests keywords when typing without context", () => {
   const sql = "us";
   const items = buildSqlCompletionItems(sql, sql.length, {
     tables,
     columnsByTable,
   });
 
-  assert.ok(items.some((item) => item.label === "users" && item.type === "table"));
-  assert.ok(items.some((item) => item.type === "keyword"));
+  assert.ok(items.some((item) => item.type === "keyword" && item.label === "USING"));
 });
 
 test("always includes keywords alongside table suggestions", () => {

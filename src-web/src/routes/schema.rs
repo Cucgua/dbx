@@ -13,6 +13,7 @@ pub struct SchemaQuery {
     pub database: Option<String>,
     pub schema: Option<String>,
     pub table: Option<String>,
+    pub object_type: Option<dbx_core::db::ObjectSourceKind>,
 }
 
 pub async fn list_databases(
@@ -41,6 +42,32 @@ pub async fn list_tables(
     let result =
         dbx_core::schema::list_tables_core(&state.app, &q.connection_id, database, schema).await.map_err(AppError)?;
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+}
+
+pub async fn list_objects(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<SchemaQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let database = q.database.as_deref().unwrap_or("");
+    let schema = q.schema.as_deref().unwrap_or("");
+    let result =
+        dbx_core::schema::list_objects_core(&state.app, &q.connection_id, database, schema).await.map_err(AppError)?;
+    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+}
+
+pub async fn get_object_source(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<SchemaQuery>,
+) -> Result<Json<dbx_core::db::ObjectSource>, AppError> {
+    let database = q.database.as_deref().unwrap_or("");
+    let schema = q.schema.as_deref().unwrap_or("");
+    let name = q.table.as_deref().unwrap_or("");
+    let object_type = q.object_type.ok_or_else(|| AppError("Missing object_type".to_string()))?;
+    let result =
+        dbx_core::schema::get_object_source_core(&state.app, &q.connection_id, database, schema, name, object_type)
+            .await
+            .map_err(AppError)?;
+    Ok(Json(result))
 }
 
 pub async fn list_columns(

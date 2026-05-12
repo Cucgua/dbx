@@ -7,6 +7,9 @@ import { useToast } from "@/composables/useToast";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
 
 const DANGER_RE = /^\s*(DROP|DELETE|TRUNCATE|ALTER|UPDATE|MERGE|REPLACE)\b/i;
+const READ_RE = /^\s*(SELECT|WITH|SHOW|DESCRIBE|DESC|EXPLAIN)\b/i;
+const WRITE_RE = /^\s*(INSERT|UPDATE|DELETE|MERGE|REPLACE|TRUNCATE)\b/i;
+const SCHEMA_RE = /^\s*(CREATE|ALTER|DROP|RENAME)\b/i;
 
 export function stripSqlComments(sql: string): string {
   return sql
@@ -18,6 +21,27 @@ export function stripSqlComments(sql: string): string {
 export function isDangerousSql(sql: string): boolean {
   const cleaned = stripSqlComments(sql);
   return cleaned.split(";").some((stmt) => DANGER_RE.test(stmt));
+}
+
+function primarySqlOperation(sql: string): string {
+  const cleaned = stripSqlComments(sql);
+  const statement = cleaned
+    .split(";")
+    .map((part) => part.trim())
+    .find(Boolean);
+  return statement?.match(/^([a-z]+)/i)?.[1]?.toUpperCase() || "SQL";
+}
+
+function activityKindForSql(sql: string): "query" | "data_change" | "schema_change" {
+  const cleaned = stripSqlComments(sql);
+  const statements = cleaned
+    .split(";")
+    .map((stmt) => stmt.trim())
+    .filter(Boolean);
+  if (statements.some((stmt) => SCHEMA_RE.test(stmt))) return "schema_change";
+  if (statements.some((stmt) => WRITE_RE.test(stmt))) return "data_change";
+  if (statements.every((stmt) => READ_RE.test(stmt))) return "query";
+  return "query";
 }
 
 export function useSqlExecution(deps: {
@@ -59,12 +83,16 @@ export function useSqlExecution(deps: {
     const elapsed = Date.now() - start;
     const success = !tab.result?.columns.includes("Error");
     historyStore.add({
+      connection_id: tab.connectionId,
       connection_name: connName,
       database: tab.database,
       sql,
       execution_time_ms: elapsed,
       success,
       error: success ? undefined : String(tab.result?.rows?.[0]?.[0] ?? ""),
+      activity_kind: activityKindForSql(sql),
+      operation: primarySqlOperation(sql),
+      affected_rows: success ? tab.result?.affected_rows : undefined,
     });
   }
 

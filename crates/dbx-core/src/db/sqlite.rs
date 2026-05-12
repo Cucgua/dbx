@@ -1,8 +1,10 @@
+use futures::StreamExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column, Executor, Row};
 use std::time::{Duration, Instant};
 
 use super::file_validator::validate_file_path;
+use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub async fn connect_path(path: &str) -> Result<SqlitePool, String> {
@@ -161,21 +163,17 @@ pub async fn list_triggers(pool: &SqlitePool, _schema: &str, table: &str) -> Res
 
 pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, String> {
     let start = Instant::now();
-    let trimmed = sql.trim().to_uppercase();
 
-    if trimmed.starts_with("SELECT")
-        || trimmed.starts_with("PRAGMA")
-        || trimmed.starts_with("EXPLAIN")
-        || trimmed.starts_with("WITH")
-    {
+    if starts_with_executable_sql_keyword(sql, &["SELECT", "PRAGMA", "EXPLAIN", "WITH"]) {
         let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
         let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
 
-        let rows: Vec<SqliteRow> = sqlx::query(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+        let mut stream = sqlx::query(sql).fetch(pool);
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
 
-        let result_rows: Vec<Vec<serde_json::Value>> = rows
-            .iter()
-            .map(|row| {
+        while let Some(row) = stream.next().await {
+            let row = row.map_err(|e| e.to_string())?;
+            result_rows.push(
                 (0..row.len())
                     .map(|i| {
                         row.try_get::<String, _>(i)
@@ -191,16 +189,24 @@ pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, 
                             .or_else(|_| row.try_get::<bool, _>(i).map(serde_json::Value::Bool))
                             .unwrap_or(serde_json::Value::Null)
                     })
-                    .collect()
-            })
-            .collect();
+                    .collect(),
+            );
+            if result_rows.len() > crate::query::MAX_ROWS {
+                break;
+            }
+        }
+
+        let truncated = result_rows.len() > crate::query::MAX_ROWS;
+        if truncated {
+            result_rows.truncate(crate::query::MAX_ROWS);
+        }
 
         Ok(QueryResult {
             columns,
             rows: result_rows,
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
+            truncated,
         })
     } else {
         let result = sqlx::query(sql).execute(pool).await.map_err(|e| e.to_string())?;
