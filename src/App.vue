@@ -618,8 +618,14 @@ onUnmounted(() => {
                   @editor-cursor-change="(p: number) => (cursorPos = p)"
                   @format-error="toast(t('toolbar.formatSqlFailed'))"
                   @reload="
-                    (sql?: string, searchText?: string, whereInput?: string, orderBy?: string) =>
-                      onReloadData(sql, searchText, whereInput, orderBy)
+                    (
+                      sql?: string,
+                      searchText?: string,
+                      whereInput?: string,
+                      orderBy?: string,
+                      limit?: number,
+                      offset?: number,
+                    ) => onReloadData(sql, searchText, whereInput, orderBy, limit, offset)
                   "
                   @paginate="onPaginate"
                   @sort="onSort"

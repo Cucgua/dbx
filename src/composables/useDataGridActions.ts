@@ -51,12 +51,19 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     await queryStore.executeTabSql(tab.id, sql);
   }
 
-  async function onReloadData(sql?: string, _searchText?: string, whereInput?: string, orderBy?: string) {
+  async function onReloadData(
+    sql?: string,
+    _searchText?: string,
+    whereInput?: string,
+    orderBy?: string,
+    limit?: number,
+    offset?: number,
+  ) {
     const tab = activeTab.value;
     if (!tab) return;
     if (tab.mode === "data" && tab.tableMeta) {
       tab.whereInput = whereInput ?? "";
-      queryStore.updateSql(tab.id, buildTableSql(tab, { whereInput, orderBy }));
+      queryStore.updateSql(tab.id, buildTableSql(tab, { whereInput, orderBy, limit, offset }));
       await queryStore.executeCurrentTab();
       return;
     }

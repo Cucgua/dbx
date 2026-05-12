@@ -40,7 +40,7 @@ const emit = defineEmits<{
   editorSelectionChange: [value: string];
   editorCursorChange: [pos: number];
   formatError: [];
-  reload: [sql?: string, searchText?: string, whereInput?: string, orderBy?: string];
+  reload: [sql?: string, searchText?: string, whereInput?: string, orderBy?: string, limit?: number, offset?: number];
   paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
   sort: [column: string, columnIndex: number, direction: "asc" | "desc" | null, whereInput?: string];
   executeSql: [sql: string];
@@ -283,8 +283,14 @@ function onHandleCloseColumnPanel() {
                 :table-meta="activeTab.tableMeta"
                 :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
                 @reload="
-                  (sql?: string, searchText?: string, whereInput?: string, orderBy?: string) =>
-                    emit('reload', sql, searchText, whereInput, orderBy)
+                  (
+                    sql?: string,
+                    searchText?: string,
+                    whereInput?: string,
+                    orderBy?: string,
+                    limit?: number,
+                    offset?: number,
+                  ) => emit('reload', sql, searchText, whereInput, orderBy, limit, offset)
                 "
                 @paginate="
                   (offset: number, limit: number, whereInput?: string, orderBy?: string) =>
@@ -381,8 +387,14 @@ function onHandleCloseColumnPanel() {
           :table-meta="activeTab.tableMeta"
           :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
           @reload="
-            (sql?: string, searchText?: string, whereInput?: string, orderBy?: string) =>
-              emit('reload', sql, searchText, whereInput, orderBy)
+            (
+              sql?: string,
+              searchText?: string,
+              whereInput?: string,
+              orderBy?: string,
+              limit?: number,
+              offset?: number,
+            ) => emit('reload', sql, searchText, whereInput, orderBy, limit, offset)
           "
           @paginate="
             (offset: number, limit: number, whereInput?: string, orderBy?: string) =>

@@ -66,8 +66,18 @@ export interface UseDataGridEditorOptions {
   rowStatusFilter: Ref<RowStatusFilter>;
   initialEditColumn?: ComputedRef<number>;
   getRowItem: (rowId: number) => RowItem | undefined;
+  pageSize: Ref<number>;
+  currentPage: Ref<number>;
   emit: {
-    (event: "reload", sql?: string, searchText?: string, whereInput?: string, orderBy?: string): void;
+    (
+      event: "reload",
+      sql?: string,
+      searchText?: string,
+      whereInput?: string,
+      orderBy?: string,
+      limit?: number,
+      offset?: number,
+    ): void;
   };
 }
 
@@ -91,6 +101,8 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
     rowStatusFilter,
     initialEditColumn,
     getRowItem,
+    pageSize,
+    currentPage,
     emit,
   } = options;
 
@@ -486,6 +498,8 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
         searchText.value,
         whereFilterInput.value.trim() || undefined,
         orderByInput.value.trim() || undefined,
+        pageSize.value,
+        (currentPage.value - 1) * pageSize.value,
       );
       return;
     }
@@ -571,6 +585,8 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
       searchText.value,
       whereFilterInput.value.trim() || undefined,
       orderByInput.value.trim() || undefined,
+      pageSize.value,
+      (currentPage.value - 1) * pageSize.value,
     );
   }
 

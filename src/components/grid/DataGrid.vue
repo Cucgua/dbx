@@ -101,7 +101,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  reload: [sql?: string, searchText?: string, whereInput?: string, orderBy?: string];
+  reload: [sql?: string, searchText?: string, whereInput?: string, orderBy?: string, limit?: number, offset?: number];
   paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
   sort: [column: string, columnIndex: number, direction: "asc" | "desc" | null, whereInput?: string];
 }>();
@@ -857,6 +857,8 @@ const editor = useDataGridEditor({
   rowStatusFilter,
   initialEditColumn: firstVisibleColumnIndex,
   getRowItem,
+  pageSize,
+  currentPage,
   emit,
 });
 
@@ -904,6 +906,8 @@ async function onToolbarRefresh() {
     searchText.value,
     whereFilterInput.value.trim() || undefined,
     orderByInput.value.trim() || undefined,
+    pageSize.value,
+    (currentPage.value - 1) * pageSize.value,
   );
 }
 
@@ -919,6 +923,8 @@ function onToolbarRollback() {
     searchText.value,
     whereFilterInput.value.trim() || undefined,
     orderByInput.value.trim() || undefined,
+    pageSize.value,
+    (currentPage.value - 1) * pageSize.value,
   );
 }
 
