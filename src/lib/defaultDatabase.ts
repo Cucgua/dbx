@@ -1,9 +1,6 @@
 import type { ConnectionConfig } from "@/types/database";
 
-type DefaultDatabaseConnection = Pick<
-  ConnectionConfig,
-  "database" | "default_database" | "db_type"
->;
+type DefaultDatabaseConnection = Pick<ConnectionConfig, "database" | "default_database" | "db_type">;
 
 function hasExplicitDefaultDatabase(connection: DefaultDatabaseConnection): boolean {
   return typeof connection.default_database === "string";
@@ -23,10 +20,7 @@ export function resolveDefaultDatabase(connection: DefaultDatabaseConnection, op
   return options[0] || "";
 }
 
-export function isDefaultDatabase(
-  connection: DefaultDatabaseConnection | undefined,
-  database: string,
-): boolean {
+export function isDefaultDatabase(connection: DefaultDatabaseConnection | undefined, database: string): boolean {
   if (!connection || !database) return false;
   if (hasExplicitDefaultDatabase(connection)) {
     return connection.default_database === database;
