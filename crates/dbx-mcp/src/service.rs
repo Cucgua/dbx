@@ -34,7 +34,7 @@ impl DbxMcpService {
             .into_iter()
             .find(|c| c.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| McpError::invalid_params(format!("Connection \"{name}\" not found"), None))?;
-        self.state.configs.lock().await.insert(config.id.clone(), config.clone());
+        self.state.configs.write().await.insert(config.id.clone(), config.clone());
         Ok(config)
     }
 }
