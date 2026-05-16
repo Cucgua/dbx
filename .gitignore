@@ -48,3 +48,6 @@ tmp/
 
 # Agent JDBC driver JARs
 agents/*/libs/*.jar
+
+# Generated changelog data
+releases-*.json
