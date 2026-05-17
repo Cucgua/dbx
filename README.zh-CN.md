@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/logo.png" width="80" />
   <h1>DBX</h1>
-  <p>15 MB 驾驭 25+ 种数据库。桌面端 & Docker 自托管，内置 AI 助手。</p>
+  <p>15 MB 驾驭 30+ 种数据库。桌面端 & Docker 自托管，内置 AI 助手。</p>
   <p>
     <a href="https://github.com/t8y2/dbx/releases"><img src="https://img.shields.io/github/downloads/t8y2/dbx/total?style=for-the-badge&color=blue" /></a>
     <a href="https://github.com/t8y2/dbx/graphs/contributors"><img src="https://img.shields.io/github/contributors/t8y2/dbx?style=for-the-badge" /></a>
@@ -23,12 +23,17 @@
     <img src="https://img.shields.io/badge/MariaDB-003545?logo=mariadb&logoColor=white" />
     <img src="https://img.shields.io/badge/TiDB-DC150B?logo=tidb&logoColor=white" />
     <img src="https://img.shields.io/badge/Doris-0052CC?logoColor=white" />
+    <img src="https://img.shields.io/badge/SelectDB-22C1C3?logoColor=white" />
     <img src="https://img.shields.io/badge/StarRocks-5C2D91?logoColor=white" />
     <img src="https://img.shields.io/badge/Redshift-8C4FFF?logo=amazonredshift&logoColor=white" />
+    <img src="https://img.shields.io/badge/DM-3857FF?logoColor=white" />
     <img src="https://img.shields.io/badge/OceanBase-006AFF?logoColor=white" />
     <img src="https://img.shields.io/badge/openGauss-2B7BD9?logoColor=white" />
     <img src="https://img.shields.io/badge/GaussDB-E60012?logoColor=white" />
     <img src="https://img.shields.io/badge/KingBase-003B8E?logoColor=white" />
+    <img src="https://img.shields.io/badge/TDengine-2F6FFF?logoColor=white" />
+    <img src="https://img.shields.io/badge/CockroachDB-6933FF?logoColor=white" />
+    <img src="https://img.shields.io/badge/JDBC-4B5563?logoColor=white" />
     <img src="https://img.shields.io/badge/and%20more...-555555?logoColor=white" />
   </p>
   <p>
@@ -47,50 +52,55 @@
 
 ## 功能特性
 
-### 17+ 种数据库，一个工具搞定
+### 30+ 种数据库，一个工具搞定
 
-MySQL、PostgreSQL、SQLite、Redis、MongoDB、DuckDB、ClickHouse、SQL Server、Oracle、Elasticsearch、MariaDB、TiDB、OceanBase、openGauss、GaussDB、KingBase、Vastbase、GoldenDB — 全部在一个约 15 MB 的应用中连接。不内嵌 Chromium。
+MySQL、PostgreSQL、SQLite、Redis、MongoDB、DuckDB、ClickHouse、SQL Server、Oracle、Elasticsearch、MariaDB、TiDB、OceanBase、openGauss、GaussDB、KingBase、Vastbase、GoldenDB、Doris、SelectDB、StarRocks、Redshift、DM、TDengine、CockroachDB、Access、HighGo 等数据库都能直接连接。Agent/JDBC 方向的配置还可扩展到 H2、Snowflake、Trino、Hive、DB2、Informix、Neo4j、Cassandra、BigQuery、Kylin、SunDB 和自定义 JDBC。全部装进约 15 MB 的应用里，不内嵌 Chromium。
 
 ### 查询编辑器
 
-CodeMirror 6 语法高亮、智能自动补全（表名和字段）、`Cmd+Enter` 执行、选中 SQL 执行、SQL 格式化，9 种编辑器主题。查询历史持久化存储，支持搜索和恢复。
+CodeMirror 6 语法高亮、元数据感知自动补全、`Cmd+Enter` 执行、选中 SQL 执行、SQL 格式化、诊断提示，9 种编辑器主题。查询历史、常用 SQL 片段、标签页恢复和 SQL 文件执行让重复工作更顺手。
 
 ### AI SQL 助手
 
-用自然语言描述你的需求，直接生成 SQL。还能解释、优化、修复错误。支持 Claude、OpenAI 或任何 OpenAI 兼容端点。
+用自然语言描述你的需求，直接生成 SQL。还能解释查询、优化 SQL、修复错误，并通过内置安全检查执行 AI 生成的 SQL。支持 Claude、OpenAI、本地模型或任何 OpenAI 兼容端点。
 
 ### 数据表格
 
-虚拟滚动，轻松应对百万行数据。行内编辑、排序、全文搜索、分页、列宽调整、行号、斑马纹。支持导出为 CSV、JSON、Markdown。
+虚拟滚动，轻松应对大型结果集。行内编辑、保存前 SQL 预览、WHERE / ORDER BY 控件、DataGrip 风格过滤器、LIKE / NOT LIKE 右键过滤、排序、全文搜索、分页、列宽调整、自动列宽、行号、斑马纹和完整单元格详情。支持导出或复制为 CSV、JSON、Markdown、XLSX、INSERT 语句。
 
 ### Schema 工具
 
 - **结构浏览** — 数据库、Schema、表、字段、索引、外键、触发器，支持侧边栏搜索和置顶
+- **对象浏览** — 按类型分组查看过程、函数、视图，并在支持的数据库中编辑源码
+- **表结构编辑器** — 对支持的数据库执行可审查的字段和索引变更
 - **ER 关系图** — 可视化表间关联
 - **Schema 对比** — 跨连接对比表结构差异
 - **执行计划** — 可视化查询执行计划
 - **字段血缘** — 字段级血缘分析
+- **数据库搜索** — 在大型 Schema 中快速查找对象
 
 ### 数据操作
 
 - **数据导入** — CSV、Excel
 - **数据迁移** — 在数据库之间迁移数据
 - **数据库导出** — 完整数据库导出
+- **数据对比** — 对比表数据并审查同步结果
 - **SQL 文件执行** — 直接执行 `.sql` 文件
 - **文件预览** — 拖入 Parquet、CSV、JSON 即时预览（基于 DuckDB）
+- **连接导入** — 从 DBeaver 或 Navicat 导入连接配置
 
 ### 专项浏览器
 
-- **Redis** — 模式匹配搜索，全数据类型支持（String、Hash、List、Set、ZSet、Stream）
+- **Redis** — 模式匹配搜索、批量键操作、命令执行器、TTL 编辑，全数据类型支持（String、Hash、List、Set、ZSet、Stream）
 - **MongoDB** — 文档增删改查、分页浏览，支持 Atlas 和副本集 URL 直连
 
 ### 安全与连接
 
-SSH 隧道（密钥和密码认证）· 断线自动重连 · 危险操作确认对话框 · 加密导出/导入连接配置 · 连接颜色标记
+SSH 隧道（密钥和密码认证）· 数据库和 AI 代理设置 · 断线自动重连 · 危险操作确认对话框 · 加密导出/导入连接配置 · 连接颜色标记 · 驱动商店与可选 JDBC 插件
 
 ### 精致 UI
 
-深色模式原生标题栏同步 · 9 种编辑器主题 · English & 简体中文 · 内置自动更新
+深色模式原生标题栏同步 · 9 种编辑器主题 · English、简体中文、Español · 布局偏好设置 · 内置自动更新
 
 ## AI 编程助手集成 (MCP)
 

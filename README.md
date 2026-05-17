@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/logo.png" width="80" />
   <h1>DBX</h1>
-  <p>25+ databases in 15 MB. Desktop & Docker self-hosting, with built-in AI assistant.</p>
+  <p>30+ databases in 15 MB. Desktop & Docker self-hosting, with built-in AI assistant.</p>
   <p>
     <a href="https://github.com/t8y2/dbx/releases"><img src="https://img.shields.io/github/downloads/t8y2/dbx/total?style=for-the-badge&color=blue" /></a>
     <a href="https://github.com/t8y2/dbx/graphs/contributors"><img src="https://img.shields.io/github/contributors/t8y2/dbx?style=for-the-badge" /></a>
@@ -23,12 +23,17 @@
     <img src="https://img.shields.io/badge/MariaDB-003545?logo=mariadb&logoColor=white" />
     <img src="https://img.shields.io/badge/TiDB-DC150B?logo=tidb&logoColor=white" />
     <img src="https://img.shields.io/badge/Doris-0052CC?logoColor=white" />
+    <img src="https://img.shields.io/badge/SelectDB-22C1C3?logoColor=white" />
     <img src="https://img.shields.io/badge/StarRocks-5C2D91?logoColor=white" />
     <img src="https://img.shields.io/badge/Redshift-8C4FFF?logo=amazonredshift&logoColor=white" />
+    <img src="https://img.shields.io/badge/DM-3857FF?logoColor=white" />
     <img src="https://img.shields.io/badge/OceanBase-006AFF?logoColor=white" />
     <img src="https://img.shields.io/badge/openGauss-2B7BD9?logoColor=white" />
     <img src="https://img.shields.io/badge/GaussDB-E60012?logoColor=white" />
     <img src="https://img.shields.io/badge/KingBase-003B8E?logoColor=white" />
+    <img src="https://img.shields.io/badge/TDengine-2F6FFF?logoColor=white" />
+    <img src="https://img.shields.io/badge/CockroachDB-6933FF?logoColor=white" />
+    <img src="https://img.shields.io/badge/JDBC-4B5563?logoColor=white" />
     <img src="https://img.shields.io/badge/and%20more...-555555?logoColor=white" />
   </p>
   <p>
@@ -47,50 +52,55 @@
 
 ## Features
 
-### 17+ Databases, One Tool
+### 30+ Databases, One Tool
 
-MySQL, PostgreSQL, SQLite, Redis, MongoDB, DuckDB, ClickHouse, SQL Server, Oracle, Elasticsearch, MariaDB, TiDB, OceanBase, openGauss, GaussDB, KingBase, Vastbase, GoldenDB — connect to all of them from a single ~15 MB app. No bundled Chromium.
+MySQL, PostgreSQL, SQLite, Redis, MongoDB, DuckDB, ClickHouse, SQL Server, Oracle, Elasticsearch, MariaDB, TiDB, OceanBase, openGauss, GaussDB, KingBase, Vastbase, GoldenDB, Doris, SelectDB, StarRocks, Redshift, DM, TDengine, CockroachDB, Access, HighGo, and more. Agent/JDBC-oriented profiles extend DBX to H2, Snowflake, Trino, Hive, DB2, Informix, Neo4j, Cassandra, BigQuery, Kylin, SunDB, and custom JDBC connections. All in a single ~15 MB app. No bundled Chromium.
 
 ### Query Editor
 
-CodeMirror 6 with SQL syntax highlighting, smart autocomplete (tables & columns), `Cmd+Enter` execution, selected SQL execution, SQL formatting, and 9 editor themes. Persistent query history with search and restore.
+CodeMirror 6 with SQL syntax highlighting, metadata-aware autocomplete, `Cmd+Enter` execution, selected SQL execution, SQL formatting, diagnostics, and 9 editor themes. Persistent query history, saved SQL snippets, tab restore, and SQL file execution keep repeat work close at hand.
 
 ### AI SQL Assistant
 
-Describe what you want in plain language — get SQL back. Also explains, optimizes, and fixes errors. Works with Claude, OpenAI, or any OpenAI-compatible endpoint.
+Describe what you want in plain language — get SQL back. DBX can explain queries, optimize SQL, fix errors, and run AI-generated SQL through built-in safety checks. Works with Claude, OpenAI, local models, or any OpenAI-compatible endpoint.
 
 ### Data Grid
 
-Virtual-scrolled table that handles millions of rows. Inline editing, sorting, full-text search, pagination, column resize, row numbers, zebra stripes. Export to CSV, JSON, Markdown.
+Virtual-scrolled table that handles large result sets. Inline editing, SQL preview before save, WHERE / ORDER BY controls, DataGrip-style filters, LIKE / NOT LIKE context filters, sorting, full-text search, pagination, column resize, auto-fit, row numbers, zebra stripes, and full cell details. Export or copy as CSV, JSON, Markdown, XLSX, or INSERT statements.
 
 ### Schema Tools
 
 - **Schema browser** — databases, schemas, tables, columns, indexes, foreign keys, triggers, with sidebar search & pin
+- **Object browser** — grouped procedures, functions, views, and source editing where supported
+- **Table structure editor** — reviewable column and index changes for supported engines
 - **ER diagram** — visualize table relationships
 - **Schema diff** — compare structures across connections
 - **Explain plan** — visual query execution plan
 - **Field lineage** — column-level lineage analysis
+- **Database search** — find objects across large schemas
 
 ### Data Operations
 
 - **Table import** — CSV, Excel
 - **Data transfer** — migrate between databases
 - **Database export** — full database dump
+- **Data compare** — compare table data and review synchronization output
 - **SQL file execution** — run `.sql` files directly
 - **File preview** — drag & drop Parquet, CSV, JSON to preview instantly (powered by DuckDB)
+- **Connection import** — bring connection profiles from DBeaver or Navicat
 
 ### Specialized Browsers
 
-- **Redis** — key pattern search, all data types (String, Hash, List, Set, ZSet, Stream)
+- **Redis** — key pattern search, batch key operations, command runner, TTL editing, and all data types (String, Hash, List, Set, ZSet, Stream)
 - **MongoDB** — document CRUD with pagination, Atlas & replica set URL connection
 
 ### Safety & Connectivity
 
-SSH tunnel (key & password) · auto-reconnect on connection loss · confirmation dialogs for destructive operations · encrypted config export/import · color-coded connections
+SSH tunnel (key & password) · database and AI proxy settings · auto-reconnect on connection loss · confirmation dialogs for destructive operations · encrypted config export/import · color-coded connections · driver store and optional JDBC plugin
 
 ### Polished UI
 
-Dark mode with native title bar sync · 9 editor themes · English & 简体中文 · built-in auto-update
+Dark mode with native title bar sync · 9 editor themes · English, 简体中文 & Español · layout preferences · built-in auto-update
 
 ## AI Agent Integration (MCP)
 
