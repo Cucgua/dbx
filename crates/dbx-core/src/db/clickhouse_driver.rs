@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::time::Instant;
 
 use super::{connection_timeout, with_connection_timeout};
+use crate::query::MAX_ROWS;
 use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, QueryResult, TableInfo};
 
@@ -48,6 +49,22 @@ struct ChColumn {
     _type: String,
 }
 
+enum QueryResultLimit {
+    Unlimited,
+    Limited(usize),
+}
+
+fn build_query_url(base_url: &str, database: Option<&str>, limit: QueryResultLimit) -> String {
+    let mut url = format!("{}/?default_format=JSONCompact", base_url);
+    if let Some(db) = database {
+        url.push_str(&format!("&database={db}"));
+    }
+    if let QueryResultLimit::Limited(max_rows) = limit {
+        url.push_str(&format!("&max_result_rows={max_rows}&result_overflow_mode=break"));
+    }
+    url
+}
+
 fn build_request(client: &ChClient, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
     match (&client.username, &client.password) {
         (Some(u), Some(p)) if !u.is_empty() => req.basic_auth(u, Some(p)),
@@ -57,26 +74,49 @@ fn build_request(client: &ChClient, req: reqwest::RequestBuilder) -> reqwest::Re
 }
 
 async fn ch_query(client: &ChClient, sql: &str, database: Option<&str>) -> Result<ChJsonResult, String> {
-    let mut url = format!("{}/?default_format=JSONCompact", client.base_url);
-    if let Some(db) = database {
-        url.push_str(&format!("&database={}", db));
-    }
+    ch_query_with_limit(client, sql, database, QueryResultLimit::Unlimited).await
+}
+
+async fn ch_query_with_limit(
+    client: &ChClient,
+    sql: &str,
+    database: Option<&str>,
+    limit: QueryResultLimit,
+) -> Result<ChJsonResult, String> {
+    let url = build_query_url(&client.base_url, database, limit);
+    log::info!("[clickhouse] query url={url} user={:?} has_pass={}", client.username, client.password.is_some());
     let req = build_request(client, client.http.post(&url).body(sql.to_string()));
     let resp = req.send().await.map_err(|e| format!("ClickHouse request failed: {e}"))?;
+    log::info!("[clickhouse] response status={}", resp.status());
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
+        log::error!("[clickhouse] error body: {body}");
         return Err(format!("ClickHouse error: {body}"));
     }
     resp.json::<ChJsonResult>().await.map_err(|e| format!("ClickHouse parse error: {e}"))
 }
 
+fn limited_query_result(result: ChJsonResult, execution_time_ms: u128) -> QueryResult {
+    let columns: Vec<String> = result.meta.iter().map(|c| c.name.clone()).collect();
+    let mut rows = result.data;
+    let truncated = rows.len() > MAX_ROWS;
+    if truncated {
+        rows.truncate(MAX_ROWS);
+    }
+    QueryResult { columns, rows, affected_rows: 0, execution_time_ms, truncated, session_id: None, has_more: false }
+}
+
 pub async fn test_connection(client: &ChClient) -> Result<(), String> {
-    let url = format!("{}/ping", client.base_url);
+    let url = format!("{}/?query=SELECT%201", client.base_url);
     let req = build_request(client, client.http.get(&url));
-    with_connection_timeout("ClickHouse", async {
+    let resp = with_connection_timeout("ClickHouse", async {
         req.send().await.map_err(|e| format!("ClickHouse connection failed: {e}"))
     })
     .await?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("ClickHouse error: {body}"));
+    }
     Ok(())
 }
 
@@ -151,17 +191,10 @@ pub async fn execute_query(client: &ChClient, database: &str, sql: &str) -> Resu
     let start = Instant::now();
 
     if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH"]) {
-        let result = ch_query(client, sql, Some(database)).await?;
-        let columns: Vec<String> = result.meta.iter().map(|c| c.name.clone()).collect();
-        Ok(QueryResult {
-            columns,
-            rows: result.data,
-            affected_rows: 0,
-            execution_time_ms: start.elapsed().as_millis(),
-            truncated: false,
-        })
+        let result = ch_query_with_limit(client, sql, Some(database), QueryResultLimit::Limited(MAX_ROWS + 1)).await?;
+        Ok(limited_query_result(result, start.elapsed().as_millis()))
     } else {
-        let url = format!("{}/?default_format=JSONCompact&database={}", client.base_url, database);
+        let url = build_query_url(&client.base_url, Some(database), QueryResultLimit::Unlimited);
         let req = build_request(client, client.http.post(&url).body(sql.to_string()));
         let resp = req.send().await.map_err(|e| format!("ClickHouse request failed: {e}"))?;
         if !resp.status().is_success() {
@@ -174,6 +207,43 @@ pub async fn execute_query(client: &ChClient, database: &str, sql: &str) -> Resu
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
+            session_id: None,
+            has_more: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_url_for_result_sets_adds_row_limit_break_settings() {
+        let url = build_query_url(
+            "http://localhost:8123",
+            Some("analytics"),
+            QueryResultLimit::Limited(crate::query::MAX_ROWS + 1),
+        );
+
+        assert_eq!(
+            url,
+            "http://localhost:8123/?default_format=JSONCompact&database=analytics&max_result_rows=10001&result_overflow_mode=break"
+        );
+    }
+
+    #[test]
+    fn limited_query_result_truncates_extra_probe_row() {
+        let result = ChJsonResult {
+            meta: vec![ChColumn { name: "id".to_string(), _type: "UInt64".to_string() }],
+            data: (0..=crate::query::MAX_ROWS).map(|value| vec![serde_json::Value::Number(value.into())]).collect(),
+            rows: crate::query::MAX_ROWS + 1,
+        };
+
+        let result = limited_query_result(result, 12);
+
+        assert_eq!(result.columns, vec!["id"]);
+        assert_eq!(result.rows.len(), crate::query::MAX_ROWS);
+        assert_eq!(result.execution_time_ms, 12);
+        assert!(result.truncated);
     }
 }

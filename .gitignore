@@ -2,10 +2,12 @@
 node_modules/
 .claude/
 .codex/
+.superpowers/
 .mcp.json
 
 # Build output
 dist/
+coverage/
 /target/
 plugins/jdbc/target/
 plugins/jdbc/dependency-reduced-pom.xml
@@ -47,3 +49,9 @@ data/
 # Logs
 *.log
 .ace-tool/
+
+# Agent JDBC driver JARs
+agents/*/libs/*.jar
+
+# Generated changelog data
+releases-*.json

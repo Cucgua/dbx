@@ -1,0 +1,58 @@
+import type { TreeNodeType } from "@/types/database";
+import { matchesShortcut, type ShortcutLikeEvent } from "@/lib/keyboardShortcuts";
+
+export type TreeNodeRowAction = "open-data" | "toggle" | "none";
+export type TreeNodeRowDoubleClickAction =
+  | "open-data"
+  | "open-object-browser"
+  | "open-object-browser-and-expand"
+  | "open-source"
+  | "open-saved-sql"
+  | "toggle"
+  | "none";
+export type SidebarSelectionCopyAction = "copy-name" | "none";
+export type SidebarActivation = "single" | "double";
+
+const dataNodeTypes = new Set<TreeNodeType>(["table", "view"]);
+const toggleLeafNodeTypes = new Set<TreeNodeType>(["redis-db", "mongo-collection"]);
+const objectBrowserNodeTypes = new Set<TreeNodeType>(["database", "schema", "object-browser"]);
+const sourceNodeTypes = new Set<TreeNodeType>(["procedure", "function"]);
+
+export function treeNodeRowAction(
+  type: TreeNodeType,
+  canExpand: boolean,
+  activation: SidebarActivation = "single",
+): TreeNodeRowAction {
+  if (activation === "double") return "none";
+  if (dataNodeTypes.has(type)) return "open-data";
+  if (toggleLeafNodeTypes.has(type)) return "toggle";
+  if (canExpand) return "toggle";
+  return "none";
+}
+
+export function treeNodeRowDoubleClickAction(
+  type: TreeNodeType,
+  canOpenObjectBrowser: boolean,
+  activation: SidebarActivation = "single",
+  canExpand = false,
+): TreeNodeRowDoubleClickAction {
+  if (activation === "double") {
+    if (dataNodeTypes.has(type)) return "open-data";
+    if (sourceNodeTypes.has(type)) return "open-source";
+    if (type === "saved-sql-file") return "open-saved-sql";
+    if (toggleLeafNodeTypes.has(type)) return "toggle";
+    if (canOpenObjectBrowser && objectBrowserNodeTypes.has(type) && canExpand) return "open-object-browser-and-expand";
+    if (canOpenObjectBrowser && objectBrowserNodeTypes.has(type)) return "open-object-browser";
+    if (canExpand) return "toggle";
+  }
+  if (canOpenObjectBrowser && objectBrowserNodeTypes.has(type)) return "open-object-browser";
+  return "none";
+}
+
+export function sidebarSelectionCopyAction(
+  event: ShortcutLikeEvent,
+  activation: SidebarActivation,
+): SidebarSelectionCopyAction {
+  if (activation !== "double") return "none";
+  return matchesShortcut(event, "Mod+C") ? "copy-name" : "none";
+}

@@ -30,12 +30,12 @@ jobs:
           APP_DIR="apps/dbx"
           mkdir -p "${APP_DIR}/latest"
 
-          cp "${{ github.workspace }}/1panel/data.yml" "${APP_DIR}/data.yml"
-          cp "${{ github.workspace }}/1panel/README.md" "${APP_DIR}/README.md"
-          if [ -f "${{ github.workspace }}/1panel/logo.png" ]; then
-            cp "${{ github.workspace }}/1panel/logo.png" "${APP_DIR}/logo.png"
+          cp "${{ github.workspace }}/deploy/1panel/data.yml" "${APP_DIR}/data.yml"
+          cp "${{ github.workspace }}/deploy/1panel/README.md" "${APP_DIR}/README.md"
+          if [ -f "${{ github.workspace }}/deploy/1panel/logo.png" ]; then
+            cp "${{ github.workspace }}/deploy/1panel/logo.png" "${APP_DIR}/logo.png"
           fi
-          cp -r "${{ github.workspace }}/1panel/latest/." "${APP_DIR}/latest/"
+          cp -r "${{ github.workspace }}/deploy/1panel/latest/." "${APP_DIR}/latest/"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

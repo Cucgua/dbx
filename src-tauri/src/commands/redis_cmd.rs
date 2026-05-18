@@ -2,10 +2,13 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::commands::connection::AppState;
-use dbx_core::db::redis_driver::{RedisScanResult, RedisValue};
+use dbx_core::db::redis_driver::{RedisCommandResult, RedisDatabaseInfo, RedisScanResult, RedisValue};
 
 #[tauri::command]
-pub async fn redis_list_databases(state: State<'_, Arc<AppState>>, connection_id: String) -> Result<Vec<u32>, String> {
+pub async fn redis_list_databases(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+) -> Result<Vec<RedisDatabaseInfo>, String> {
     dbx_core::redis_ops::redis_list_databases_core(&state, &connection_id).await
 }
 
@@ -88,6 +91,18 @@ pub async fn redis_list_push(
 }
 
 #[tauri::command]
+pub async fn redis_list_set(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    db: u32,
+    key_raw: String,
+    index: i64,
+    value: String,
+) -> Result<(), String> {
+    dbx_core::redis_ops::redis_list_set_in_db_core(&state, &connection_id, db, &key_raw, index, &value).await
+}
+
+#[tauri::command]
 pub async fn redis_list_remove(
     state: State<'_, Arc<AppState>>,
     connection_id: String,
@@ -162,6 +177,21 @@ pub async fn redis_delete_keys(
     key_raws: Vec<String>,
 ) -> Result<u64, String> {
     dbx_core::redis_ops::redis_delete_keys_in_db_core(&state, &connection_id, db, &key_raws).await
+}
+
+#[tauri::command]
+pub async fn redis_flush_db(state: State<'_, Arc<AppState>>, connection_id: String, db: u32) -> Result<(), String> {
+    dbx_core::redis_ops::redis_flush_db_core(&state, &connection_id, db).await
+}
+
+#[tauri::command]
+pub async fn redis_execute_command(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    db: u32,
+    command: String,
+) -> Result<RedisCommandResult, String> {
+    dbx_core::redis_ops::redis_execute_command_core(&state, &connection_id, db, &command).await
 }
 
 #[tauri::command]

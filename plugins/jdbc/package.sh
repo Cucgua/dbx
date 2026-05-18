@@ -13,6 +13,7 @@ rm -rf "$PACKAGE_DIR" "$ZIP_PATH"
 mkdir -p "$PACKAGE_DIR/bin" "$PACKAGE_DIR/lib"
 cp "$ROOT/manifest.json" "$PACKAGE_DIR/manifest.json"
 cp "$ROOT/bin/dbx-jdbc-plugin" "$PACKAGE_DIR/bin/dbx-jdbc-plugin"
+cp "$ROOT/bin/dbx-jdbc-plugin.bat" "$PACKAGE_DIR/bin/dbx-jdbc-plugin.bat"
 cp "$ROOT/target/dbx-jdbc-plugin-$VERSION-all.jar" "$PACKAGE_DIR/lib/dbx-jdbc-plugin.jar"
 chmod +x "$PACKAGE_DIR/bin/dbx-jdbc-plugin"
 

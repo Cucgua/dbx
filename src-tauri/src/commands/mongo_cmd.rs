@@ -29,8 +29,20 @@ pub async fn mongo_find_documents(
     collection: String,
     skip: u64,
     limit: i64,
+    filter: Option<String>,
+    sort: Option<String>,
 ) -> Result<MongoDocumentResult, String> {
-    dbx_core::mongo_ops::mongo_find_documents_core(&state, &connection_id, &database, &collection, skip, limit).await
+    dbx_core::mongo_ops::mongo_find_documents_core(
+        &state,
+        &connection_id,
+        &database,
+        &collection,
+        skip,
+        limit,
+        filter.as_deref(),
+        sort.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]

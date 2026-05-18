@@ -100,10 +100,16 @@ public final class DbxJdbcPlugin {
                 result.put("ok", true);
                 yield result;
             }
-            case "executeQuery" -> executeQuery(connection, requireText(params, "sql"));
+            case "executeQuery" -> executeQuery(
+                connection,
+                requireText(params, "sql"),
+                optionalText(params, "database"),
+                optionalText(params, "schema")
+            );
             case "listDatabases" -> listDatabases(connection);
             case "listSchemas" -> listSchemas(connection, optionalText(params, "database"));
             case "listTables" -> listTables(connection, optionalText(params, "database"), optionalText(params, "schema"));
+            case "list_objects" -> listObjects(connection, optionalText(params, "database"), optionalText(params, "schema"));
             case "getColumns" -> getColumns(
                 connection,
                 optionalText(params, "database"),
@@ -179,9 +185,10 @@ public final class DbxJdbcPlugin {
         return sharedConnection;
     }
 
-    private static JsonNode executeQuery(JsonNode connection, String sql) throws SQLException {
+    private static JsonNode executeQuery(JsonNode connection, String sql, String database, String schema) throws SQLException {
         long start = System.nanoTime();
         Connection conn = openConnection(connection);
+        applyExecutionContext(conn, database, schema);
         try (Statement statement = conn.createStatement()) {
             statement.setMaxRows(MAX_ROWS + 1);
             boolean hasResultSet = statement.execute(sql);
@@ -218,6 +225,21 @@ public final class DbxJdbcPlugin {
             result.put("execution_time_ms", (System.nanoTime() - start) / 1_000_000);
             result.put("truncated", truncated);
             return result;
+        }
+    }
+
+    private static void applyExecutionContext(Connection conn, String database, String schema) throws SQLException {
+        if (database != null) {
+            try {
+                conn.setCatalog(database);
+            } catch (SQLFeatureNotSupportedException | AbstractMethodError ignored) {
+            }
+        }
+        if (schema != null) {
+            try {
+                conn.setSchema(schema);
+            } catch (SQLFeatureNotSupportedException | AbstractMethodError ignored) {
+            }
         }
     }
 
@@ -282,6 +304,61 @@ public final class DbxJdbcPlugin {
                 result.add(item);
             }
         }
+        return result;
+    }
+
+    private static JsonNode listObjects(JsonNode connection, String database, String schema) throws SQLException {
+        ArrayNode result = MAPPER.createArrayNode();
+        Connection conn = openConnection(connection);
+        DatabaseMetaData meta = conn.getMetaData();
+        String catalog = emptyToNull(database);
+        String schemaPattern = emptyToNull(schema);
+
+        String[] tableTypes = new String[] {"TABLE", "VIEW", "MATERIALIZED VIEW", "SYSTEM TABLE", "SYSTEM VIEW"};
+        try (ResultSet rs = meta.getTables(catalog, schemaPattern, "%", tableTypes)) {
+            while (rs.next()) {
+                ObjectNode item = MAPPER.createObjectNode();
+                item.put("name", rs.getString("TABLE_NAME"));
+                item.put("object_type", rs.getString("TABLE_TYPE"));
+                putNullable(item, "schema", schema);
+                putNullable(item, "comment", rs.getString("REMARKS"));
+                result.add(item);
+            }
+        }
+
+        try (ResultSet rs = meta.getProcedures(catalog, schemaPattern, "%")) {
+            while (rs.next()) {
+                ObjectNode item = MAPPER.createObjectNode();
+                item.put("name", rs.getString("PROCEDURE_NAME"));
+                item.put("object_type", "PROCEDURE");
+                putNullable(item, "schema", schema);
+                putNullable(item, "comment", rs.getString("REMARKS"));
+                result.add(item);
+            }
+        } catch (SQLException ignored) {
+        }
+
+        Set<String> procedureNames = new HashSet<>();
+        for (JsonNode node : result) {
+            if ("PROCEDURE".equals(node.path("object_type").asText())) {
+                procedureNames.add(node.path("name").asText());
+            }
+        }
+        try (ResultSet rs = meta.getFunctions(catalog, schemaPattern, "%")) {
+            while (rs.next()) {
+                String name = rs.getString("FUNCTION_NAME");
+                if (!procedureNames.contains(name)) {
+                    ObjectNode item = MAPPER.createObjectNode();
+                    item.put("name", name);
+                    item.put("object_type", "FUNCTION");
+                    putNullable(item, "schema", schema);
+                    putNullable(item, "comment", rs.getString("REMARKS"));
+                    result.add(item);
+                }
+            }
+        } catch (SQLException ignored) {
+        }
+
         return result;
     }
 

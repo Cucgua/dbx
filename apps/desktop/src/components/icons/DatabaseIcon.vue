@@ -1,0 +1,94 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import { Database } from "lucide-vue-next";
+
+const props = defineProps<{
+  dbType: string;
+}>();
+
+const assetIcons: Record<string, string> = {
+  mysql: "mysql",
+  postgres: "postgres",
+  postgresql: "postgres",
+  sqlite: "sqlite",
+  redis: "redis",
+  mongodb: "mongodb",
+  clickhouse: "clickhouse",
+  duckdb: "duckdb",
+  mariadb: "mariadb",
+  tidb: "tidb",
+  elasticsearch: "elasticsearch",
+  oracle: "oracle",
+  "oracle-10g": "oracle",
+  oracle_10g: "oracle",
+  sqlserver: "sqlserver",
+  access: "access.png",
+  oceanbase: "oceanbase",
+  opengauss: "opengauss",
+  gaussdb: "gaussdb",
+  kingbase: "kingbase",
+  goldendb: "goldendb.png",
+  vastbase: "vastbase.png",
+  snowflake: "snowflake",
+  h2: "h2",
+  dm: "dm",
+  dameng: "dm",
+  presto: "presto",
+  hive: "hive",
+  apache_kylin: "apache_kylin",
+  sundb: "sundb",
+  trino: "presto",
+  kylin: "apache_kylin",
+  cockroachdb: "cockroachdb",
+  db2: "db2",
+  bigquery: "bigquery",
+  cassandra: "cassandra",
+  doris: "doris",
+  selectdb: "selectdb",
+  tdengine: "tdengine",
+  starrocks: "starrocks",
+  redshift: "redshift",
+  neo4j: "neo4j",
+  informix: "informix",
+};
+
+const letterIcons: Record<string, { letter: string; color: string }> = {
+  highgo: { letter: "瀚", color: "#005bac" },
+};
+
+const normalizedType = computed(() => props.dbType.toLowerCase().replace(/[\s-]+/g, "_"));
+const assetName = computed(() => assetIcons[normalizedType.value]);
+const assetSrc = computed(() => {
+  if (!assetName.value) return "";
+  return assetName.value.includes(".")
+    ? `/icons/database/${assetName.value}`
+    : `/icons/database/${assetName.value}.svg`;
+});
+const letter = computed(() => letterIcons[normalizedType.value]);
+</script>
+
+<template>
+  <img v-if="assetName" :src="assetSrc" alt="" class="database-logo object-contain" aria-hidden="true" />
+  <svg v-else-if="letter" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="12" :fill="letter.color" />
+    <text
+      x="12"
+      y="16.5"
+      text-anchor="middle"
+      fill="white"
+      font-size="14"
+      font-weight="bold"
+      font-family="system-ui, sans-serif"
+    >
+      {{ letter.letter }}
+    </text>
+  </svg>
+  <Database v-else class="text-blue-400" />
+</template>
+
+<style scoped>
+.database-logo {
+  transform: scale(1.35);
+  transform-origin: center;
+}
+</style>

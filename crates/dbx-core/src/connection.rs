@@ -4,11 +4,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::database_capabilities;
 use crate::db;
 use crate::db::proxy_tunnel::ProxyTunnelManager;
 use crate::db::ssh_tunnel::TunnelManager;
 use crate::external;
-use crate::models::connection::{parse_mongo_first_host, ConnectionConfig, DatabaseType};
+use crate::models::connection::{
+    parse_jdbc_host_port, parse_mongo_first_host, rewrite_jdbc_url_host, ConnectionConfig, DatabaseType,
+};
 use crate::plugins::{PluginDriverSession, PluginRegistry};
 use crate::query_cancel::RunningQueries;
 use crate::storage::Storage;
@@ -43,8 +46,7 @@ pub enum PoolKind {
     SqlServer(Arc<tokio::sync::Mutex<db::sqlserver::SqlServerClient>>),
     Oracle(Arc<OraclePool>),
     Elasticsearch(db::elasticsearch_driver::EsClient),
-    Dameng(Arc<std::sync::Mutex<db::dm_driver::DmClient>>),
-    Gaussdb(Arc<tokio::sync::Mutex<db::gaussdb_driver::GaussdbClient>>),
+    Agent(Arc<tokio::sync::Mutex<db::agent_driver::AgentDriverClient>>),
     ExternalTabular(Arc<external::ExternalPool>),
     ExternalDriver { driver_id: String, config: ConnectionConfig, session: Arc<PluginDriverSession> },
 }
@@ -72,23 +74,6 @@ impl OraclePool {
     }
 }
 
-async fn connect_oracle_pool(
-    host: &str,
-    port: u16,
-    service: &str,
-    user: &str,
-    pass: &str,
-    sysdba: bool,
-) -> Result<OraclePool, String> {
-    let (first, second, third) = tokio::try_join!(
-        db::oracle_driver::connect(host, port, service, user, pass, sysdba),
-        db::oracle_driver::connect(host, port, service, user, pass, sysdba),
-        db::oracle_driver::connect(host, port, service, user, pass, sysdba),
-    )?;
-    let clients = vec![first, second, third];
-    Ok(OraclePool::new(clients))
-}
-
 pub struct AppState {
     pub connections: RwLock<HashMap<String, PoolKind>>,
     pub configs: RwLock<HashMap<String, ConnectionConfig>>,
@@ -97,11 +82,12 @@ pub struct AppState {
     pub proxy_tunnels: ProxyTunnelManager,
     pub storage: Storage,
     pub plugins: PluginRegistry,
+    pub agent_manager: crate::agent_manager::AgentManager,
 }
 
 pub fn metadata_connection_config(config: &ConnectionConfig) -> ConnectionConfig {
-    let mut db_config = config.clone();
-    if matches!(db_config.db_type, DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks) {
+    let mut db_config = config.canonicalized();
+    if database_capabilities::is_metadata_connection_scoped(&db_config.db_type) {
         db_config.database = None;
     }
     db_config
@@ -110,7 +96,7 @@ pub fn metadata_connection_config(config: &ConnectionConfig) -> ConnectionConfig
 pub fn database_connection_config(config: &ConnectionConfig, database: Option<&str>) -> ConnectionConfig {
     let mut db_config = if database.is_some() { config.clone() } else { metadata_connection_config(config) };
     if let Some(db) = database {
-        if db_config.db_type != DatabaseType::Oracle && db_config.db_type != DatabaseType::Dameng {
+        if !matches!(db_config.db_type, DatabaseType::Oracle | DatabaseType::Dameng) {
             db_config.database = Some(db.to_string());
         }
     }
@@ -131,6 +117,7 @@ impl AppState {
             proxy_tunnels: ProxyTunnelManager::new(),
             storage,
             plugins: PluginRegistry::new(plugin_dir),
+            agent_manager: crate::agent_manager::AgentManager::new(),
         }
     }
 
@@ -161,14 +148,7 @@ impl AppState {
             configs.get(connection_id).map(|c| c.db_type.clone())
         };
 
-        let is_single_conn = matches!(
-            db_type,
-            Some(DatabaseType::Sqlite)
-                | Some(DatabaseType::DuckDb)
-                | Some(DatabaseType::Oracle)
-                | Some(DatabaseType::Dameng)
-                | Some(DatabaseType::Jdbc)
-        );
+        let is_single_conn = db_type.as_ref().is_some_and(database_capabilities::is_single_connection_pool);
         let pool_key = if is_single_conn {
             connection_id.to_string()
         } else {
@@ -180,20 +160,7 @@ impl AppState {
 
         let conns = self.connections.read().await;
         if conns.contains_key(&pool_key) {
-            if let Some(PoolKind::Oracle(pool)) = conns.get(&pool_key) {
-                let client = pool.primary();
-                let conn = client.lock().await;
-                if conn.is_closed() {
-                    drop(conn);
-                    drop(conns);
-                    log::info!("[oracle] connection closed, reconnecting...");
-                    self.connections.write().await.remove(&pool_key);
-                } else {
-                    return Ok(pool_key);
-                }
-            } else {
-                return Ok(pool_key);
-            }
+            return Ok(pool_key);
         } else {
             drop(conns);
         }
@@ -231,9 +198,25 @@ impl AppState {
                 PoolKind::DuckDb(con)
             }
             DatabaseType::MongoDb => {
-                let client = db::mongo_driver::connect(&url).await?;
-                db::mongo_driver::test_connection(&client).await?;
-                PoolKind::MongoDb(client)
+                let native_err = match db::mongo_driver::connect(&url).await {
+                    Ok(client) => match db::mongo_driver::test_connection(&client).await {
+                        Ok(()) => {
+                            self.connections.write().await.insert(pool_key.clone(), PoolKind::MongoDb(client));
+                            return Ok(pool_key);
+                        }
+                        Err(e) => e,
+                    },
+                    Err(e) => e,
+                };
+                if native_err.contains("wire version") {
+                    log::info!("Native MongoDB driver failed ({native_err}), falling back to agent driver");
+                    let connect_params = serde_json::json!({ "connection": agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or("")) });
+                    let mut client = self.agent_manager.spawn(&DatabaseType::MongoDb, None).await?;
+                    client.call::<serde_json::Value>("connect", connect_params).await?;
+                    PoolKind::Agent(Arc::new(tokio::sync::Mutex::new(client)))
+                } else {
+                    return Err(native_err);
+                }
             }
             DatabaseType::ClickHouse => {
                 let username = if db_config.username.is_empty() { None } else { Some(db_config.username.clone()) };
@@ -269,34 +252,54 @@ impl AppState {
                 PoolKind::Oracle(Arc::new(pool))
             }
             DatabaseType::Elasticsearch => {
-                let client =
-                    db::elasticsearch_driver::EsClient::new(&url, Some(&db_config.username), Some(&db_config.password));
+                let accept_invalid_certs = db_config.ssl;
+                let client = db::elasticsearch_driver::EsClient::new(
+                    &url,
+                    Some(&db_config.username),
+                    Some(&db_config.password),
+                    accept_invalid_certs,
+                );
                 db::elasticsearch_driver::test_connection(&client).await?;
                 PoolKind::Elasticsearch(client)
             }
-            DatabaseType::Dameng => {
-                let client = db::dm_driver::connect(
-                    &host,
-                    port,
-                    db_config.database.as_deref().unwrap_or(""),
-                    &db_config.username,
-                    &db_config.password,
-                )
-                .await?;
-                PoolKind::Dameng(Arc::new(std::sync::Mutex::new(client)))
+            DatabaseType::Dameng
+            | DatabaseType::Kingbase
+            | DatabaseType::Highgo
+            | DatabaseType::Vastbase
+            | DatabaseType::Goldendb
+            | DatabaseType::H2
+            | DatabaseType::Snowflake
+            | DatabaseType::Trino
+            | DatabaseType::Hive
+            | DatabaseType::Db2
+            | DatabaseType::Informix
+            | DatabaseType::Neo4j
+            | DatabaseType::Cassandra
+            | DatabaseType::Bigquery
+            | DatabaseType::Kylin
+            | DatabaseType::Sundb
+            | DatabaseType::Tdengine
+            | DatabaseType::Access
+            | DatabaseType::Gaussdb => {
+                let mut client =
+                    self.agent_manager.spawn(&db_config.db_type, db_config.driver_profile.as_deref()).await?;
+                client
+                    .call::<serde_json::Value>(
+                        "connect",
+                        agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or("")),
+                    )
+                    .await?;
+                PoolKind::Agent(Arc::new(tokio::sync::Mutex::new(client)))
             }
-            DatabaseType::Gaussdb => {
-                let client = db::gaussdb_driver::connect(
-                    &host,
-                    port,
-                    db_config.effective_database().unwrap_or("postgres"),
-                    &db_config.username,
-                    &db_config.password,
-                )
-                .await?;
-                PoolKind::Gaussdb(Arc::new(tokio::sync::Mutex::new(client)))
+            DatabaseType::Jdbc => {
+                let mut jdbc_config = db_config.clone();
+                if host != config.host || port != config.port {
+                    if let Some(ref url) = jdbc_config.connection_string {
+                        jdbc_config.connection_string = Some(rewrite_jdbc_url_host(url, &host, port));
+                    }
+                }
+                self.external_driver_pool("jdbc", &jdbc_config).await?
             }
-            DatabaseType::Jdbc => self.external_driver_pool("jdbc", &db_config).await?,
         };
 
         self.connections.write().await.insert(pool_key.clone(), pool);
@@ -320,6 +323,13 @@ impl AppState {
                         .as_deref()
                         .filter(|s| !s.is_empty())
                         .and_then(parse_mongo_first_host)
+                        .unwrap_or_else(|| (config.host.clone(), config.port))
+                } else if config.db_type == DatabaseType::Jdbc {
+                    config
+                        .connection_string
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .and_then(parse_jdbc_host_port)
                         .unwrap_or_else(|| (config.host.clone(), config.port))
                 } else {
                     (config.host.clone(), config.port)
@@ -354,6 +364,13 @@ impl AppState {
                 .filter(|s| !s.is_empty())
                 .and_then(parse_mongo_first_host)
                 .unwrap_or_else(|| (config.host.clone(), config.port))
+        } else if config.db_type == DatabaseType::Jdbc {
+            config
+                .connection_string
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .and_then(parse_jdbc_host_port)
+                .unwrap_or_else(|| (config.host.clone(), config.port))
         } else {
             (config.host.clone(), config.port)
         };
@@ -384,9 +401,8 @@ impl AppState {
             configs
                 .get(connection_id)
                 .map(|c| {
-                    c.db_type == DatabaseType::Oracle
+                    database_capabilities::is_single_connection_pool(&c.db_type)
                         || c.db_type == DatabaseType::Elasticsearch
-                        || c.db_type == DatabaseType::Dameng
                 })
                 .unwrap_or(false)
         };
@@ -398,8 +414,38 @@ impl AppState {
                 None => connection_id.to_string(),
             }
         };
-        self.connections.write().await.remove(&pool_key);
+        if self.uses_forwarded_transport(connection_id).await {
+            self.remove_connection_pools(connection_id).await;
+            self.reset_connection_transport(connection_id).await;
+        } else {
+            self.connections.write().await.remove(&pool_key);
+        }
         self.get_or_create_pool(connection_id, database).await
+    }
+
+    pub async fn reset_connection_transport(&self, connection_id: &str) {
+        self.tunnels.stop_tunnel(connection_id).await;
+        self.proxy_tunnels.stop_tunnel(connection_id).await;
+    }
+
+    pub async fn remove_connection_pools(&self, connection_id: &str) {
+        let mut conns = self.connections.write().await;
+        let keys_to_remove: Vec<String> = conns
+            .keys()
+            .filter(|k| *k == connection_id || k.starts_with(&format!("{connection_id}:")))
+            .cloned()
+            .collect();
+        for key in keys_to_remove {
+            conns.remove(&key);
+        }
+    }
+
+    async fn uses_forwarded_transport(&self, connection_id: &str) -> bool {
+        let configs = self.configs.read().await;
+        configs.get(connection_id).is_some_and(|config| {
+            (config.ssh_enabled && !config.ssh_host.is_empty())
+                || (config.proxy_enabled && !config.proxy_host.is_empty())
+        })
     }
 }
 
@@ -424,17 +470,34 @@ pub fn redacted_connection_url_for_endpoint(config: &ConnectionConfig, host: &st
     }
 }
 
+pub fn agent_connect_params(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> serde_json::Value {
+    serde_json::json!({
+        "host": host,
+        "port": port,
+        "database": database,
+        "username": config.username,
+        "password": config.password,
+        "url_params": config.url_params.as_deref().unwrap_or(""),
+        "connection_string": config.connection_string.as_deref().unwrap_or(""),
+    })
+}
+
 pub async fn probe_connection_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> Result<(), String> {
     let has_oracle_oci_connect_string =
         config.is_oracle_oci() && config.connection_string.as_deref().is_some_and(|value| !value.trim().is_empty());
 
-    match config.db_type {
-        DatabaseType::Sqlite | DatabaseType::DuckDb => Ok(()),
-        DatabaseType::MongoDb if config.connection_string.as_deref().is_some_and(|value| !value.is_empty()) => Ok(()),
-        DatabaseType::Oracle if has_oracle_oci_connect_string => Ok(()),
-        DatabaseType::Jdbc => Ok(()),
-        _ => db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port).await,
+    if config.db_type == DatabaseType::MongoDb
+        && config.connection_string.as_deref().is_some_and(|value| !value.is_empty())
+    {
+        return Ok(());
     }
+    if has_oracle_oci_connect_string {
+        return Ok(());
+    }
+    if database_capabilities::skips_tcp_probe(&config.db_type) {
+        return Ok(());
+    }
+    db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port).await
 }
 
 async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &sqlx::mysql::MySqlPool) -> MysqlMode {
@@ -453,7 +516,7 @@ async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &sqlx::mysql::My
 
 #[cfg(test)]
 mod tests {
-    use super::{database_connection_config, metadata_connection_config, AppState};
+    use super::{agent_connect_params, database_connection_config, metadata_connection_config, AppState, PoolKind};
     use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
     use crate::schema;
     use crate::storage::Storage;
@@ -471,6 +534,7 @@ mod tests {
             username: "root".to_string(),
             password: "secret".to_string(),
             database: database.map(str::to_string),
+            visible_databases: None,
             color: None,
             ssh_enabled: false,
             ssh_host: String::new(),
@@ -494,6 +558,23 @@ mod tests {
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
         }
+    }
+
+    #[test]
+    fn agent_connect_params_include_url_params() {
+        let mut config = mysql_config(Some("testdb"));
+        config.username = "informix".to_string();
+        config.password = "in4mix".to_string();
+        config.url_params = Some("INFORMIXSERVER=informix;CLIENT_LOCALE=en_US.utf8".to_string());
+
+        let params = agent_connect_params(&config, "172.26.128.159", 20013, "testdb");
+
+        assert_eq!(params["host"], "172.26.128.159");
+        assert_eq!(params["port"], 20013);
+        assert_eq!(params["database"], "testdb");
+        assert_eq!(params["username"], "informix");
+        assert_eq!(params["password"], "in4mix");
+        assert_eq!(params["url_params"], "INFORMIXSERVER=informix;CLIENT_LOCALE=en_US.utf8");
     }
 
     async fn test_app_state() -> (AppState, std::path::PathBuf) {
@@ -562,6 +643,28 @@ mod tests {
         let databases = schema::list_databases_core(&state, "sqlite-conn").await.unwrap();
         assert_eq!(databases.len(), 1);
         assert_eq!(databases[0].name, "main");
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn remove_connection_pools_clears_base_and_database_scoped_pools() {
+        let (state, dir) = test_app_state().await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect(":memory:").await.unwrap();
+
+        {
+            let mut conns = state.connections.write().await;
+            conns.insert("conn".to_string(), PoolKind::Sqlite(pool.clone()));
+            conns.insert("conn:analytics".to_string(), PoolKind::Sqlite(pool.clone()));
+            conns.insert("other".to_string(), PoolKind::Sqlite(pool));
+        }
+
+        state.remove_connection_pools("conn").await;
+
+        let conns = state.connections.read().await;
+        assert!(!conns.contains_key("conn"));
+        assert!(!conns.contains_key("conn:analytics"));
+        assert!(conns.contains_key("other"));
 
         let _ = std::fs::remove_dir_all(dir);
     }

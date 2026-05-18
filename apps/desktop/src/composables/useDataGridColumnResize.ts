@@ -1,0 +1,110 @@
+import { ref, computed, type ComputedRef, type Ref } from "vue";
+import { useElementSize } from "@vueuse/core";
+import {
+  calculateDataGridColumnWidth,
+  DATA_GRID_COL_MIN_WIDTH,
+  DATA_GRID_SAMPLE_ROWS,
+} from "@/lib/dataGridColumnWidth";
+
+type CellValue = string | number | boolean | null;
+
+const ROW_NUM_WIDTH = 48;
+
+export interface UseDataGridColumnResizeOptions {
+  columns: ComputedRef<string[]>;
+  rows: ComputedRef<CellValue[][]>;
+  gridRef: Ref<HTMLDivElement | undefined>;
+}
+
+export function useDataGridColumnResize(options: UseDataGridColumnResizeOptions) {
+  const { columns, rows, gridRef } = options;
+
+  const columnWidths = ref<number[]>([]);
+  const { width: gridWidth } = useElementSize(gridRef);
+  let isResizing = false;
+
+  function sampleColumnValues(rowData: CellValue[][], colIdx: number): CellValue[] {
+    return rowData.slice(0, DATA_GRID_SAMPLE_ROWS).map((row) => row[colIdx] ?? null);
+  }
+
+  function initColumnWidths() {
+    if (columnWidths.value.length !== columns.value.length) {
+      const rowData = rows.value;
+      columnWidths.value = columns.value.map((colName, colIdx) => {
+        return calculateDataGridColumnWidth({
+          columnName: colName,
+          sampleValues: sampleColumnValues(rowData, colIdx),
+        });
+      });
+    }
+  }
+
+  function onResizeStart(colIdx: number, event: MouseEvent) {
+    event.preventDefault();
+    isResizing = true;
+    const startX = event.clientX;
+    const startWidth = columnWidths.value[colIdx];
+    const onMove = (e: MouseEvent) => {
+      columnWidths.value[colIdx] = Math.max(DATA_GRID_COL_MIN_WIDTH, startWidth + e.clientX - startX);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      requestAnimationFrame(() => {
+        isResizing = false;
+      });
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  function autoFitColumn(colIdx: number) {
+    const colName = columns.value[colIdx];
+    if (!colName) return;
+    const rowData = rows.value;
+    columnWidths.value[colIdx] = calculateDataGridColumnWidth({
+      columnName: colName,
+      sampleValues: sampleColumnValues(rowData, colIdx),
+    });
+  }
+
+  const baseTotalWidth = computed(() => columnWidths.value.reduce((a, b) => a + b, 0));
+
+  const renderedColumnWidths = computed(() => {
+    const widths = columnWidths.value;
+    if (widths.length === 0) return widths;
+
+    const extraWidth = Math.max(0, gridWidth.value - ROW_NUM_WIDTH - baseTotalWidth.value);
+    if (extraWidth === 0) return widths;
+
+    const extraPerColumn = extraWidth / widths.length;
+    return widths.map((width) => width + extraPerColumn);
+  });
+
+  const totalWidth = computed(() => renderedColumnWidths.value.reduce((a, b) => a + b, 0) + ROW_NUM_WIDTH);
+
+  const columnVars = computed(() => {
+    const vars: Record<string, string> = {};
+    renderedColumnWidths.value.forEach((w, i) => {
+      vars[`--col-w-${i}`] = `${w}px`;
+    });
+    vars["--row-num-w"] = `${ROW_NUM_WIDTH}px`;
+    vars["--total-w"] = `${totalWidth.value}px`;
+    return vars;
+  });
+
+  function getIsResizing() {
+    return isResizing;
+  }
+
+  return {
+    columnWidths,
+    initColumnWidths,
+    onResizeStart,
+    autoFitColumn,
+    renderedColumnWidths,
+    totalWidth,
+    columnVars,
+    getIsResizing,
+  };
+}

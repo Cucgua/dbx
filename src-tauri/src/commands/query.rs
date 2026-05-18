@@ -16,13 +16,25 @@ pub async fn execute_query(
     sql: String,
     schema: Option<String>,
     execution_id: Option<String>,
+    max_rows: Option<usize>,
+    fetch_size: Option<usize>,
+    page_size: Option<usize>,
+    result_session_id: Option<String>,
 ) -> Result<db::QueryResult, String> {
     let registered_query =
         execution_id.as_ref().filter(|id| !id.trim().is_empty()).map(|id| state.running_queries.register(id.clone()));
     let cancel_token = registered_query.as_ref().map(|query| query.token());
 
-    dbx_core::query::execute_sql_statement(&state, &connection_id, &database, &sql, schema.as_deref(), cancel_token)
-        .await
+    dbx_core::query::execute_sql_statement_with_options(
+        &state,
+        &connection_id,
+        &database,
+        &sql,
+        schema.as_deref(),
+        cancel_token,
+        dbx_core::query::QueryExecutionOptions { max_rows, fetch_size, page_size, result_session_id },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -33,6 +45,10 @@ pub async fn execute_multi(
     sql: String,
     schema: Option<String>,
     execution_id: Option<String>,
+    max_rows: Option<usize>,
+    fetch_size: Option<usize>,
+    page_size: Option<usize>,
+    result_session_id: Option<String>,
 ) -> Result<Vec<db::QueryResult>, String> {
     let registered_query =
         execution_id.as_ref().filter(|id| !id.trim().is_empty()).map(|id| state.running_queries.register(id.clone()));
@@ -47,9 +63,16 @@ pub async fn execute_multi(
         sql
     );
 
-    let result =
-        dbx_core::query::execute_multi_core(&state, &connection_id, &database, &sql, schema.as_deref(), cancel_token)
-            .await;
+    let result = dbx_core::query::execute_multi_core_with_options(
+        &state,
+        &connection_id,
+        &database,
+        &sql,
+        schema.as_deref(),
+        cancel_token,
+        dbx_core::query::QueryExecutionOptions { max_rows, fetch_size, page_size, result_session_id },
+    )
+    .await;
     match &result {
         Ok(results) => log::info!(
             "[query][execute_multi:done] trace_id={} result_count={} row_counts={:?}",
@@ -65,6 +88,16 @@ pub async fn execute_multi(
 #[tauri::command]
 pub async fn cancel_query(state: State<'_, Arc<AppState>>, execution_id: String) -> Result<bool, String> {
     Ok(state.running_queries.cancel(&execution_id))
+}
+
+#[tauri::command]
+pub async fn close_query_session(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    database: String,
+    session_id: String,
+) -> Result<bool, String> {
+    dbx_core::query::close_query_session(&state, &connection_id, &database, &session_id).await
 }
 
 #[tauri::command]

@@ -6,7 +6,9 @@ use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 use std::time::{Duration, Instant};
 
 use crate::sql::starts_with_executable_sql_keyword;
-use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
+use crate::types::{
+    ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, ObjectInfo, QueryResult, TableInfo, TriggerInfo,
+};
 
 fn quote_value(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
@@ -155,7 +157,7 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
 }
 
 pub async fn connect(url: &str) -> Result<MySqlPool, String> {
-    super::with_connection_timeout("MySQL", async {
+    let result = super::with_connection_timeout("MySQL", async {
         MySqlPoolOptions::new()
             .max_connections(5)
             .acquire_timeout(super::connection_timeout())
@@ -164,7 +166,38 @@ pub async fn connect(url: &str) -> Result<MySqlPool, String> {
             .await
             .map_err(|e| format!("MySQL connection failed: {e}"))
     })
-    .await
+    .await;
+
+    if let Err(ref e) = result {
+        if e.contains("HandshakeFailure") || e.contains("handshake") {
+            if let Some(fallback_url) = ssl_fallback_url(url) {
+                log::info!("SSL handshake failed, retrying with ssl-mode=disabled");
+                return super::with_connection_timeout("MySQL", async {
+                    MySqlPoolOptions::new()
+                        .max_connections(5)
+                        .acquire_timeout(super::connection_timeout())
+                        .idle_timeout(Duration::from_secs(300))
+                        .connect(&fallback_url)
+                        .await
+                        .map_err(|e| format!("MySQL connection failed: {e}"))
+                })
+                .await;
+            }
+        }
+    }
+
+    result
+}
+
+fn ssl_fallback_url(url: &str) -> Option<String> {
+    if url.contains("ssl-mode=preferred") {
+        Some(url.replace("ssl-mode=preferred", "ssl-mode=disabled"))
+    } else if !url.contains("ssl-mode=") {
+        let sep = if url.contains('?') { "&" } else { "?" };
+        Some(format!("{url}{sep}ssl-mode=disabled"))
+    } else {
+        None
+    }
 }
 
 pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
@@ -213,6 +246,39 @@ pub async fn list_tables(pool: &MySqlPool, database: &str) -> Result<Vec<TableIn
         .collect())
 }
 
+fn list_objects_sql(database: &str) -> String {
+    format!(
+        "SELECT TABLE_NAME AS object_name, \
+           CASE WHEN TABLE_TYPE = 'VIEW' THEN 'VIEW' ELSE 'TABLE' END AS object_type, \
+           TABLE_COMMENT AS object_comment, \
+           CASE WHEN TABLE_TYPE = 'VIEW' THEN 1 ELSE 0 END AS sort_order \
+         FROM information_schema.TABLES \
+         WHERE TABLE_SCHEMA = {db} \
+         UNION ALL \
+         SELECT ROUTINE_NAME AS object_name, ROUTINE_TYPE AS object_type, NULL AS object_comment, \
+           CASE WHEN ROUTINE_TYPE = 'PROCEDURE' THEN 2 ELSE 3 END AS sort_order \
+         FROM information_schema.ROUTINES \
+         WHERE ROUTINE_SCHEMA = {db} AND ROUTINE_TYPE IN ('PROCEDURE', 'FUNCTION') \
+         ORDER BY sort_order, object_name",
+        db = quote_value(database),
+    )
+}
+
+pub async fn list_objects(pool: &MySqlPool, database: &str) -> Result<Vec<ObjectInfo>, String> {
+    let sql = list_objects_sql(database);
+    let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+
+    Ok(rows
+        .iter()
+        .map(|row| ObjectInfo {
+            name: get_str_by_name(row, "object_name"),
+            object_type: get_str_by_name(row, "object_type"),
+            schema: Some(database.to_string()),
+            comment: get_opt_str(row, "object_comment").filter(|s| !s.is_empty()),
+        })
+        .collect())
+}
+
 pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let sql = format!(
         "SELECT c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE, c.COLUMN_DEFAULT, c.EXTRA, c.COLUMN_COMMENT, \
@@ -251,7 +317,7 @@ pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Resul
 pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<QueryResult, String> {
     let start = Instant::now();
 
-    if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN"]) {
+    if is_result_set_query(sql) {
         if bare {
             let mut stream = sqlx::raw_sql(sql).fetch(&*pool);
             let mut columns: Vec<String> = vec![];
@@ -285,6 +351,8 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
                 affected_rows: 0,
                 execution_time_ms: start.elapsed().as_millis(),
                 truncated,
+                session_id: None,
+                has_more: false,
             })
         } else {
             let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
@@ -317,6 +385,8 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
                 affected_rows: 0,
                 execution_time_ms: start.elapsed().as_millis(),
                 truncated,
+                session_id: None,
+                has_more: false,
             })
         }
     } else {
@@ -328,8 +398,14 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
             affected_rows: result.rows_affected(),
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
+            session_id: None,
+            has_more: false,
         })
     }
+}
+
+fn is_result_set_query(sql: &str) -> bool {
+    starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH"])
 }
 
 pub async fn list_indexes(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
@@ -414,6 +490,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mysql_with_queries_are_treated_as_result_sets() {
+        let sql = "WITH RECURSIVE org_tree AS (SELECT 1 AS id) SELECT id FROM org_tree";
+
+        assert!(is_result_set_query(sql));
+    }
+
+    #[test]
     fn numeric_metadata_accepts_unsigned_information_schema_values() {
         assert_eq!(numeric_metadata_u64_to_i32(Some(65)), Some(65));
     }
@@ -422,5 +505,15 @@ mod tests {
     fn numeric_metadata_ignores_values_outside_frontend_range() {
         assert_eq!(numeric_metadata_u64_to_i32(Some(i32::MAX as u64 + 1)), None);
         assert_eq!(numeric_metadata_u64_to_i32(None), None);
+    }
+
+    #[test]
+    fn mysql_list_objects_sql_includes_routines() {
+        let sql = list_objects_sql("app");
+
+        assert!(sql.contains("information_schema.TABLES"));
+        assert!(sql.contains("information_schema.ROUTINES"));
+        assert!(sql.contains("'PROCEDURE'"));
+        assert!(sql.contains("'FUNCTION'"));
     }
 }

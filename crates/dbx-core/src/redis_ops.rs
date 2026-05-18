@@ -1,7 +1,10 @@
 use crate::connection::{AppState, PoolKind};
-use crate::db::redis_driver::{self, RedisScanResult, RedisValue};
+use crate::db::redis_driver::{self, RedisCommandResult, RedisDatabaseInfo, RedisScanResult, RedisValue};
 
-pub async fn redis_list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<u32>, String> {
+pub async fn redis_list_databases_core(
+    state: &AppState,
+    connection_id: &str,
+) -> Result<Vec<RedisDatabaseInfo>, String> {
     let connections = state.connections.read().await;
     let pool = connections.get(connection_id).ok_or("Connection not found")?;
     match pool {
@@ -186,6 +189,26 @@ pub async fn redis_list_push_in_db_core(
     }
 }
 
+pub async fn redis_list_set_in_db_core(
+    state: &AppState,
+    connection_id: &str,
+    db: u32,
+    key_raw: &str,
+    index: i64,
+    value: &str,
+) -> Result<(), String> {
+    let connections = state.connections.read().await;
+    match connections.get(connection_id).ok_or("Not found")? {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            let key = redis_driver::redis_key_raw_to_bytes(key_raw)?;
+            redis_driver::select_db(&mut con, db).await?;
+            redis_driver::list_set(&mut con, &key, index, value).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}
+
 pub async fn redis_list_remove_core(
     state: &AppState,
     connection_id: &str,
@@ -337,6 +360,35 @@ pub async fn redis_delete_keys_in_db_core(
             let keys: Result<Vec<Vec<u8>>, String> =
                 key_raws.iter().map(|k| redis_driver::redis_key_raw_to_bytes(k)).collect();
             redis_driver::delete_keys(&mut con, &keys?).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}
+
+pub async fn redis_flush_db_core(state: &AppState, connection_id: &str, db: u32) -> Result<(), String> {
+    let connections = state.connections.read().await;
+    match connections.get(connection_id).ok_or("Not found")? {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            redis_driver::select_db(&mut con, db).await?;
+            redis_driver::flush_db(&mut con).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}
+
+pub async fn redis_execute_command_core(
+    state: &AppState,
+    connection_id: &str,
+    db: u32,
+    command: &str,
+) -> Result<RedisCommandResult, String> {
+    let connections = state.connections.read().await;
+    match connections.get(connection_id).ok_or("Not found")? {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            redis_driver::select_db(&mut con, db).await?;
+            redis_driver::execute_command(&mut con, command).await
         }
         _ => Err("Not a Redis connection".to_string()),
     }

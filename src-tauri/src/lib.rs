@@ -1,12 +1,15 @@
 mod commands;
+mod data_dir;
 mod db;
 mod models;
+mod window_state_guard;
 
 use async_trait::async_trait;
 use commands::connection::AppState;
 use dbx_core::storage::Storage;
 use dbx_mcp::{DesktopEventSink, McpExecuteQueryEvent, McpOpenTableEvent};
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::{Emitter, Manager, RunEvent};
 
 #[derive(Clone)]
@@ -29,31 +32,56 @@ impl DesktopEventSink for TauriMcpEvents {
 pub fn run() {
     rustls::crypto::aws_lc_rs::default_provider().install_default().expect("Failed to install rustls crypto provider");
 
+    let startup_begin = Instant::now();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let paths = commands::external_sql::sql_file_paths_from_args(args, std::path::Path::new(&cwd));
+            if !paths.is_empty() {
+                if let Some(state) = app.try_state::<commands::external_sql::ExternalSqlOpenState>() {
+                    state.push(paths.clone());
+                }
+                let _ = app.emit("dbx-open-sql-files", paths);
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .setup(|app| {
+        .setup(move |app| {
+            let setup_start = Instant::now();
+            eprintln!("[STARTUP] plugins registered in {:?}", startup_begin.elapsed());
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())?;
             }
 
-            let data_dir =
+            let default_data_dir =
                 app.path().app_data_dir().map_err(|e| e.to_string()).expect("Failed to resolve app data dir");
+            let data_dir = data_dir::resolve_data_dir(default_data_dir);
             std::fs::create_dir_all(&data_dir).expect("Failed to create data dir");
             let db_path = data_dir.join("dbx.db");
 
+            let t = Instant::now();
             let storage = tauri::async_runtime::block_on(async {
                 let s = Storage::open(&db_path).await.expect("Failed to open storage");
+                eprintln!("[STARTUP]   Storage::open in {:?}", t.elapsed());
+                let t2 = Instant::now();
                 s.migrate_from_json(&data_dir).await.expect("Failed to migrate JSON data");
+                eprintln!("[STARTUP]   migrate_from_json in {:?}", t2.elapsed());
                 s
             });
+            eprintln!("[STARTUP] storage ready in {:?}", t.elapsed());
 
             let state = Arc::new(AppState::new_with_plugin_dir(storage, data_dir.join("plugins")));
             app.manage(state.clone());
+            app.manage(commands::external_sql::ExternalSqlOpenState::default());
 
             let app_handle = app.handle().clone();
             commands::mcp_bridge::start(app_handle.clone(), state.clone());
@@ -67,6 +95,7 @@ pub fn run() {
                     log::warn!("DBX MCP HTTP server stopped: {err}");
                 }
             });
+            eprintln!("[STARTUP] setup complete in {:?} (total {:?})", setup_start.elapsed(), startup_begin.elapsed());
 
             #[cfg(not(target_os = "macos"))]
             {
@@ -75,6 +104,8 @@ pub fn run() {
                 }
             }
 
+            window_state_guard::enforce_main_window_bounds(app.handle());
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -82,6 +113,10 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 window.hide().unwrap();
                 api.prevent_close();
+            }
+
+            if matches!(event, tauri::WindowEvent::Resized(_)) {
+                window_state_guard::enforce_window_bounds(window);
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -110,6 +145,7 @@ pub fn run() {
             commands::plugins::delete_jdbc_driver,
             commands::plugins::jdbc_plugin_status,
             commands::plugins::install_jdbc_plugin,
+            commands::plugins::install_jdbc_plugin_local,
             commands::plugins::uninstall_jdbc_plugin,
             commands::schema::list_databases,
             commands::schema::list_tables,
@@ -127,12 +163,14 @@ pub fn run() {
             commands::query::execute_query,
             commands::query::execute_multi,
             commands::query::cancel_query,
+            commands::query::close_query_session,
             commands::query::execute_batch,
             commands::query::execute_script,
             commands::query::execute_in_transaction,
             commands::sql_file::preview_sql_file,
             commands::sql_file::execute_sql_file,
             commands::sql_file::cancel_sql_file_execution,
+            commands::external_sql::pending_open_sql_files,
             commands::table_import::preview_table_import_file,
             commands::table_import::import_table_file,
             commands::table_import::cancel_table_import,
@@ -144,6 +182,7 @@ pub fn run() {
             commands::redis_cmd::redis_hash_set,
             commands::redis_cmd::redis_hash_del,
             commands::redis_cmd::redis_list_push,
+            commands::redis_cmd::redis_list_set,
             commands::redis_cmd::redis_list_remove,
             commands::redis_cmd::redis_set_add,
             commands::redis_cmd::redis_set_remove,
@@ -151,6 +190,8 @@ pub fn run() {
             commands::redis_cmd::redis_zrem,
             commands::redis_cmd::redis_set_ttl,
             commands::redis_cmd::redis_delete_keys,
+            commands::redis_cmd::redis_flush_db,
+            commands::redis_cmd::redis_execute_command,
             commands::redis_cmd::redis_load_more,
             commands::saved_sql::load_saved_sql_library,
             commands::saved_sql::save_saved_sql_folder,
@@ -170,10 +211,43 @@ pub fn run() {
             commands::update::check_for_updates,
             commands::transfer::start_transfer,
             commands::transfer::cancel_transfer,
+            commands::database_export::export_database_sql,
+            commands::database_export::cancel_database_export,
+            commands::agents::list_installed_agents,
+            commands::agents::list_installed_agents_local,
+            commands::agents::install_agent,
+            commands::agents::upgrade_all_agents,
+            commands::agents::uninstall_agent,
+            commands::agents::check_jre_installed,
+            commands::agents::get_agent_java_runtime_config,
+            commands::agents::set_agent_java_runtime_config,
+            commands::agents::uninstall_jre,
+            commands::agents::reinstall_jre,
+            commands::agents::invalidate_agent_registry_cache,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Opened { urls } = &event {
+                let paths: Vec<String> = urls
+                    .iter()
+                    .filter_map(|url| url.to_file_path().ok())
+                    .filter(|path| commands::external_sql::is_sql_file_path(path))
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect();
+                if !paths.is_empty() {
+                    if let Some(state) = app_handle.try_state::<commands::external_sql::ExternalSqlOpenState>() {
+                        state.push(paths.clone());
+                    }
+                    let _ = app_handle.emit("dbx-open-sql-files", paths);
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+
             #[cfg(target_os = "macos")]
             if let RunEvent::Reopen { has_visible_windows, .. } = &event {
                 if !has_visible_windows {

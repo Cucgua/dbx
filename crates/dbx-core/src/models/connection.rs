@@ -17,6 +17,8 @@ pub struct ConnectionConfig {
     pub username: String,
     pub password: String,
     pub database: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_databases: Option<Vec<String>>,
     #[serde(default)]
     pub default_database: Option<String>,
     #[serde(default)]
@@ -117,7 +119,28 @@ pub enum DatabaseType {
     StarRocks,
     Redshift,
     Dameng,
+    Kingbase,
+    Highgo,
+    Vastbase,
+    Goldendb,
     Gaussdb,
+    Access,
+    #[serde(rename = "h2")]
+    H2,
+    Snowflake,
+    Trino,
+    Hive,
+    #[serde(rename = "db2")]
+    Db2,
+    Informix,
+    #[serde(rename = "neo4j")]
+    Neo4j,
+    Cassandra,
+    #[serde(rename = "bigquery")]
+    Bigquery,
+    Kylin,
+    Sundb,
+    Tdengine,
     Jdbc,
 }
 
@@ -166,6 +189,8 @@ impl ConnectionConfig {
             },
             DatabaseType::Redshift => Some("dev"),
             DatabaseType::Gaussdb => Some("postgres"),
+            DatabaseType::Kingbase | DatabaseType::Vastbase => Some("postgres"),
+            DatabaseType::Highgo => Some("highgo"),
             _ => None,
         }
     }
@@ -176,7 +201,24 @@ impl ConnectionConfig {
                 .driver_profile
                 .as_deref()
                 .map(|p| p.to_lowercase())
-                .is_some_and(|p| matches!(p.as_str(), "doris" | "starrocks" | "selectdb" | "tdengine"))
+                .is_some_and(|p| matches!(p.as_str(), "doris" | "starrocks" | "selectdb" | "oceanbase"))
+    }
+
+    pub fn canonicalized(&self) -> Self {
+        let mut config = self.clone();
+        if config.db_type == DatabaseType::Mysql
+            && config.driver_profile.as_deref().is_some_and(|profile| profile.eq_ignore_ascii_case("tdengine"))
+        {
+            config.db_type = DatabaseType::Tdengine;
+            if config.port == 0 || config.port == 6030 {
+                config.port = 6041;
+            }
+            config.driver_profile = Some("tdengine".to_string());
+            if config.driver_label.as_deref().unwrap_or("").trim().is_empty() {
+                config.driver_label = Some("TDengine".to_string());
+            }
+        }
+        config
     }
 
     pub fn connection_url(&self) -> String {
@@ -196,6 +238,7 @@ impl ConnectionConfig {
             DatabaseType::Sqlite | DatabaseType::DuckDb => {
                 format!("{}?mode=rwc", self.host)
             }
+            DatabaseType::Access => self.host.clone(),
             DatabaseType::Redis => {
                 let scheme = if self.ssl { "rediss" } else { "redis" };
                 format!("{scheme}://{host}:{port}/")
@@ -230,9 +273,28 @@ impl ConnectionConfig {
                 format!("mongodb://{host}:{port}{db_part}{suffix}")
             }
             DatabaseType::Oracle => format!("oracle://{host}:{port}{db_part}"),
-            DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
+            DatabaseType::Elasticsearch => {
+                let scheme = if self.ssl { "https" } else { "http" };
+                format!("{scheme}://{host}:{port}")
+            }
             DatabaseType::Dameng => format!("dm://{host}:{port}{db_part}"),
+            DatabaseType::Kingbase => format!("kingbase://{host}:{port}{db_part}"),
+            DatabaseType::Highgo => format!("highgo://{host}:{port}{db_part}"),
+            DatabaseType::Vastbase => format!("vastbase://{host}:{port}{db_part}"),
+            DatabaseType::Goldendb => format!("goldendb://{host}:{port}{db_part}"),
             DatabaseType::Gaussdb => format!("gaussdb://{host}:{port}{db_part}"),
+            DatabaseType::H2 => format!("h2://{host}:{port}{db_part}"),
+            DatabaseType::Snowflake => format!("snowflake://{host}/{db_part}"),
+            DatabaseType::Trino => format!("trino://{host}:{port}{db_part}"),
+            DatabaseType::Hive => format!("hive://{host}:{port}{db_part}"),
+            DatabaseType::Db2 => format!("db2://{host}:{port}{db_part}"),
+            DatabaseType::Informix => format!("informix://{host}:{port}{db_part}"),
+            DatabaseType::Neo4j => format!("neo4j://{host}:{port}{db_part}"),
+            DatabaseType::Cassandra => format!("cassandra://{host}:{port}{db_part}"),
+            DatabaseType::Bigquery => format!("bigquery://{host}/{db_part}"),
+            DatabaseType::Kylin => format!("kylin://{host}:{port}{db_part}"),
+            DatabaseType::Sundb => format!("sundb://{host}:{port}{db_part}"),
+            DatabaseType::Tdengine => format!("tdengine://{host}:{port}{db_part}"),
             DatabaseType::Jdbc => "jdbc:<redacted>".to_string(),
         }
     }
@@ -248,6 +310,7 @@ impl ConnectionConfig {
             DatabaseType::Sqlite | DatabaseType::DuckDb => {
                 format!("{}?mode=rwc", self.host)
             }
+            DatabaseType::Access => self.host.clone(),
             DatabaseType::Redis => {
                 let scheme = if self.ssl { "rediss" } else { "redis" };
                 if self.username.is_empty() && self.password.is_empty() {
@@ -297,12 +360,63 @@ impl ConnectionConfig {
             DatabaseType::Oracle => {
                 format!("oracle://{}:{}@{host}:{port}{db_part}", username, password)
             }
-            DatabaseType::Elasticsearch => format!("http://{host}:{port}"),
+            DatabaseType::Elasticsearch => {
+                let scheme = if self.ssl { "https" } else { "http" };
+                format!("{scheme}://{host}:{port}")
+            }
             DatabaseType::Dameng => {
                 format!("dm://{}:{}@{host}:{port}{db_part}", username, password)
             }
+            DatabaseType::Kingbase => {
+                format!("kingbase://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Highgo => {
+                format!("highgo://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Vastbase => {
+                format!("vastbase://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Goldendb => {
+                format!("goldendb://{}:{}@{host}:{port}{db_part}", username, password)
+            }
             DatabaseType::Gaussdb => {
                 format!("gaussdb://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::H2 => {
+                format!("h2://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Snowflake => {
+                format!("snowflake://{}:{}@{host}/{db_part}", username, password)
+            }
+            DatabaseType::Trino => {
+                format!("trino://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Hive => {
+                format!("hive://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Db2 => {
+                format!("db2://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Informix => {
+                format!("informix://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Neo4j => {
+                format!("neo4j://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Cassandra => {
+                format!("cassandra://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Bigquery => {
+                format!("bigquery://{}:{}@{host}/{db_part}", username, password)
+            }
+            DatabaseType::Kylin => {
+                format!("kylin://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Sundb => {
+                format!("sundb://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Tdengine => {
+                format!("tdengine://{}:{}@{host}:{port}{db_part}", username, password)
             }
             DatabaseType::Jdbc => {
                 self.connection_string.as_deref().filter(|value| !value.is_empty()).unwrap_or("jdbc:").to_string()
@@ -411,6 +525,53 @@ fn rewrite_mongo_uri_host(uri: &str, new_host: &str, new_port: u16) -> String {
     result
 }
 
+pub fn parse_jdbc_host_port(url: &str) -> Option<(String, u16)> {
+    let rest = url.strip_prefix("jdbc:")?;
+
+    // jdbc:oracle:thin:@host:port:SID  or  jdbc:oracle:thin:@//host:port/service
+    if let Some(after) = rest.strip_prefix("oracle:") {
+        let at_pos = after.find('@')?;
+        let after_at = &after[at_pos + 1..];
+        let after_at = after_at.strip_prefix("//").unwrap_or(after_at);
+        let host_port = after_at.split(&['/', ':', '?'][..]).next()?;
+        let port_str = after_at.strip_prefix(host_port)?.strip_prefix(':')?.split(&[':', '/', ';', '?'][..]).next()?;
+        return Some((host_port.to_string(), port_str.parse().ok()?));
+    }
+
+    // jdbc:sqlserver://host:port;prop=val  or  jdbc:sqlserver://host\instance:port;...
+    if let Some(after) = rest.strip_prefix("sqlserver://") {
+        let authority = after.split(';').next().unwrap_or(after);
+        let authority = authority.split('\\').next().unwrap_or(authority);
+        return match authority.rsplit_once(':') {
+            Some((h, p)) => Some((h.to_string(), p.parse().ok()?)),
+            None => Some((authority.to_string(), 1433)),
+        };
+    }
+
+    // Generic: jdbc:subprotocol://[user:pass@]host:port[/path][?query]
+    let scheme_end = rest.find("://")?;
+    let after_scheme = &rest[scheme_end + 3..];
+    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let authority = authority.split('?').next().unwrap_or(authority);
+    let host_port = match authority.rfind('@') {
+        Some(idx) => &authority[idx + 1..],
+        None => authority,
+    };
+    match host_port.rsplit_once(':') {
+        Some((h, p)) => Some((h.to_string(), p.parse().ok()?)),
+        None => None,
+    }
+}
+
+pub fn rewrite_jdbc_url_host(url: &str, new_host: &str, new_port: u16) -> String {
+    let Some((old_host, old_port)) = parse_jdbc_host_port(url) else {
+        return url.to_string();
+    };
+    let old_authority = format!("{old_host}:{old_port}");
+    let new_authority = format!("{new_host}:{new_port}");
+    url.replacen(&old_authority, &new_authority, 1)
+}
+
 fn encode_url_part(value: &str) -> String {
     utf8_percent_encode(value, NON_ALPHANUMERIC).to_string()
 }
@@ -441,6 +602,7 @@ mod tests {
             password: password.to_string(),
             database: database.map(str::to_string),
             default_database: None,
+            visible_databases: None,
             color: None,
             ssh_enabled: false,
             ssh_host: String::new(),
@@ -532,6 +694,26 @@ mod tests {
     }
 
     #[test]
+    fn visible_databases_round_trips_through_connection_config() {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "id",
+            "name": "name",
+            "db_type": "mysql",
+            "host": "10.1.2.3",
+            "port": 3306,
+            "username": "root",
+            "password": "",
+            "database": null,
+            "visible_databases": ["app", "billing"]
+        }))
+        .unwrap();
+
+        let saved = serde_json::to_value(config).unwrap();
+
+        assert_eq!(saved["visible_databases"], serde_json::json!(["app", "billing"]));
+    }
+
+    #[test]
     fn ssh_connect_timeout_zero_uses_default() {
         let mut config = mysql_config("root", "", None);
         config.ssh_connect_timeout_secs = 0;
@@ -547,6 +729,31 @@ mod tests {
             config.connection_url(),
             "mysql://user%40tenant%23cluster:secret@10.1.2.3:2883?ssl-mode=preferred&charset=utf8mb4"
         );
+    }
+
+    #[test]
+    fn oceanbase_profile_uses_bare_mysql_connection_options() {
+        let mut config = mysql_config("user@tenant#cluster", "secret", None);
+        config.driver_profile = Some("oceanbase".to_string());
+
+        assert!(config.needs_bare_mysql());
+        assert_eq!(config.connection_url(), "mysql://user%40tenant%23cluster:secret@10.1.2.3:2883?ssl-mode=disabled");
+    }
+
+    #[test]
+    fn tdengine_profile_is_canonicalized_to_agent_database_type() {
+        let mut config = mysql_config("root", "taosdata", Some("power"));
+        config.driver_profile = Some("tdengine".to_string());
+        config.driver_label = None;
+        config.port = 6030;
+
+        let canonical = config.canonicalized();
+
+        assert_eq!(canonical.db_type, DatabaseType::Tdengine);
+        assert_eq!(canonical.port, 6041);
+        assert_eq!(canonical.driver_profile.as_deref(), Some("tdengine"));
+        assert_eq!(canonical.driver_label.as_deref(), Some("TDengine"));
+        assert!(!canonical.needs_bare_mysql());
     }
 
     #[test]
@@ -764,5 +971,92 @@ mod tests {
         let url = config.connection_url_with_host("127.0.0.1", 54321);
 
         assert!(url.matches("directConnection").count() == 1);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_postgresql() {
+        let (h, p) = super::parse_jdbc_host_port("jdbc:postgresql://myhost:5432/mydb").unwrap();
+        assert_eq!(h, "myhost");
+        assert_eq!(p, 5432);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_mysql() {
+        let (h, p) = super::parse_jdbc_host_port("jdbc:mysql://db.example.com:3306/app?useSSL=false").unwrap();
+        assert_eq!(h, "db.example.com");
+        assert_eq!(p, 3306);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_with_userinfo() {
+        let (h, p) = super::parse_jdbc_host_port("jdbc:postgresql://user:pass@pghost:5433/db").unwrap();
+        assert_eq!(h, "pghost");
+        assert_eq!(p, 5433);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_oracle_thin() {
+        let (h, p) = super::parse_jdbc_host_port("jdbc:oracle:thin:@orahost:1521:ORCL").unwrap();
+        assert_eq!(h, "orahost");
+        assert_eq!(p, 1521);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_oracle_service() {
+        let (h, p) = super::parse_jdbc_host_port("jdbc:oracle:thin:@//orahost:1521/service").unwrap();
+        assert_eq!(h, "orahost");
+        assert_eq!(p, 1521);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_sqlserver() {
+        let (h, p) = super::parse_jdbc_host_port("jdbc:sqlserver://mshost:1433;databaseName=master").unwrap();
+        assert_eq!(h, "mshost");
+        assert_eq!(p, 1433);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_sqlserver_no_port() {
+        let (h, p) = super::parse_jdbc_host_port("jdbc:sqlserver://mshost;databaseName=master").unwrap();
+        assert_eq!(h, "mshost");
+        assert_eq!(p, 1433);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_no_port_returns_none() {
+        assert!(super::parse_jdbc_host_port("jdbc:postgresql://myhost/mydb").is_none());
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_invalid_returns_none() {
+        assert!(super::parse_jdbc_host_port("not-a-jdbc-url").is_none());
+    }
+
+    #[test]
+    fn rewrite_jdbc_url_postgresql() {
+        let url = "jdbc:postgresql://myhost:5432/mydb";
+        let rewritten = super::rewrite_jdbc_url_host(url, "127.0.0.1", 54321);
+        assert_eq!(rewritten, "jdbc:postgresql://127.0.0.1:54321/mydb");
+    }
+
+    #[test]
+    fn rewrite_jdbc_url_oracle() {
+        let url = "jdbc:oracle:thin:@orahost:1521:ORCL";
+        let rewritten = super::rewrite_jdbc_url_host(url, "127.0.0.1", 54321);
+        assert_eq!(rewritten, "jdbc:oracle:thin:@127.0.0.1:54321:ORCL");
+    }
+
+    #[test]
+    fn rewrite_jdbc_url_sqlserver() {
+        let url = "jdbc:sqlserver://mshost:1433;databaseName=master";
+        let rewritten = super::rewrite_jdbc_url_host(url, "127.0.0.1", 54321);
+        assert_eq!(rewritten, "jdbc:sqlserver://127.0.0.1:54321;databaseName=master");
+    }
+
+    #[test]
+    fn rewrite_jdbc_url_unparseable_returns_original() {
+        let url = "jdbc:custom:some-opaque-string";
+        let rewritten = super::rewrite_jdbc_url_host(url, "127.0.0.1", 54321);
+        assert_eq!(rewritten, url);
     }
 }

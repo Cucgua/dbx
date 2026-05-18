@@ -1,0 +1,144 @@
+name: Node Packages Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version to publish, for example 0.4.3"
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish CLI and MCP packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Check npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN secret is required to publish DBX Node packages."
+            exit 1
+          fi
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set package versions
+        id: version
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+
+          const version = process.env.VERSION.trim();
+          if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
+            throw new Error(`Invalid semver version: ${version}`);
+          }
+
+          const readJson = (path) => JSON.parse(fs.readFileSync(path, "utf8"));
+          const writeJson = (path, data) => fs.writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+
+          for (const path of [
+            "packages/node-core/package.json",
+            "packages/cli/package.json",
+            "packages/mcp-server/package.json",
+          ]) {
+            const pkg = readJson(path);
+            pkg.version = version;
+            writeJson(path, pkg);
+          }
+
+          const serverPath = "packages/mcp-server/server.json";
+          const server = readJson(serverPath);
+          server.version = version;
+          for (const packageInfo of server.packages ?? []) {
+            if (packageInfo.registryType === "npm" && packageInfo.identifier === "@dbx-app/mcp-server") {
+              packageInfo.version = version;
+            }
+          }
+          writeJson(serverPath, server);
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          NODE
+
+      - name: Check npm versions are new
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for PACKAGE in @dbx-app/node-core @dbx-app/cli @dbx-app/mcp-server; do
+            if npm view "${PACKAGE}@${VERSION}" version >/dev/null 2>&1; then
+              echo "::error::${PACKAGE}@${VERSION} already exists on npm."
+              exit 1
+            fi
+          done
+
+      - name: Run package tests
+        run: pnpm test:packages
+
+      - name: Build and pack packages
+        run: pnpm publish:dry-run
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit package release version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git add packages/node-core/package.json packages/cli/package.json packages/mcp-server/package.json packages/mcp-server/server.json
+          git commit -m "chore(packages): release ${VERSION} [skip node-packages-release]"
+          git tag "packages-v${VERSION}"
+
+      - name: Push package release commit and tag
+        env:
+          RELEASE_TOKEN: ${{ secrets.MCP_RELEASE_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ -n "${RELEASE_TOKEN}" ]; then
+            git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          fi
+          git push origin HEAD:main
+          git push origin "packages-v${VERSION}"
+
+      - name: Publish Node core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter @dbx-app/node-core publish --access public --provenance --no-git-checks
+
+      - name: Publish CLI
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter @dbx-app/cli publish --access public --provenance --no-git-checks
+
+      - name: Publish MCP server
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter @dbx-app/mcp-server publish --access public --provenance --no-git-checks

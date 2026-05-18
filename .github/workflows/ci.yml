@@ -15,24 +15,33 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.13.0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
+
+      - name: Install system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libsecret-1-dev
 
       - name: Install frontend dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Frontend format check
-        run: npx oxfmt --check "src/**/*.{ts,vue}"
+        run: npx oxfmt --check "apps/desktop/src/**/*.{ts,vue}"
 
       - name: TypeScript check
-        run: npx vue-tsc --noEmit
+        run: npx vue-tsc --noEmit --project apps/desktop/tsconfig.json
 
       - name: Frontend tests
         run: pnpm test
+
+      - name: Node package tests
+        run: pnpm test:packages
+
+      - name: Node package publish dry run
+        run: pnpm publish:dry-run
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -49,11 +58,6 @@ jobs:
         with:
           workspaces: './ -> target'
           shared-key: ci-x86_64-unknown-linux-gnu
-
-      - name: Install system dependencies (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev unixodbc-dev
 
       - name: Cargo fmt check
         run: cargo fmt --check

@@ -10,9 +10,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::commands::connection::AppState;
 use crate::commands::query::execute_sql_statement;
+use dbx_core::models::connection::DatabaseType;
 
 pub use dbx_core::sql::{
-    statement_summary, SqlFilePreview, SqlFileProgress, SqlFileRequest, SqlFileStatus, SqlStatementSplitter,
+    prepare_sql_file_statement, statement_summary, SqlFilePreview, SqlFileProgress, SqlFileRequest,
+    SqlFileStatementAction, SqlFileStatus, SqlStatementSplitter,
 };
 
 static SQL_FILE_EXECUTIONS: std::sync::LazyLock<RwLock<HashMap<String, CancellationToken>>> =
@@ -23,6 +25,12 @@ struct StatementErrorDecision {
     progress: Vec<SqlFileProgress>,
     failure_count: usize,
     result: Result<bool, String>,
+}
+
+#[derive(Debug, Clone)]
+struct SqlFileImportTarget {
+    db_type: DatabaseType,
+    driver_profile: Option<String>,
 }
 
 #[cfg(test)]
@@ -118,6 +126,7 @@ async fn execute_sql_file_inner(
     let mut reader = BufReader::new(file);
     let mut splitter = SqlStatementSplitter::default();
     let mut line = String::new();
+    let import_target = sql_file_import_target(state.inner().as_ref(), &request.connection_id).await;
 
     loop {
         if token.is_cancelled() {
@@ -168,6 +177,7 @@ async fn execute_sql_file_inner(
                 started_at,
                 statement_index,
                 &statement,
+                import_target.as_ref(),
                 &mut success_count,
                 &mut failure_count,
                 &mut affected_rows,
@@ -189,6 +199,7 @@ async fn execute_sql_file_inner(
             started_at,
             statement_index,
             &statement,
+            import_target.as_ref(),
             &mut success_count,
             &mut failure_count,
             &mut affected_rows,
@@ -214,6 +225,13 @@ async fn execute_sql_file_inner(
     Ok(())
 }
 
+async fn sql_file_import_target(state: &AppState, connection_id: &str) -> Option<SqlFileImportTarget> {
+    let configs = state.configs.read().await;
+    configs
+        .get(connection_id)
+        .map(|config| SqlFileImportTarget { db_type: config.db_type, driver_profile: config.driver_profile.clone() })
+}
+
 async fn execute_statement_with_progress(
     app: &AppHandle,
     state: &State<'_, Arc<AppState>>,
@@ -222,13 +240,13 @@ async fn execute_statement_with_progress(
     started_at: Instant,
     statement_index: usize,
     statement: &str,
+    import_target: Option<&SqlFileImportTarget>,
     success_count: &mut usize,
     failure_count: &mut usize,
     affected_rows: &mut u64,
 ) -> Result<bool, String> {
-    let summary = statement_summary(statement);
-
     if token.is_cancelled() {
+        let summary = statement_summary(statement);
         emit_progress(
             app,
             &request.execution_id,
@@ -243,6 +261,43 @@ async fn execute_statement_with_progress(
         );
         return Ok(true);
     }
+
+    let statement_action = import_target
+        .map(|target| prepare_sql_file_statement(statement, &target.db_type, target.driver_profile.as_deref()))
+        .unwrap_or_else(|| SqlFileStatementAction::Execute(statement.to_string()));
+    let executable_statement = match statement_action {
+        SqlFileStatementAction::Execute(statement) => statement,
+        SqlFileStatementAction::Skip => {
+            let summary = statement_summary(statement);
+            emit_progress(
+                app,
+                &request.execution_id,
+                SqlFileStatus::Running,
+                statement_index,
+                *success_count,
+                *failure_count,
+                *affected_rows,
+                started_at,
+                &summary,
+                None,
+            );
+            *success_count += 1;
+            emit_progress(
+                app,
+                &request.execution_id,
+                SqlFileStatus::StatementDone,
+                statement_index,
+                *success_count,
+                *failure_count,
+                *affected_rows,
+                started_at,
+                &summary,
+                None,
+            );
+            return Ok(false);
+        }
+    };
+    let summary = statement_summary(&executable_statement);
 
     emit_progress(
         app,
@@ -261,7 +316,7 @@ async fn execute_statement_with_progress(
         state.inner().as_ref(),
         &request.connection_id,
         &request.database,
-        statement,
+        &executable_statement,
         None,
         Some(token.clone()),
     )

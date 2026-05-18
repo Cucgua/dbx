@@ -58,6 +58,10 @@ pub struct QueryResult {
     pub execution_time_ms: u128,
     #[serde(default)]
     pub truncated: bool,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

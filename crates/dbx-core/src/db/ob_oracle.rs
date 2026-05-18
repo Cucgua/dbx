@@ -1,7 +1,7 @@
 use sqlx::mysql::{MySqlPool, MySqlRow};
 use sqlx::Row;
 
-use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, TableInfo, TriggerInfo};
+use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, ObjectInfo, TableInfo, TriggerInfo};
 
 fn quote_value(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
@@ -50,6 +50,37 @@ pub async fn list_tables(pool: &MySqlPool, schema: &str) -> Result<Vec<TableInfo
     let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(|row| TableInfo { name: get_str(row, 0), table_type: get_str(row, 1), comment: None }).collect())
+}
+
+fn list_objects_sql(schema: &str) -> String {
+    format!(
+        "SELECT TABLE_NAME AS OBJECT_NAME, 'TABLE' AS OBJECT_TYPE, 0 AS SORT_ORDER \
+         FROM ALL_TABLES WHERE OWNER = {s} \
+         UNION ALL \
+         SELECT VIEW_NAME AS OBJECT_NAME, 'VIEW' AS OBJECT_TYPE, 1 AS SORT_ORDER \
+         FROM ALL_VIEWS WHERE OWNER = {s} \
+         UNION ALL \
+         SELECT OBJECT_NAME, OBJECT_TYPE, CASE WHEN OBJECT_TYPE = 'PROCEDURE' THEN 2 ELSE 3 END AS SORT_ORDER \
+         FROM ALL_PROCEDURES \
+         WHERE OWNER = {s} AND OBJECT_TYPE IN ('PROCEDURE', 'FUNCTION') AND PROCEDURE_NAME IS NULL \
+         ORDER BY SORT_ORDER, OBJECT_NAME",
+        s = quote_value(schema),
+    )
+}
+
+pub async fn list_objects(pool: &MySqlPool, schema: &str) -> Result<Vec<ObjectInfo>, String> {
+    let sql = list_objects_sql(schema);
+    let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+
+    Ok(rows
+        .iter()
+        .map(|row| ObjectInfo {
+            name: get_str(row, 0),
+            object_type: get_str(row, 1),
+            schema: Some(schema.to_string()),
+            comment: None,
+        })
+        .collect())
 }
 
 pub async fn get_columns(pool: &MySqlPool, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
@@ -197,4 +228,20 @@ pub async fn list_triggers(pool: &MySqlPool, schema: &str, table: &str) -> Resul
             TriggerInfo { name: get_str(row, 0), event: get_str(row, 1), timing: timing.to_string() }
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ob_oracle_list_objects_sql_includes_routines() {
+        let sql = list_objects_sql("DLJPM");
+
+        assert!(sql.contains("ALL_TABLES"));
+        assert!(sql.contains("ALL_VIEWS"));
+        assert!(sql.contains("ALL_PROCEDURES"));
+        assert!(sql.contains("'PROCEDURE'"));
+        assert!(sql.contains("'FUNCTION'"));
+    }
 }

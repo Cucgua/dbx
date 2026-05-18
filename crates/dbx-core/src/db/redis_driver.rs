@@ -7,6 +7,12 @@ const COLLECTION_PAGE_SIZE: usize = 200;
 const DEFAULT_REDIS_DATABASES: u32 = 16;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisDatabaseInfo {
+    pub db: u32,
+    pub keys: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisKeyInfo {
     pub key_display: String,
     pub key_raw: String,
@@ -20,6 +26,7 @@ pub struct RedisKeyInfo {
 pub struct RedisScanResult {
     pub cursor: u64,
     pub keys: Vec<RedisKeyInfo>,
+    pub total_keys: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +39,21 @@ pub struct RedisValue {
     pub value: serde_json::Value,
     pub total: Option<u64>,
     pub scan_cursor: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RedisCommandSafety {
+    Allowed,
+    Confirm,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisCommandResult {
+    pub command: String,
+    pub safety: RedisCommandSafety,
+    pub value: serde_json::Value,
 }
 
 pub async fn connect(url: &str) -> Result<redis::aio::MultiplexedConnection, String> {
@@ -49,16 +71,20 @@ pub async fn connect(url: &str) -> Result<redis::aio::MultiplexedConnection, Str
     Ok(con)
 }
 
-pub async fn list_databases(con: &mut redis::aio::MultiplexedConnection) -> Result<Vec<u32>, String> {
+pub async fn list_databases(con: &mut redis::aio::MultiplexedConnection) -> Result<Vec<RedisDatabaseInfo>, String> {
     let configured_count =
         redis::cmd("CONFIG").arg("GET").arg("databases").query_async(con).await.ok().and_then(parse_database_count);
 
     let keyspace_dbs = list_keyspace_databases(con).await.unwrap_or_default();
     let database_count = configured_count.unwrap_or(DEFAULT_REDIS_DATABASES);
-    let max_db = keyspace_dbs.iter().copied().max().map(|db| db + 1).unwrap_or(0);
+    let max_db = keyspace_dbs.iter().map(|db| db.db).max().map(|db| db + 1).unwrap_or(0);
     let visible_count = database_count.max(max_db).max(1);
+    let keyspace_counts =
+        keyspace_dbs.into_iter().map(|db| (db.db, db.keys)).collect::<std::collections::HashMap<_, _>>();
 
-    Ok((0..visible_count).collect())
+    Ok((0..visible_count)
+        .map(|db| RedisDatabaseInfo { db, keys: keyspace_counts.get(&db).copied().unwrap_or(0) })
+        .collect())
 }
 
 fn parse_database_count(value: redis::Value) -> Option<u32> {
@@ -77,15 +103,23 @@ fn parse_database_count(value: redis::Value) -> Option<u32> {
     })
 }
 
-async fn list_keyspace_databases(con: &mut redis::aio::MultiplexedConnection) -> Result<Vec<u32>, String> {
+async fn list_keyspace_databases(
+    con: &mut redis::aio::MultiplexedConnection,
+) -> Result<Vec<RedisDatabaseInfo>, String> {
     let info: String = redis::cmd("INFO").arg("keyspace").query_async(con).await.map_err(|e| e.to_string())?;
 
     let mut dbs = Vec::new();
     for line in info.lines() {
         if line.starts_with("db") {
-            if let Some(num) = line.strip_prefix("db").and_then(|s| s.split(':').next()) {
-                if let Ok(n) = num.parse::<u32>() {
-                    dbs.push(n);
+            if let Some((db_part, stats_part)) = line.split_once(':') {
+                if let Some(num) = db_part.strip_prefix("db") {
+                    if let Ok(db) = num.parse::<u32>() {
+                        let keys = stats_part
+                            .split(',')
+                            .find_map(|part| part.strip_prefix("keys=").and_then(|value| value.parse::<u64>().ok()))
+                            .unwrap_or(0);
+                        dbs.push(RedisDatabaseInfo { db, keys });
+                    }
                 }
             }
         }
@@ -95,6 +129,153 @@ async fn list_keyspace_databases(con: &mut redis::aio::MultiplexedConnection) ->
 
 pub async fn select_db(con: &mut redis::aio::MultiplexedConnection, db: u32) -> Result<(), String> {
     redis::cmd("SELECT").arg(db).query_async(con).await.map_err(|e| e.to_string())
+}
+
+pub fn parse_command_argv(command_text: &str) -> Result<Vec<String>, String> {
+    let mut argv = Vec::new();
+    let mut current = String::new();
+    let mut chars = command_text.chars().peekable();
+    let mut quote: Option<char> = None;
+    let mut escaping = false;
+
+    while let Some(ch) = chars.next() {
+        if escaping {
+            current.push(match ch {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                other => other,
+            });
+            escaping = false;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaping = true;
+            continue;
+        }
+
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            continue;
+        }
+
+        if ch.is_whitespace() {
+            if !current.is_empty() {
+                argv.push(std::mem::take(&mut current));
+            }
+            while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
+                chars.next();
+            }
+            continue;
+        }
+
+        current.push(ch);
+    }
+
+    if escaping {
+        current.push('\\');
+    }
+    if quote.is_some() {
+        return Err("Redis command has an unterminated quote".to_string());
+    }
+    if !current.is_empty() {
+        argv.push(current);
+    }
+    if argv.is_empty() {
+        return Err("Redis command is empty".to_string());
+    }
+    Ok(argv)
+}
+
+pub fn classify_command(command: &str) -> RedisCommandSafety {
+    match command.to_ascii_uppercase().as_str() {
+        "KEYS" | "FLUSHALL" | "SHUTDOWN" | "CONFIG" | "SAVE" | "BGSAVE" | "SLAVEOF" | "REPLICAOF" | "MIGRATE"
+        | "MODULE" | "SCRIPT" | "EVAL" | "EVALSHA" => RedisCommandSafety::Blocked,
+        "DEL" | "UNLINK" | "EXPIRE" | "EXPIREAT" | "PEXPIRE" | "PEXPIREAT" | "PERSIST" | "RENAME" | "RENAMENX"
+        | "SET" | "SETEX" | "PSETEX" | "SETNX" | "MSET" | "MSETNX" | "HSET" | "HDEL" | "LPUSH" | "RPUSH" | "LPOP"
+        | "RPOP" | "LSET" | "LREM" | "SADD" | "SREM" | "ZADD" | "ZREM" | "XADD" | "XDEL" | "FLUSHDB" => {
+            RedisCommandSafety::Confirm
+        }
+        _ => RedisCommandSafety::Allowed,
+    }
+}
+
+pub fn redis_command_raw_to_json(value: RedisRawValue) -> serde_json::Value {
+    match value {
+        RedisRawValue::Nil => serde_json::Value::Null,
+        RedisRawValue::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(redis_command_raw_to_json).collect())
+        }
+        RedisRawValue::Map(values) => serde_json::Value::Array(
+            values
+                .into_iter()
+                .map(|(key, value)| {
+                    serde_json::json!({
+                        "key": redis_command_raw_to_json(key),
+                        "value": redis_command_raw_to_json(value),
+                    })
+                })
+                .collect(),
+        ),
+        RedisRawValue::Set(values) => {
+            serde_json::Value::Array(values.into_iter().map(redis_command_raw_to_json).collect())
+        }
+        RedisRawValue::Attribute { data, attributes } => serde_json::json!({
+            "data": redis_command_raw_to_json(*data),
+            "attributes": redis_command_raw_to_json(RedisRawValue::Map(attributes)),
+        }),
+        RedisRawValue::Push { kind, data } => serde_json::json!({
+            "kind": format!("{kind:?}"),
+            "data": redis_command_raw_to_json(RedisRawValue::Array(data)),
+        }),
+        RedisRawValue::BulkString(bytes) => serde_json::Value::String(redis_bytes_to_display(&bytes)),
+        RedisRawValue::SimpleString(value) => serde_json::Value::String(value),
+        RedisRawValue::Okay => serde_json::Value::String("OK".to_string()),
+        RedisRawValue::Int(value) => serde_json::Value::Number(value.into()),
+        RedisRawValue::Double(value) => {
+            serde_json::Number::from_f64(value).map_or(serde_json::Value::Null, serde_json::Value::Number)
+        }
+        RedisRawValue::Boolean(value) => serde_json::Value::Bool(value),
+        RedisRawValue::VerbatimString { text, .. } => {
+            serde_json::Value::String(redis_bytes_to_display(text.as_bytes()))
+        }
+        RedisRawValue::BigNumber(value) => serde_json::Value::String(value.to_string()),
+        RedisRawValue::ServerError(error) => serde_json::Value::String(format!("{error:?}")),
+    }
+}
+
+pub async fn flush_db(con: &mut redis::aio::MultiplexedConnection) -> Result<(), String> {
+    redis::cmd("FLUSHDB").query_async::<()>(con).await.map_err(|e| e.to_string())
+}
+
+pub async fn execute_command(
+    con: &mut redis::aio::MultiplexedConnection,
+    command_text: &str,
+) -> Result<RedisCommandResult, String> {
+    let argv = parse_command_argv(command_text)?;
+    let command = argv[0].to_ascii_uppercase();
+    let safety = classify_command(&command);
+    if safety == RedisCommandSafety::Blocked {
+        return Err(format!("Redis command is blocked for safety: {command}"));
+    }
+
+    let mut cmd = redis::cmd(&argv[0]);
+    for arg in argv.iter().skip(1) {
+        cmd.arg(arg);
+    }
+    let raw: RedisRawValue = cmd.query_async(con).await.map_err(|e| e.to_string())?;
+
+    Ok(RedisCommandResult { command, safety, value: redis_command_raw_to_json(raw) })
 }
 
 pub async fn scan_keys_page(
@@ -114,26 +295,29 @@ pub async fn scan_keys_page(
         .map_err(|e| e.to_string())?;
 
     let (next_cursor, keys) = parse_scan_keys(raw)?;
+    let total_keys: u64 = redis::cmd("DBSIZE").query_async(con).await.unwrap_or(0);
+    if keys.is_empty() {
+        return Ok(RedisScanResult { cursor: next_cursor, keys: Vec::new(), total_keys });
+    }
 
-    let mut result = Vec::new();
+    let mut pipe = redis::pipe();
     for key in &keys {
-        let key_type: String =
-            redis::cmd("TYPE").arg(key).query_async(con).await.unwrap_or_else(|_| "unknown".to_string());
+        pipe.cmd("TYPE").arg(key);
+    }
+    let key_types: Vec<String> = pipe.query_async(con).await.unwrap_or_default();
 
-        let ttl: i64 = redis::cmd("TTL").arg(key).query_async(con).await.unwrap_or(-1);
-
-        let (size, value_preview) = fetch_key_preview(con, key, &key_type).await;
-
+    let mut result = Vec::with_capacity(keys.len());
+    for (index, key) in keys.iter().enumerate() {
         result.push(RedisKeyInfo {
             key_display: redis_key_bytes_to_display(key),
             key_raw: redis_key_bytes_to_raw(key),
-            key_type,
-            ttl,
-            size,
-            value_preview,
+            key_type: key_types.get(index).cloned().unwrap_or_else(|| "unknown".to_string()),
+            ttl: -2,
+            size: 0,
+            value_preview: String::new(),
         });
     }
-    Ok(RedisScanResult { cursor: next_cursor, keys: result })
+    Ok(RedisScanResult { cursor: next_cursor, keys: result, total_keys })
 }
 
 pub async fn get_value(con: &mut redis::aio::MultiplexedConnection, key: &[u8]) -> Result<RedisValue, String> {
@@ -187,89 +371,6 @@ pub async fn get_value(con: &mut redis::aio::MultiplexedConnection, key: &[u8]) 
         total,
         scan_cursor,
     })
-}
-
-async fn fetch_key_preview(con: &mut redis::aio::MultiplexedConnection, key: &[u8], key_type: &str) -> (u64, String) {
-    match key_type {
-        "string" => {
-            let len: u64 = redis::cmd("STRLEN").arg(key).query_async(con).await.unwrap_or(0);
-            let v: Option<String> = redis::cmd("GETRANGE").arg(key).arg(0).arg(199).query_async(con).await.ok();
-            (len, v.unwrap_or_default())
-        }
-        "list" => {
-            let len: u64 = redis::cmd("LLEN").arg(key).query_async(con).await.unwrap_or(0);
-            let items: Vec<String> =
-                redis::cmd("LRANGE").arg(key).arg(0).arg(2).query_async(con).await.unwrap_or_default();
-            let preview = format!("[{}]", items.join(", "));
-            (len, preview)
-        }
-        "set" => {
-            let len: u64 = redis::cmd("SCARD").arg(key).query_async(con).await.unwrap_or(0);
-            let raw: RedisRawValue = redis::cmd("SSCAN")
-                .arg(key)
-                .arg(0)
-                .arg("COUNT")
-                .arg(3)
-                .query_async(con)
-                .await
-                .unwrap_or(RedisRawValue::Nil);
-            let members = parse_scan_members(raw).map(|(_, items)| items).unwrap_or_default();
-            let parts: Vec<String> = members.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).take(3).collect();
-            let preview = format!("{{{}}}", parts.join(", "));
-            (len, preview)
-        }
-        "hash" => {
-            let len: u64 = redis::cmd("HLEN").arg(key).query_async(con).await.unwrap_or(0);
-            let raw: RedisRawValue = redis::cmd("HSCAN")
-                .arg(key)
-                .arg(0)
-                .arg("COUNT")
-                .arg(3)
-                .query_async(con)
-                .await
-                .unwrap_or(RedisRawValue::Nil);
-            let pairs = parse_scan_pairs(raw, "hash").map(|(_, items)| items).unwrap_or_default();
-            let parts: Vec<String> = pairs
-                .iter()
-                .take(3)
-                .filter_map(|v| {
-                    let f = v.get("field")?.as_str()?;
-                    let val = v.get("value")?.as_str()?;
-                    Some(format!("{f}:{val}"))
-                })
-                .collect();
-            let preview = format!("[{}]", parts.join(", "));
-            (len, preview)
-        }
-        "zset" => {
-            let len: u64 = redis::cmd("ZCARD").arg(key).query_async(con).await.unwrap_or(0);
-            let raw: RedisRawValue = redis::cmd("ZSCAN")
-                .arg(key)
-                .arg(0)
-                .arg("COUNT")
-                .arg(3)
-                .query_async(con)
-                .await
-                .unwrap_or(RedisRawValue::Nil);
-            let pairs = parse_scan_pairs(raw, "zset").map(|(_, items)| items).unwrap_or_default();
-            let parts: Vec<String> = pairs
-                .iter()
-                .take(3)
-                .filter_map(|v| {
-                    let m = v.get("member")?.as_str()?;
-                    let s = v.get("score")?.as_str()?;
-                    Some(format!("{m}:{s}"))
-                })
-                .collect();
-            let preview = format!("{{{}}}", parts.join(", "));
-            (len, preview)
-        }
-        "stream" => {
-            let len: u64 = redis::cmd("XLEN").arg(key).query_async(con).await.unwrap_or(0);
-            (len, format!("{len} entries"))
-        }
-        _ => (0, String::new()),
-    }
 }
 
 async fn get_stream_entries(
@@ -464,6 +565,15 @@ pub async fn hash_del(con: &mut redis::aio::MultiplexedConnection, key: &[u8], f
 
 pub async fn list_push(con: &mut redis::aio::MultiplexedConnection, key: &[u8], value: &str) -> Result<(), String> {
     redis::cmd("RPUSH").arg(key).arg(value).query_async::<()>(con).await.map_err(|e| e.to_string())
+}
+
+pub async fn list_set(
+    con: &mut redis::aio::MultiplexedConnection,
+    key: &[u8],
+    index: i64,
+    value: &str,
+) -> Result<(), String> {
+    redis::cmd("LSET").arg(key).arg(index).arg(value).query_async::<()>(con).await.map_err(|e| e.to_string())
 }
 
 pub async fn list_remove(con: &mut redis::aio::MultiplexedConnection, key: &[u8], index: i64) -> Result<(), String> {
@@ -667,8 +777,9 @@ fn parse_scan_members(raw: RedisRawValue) -> Result<(u64, Vec<serde_json::Value>
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_database_count, parse_scan_keys, parse_stream_entries, redis_key_bytes_to_display,
-        redis_key_bytes_to_raw, redis_key_raw_to_bytes, redis_raw_to_json, redis_value_contains_binary, RedisRawValue,
+        classify_command, parse_command_argv, parse_database_count, parse_scan_keys, parse_stream_entries,
+        redis_command_raw_to_json, redis_key_bytes_to_display, redis_key_bytes_to_raw, redis_key_raw_to_bytes,
+        redis_raw_to_json, redis_value_contains_binary, RedisCommandSafety, RedisRawValue,
     };
 
     fn bulk(value: &str) -> RedisRawValue {
@@ -785,5 +896,38 @@ mod tests {
         let raw = RedisRawValue::BulkString(br#"C:\Users\path"#.to_vec());
 
         assert!(!redis_value_contains_binary(&raw));
+    }
+
+    #[test]
+    fn parses_command_text_with_quotes_and_escapes() {
+        let argv = parse_command_argv(r#"SET "user:1" "Ada \"Lovelace\"""#).unwrap();
+
+        assert_eq!(argv, vec!["SET", "user:1", "Ada \"Lovelace\""]);
+    }
+
+    #[test]
+    fn rejects_empty_command_text() {
+        assert_eq!(parse_command_argv("   ").unwrap_err(), "Redis command is empty");
+    }
+
+    #[test]
+    fn classifies_safe_confirmed_and_blocked_commands() {
+        assert_eq!(classify_command("GET"), RedisCommandSafety::Allowed);
+        assert_eq!(classify_command("set"), RedisCommandSafety::Confirm);
+        assert_eq!(classify_command("flushdb"), RedisCommandSafety::Confirm);
+        assert_eq!(classify_command("KEYS"), RedisCommandSafety::Blocked);
+        assert_eq!(classify_command("flushall"), RedisCommandSafety::Blocked);
+        assert_eq!(classify_command("eval"), RedisCommandSafety::Blocked);
+    }
+
+    #[test]
+    fn converts_command_results_to_json() {
+        let raw = RedisRawValue::Array(vec![
+            RedisRawValue::SimpleString("OK".to_string()),
+            RedisRawValue::Int(2),
+            RedisRawValue::Nil,
+        ]);
+
+        assert_eq!(redis_command_raw_to_json(raw), serde_json::json!(["OK", 2, null]));
     }
 }

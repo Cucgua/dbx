@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 
 use super::file_validator::validate_file_path;
 use crate::sql::starts_with_executable_sql_keyword;
-use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
+use crate::types::{
+    ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, ObjectInfo, QueryResult, TableInfo, TriggerInfo,
+};
 
 fn pg_temporal_to_json_value(row: &PgRow, idx: usize) -> Option<serde_json::Value> {
     if let Ok(v) = row.try_get::<DateTime<Utc>, _>(idx) {
@@ -133,12 +135,21 @@ pub async fn connect(url: &str) -> Result<PgPool, String> {
     // Validate SSL certificate paths if present in the URL
     validate_postgres_ssl_paths(url)?;
 
+    let tz = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
+    let url_owned = url.to_string();
     super::with_connection_timeout("PostgreSQL", async {
         PgPoolOptions::new()
             .max_connections(5)
             .acquire_timeout(super::connection_timeout())
             .idle_timeout(Duration::from_secs(300))
-            .connect(url)
+            .after_connect(move |conn, _meta| {
+                let tz = tz.clone();
+                Box::pin(async move {
+                    conn.execute(sqlx::query(&format!("SET timezone = '{tz}'"))).await?;
+                    Ok(())
+                })
+            })
+            .connect(&url_owned)
             .await
             .map_err(|e| format!("PostgreSQL connection failed: {e}"))
     })
@@ -192,11 +203,15 @@ pub async fn list_databases(pool: &PgPool) -> Result<Vec<DatabaseInfo>, String> 
 
 pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, String> {
     let rows: Vec<PgRow> = sqlx::query(
-        "SELECT t.table_name, t.table_type, obj_description(c.oid) AS table_comment \
-         FROM information_schema.tables t \
-         LEFT JOIN pg_catalog.pg_class c ON c.relname = t.table_name \
-         LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.table_schema \
-         WHERE t.table_schema = $1 ORDER BY t.table_name",
+        "SELECT c.relname AS table_name, \
+         CASE c.relkind WHEN 'r' THEN 'BASE TABLE' WHEN 'v' THEN 'VIEW' \
+           WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN TABLE' \
+           WHEN 'p' THEN 'BASE TABLE' END AS table_type, \
+         obj_description(c.oid) AS table_comment \
+         FROM pg_catalog.pg_class c \
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
+         ORDER BY c.relname",
     )
     .bind(schema)
     .fetch_all(pool)
@@ -213,13 +228,51 @@ pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, 
         .collect())
 }
 
+fn list_objects_sql() -> &'static str {
+    "SELECT c.relname AS object_name, \
+       CASE c.relkind \
+         WHEN 'v' THEN 'VIEW' \
+         WHEN 'm' THEN 'VIEW' \
+         ELSE 'TABLE' \
+       END AS object_type, \
+       obj_description(c.oid) AS object_comment, \
+       CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
+     FROM pg_catalog.pg_class c \
+     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+     WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
+     UNION ALL \
+     SELECT p.proname AS object_name, \
+       CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS object_type, \
+       obj_description(p.oid) AS object_comment, \
+       CASE p.prokind WHEN 'p' THEN 2 ELSE 3 END AS sort_order \
+     FROM pg_catalog.pg_proc p \
+     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
+     WHERE n.nspname = $1 AND p.prokind IN ('p','f') \
+     ORDER BY sort_order, object_name"
+}
+
+pub async fn list_objects(pool: &PgPool, schema: &str) -> Result<Vec<ObjectInfo>, String> {
+    let rows: Vec<PgRow> =
+        sqlx::query(list_objects_sql()).bind(schema).fetch_all(pool).await.map_err(|e| e.to_string())?;
+
+    Ok(rows
+        .iter()
+        .map(|row| ObjectInfo {
+            name: row.get::<String, _>("object_name"),
+            object_type: row.get::<String, _>("object_type"),
+            schema: Some(schema.to_string()),
+            comment: row.get::<Option<String>, _>("object_comment").filter(|s| !s.is_empty()),
+        })
+        .collect())
+}
+
 pub async fn list_schemas(pool: &PgPool) -> Result<Vec<String>, String> {
     let rows: Vec<PgRow> = sqlx::query(
-        "SELECT schema_name FROM information_schema.schemata \
-         WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast') \
-         AND schema_name NOT LIKE 'pg_toast_temp_%' \
-         AND schema_name NOT LIKE 'pg_temp_%' \
-         ORDER BY schema_name",
+        "SELECT n.nspname AS schema_name FROM pg_catalog.pg_namespace n \
+         WHERE n.nspname NOT IN ('information_schema', 'pg_catalog', 'pg_toast') \
+         AND n.nspname NOT LIKE 'pg_toast_temp_%' \
+         AND n.nspname NOT LIKE 'pg_temp_%' \
+         ORDER BY n.nspname",
     )
     .fetch_all(pool)
     .await
@@ -322,6 +375,8 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
             truncated,
+            session_id: None,
+            has_more: false,
         })
     } else {
         let result = sqlx::query(sql).execute(pool).await.map_err(|e| e.to_string())?;
@@ -332,6 +387,8 @@ pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, Stri
             affected_rows: result.rows_affected(),
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
+            session_id: None,
+            has_more: false,
         })
     }
 }
@@ -383,6 +440,8 @@ pub async fn execute_query_with_schema(pool: &PgPool, schema: &str, sql: &str) -
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
             truncated,
+            session_id: None,
+            has_more: false,
         })
     } else {
         let result = sqlx::query(sql).execute(&mut *conn).await.map_err(|e| e.to_string())?;
@@ -393,6 +452,8 @@ pub async fn execute_query_with_schema(pool: &PgPool, schema: &str, sql: &str) -
             affected_rows: result.rows_affected(),
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
+            session_id: None,
+            has_more: false,
         })
     }
 }
@@ -498,4 +559,19 @@ pub async fn list_triggers(pool: &PgPool, schema: &str, table: &str) -> Result<V
             timing: row.get::<String, _>("action_timing"),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn postgres_list_objects_sql_includes_routines() {
+        let sql = list_objects_sql();
+
+        assert!(sql.contains("pg_catalog.pg_class"));
+        assert!(sql.contains("pg_catalog.pg_proc"));
+        assert!(sql.contains("'PROCEDURE'"));
+        assert!(sql.contains("'FUNCTION'"));
+    }
 }

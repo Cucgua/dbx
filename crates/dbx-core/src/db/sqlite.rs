@@ -207,6 +207,8 @@ pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, 
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
             truncated,
+            session_id: None,
+            has_more: false,
         })
     } else {
         let result = sqlx::query(sql).execute(pool).await.map_err(|e| e.to_string())?;
@@ -217,6 +219,8 @@ pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, 
             affected_rows: result.rows_affected(),
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
+            session_id: None,
+            has_more: false,
         })
     }
 }
