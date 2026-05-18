@@ -41,6 +41,9 @@ Thumbs.db
 # Temp
 tmp/
 
+# Runtime data
+data/
+
 # Logs
 *.log
 .ace-tool/
