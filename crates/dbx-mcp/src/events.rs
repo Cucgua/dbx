@@ -20,4 +20,5 @@ pub struct McpExecuteQueryEvent {
 pub trait DesktopEventSink: Send + Sync {
     async fn open_table(&self, event: McpOpenTableEvent) -> Result<(), String>;
     async fn execute_query(&self, event: McpExecuteQueryEvent) -> Result<(), String>;
+    async fn reload_connections(&self) -> Result<(), String>;
 }

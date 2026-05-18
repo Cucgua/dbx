@@ -12,8 +12,9 @@ use serde_json::json;
 use crate::events::DesktopEventSink;
 use crate::events::{McpExecuteQueryEvent, McpOpenTableEvent};
 use crate::tools::{
-    resolve_database, resolve_schema, DescribeTableArgs, ExecuteQueryArgs, ListDatabasesArgs, ListSchemasArgs,
-    ListTablesArgs, OpenTableArgs, QUERY_ROW_LIMIT,
+    build_connection_config, created_connection_result, resolve_database, resolve_schema, CreateConnectionArgs,
+    DescribeTableArgs, ExecuteQueryArgs, ListDatabasesArgs, ListSchemasArgs, ListTablesArgs, OpenTableArgs,
+    QUERY_ROW_LIMIT,
 };
 
 #[derive(Clone)]
@@ -57,6 +58,31 @@ impl DbxMcpService {
             })
             .collect::<Vec<_>>();
         structured_result(value)
+    }
+
+    #[tool(
+        description = "Create a database connection configuration in DBX desktop. Secrets are stored by DBX and are not returned. Existing connection names are rejected."
+    )]
+    async fn dbx_create_connection(
+        &self,
+        Parameters(args): Parameters<CreateConnectionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut configs = self.state.storage.load_connections().await.map_err(internal_error)?;
+        if configs.iter().any(|config| config.name.eq_ignore_ascii_case(args.name.trim())) {
+            return Err(McpError::invalid_params(format!("Connection \"{}\" already exists", args.name), None));
+        }
+
+        let config = build_connection_config(args, uuid::Uuid::new_v4().to_string())
+            .map_err(|message| McpError::invalid_params(message, None))?;
+        configs.push(config.clone());
+        self.state.storage.save_connections(&configs).await.map_err(internal_error)?;
+        self.state.configs.write().await.insert(config.id.clone(), config.clone());
+
+        if let Err(err) = self.events.reload_connections().await {
+            log::warn!("[mcp] failed to notify UI after creating connection: {err}");
+        }
+
+        structured_result(created_connection_result(&config))
     }
 
     #[tool(description = "List databases for a DBX connection")]

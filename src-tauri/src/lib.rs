@@ -26,6 +26,10 @@ impl DesktopEventSink for TauriMcpEvents {
     async fn execute_query(&self, event: McpExecuteQueryEvent) -> Result<(), String> {
         self.app.emit("mcp-execute-query", event).map_err(|e| e.to_string())
     }
+
+    async fn reload_connections(&self) -> Result<(), String> {
+        self.app.emit("mcp-reload-connections", ()).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
