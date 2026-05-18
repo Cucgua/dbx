@@ -88,7 +88,9 @@ watchEffect(() => {
   }
 });
 
-const isActiveDatabaseDefault = computed(() => isDefaultDatabase(props.activeConnection, activeDefaultDatabaseValue.value));
+const isActiveDatabaseDefault = computed(() =>
+  isDefaultDatabase(props.activeConnection, activeDefaultDatabaseValue.value),
+);
 const toolbarStyle = computed(() => {
   const color = props.activeConnection?.color;
   if (!color) return undefined;
