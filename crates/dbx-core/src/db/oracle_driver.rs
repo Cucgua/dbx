@@ -794,7 +794,15 @@ async fn execute_query_thin(conn: &ThinConnection, sql: &str) -> Result<QueryRes
             truncated,
             start.elapsed().as_millis()
         );
-        Ok(QueryResult { columns, rows, affected_rows: 0, execution_time_ms: start.elapsed().as_millis(), truncated })
+        Ok(QueryResult {
+            columns,
+            rows,
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated,
+            session_id: None,
+            has_more: false,
+        })
     } else {
         log::info!("[oracle][execute-non-select:start] sql={}", sql.as_ref());
         match conn.execute(sql.as_ref(), &[]).await {
@@ -811,6 +819,8 @@ async fn execute_query_thin(conn: &ThinConnection, sql: &str) -> Result<QueryRes
                     affected_rows: result.rows_affected,
                     execution_time_ms: start.elapsed().as_millis(),
                     truncated: false,
+                    session_id: None,
+                    has_more: false,
                 })
             }
             Err(e) => {
@@ -858,6 +868,8 @@ fn execute_query_oci(conn: &oracle_oci::Connection, sql: &str) -> Result<QueryRe
             affected_rows: 0,
             execution_time_ms: start.elapsed().as_millis(),
             truncated,
+            session_id: None,
+            has_more: false,
         })
     } else {
         match conn.execute(sql.as_ref(), &[]) {
@@ -869,6 +881,8 @@ fn execute_query_oci(conn: &oracle_oci::Connection, sql: &str) -> Result<QueryRe
                     affected_rows: stmt.row_count().unwrap_or(0),
                     execution_time_ms: start.elapsed().as_millis(),
                     truncated: false,
+                    session_id: None,
+                    has_more: false,
                 })
             }
             Err(e) => map_oracle_execute_error(e.to_string()),

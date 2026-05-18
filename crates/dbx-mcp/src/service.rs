@@ -86,7 +86,7 @@ impl DbxMcpService {
         let config = self.find_connection(&args.connection_name).await?;
         let database = resolve_database(&config, args.database);
         let schema = resolve_schema(&config, &database, args.schema);
-        let rows = dbx_core::schema::list_tables_core(&self.state, &config.id, &database, &schema)
+        let rows = dbx_core::schema::list_tables_core(&self.state, &config.id, &database, &schema, None, None)
             .await
             .map_err(internal_error)?;
         structured_result(rows)

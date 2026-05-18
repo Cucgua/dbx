@@ -37,6 +37,10 @@ pub(crate) fn enforce_window_bounds<R: Runtime>(window: &Window<R>) {
 }
 
 fn enforce_webview_window_bounds<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+        return false;
+    }
+
     match window.current_monitor() {
         Ok(Some(monitor)) => {
             let monitor_size = monitor.size();
@@ -62,6 +66,10 @@ fn enforce_webview_window_bounds<R: Runtime>(window: &WebviewWindow<R>) -> bool 
 }
 
 fn enforce_tauri_window_bounds<R: Runtime>(window: &Window<R>) -> bool {
+    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+        return false;
+    }
+
     match window.current_monitor() {
         Ok(Some(monitor)) => {
             let monitor_size = monitor.size();
