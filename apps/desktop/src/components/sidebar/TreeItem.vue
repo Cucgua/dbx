@@ -63,7 +63,7 @@ import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import type { DatabaseType, TreeNode, TreeNodeType } from "@/types/database";
 import * as api from "@/lib/api";
 import { uuid } from "@/lib/utils";
-import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
+import { resolveDefaultDatabase, resolveDefaultSchema } from "@/lib/defaultDatabase";
 import { canTreeNodeShowExpander, treeItemPaddingLeft } from "@/lib/sidebarTreeItemLayout";
 import {
   buildTableSelectSql,
@@ -82,6 +82,7 @@ import {
   supportsTableImport,
   supportsTableTruncate,
   supportsTableStructureEditing,
+  isSingleDatabase,
   usesPostgresLikeStructureCopy,
   usesTreeSchemaMode,
   usesFetchFirst,
@@ -514,13 +515,16 @@ async function newQuery() {
     await connectionStore.ensureConnected(node.connectionId);
     connectionStore.activeConnectionId = node.connectionId;
     if (node.database) {
-      queryStore.createTab(node.connectionId, node.database, undefined, "query");
+      const tabId = queryStore.createTab(node.connectionId, node.database, undefined, "query");
+      if (node.schema) queryStore.updateSchema(tabId, node.schema);
       return;
     }
     const connection = connectionStore.getConfig(node.connectionId);
     if (!connection) return;
     const options = await getDatabaseOptions(node.connectionId);
-    queryStore.createTab(node.connectionId, resolveDefaultDatabase(connection, options), undefined, "query");
+    const database = resolveDefaultDatabase(connection, options);
+    const tabId = queryStore.createTab(node.connectionId, database, undefined, "query");
+    queryStore.updateSchema(tabId, resolveDefaultSchema(connection, database));
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
     if (
@@ -534,9 +538,10 @@ async function newQuery() {
 
 async function setNodeAsDefaultDatabase() {
   const node = props.node;
-  if (!node.connectionId || !node.database) return;
+  const database = nodeDefaultDatabaseValue.value;
+  if (!node.connectionId || !database) return;
   try {
-    await connectionStore.setDefaultDatabase(node.connectionId, node.database);
+    await connectionStore.setDefaultDatabase(node.connectionId, database);
   } catch (e: any) {
     toast(t("connection.saveFailed", { message: e?.message || String(e) }), 5000);
   }
@@ -1305,12 +1310,20 @@ const canOpenFieldLineage = computed(() => {
   );
 });
 const isPinned = computed(() => props.node.pinned || connectionStore.isTreeNodePinned(props.node.id));
+const nodeDefaultDatabaseValue = computed(() => {
+  if (props.node.type === "schema" && isSingleDatabase(nodeConfig.value?.db_type)) {
+    return props.node.schema || props.node.database || "";
+  }
+  if (props.node.type === "database" || props.node.type === "redis-db" || props.node.type === "mongo-db") {
+    return props.node.database || "";
+  }
+  return "";
+});
+const canUseNodeAsDefaultDatabase = computed(() => !!props.node.connectionId && !!nodeDefaultDatabaseValue.value);
 const isNodeDefaultDatabase = computed(
   () =>
-    (props.node.type === "database" || props.node.type === "redis-db" || props.node.type === "mongo-db") &&
-    !!props.node.connectionId &&
-    !!props.node.database &&
-    connectionStore.isDefaultDatabase(props.node.connectionId, props.node.database),
+    canUseNodeAsDefaultDatabase.value &&
+    connectionStore.isDefaultDatabase(props.node.connectionId!, nodeDefaultDatabaseValue.value),
 );
 const hasTypeMenu = computed(() => {
   const t = props.node.type;
@@ -1754,10 +1767,10 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem @click="newQuery">
           <TerminalSquare class="w-4 h-4" /> {{ t("contextMenu.newQuery") }}
         </ContextMenuItem>
-        <ContextMenuItem v-if="node.type === 'database' && !isNodeDefaultDatabase" @click="setNodeAsDefaultDatabase">
+        <ContextMenuItem v-if="canUseNodeAsDefaultDatabase && !isNodeDefaultDatabase" @click="setNodeAsDefaultDatabase">
           <Database class="w-4 h-4" /> {{ t("contextMenu.setDefaultDatabase") }}
         </ContextMenuItem>
-        <ContextMenuItem v-if="node.type === 'database' && isNodeDefaultDatabase" @click="clearNodeDefaultDatabase">
+        <ContextMenuItem v-if="canUseNodeAsDefaultDatabase && isNodeDefaultDatabase" @click="clearNodeDefaultDatabase">
           <Database class="w-4 h-4" /> {{ t("contextMenu.clearDefaultDatabase") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canCreateTable" @click="createTable">

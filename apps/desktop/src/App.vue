@@ -33,7 +33,7 @@ import { useTauriEvents } from "@/composables/useTauriEvents";
 import "@/i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
 import * as api from "@/lib/api";
-import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
+import { resolveDefaultDatabase, resolveDefaultSchema } from "@/lib/defaultDatabase";
 import { buildExecutableObjectSourceSql, objectSourceSaveExecutionMode } from "@/lib/objectSourceEditor";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
@@ -55,6 +55,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { HistoryEntry } from "@/lib/tauri";
+import type { ConnectionConfig } from "@/types/database";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
@@ -141,6 +142,7 @@ function restoreHistorySql(sql: string, entry: HistoryEntry) {
   const config = connectionStore.getConfig(connectionId);
   const database = entry.database || tab?.database || (config ? resolveDefaultDatabase(config, []) : "");
   const tabId = queryStore.createTab(connectionId, database || "", t("tabs.sql"));
+  if (config) queryStore.updateSchema(tabId, resolveDefaultSchema(config, database));
   queryStore.updateSql(tabId, sql);
 }
 
@@ -188,6 +190,13 @@ const saveSqlFolders = computed(() => {
   return tab ? savedSqlStore.listFolders(tab.connectionId) : [];
 });
 
+function applyDefaultDatabaseToTab(tabId: string, connection: ConnectionConfig, options: string[] = []) {
+  const database = resolveDefaultDatabase(connection, options);
+  queryStore.updateDatabase(tabId, database);
+  queryStore.updateSchema(tabId, resolveDefaultSchema(connection, database));
+  return database;
+}
+
 watch(
   () => queryStore.activeTabId,
   () => {
@@ -234,6 +243,7 @@ function analyzeHistoryWithAi(entry: HistoryEntry) {
   const database = entry.database || activeTab.value?.database || resolveDefaultDatabase(config, []);
   const title = t("history.aiAnalysisTab");
   const tabId = queryStore.createTab(connectionId, database || "", title, "query");
+  queryStore.updateSchema(tabId, resolveDefaultSchema(config, database));
   queryStore.updateSql(tabId, entry.sql);
   nextTick(() => aiAssistantRef.value?.triggerAction("explain", buildHistoryAiAnalysisPrompt(entry)));
 }
@@ -369,6 +379,7 @@ async function openSqlFilePath(path: string) {
     const connection = connectionId ? connectionStore.getConfig(connectionId) : undefined;
     const database = activeTab.value?.database || (connection ? resolveDefaultDatabase(connection, []) : "");
     const tabId = queryStore.createTab(connectionId, database, sqlFileTitleFromPath(path), "query");
+    queryStore.updateSchema(tabId, activeTab.value?.schema || resolveDefaultSchema(connection, database));
     queryStore.updateSql(tabId, content);
   } catch (e: any) {
     toast(t("toolbar.sqlOpenFailed", { message: e?.message || String(e) }), 5000);
@@ -393,11 +404,13 @@ async function newQuery() {
   const conn = connectionStore.getConfig(connId);
   if (!conn) return;
   connectionStore.activeConnectionId = connId;
-  const tabId = queryStore.createTab(conn.id, resolveDefaultDatabase(conn, []));
+  const initialDatabase = resolveDefaultDatabase(conn, []);
+  const tabId = queryStore.createTab(conn.id, initialDatabase);
+  queryStore.updateSchema(tabId, resolveDefaultSchema(conn, initialDatabase));
   try {
     await connectionStore.ensureConnected(connId);
     const options = await getDatabaseOptions(connId);
-    queryStore.updateDatabase(tabId, resolveDefaultDatabase(conn, options));
+    applyDefaultDatabaseToTab(tabId, conn, options);
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
   }
@@ -407,11 +420,13 @@ async function openConnectionQuery(connectionId: string) {
   const connection = connectionStore.getConfig(connectionId);
   if (!connection) return;
   connectionStore.activeConnectionId = connectionId;
-  const tabId = queryStore.createTab(connectionId, resolveDefaultDatabase(connection, []));
+  const initialDatabase = resolveDefaultDatabase(connection, []);
+  const tabId = queryStore.createTab(connectionId, initialDatabase);
+  queryStore.updateSchema(tabId, resolveDefaultSchema(connection, initialDatabase));
   try {
     await connectionStore.ensureConnected(connectionId);
     const options = await getDatabaseOptions(connectionId);
-    queryStore.updateDatabase(tabId, resolveDefaultDatabase(connection, options));
+    applyDefaultDatabaseToTab(tabId, connection, options);
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
   }
@@ -443,12 +458,14 @@ async function changeActiveConnection(connectionId: string) {
   if (!tab) return;
   const connection = connectionStore.getConfig(connectionId);
   if (!connection) return;
-  queryStore.updateConnection(tab.id, connectionId, resolveDefaultDatabase(connection, []));
+  const initialDatabase = resolveDefaultDatabase(connection, []);
+  queryStore.updateConnection(tab.id, connectionId, initialDatabase);
+  queryStore.updateSchema(tab.id, resolveDefaultSchema(connection, initialDatabase));
   connectionStore.activeConnectionId = connectionId;
   try {
     await connectionStore.ensureConnected(connectionId);
     const options = await getDatabaseOptions(connectionId);
-    queryStore.updateDatabase(tab.id, resolveDefaultDatabase(connection, options));
+    applyDefaultDatabaseToTab(tab.id, connection, options);
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
   }
@@ -461,8 +478,11 @@ function changeActiveDatabase(database: string) {
 
 async function setActiveDatabaseAsDefault() {
   const tab = activeTab.value;
-  if (!tab || !tab.connectionId || !tab.database) return;
-  await connectionStore.setDefaultDatabase(tab.connectionId, tab.database);
+  if (!tab || !tab.connectionId) return;
+  const connection = connectionStore.getConfig(tab.connectionId);
+  const database = resolveDefaultSchema(connection, tab.schema || tab.database) || tab.database;
+  if (!database) return;
+  await connectionStore.setDefaultDatabase(tab.connectionId, database);
 }
 
 async function clearActiveDefaultDatabase() {

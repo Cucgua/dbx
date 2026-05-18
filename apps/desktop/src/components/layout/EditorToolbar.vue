@@ -64,6 +64,9 @@ const activeDatabaseValue = computed(() => props.activeTab.database || "");
 const activeConnectionValue = computed(() => props.activeConnection?.id || "");
 const activeSchemaValue = computed(() => props.activeTab.schema || "");
 const isSingleDb = computed(() => isSingleDatabase(props.activeConnection?.db_type));
+const activeDefaultDatabaseValue = computed(() =>
+  isSingleDb.value && activeSchemaValue.value ? activeSchemaValue.value : activeDatabaseValue.value,
+);
 const schemaDatabaseKey = computed(() => props.activeTab.database || (isSingleDb.value ? "_" : ""));
 const saveTooltip = computed(() => (props.activeTab.objectSource ? t("objects.saveSource") : t("toolbar.saveSql")));
 
@@ -85,7 +88,7 @@ watchEffect(() => {
   }
 });
 
-const isActiveDatabaseDefault = computed(() => isDefaultDatabase(props.activeConnection, activeDatabaseValue.value));
+const isActiveDatabaseDefault = computed(() => isDefaultDatabase(props.activeConnection, activeDefaultDatabaseValue.value));
 const toolbarStyle = computed(() => {
   const color = props.activeConnection?.color;
   if (!color) return undefined;
@@ -294,6 +297,16 @@ function connectionById(connectionId: string): ConnectionConfig | undefined {
             </SelectItem>
           </SelectContent>
         </Select>
+        <Button
+          v-if="isSingleDb && activeDefaultDatabaseValue"
+          variant="ghost"
+          size="sm"
+          class="h-6 px-2 text-[11px]"
+          @click="isActiveDatabaseDefault ? emit('clearDefaultDatabase') : emit('setDefaultDatabase')"
+        >
+          <Check v-if="isActiveDatabaseDefault" class="h-3 w-3" />
+          {{ isActiveDatabaseDefault ? t("editor.defaultDatabase") : t("editor.setDefaultDatabase") }}
+        </Button>
       </div>
     </div>
     <div v-if="activeTab.tableMeta" class="flex min-w-0 items-center gap-1 ml-2">

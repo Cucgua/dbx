@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isDefaultDatabase, resolveDefaultDatabase } from "../../apps/desktop/src/lib/defaultDatabase.ts";
+import {
+  defaultDatabaseTargetsSchema,
+  isDefaultDatabase,
+  resolveDefaultDatabase,
+  resolveDefaultSchema,
+} from "../../apps/desktop/src/lib/defaultDatabase.ts";
 
 test("优先使用连接上已保存的默认数据库", () => {
   assert.equal(
@@ -36,6 +41,11 @@ test("Oracle 不把连接 Service/SID 当成默认库", () => {
   assert.equal(resolveDefaultDatabase({ db_type: "oracle", database: "ORCL" }, []), "");
 });
 
+test("单库多 schema 连接不把连接标识当成默认 schema", () => {
+  assert.equal(resolveDefaultDatabase({ db_type: "dameng", database: "DM" }, ["SYSDBA"]), "SYSDBA");
+  assert.equal(resolveDefaultDatabase({ db_type: "dameng", database: "DM" }, []), "");
+});
+
 test("判断当前数据库是否为默认数据库", () => {
   assert.equal(
     isDefaultDatabase({ db_type: "mysql", database: "app", default_database: "analytics" }, "analytics"),
@@ -56,4 +66,15 @@ test("Oracle 默认库判断只认独立默认库字段", () => {
     isDefaultDatabase({ db_type: "oracle", database: "ORCL", default_database: "MCHS" }, "MCHS"),
     true,
   );
+});
+
+test("Oracle 和达梦的默认库用于查询 schema 上下文", () => {
+  assert.equal(defaultDatabaseTargetsSchema({ db_type: "oracle", database: "ORCL" }), true);
+  assert.equal(defaultDatabaseTargetsSchema({ db_type: "dameng", database: "DM" }), true);
+  assert.equal(defaultDatabaseTargetsSchema({ db_type: "mysql", database: "app" }), false);
+
+  assert.equal(resolveDefaultSchema({ db_type: "oracle", database: "ORCL" }, "MCHS"), "MCHS");
+  assert.equal(resolveDefaultSchema({ db_type: "dameng", database: "DM" }, "SYSDBA"), "SYSDBA");
+  assert.equal(resolveDefaultSchema({ db_type: "mysql", database: "app" }, "analytics"), undefined);
+  assert.equal(resolveDefaultSchema({ db_type: "oracle", database: "ORCL" }, ""), undefined);
 });

@@ -193,6 +193,7 @@ defineExpose({ focusSearch });
               :model-value="activeTab.sql"
               :connection-id="activeTab.connectionId"
               :database="activeTab.database"
+              :schema="activeTab.schema || undefined"
               :dialect="editorDialect"
               :format-dialect="activeSqlFormatDialect"
               :format-request-id="formatSqlRequestId"

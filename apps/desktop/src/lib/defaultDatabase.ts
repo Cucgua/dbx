@@ -7,7 +7,11 @@ function hasExplicitDefaultDatabase(connection: DefaultDatabaseConnection): bool
 }
 
 function connectionDatabaseCanBeDefault(connection: DefaultDatabaseConnection): boolean {
-  return connection.db_type !== "oracle";
+  return !defaultDatabaseTargetsSchema(connection);
+}
+
+export function defaultDatabaseTargetsSchema(connection: DefaultDatabaseConnection | undefined): boolean {
+  return connection?.db_type === "oracle" || connection?.db_type === "dameng";
 }
 
 export function resolveDefaultDatabase(connection: DefaultDatabaseConnection, options: string[]): string {
@@ -18,6 +22,13 @@ export function resolveDefaultDatabase(connection: DefaultDatabaseConnection, op
     return connection.database;
   }
   return options[0] || "";
+}
+
+export function resolveDefaultSchema(
+  connection: DefaultDatabaseConnection | undefined,
+  resolvedDatabase: string,
+): string | undefined {
+  return defaultDatabaseTargetsSchema(connection) && resolvedDatabase ? resolvedDatabase : undefined;
 }
 
 export function isDefaultDatabase(connection: DefaultDatabaseConnection | undefined, database: string): boolean {

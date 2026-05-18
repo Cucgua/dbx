@@ -22,6 +22,7 @@ const props = defineProps<{
   modelValue: string;
   connectionId?: string;
   database?: string;
+  schema?: string;
   dialect?: "mysql" | "postgres" | "sqlserver";
   formatDialect?: SqlFormatDialect;
   formatRequestId?: number;
@@ -176,14 +177,20 @@ function completionCacheKey(table: { name: string; schema?: string }) {
   return table.schema ? `${table.schema}.${table.name}` : table.name;
 }
 
+function withActiveSchema<T extends { name: string; schema?: string }>(table: T): T {
+  if (table.schema || !props.schema) return table;
+  return { ...table, schema: props.schema };
+}
+
 async function ensureColumnsForTable(table: { name: string; schema?: string }) {
-  const cacheKey = completionCacheKey(table);
+  const scopedTable = withActiveSchema(table);
+  const cacheKey = completionCacheKey(scopedTable);
   if (cachedColumnsByTable.has(cacheKey) || !props.connectionId || !props.database) return;
   const columns = await connectionStore.listCompletionColumns(
     props.connectionId,
     props.database,
-    table.name,
-    table.schema,
+    scopedTable.name,
+    scopedTable.schema,
   );
   cachedColumnsByTable.set(cacheKey, columns);
 }
@@ -267,6 +274,7 @@ async function resolveSqlHoverTooltip(currentView: EditorViewType, pos: number) 
         props.database,
         name,
         MAX_COMPLETION_TABLES,
+        props.schema,
       );
     }
 
@@ -277,6 +285,7 @@ async function resolveSqlHoverTooltip(currentView: EditorViewType, pos: number) 
         props.database,
         name,
         MAX_COMPLETION_TABLES,
+        props.schema,
       );
       cachedTables = [...cachedTables, ...hoverTables];
       table = matchTable(identifier, hoverTables) ?? matchTable(name, hoverTables);
@@ -301,7 +310,7 @@ async function resolveSqlHoverTooltip(currentView: EditorViewType, pos: number) 
 
     for (const refTable of candidates) {
       await ensureColumnsForTable(refTable);
-      const columns = cachedColumnsByTable.get(completionCacheKey(refTable)) ?? [];
+      const columns = cachedColumnsByTable.get(completionCacheKey(withActiveSchema(refTable))) ?? [];
       const column = columns.find((col) => col.name.toLowerCase() === name.toLowerCase());
       if (!column) continue;
       return {
@@ -380,6 +389,7 @@ async function provideSqlCompletions(
           props.database,
           completionContext.qualifier || completionContext.prefix,
           MAX_COMPLETION_TABLES,
+          props.schema,
         )
       : cachedTables;
 
@@ -414,7 +424,7 @@ async function provideSqlCompletions(
     if (unresolvedRefs.length > 0) {
       const lookupGroups = await Promise.all(
         unresolvedRefs.map((rt) =>
-          connectionStore.listCompletionTables(props.connectionId!, props.database!, rt.name, 20),
+          connectionStore.listCompletionTables(props.connectionId!, props.database!, rt.name, 20, props.schema),
         ),
       );
       const lookupTables = lookupGroups.flat();
@@ -434,7 +444,8 @@ async function provideSqlCompletions(
 
     await Promise.all(
       refs.map(async (refTable) => {
-        const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
+        const scopedTable = withActiveSchema(refTable);
+        const cacheKey = completionCacheKey(scopedTable);
         if (cachedColumnsByTable.has(cacheKey)) {
           return;
         }
@@ -442,8 +453,8 @@ async function provideSqlCompletions(
           const columns = await connectionStore.listCompletionColumns(
             props.connectionId!,
             props.database!,
-            refTable.name,
-            refTable.schema,
+            scopedTable.name,
+            scopedTable.schema,
           );
           cachedColumnsByTable.set(cacheKey, columns);
         } catch (e) {
@@ -455,7 +466,7 @@ async function provideSqlCompletions(
     // Build columnsByTable from persistent cache — only include columns for referenced tables
     const columnsByTable = new Map<string, SqlCompletionColumn[]>();
     for (const refTable of refs) {
-      const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
+      const cacheKey = completionCacheKey(withActiveSchema(refTable));
       const cached = cachedColumnsByTable.get(cacheKey);
       if (cached) {
         columnsByTable.set(cacheKey, cached);
@@ -679,6 +690,7 @@ onMounted(async () => {
                   props.database!,
                   identifier,
                   MAX_COMPLETION_TABLES,
+                  props.schema,
                 );
               }
 
@@ -729,19 +741,20 @@ onMounted(async () => {
               const matchedCols: Array<{ name: string; table: string; schema?: string }> = [];
 
               for (const refTable of tablesToCheck) {
-                const cacheKey = refTable.schema ? `${refTable.schema}.${refTable.name}` : refTable.name;
+                const scopedTable = withActiveSchema(refTable);
+                const scopedCacheKey = completionCacheKey(scopedTable);
 
                 // Use persistent column cache; fetch only if missing
-                let cols = cachedColumnsByTable.get(cacheKey);
+                let cols = cachedColumnsByTable.get(scopedCacheKey);
                 if (!cols) {
                   try {
                     cols = await connectionStore.listCompletionColumns(
                       props.connectionId!,
                       props.database!,
-                      refTable.name,
-                      refTable.schema,
+                      scopedTable.name,
+                      scopedTable.schema,
                     );
-                    cachedColumnsByTable.set(cacheKey, cols);
+                    cachedColumnsByTable.set(scopedCacheKey, cols);
                   } catch {
                     continue;
                   }
@@ -751,7 +764,7 @@ onMounted(async () => {
                     matchedCols.push({
                       name: col.name,
                       table: refTable.name,
-                      schema: col.schema || refTable.schema,
+                      schema: col.schema || scopedTable.schema,
                     });
                   }
                 }
@@ -812,6 +825,13 @@ watch(
 
 watch(
   () => props.database,
+  () => {
+    refreshCompletionCache();
+  },
+);
+
+watch(
+  () => props.schema,
   () => {
     refreshCompletionCache();
   },
