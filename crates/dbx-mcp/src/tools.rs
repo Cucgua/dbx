@@ -272,7 +272,7 @@ fn profile_defaults(kind: &str) -> Result<ProfileDefaults, String> {
 fn default_port(db_type: DatabaseType) -> u16 {
     match db_type {
         DatabaseType::Mysql | DatabaseType::Goldendb => 3306,
-        DatabaseType::Postgres | DatabaseType::Gaussdb | DatabaseType::Vastbase => 5432,
+        DatabaseType::Postgres | DatabaseType::Gaussdb | DatabaseType::OpenGauss | DatabaseType::Vastbase => 5432,
         DatabaseType::Redshift => 5439,
         DatabaseType::Sqlite | DatabaseType::DuckDb | DatabaseType::Access | DatabaseType::Jdbc => 0,
         DatabaseType::Redis => 6379,
@@ -285,6 +285,15 @@ fn default_port(db_type: DatabaseType) -> u16 {
         DatabaseType::Dameng => 5236,
         DatabaseType::Kingbase => 54321,
         DatabaseType::Highgo => 5866,
+        DatabaseType::Yashandb => 1688,
+        DatabaseType::Databricks => 443,
+        DatabaseType::SapHana => 30015,
+        DatabaseType::Teradata => 1025,
+        DatabaseType::Vertica => 5433,
+        DatabaseType::Firebird => 3050,
+        DatabaseType::Exasol => 8563,
+        DatabaseType::OceanbaseOracle => 2881,
+        DatabaseType::Gbase => 5258,
         DatabaseType::H2 => 9092,
         DatabaseType::Snowflake | DatabaseType::Bigquery => 443,
         DatabaseType::Trino => 8080,
@@ -309,12 +318,20 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         | DatabaseType::Tdengine => "root",
         DatabaseType::Postgres | DatabaseType::Vastbase => "postgres",
         DatabaseType::Redshift => "awsuser",
-        DatabaseType::Gaussdb => "gaussdb",
+        DatabaseType::Gaussdb | DatabaseType::OpenGauss => "gaussdb",
         DatabaseType::SqlServer => "sa",
         DatabaseType::Oracle | DatabaseType::Kingbase => "system",
         DatabaseType::ClickHouse => "default",
         DatabaseType::Dameng => "SYSDBA",
         DatabaseType::Highgo => "highgo",
+        DatabaseType::Yashandb => "sys",
+        DatabaseType::Databricks => "token",
+        DatabaseType::SapHana => "SYSTEM",
+        DatabaseType::Vertica => "dbadmin",
+        DatabaseType::Firebird => "SYSDBA",
+        DatabaseType::Exasol => "sys",
+        DatabaseType::OceanbaseOracle => "SYS",
+        DatabaseType::Gbase => "gbasedbt",
         DatabaseType::H2 => "sa",
         DatabaseType::Hive | DatabaseType::Trino | DatabaseType::Snowflake | DatabaseType::Bigquery => "",
         DatabaseType::Db2 => "db2inst1",
@@ -322,6 +339,7 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         DatabaseType::Neo4j => "neo4j",
         DatabaseType::Cassandra => "cassandra",
         DatabaseType::Kylin => "ADMIN",
+        DatabaseType::Teradata => "",
         DatabaseType::Sqlite
         | DatabaseType::Redis
         | DatabaseType::DuckDb
@@ -535,6 +553,24 @@ mod tests {
         assert_eq!(config.database.as_deref(), Some("orcl"));
         assert_eq!(config.default_database.as_deref(), Some("MCHS"));
         assert_eq!(config.oracle_connect_method, OracleConnectMethod::Sid);
+    }
+
+    #[test]
+    fn create_connection_config_uses_defaults_for_agent_database_types() {
+        let mut args = create_args();
+        args.db_type = "yashandb".to_string();
+        args.host = Some("10.1.2.3".to_string());
+        args.port = None;
+        args.username = None;
+        args.database = None;
+        args.default_database = None;
+        args.oracle_connect_method = None;
+
+        let config = build_connection_config(args, "generated-id".to_string()).unwrap();
+
+        assert_eq!(config.db_type, DatabaseType::Yashandb);
+        assert_eq!(config.port, 1688);
+        assert_eq!(config.username, "sys");
     }
 
     #[test]
