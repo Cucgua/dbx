@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from "vue";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import AiAssistant from "@/components/editor/AiAssistant.vue";
-import QueryHistory from "@/components/editor/QueryHistory.vue";
 import AppToolbar from "@/components/layout/AppToolbar.vue";
 import AppTabBar from "@/components/layout/AppTabBar.vue";
 import AppSidebar from "@/components/layout/AppSidebar.vue";
@@ -12,9 +10,6 @@ import EditorToolbar from "@/components/layout/EditorToolbar.vue";
 import ContentArea from "@/components/layout/ContentArea.vue";
 import AppDialogs from "@/components/layout/AppDialogs.vue";
 import WelcomeScreen from "@/components/layout/WelcomeScreen.vue";
-import DriverStorePage from "@/components/config/DriverStoreDialog.vue";
-import UpdateDialog from "@/components/layout/UpdateDialog.vue";
-import LoginPage from "@/components/auth/LoginPage.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -34,7 +29,7 @@ import "@/i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
 import * as api from "@/lib/api";
 import { resolveDefaultDatabase, resolveDefaultSchema } from "@/lib/defaultDatabase";
-import { buildExecutableObjectSourceSql, objectSourceSaveExecutionMode } from "@/lib/objectSourceEditor";
+import { buildExecutableObjectSourceStatements, objectSourceSaveExecutionMode } from "@/lib/objectSourceEditor";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { sqlFileTitleFromPath } from "@/lib/sqlFileOpen";
@@ -43,6 +38,7 @@ import {
   isExecuteSqlShortcut,
   isFocusSearchShortcut,
   isObjectSourceSaveShortcutTarget,
+  isRefreshDataShortcut,
   isSaveShortcut,
 } from "@/lib/keyboardShortcuts";
 import { isPreviewTab } from "@/lib/tabPresentation";
@@ -56,6 +52,17 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { HistoryEntry } from "@/lib/tauri";
 import type { ConnectionConfig } from "@/types/database";
+import type { AiAction } from "@/lib/ai";
+
+const AiAssistant = defineAsyncComponent(() => import("@/components/editor/AiAssistant.vue"));
+const QueryHistory = defineAsyncComponent(() => import("@/components/editor/QueryHistory.vue"));
+const DriverStorePage = defineAsyncComponent(() => import("@/components/config/DriverStoreDialog.vue"));
+const UpdateDialog = defineAsyncComponent(() => import("@/components/layout/UpdateDialog.vue"));
+const LoginPage = defineAsyncComponent(() => import("@/components/auth/LoginPage.vue"));
+
+type AiAssistantHandle = {
+  triggerAction: (action: AiAction, instruction?: string) => void;
+};
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
@@ -94,9 +101,10 @@ const showDriverStore = ref(false);
 const agentDriverUpdateCount = ref(0);
 const showHistory = ref(false);
 const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") !== "false");
+const aiPanelReady = ref(false);
 const { sidebarWidth, aiPanelWidth, historyWidth, startSidebarResize, startAiPanelResize, startHistoryResize } =
   usePanelResize();
-const aiAssistantRef = ref<InstanceType<typeof AiAssistant> | null>(null);
+const aiAssistantRef = ref<AiAssistantHandle | null>(null);
 const appSidebarRef = ref<InstanceType<typeof AppSidebar> | null>(null);
 const contentAreaRef = ref<InstanceType<typeof ContentArea> | null>(null);
 
@@ -294,17 +302,19 @@ async function saveActiveObjectSource(tab: NonNullable<typeof activeTab.value>) 
   if (!connection || !source) return;
 
   try {
-    const sql = buildExecutableObjectSourceSql({
+    const statements = buildExecutableObjectSourceStatements({
       databaseType: connection.db_type,
       objectType: source.objectType,
       schema: source.schema || tab.schema || tab.database,
       name: source.name,
       source: tab.sql,
     });
-    if (objectSourceSaveExecutionMode(connection.db_type) === "single") {
-      await api.executeQuery(tab.connectionId, tab.database, sql, source.schema || tab.schema);
-    } else {
-      await api.executeScript(tab.connectionId, tab.database, sql, source.schema || tab.schema);
+    for (const sql of statements) {
+      if (objectSourceSaveExecutionMode(connection.db_type) === "single") {
+        await api.executeQuery(tab.connectionId, tab.database, sql, source.schema || tab.schema);
+      } else {
+        await api.executeScript(tab.connectionId, tab.database, sql, source.schema || tab.schema);
+      }
     }
     toast(t("objects.sourceSaved"), 2000);
   } catch (e: any) {
@@ -372,8 +382,7 @@ async function openSqlFile() {
 async function openSqlFilePath(path: string) {
   if (!isTauriRuntime()) return;
   try {
-    const { readTextFile } = await import("@tauri-apps/plugin-fs");
-    const content = await readTextFile(path);
+    const content = await api.readExternalSqlFile(path);
     const connectionId =
       connectionStore.activeConnectionId || activeTab.value?.connectionId || connectionStore.connections[0]?.id || "";
     const connection = connectionId ? connectionStore.getConfig(connectionId) : undefined;
@@ -496,10 +505,10 @@ function changeActiveSchema(schema: string | undefined) {
   if (tab) queryStore.updateSchema(tab.id, schema);
 }
 function openGitHub() {
-  openUrl("https://github.com/t8y2/dbx");
+  openUrl("https://github.com/Cucgua/dbx");
 }
 function openMcpGuide() {
-  openUrl("https://github.com/t8y2/dbx/blob/main/docs/mcp-guide.md");
+  openUrl("https://github.com/Cucgua/dbx/blob/main/docs/mcp-guide.md");
 }
 
 function ensureQueryTab(): string {
@@ -553,6 +562,12 @@ function handleKeydown(e: KeyboardEvent) {
       e.preventDefault();
       e.stopPropagation();
     }
+    return;
+  }
+  if (isRefreshDataShortcut(e, shortcuts)) {
+    e.preventDefault();
+    e.stopPropagation();
+    contentAreaRef.value?.refreshData();
     return;
   }
   if (isCloseTabShortcut(e, shortcuts)) {
@@ -635,14 +650,19 @@ function handleContextMenu(e: MouseEvent) {
   e.preventDefault();
 }
 
+function openDriverStoreFromEvent() {
+  showDriverStore.value = true;
+}
+
 onMounted(async () => {
   console.log("[STARTUP] onMounted begin");
   const mountStart = performance.now();
+  requestAnimationFrame(() => {
+    aiPanelReady.value = true;
+  });
   applyTheme();
   window.addEventListener("keydown", handleKeydown, true);
-  window.addEventListener("dbx-open-driver-store", () => {
-    showDriverStore.value = true;
-  });
+  window.addEventListener("dbx-open-driver-store", openDriverStoreFromEvent);
   if (isDesktop) {
     document.addEventListener("contextmenu", handleContextMenu);
   }
@@ -696,6 +716,7 @@ onUnmounted(() => {
     clearInterval(updateCheckTimer);
   }
   window.removeEventListener("keydown", handleKeydown, true);
+  window.removeEventListener("dbx-open-driver-store", openDriverStoreFromEvent);
   document.removeEventListener("contextmenu", handleContextMenu);
 });
 </script>
@@ -867,6 +888,7 @@ onUnmounted(() => {
             <div class="panel-resize-handle panel-resize-handle--left" @mousedown="startAiPanelResize" />
             <div class="h-full min-h-0 overflow-hidden">
               <AiAssistant
+                v-if="aiPanelReady"
                 ref="aiAssistantRef"
                 :tab="activeTab"
                 :connection="activeConnection"
@@ -920,6 +942,7 @@ onUnmounted(() => {
           @open-database-search-target="openDatabaseSearchTarget"
         />
         <UpdateDialog
+          v-if="showUpdateDialog"
           v-model:open="showUpdateDialog"
           :update-info="updateInfo"
           :update-check-message="updateCheckMessage"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Search, X, ListFilter, Check, FolderPlus } from "lucide-vue-next";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -11,6 +11,7 @@ import {
   SIDEBAR_TREE_PRERENDER_COUNT,
   SIDEBAR_TREE_SCROLL_BUFFER,
   flattenTree,
+  scrollTopForExpandedTreeNode,
   shouldVirtualizeFlatTree,
   type FlatTreeNode,
 } from "@/composables/useFlatTree";
@@ -32,6 +33,7 @@ const store = useConnectionStore();
 const searchQuery = ref("");
 const deferredSearchQuery = ref("");
 const searchInputRef = ref<HTMLInputElement>();
+const treeScrollerRef = ref<InstanceType<typeof RecycleScroller> | null>(null);
 const selectedTypes = ref<string[]>([]);
 const searchCollapsedIds = ref<Set<string>>(new Set());
 let searchTimer: number | undefined;
@@ -139,6 +141,28 @@ function onSearchToggle(node: TreeNode) {
   searchCollapsedIds.value = next;
 }
 
+async function onNodeToggled(node: TreeNode, wasExpanded: boolean) {
+  if (wasExpanded || !node.isExpanded) return;
+
+  await nextTick();
+
+  const expandedIndex = flatNodes.value.findIndex((item) => item.id === node.id);
+  const insertedRowCount = flattenTree([node]).length - 1;
+  const scroller = treeScrollerRef.value?.$el as HTMLElement | undefined;
+  if (!scroller || expandedIndex < 0 || insertedRowCount <= 0) return;
+
+  const nextScrollTop = scrollTopForExpandedTreeNode({
+    expandedIndex,
+    insertedRowCount,
+    currentScrollTop: scroller.scrollTop,
+    viewportHeight: scroller.clientHeight,
+  });
+
+  if (nextScrollTop !== scroller.scrollTop) {
+    scroller.scrollTop = nextScrollTop;
+  }
+}
+
 function focusSearch(): boolean {
   const input = searchInputRef.value;
   if (!input) return false;
@@ -158,7 +182,7 @@ defineExpose({ focusSearch });
 
 <template>
   <div class="h-full min-h-0 flex flex-col text-sm select-none">
-    <div v-if="store.treeNodes.length > 0" class="sticky top-0 z-10 bg-background px-2 py-1">
+    <div class="sticky top-0 z-10 bg-background px-2 py-1">
       <div class="relative flex items-center gap-1">
         <div class="relative flex-1">
           <Search class="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
@@ -225,6 +249,7 @@ defineExpose({ focusSearch });
     </div>
     <RecycleScroller
       v-if="flatNodes.length > 0 && useVirtualTree"
+      ref="treeScrollerRef"
       class="sidebar-tree connection-tree-scroller min-h-0 flex-1 overflow-y-auto overflow-x-auto"
       :items="flatNodes"
       :item-size="SIDEBAR_TREE_ROW_HEIGHT"
@@ -241,6 +266,7 @@ defineExpose({ focusSearch });
           :depth="item.depth"
           :drag-disabled="isFiltering"
           :pending-rename="pendingRenameGroupId === item.node.id"
+          @node-toggled="onNodeToggled"
           @search-toggle="onSearchToggle"
           @rename-started="pendingRenameGroupId = null"
         />
@@ -254,6 +280,7 @@ defineExpose({ focusSearch });
         :depth="item.depth"
         :drag-disabled="isFiltering"
         :pending-rename="pendingRenameGroupId === item.node.id"
+        @node-toggled="onNodeToggled"
         @search-toggle="onSearchToggle"
         @rename-started="pendingRenameGroupId = null"
       />

@@ -9,6 +9,11 @@ pub fn pending_open_sql_files(state: tauri::State<'_, ExternalSqlOpenState>) -> 
     dedupe_paths(paths)
 }
 
+#[tauri::command]
+pub fn read_external_sql_file(path: String) -> Result<String, String> {
+    read_external_sql_file_content(Path::new(&path))
+}
+
 #[derive(Default)]
 pub struct ExternalSqlOpenState {
     pending: Mutex<Vec<String>>,
@@ -55,6 +60,13 @@ pub fn is_sql_file_path(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.eq_ignore_ascii_case("sql")).unwrap_or(false)
 }
 
+pub fn read_external_sql_file_content(path: &Path) -> Result<String, String> {
+    if !is_sql_file_path(path) {
+        return Err("Only .sql files can be opened this way".to_string());
+    }
+    std::fs::read_to_string(path).map_err(|e| format!("Failed to read SQL file: {e}"))
+}
+
 fn dedupe_paths(paths: Vec<String>) -> Vec<String> {
     let mut unique = Vec::new();
     for path in paths {
@@ -90,5 +102,27 @@ mod tests {
 
         assert_eq!(state.drain(), vec!["/tmp/a.sql"]);
         assert!(state.drain().is_empty());
+    }
+
+    #[test]
+    fn reads_external_sql_file_content() {
+        let path = std::env::temp_dir().join(format!("dbx-test-{}.sql", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "select 1;").unwrap();
+
+        let result = read_external_sql_file_content(&path);
+
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(result.unwrap(), "select 1;");
+    }
+
+    #[test]
+    fn rejects_external_non_sql_file_content() {
+        let path = std::env::temp_dir().join(format!("dbx-test-{}.txt", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "select 1;").unwrap();
+
+        let result = read_external_sql_file_content(&path);
+
+        let _ = std::fs::remove_file(&path);
+        assert!(result.unwrap_err().contains(".sql"));
     }
 }

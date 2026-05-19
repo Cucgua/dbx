@@ -44,7 +44,11 @@ async fn main() {
         let db_path = data_dir.join("dbx.db");
         let storage = Storage::open(&db_path).await.expect("Failed to open storage");
         storage.migrate_from_json(&data_dir).await.expect("Failed to migrate JSON data");
-        Arc::new(AppState::new_with_plugin_dir(storage, data_dir.join("plugins")))
+        Arc::new(AppState::new_with_plugin_dir_and_app_version(
+            storage,
+            data_dir.join("plugins"),
+            env!("CARGO_PKG_VERSION"),
+        ))
     };
 
     // Password hash: env var takes priority, then database
@@ -82,6 +86,20 @@ async fn main() {
         .route("/connection/save", post(routes::connection::save_connections))
         .route("/connection/list", get(routes::connection::load_connections))
         .route("/plugins", get(routes::plugins::list_plugins))
+        // Agent drivers
+        .route("/agents/installed-local", get(routes::agents::list_installed_agents_local))
+        .route("/agents/installed", get(routes::agents::list_installed_agents))
+        .route("/agents/install", post(routes::agents::install_agent))
+        .route("/agents/upgrade-all", post(routes::agents::upgrade_all_agents))
+        .route("/agents/uninstall", post(routes::agents::uninstall_agent))
+        .route(
+            "/agents/java-runtime",
+            get(routes::agents::get_agent_java_runtime_config).post(routes::agents::set_agent_java_runtime_config),
+        )
+        .route("/agents/invalidate-registry-cache", post(routes::agents::invalidate_agent_registry_cache))
+        .route("/agents/reinstall-jre", post(routes::agents::reinstall_jre))
+        .route("/agents/uninstall-jre", post(routes::agents::uninstall_jre))
+        .route("/agents/progress/{operationId}", get(routes::agents::agent_progress))
         // Schema
         .route("/schema/databases", get(routes::schema::list_databases))
         .route("/schema/schemas", get(routes::schema::list_schemas))
@@ -109,6 +127,7 @@ async fn main() {
         // Redis
         .route("/redis/list-databases", post(routes::redis::list_databases))
         .route("/redis/scan-keys", post(routes::redis::scan_keys))
+        .route("/redis/scan-values", post(routes::redis::scan_values))
         .route("/redis/get-value", post(routes::redis::get_value))
         .route("/redis/set-string", post(routes::redis::set_string))
         .route("/redis/delete-key", post(routes::redis::delete_key))

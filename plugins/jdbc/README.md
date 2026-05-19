@@ -17,6 +17,7 @@ cp target/dbx-jdbc-plugin-*-all.jar lib/dbx-jdbc-plugin.jar
 ```
 
 The package version follows the JDBC plugin version in `pom.xml` and `manifest.json`.
+The package script writes both `dbx-jdbc-plugin-<version>.zip` and `dbx-jdbc-plugin-latest.zip`.
 
 ## Install for local DBX
 

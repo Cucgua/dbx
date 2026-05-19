@@ -28,13 +28,17 @@ const passphrase = ref("");
 const passphraseConfirm = ref("");
 const error = ref("");
 
-watch(dialogOpen, (open) => {
-  if (open) {
-    passphrase.value = "";
-    passphraseConfirm.value = "";
-    error.value = "";
-  }
-});
+watch(
+  dialogOpen,
+  (open) => {
+    if (open) {
+      passphrase.value = "";
+      passphraseConfirm.value = "";
+      error.value = "";
+    }
+  },
+  { immediate: true },
+);
 
 function confirm() {
   if (!passphrase.value) {

@@ -1,5 +1,9 @@
 import type { ObjectInfo, TableInfo, TreeNode, TreeNodeType } from "@/types/database";
 
+export function normalizeDatabaseObjectName(name: string): string {
+  return name.trim();
+}
+
 export function buildTableTreeNodes({
   nodeId,
   connectionId,
@@ -13,16 +17,22 @@ export function buildTableTreeNodes({
   schema?: string;
   tables: TableInfo[];
 }): TreeNode[] {
-  return tables.map((table) => ({
-    id: `${nodeId}:${table.name}`,
-    label: table.name,
-    type: table.table_type === "VIEW" ? "view" : "table",
-    connectionId,
-    database,
-    schema,
-    isExpanded: false,
-    children: [],
-  }));
+  return tables.flatMap((table) => {
+    const name = normalizeDatabaseObjectName(table.name);
+    if (!name) return [];
+    return [
+      {
+        id: `${nodeId}:${name}`,
+        label: name,
+        type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
+        connectionId,
+        database,
+        schema,
+        isExpanded: false,
+        children: [],
+      },
+    ];
+  });
 }
 
 function normalizeObjectType(type: string): "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION" {
@@ -86,10 +96,17 @@ export function buildGroupedObjectTreeNodes({
   objects: ObjectInfo[];
 }): TreeNode[] {
   const buckets = new Map<string, ObjectInfo[]>();
+  const seen = new Set<string>();
   for (const obj of objects) {
+    const name = normalizeDatabaseObjectName(obj.name);
+    if (!name) continue;
     const t = normalizeObjectType(obj.object_type);
+    const objectSchema = obj.schema ? normalizeDatabaseObjectName(obj.schema) : schema || "";
+    const key = `${t}\0${objectSchema.toLowerCase()}\0${name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const arr = buckets.get(t) ?? [];
-    arr.push(obj);
+    arr.push({ ...obj, name, schema: obj.schema ? normalizeDatabaseObjectName(obj.schema) : obj.schema });
     buckets.set(t, arr);
   }
 
@@ -107,16 +124,19 @@ export function buildGroupedObjectTreeNodes({
       schema,
       objectCount: items.length,
       isExpanded: false,
-      children: items.map((obj) => ({
-        id: `${nodeId}:${def.key}:${obj.name}`,
-        label: obj.name,
-        type: def.childType,
-        connectionId,
-        database,
-        schema,
-        isExpanded: false,
-        children: isExpandable ? [] : undefined,
-      })),
+      children: items.map((obj) => {
+        const childSchema = obj.schema ? normalizeDatabaseObjectName(obj.schema) : schema;
+        return {
+          id: `${nodeId}:${def.key}:${childSchema ? `${childSchema}:` : ""}${obj.name}`,
+          label: obj.name,
+          type: def.childType,
+          connectionId,
+          database,
+          schema: childSchema,
+          isExpanded: false,
+          children: isExpandable ? [] : undefined,
+        };
+      }),
     });
   }
   return groups;

@@ -16,12 +16,20 @@ test("keeps a saved Redis scan page size", () => {
   assert.equal(normalizeEditorSettings({ redisScanPageSize: 5000 }).redisScanPageSize, 5000);
 });
 
+test("normalizes saved query result page size", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.pageSize, 100);
+  assert.equal(normalizeEditorSettings({ pageSize: 5000 }).pageSize, 5000);
+  assert.equal(normalizeEditorSettings({ pageSize: 200000 }).pageSize, 100000);
+  assert.equal(normalizeEditorSettings({ pageSize: 0 }).pageSize, 100);
+});
+
 test("defaults shortcut settings", () => {
   const settings = normalizeEditorSettings({});
 
   assert.equal(settings.shortcuts.executeSql, "Mod+Enter");
   assert.equal(settings.shortcuts.saveSql, "Mod+S");
   assert.equal(settings.shortcuts.focusSearch, "Mod+F");
+  assert.equal(settings.shortcuts.refreshData, "F5");
 });
 
 test("keeps saved shortcut overrides", () => {
@@ -102,4 +110,16 @@ test("normalizes legacy AI config and fills provider defaults", () => {
   assert.equal(ollama.endpoint, "http://localhost:11434/v1");
   assert.equal(ollama.model, "llama3.1");
   assert.equal(ollama.apiKey, "");
+});
+
+test("infers legacy AI provider from saved endpoint and model", () => {
+  const deepseek = normalizeAiConfig({
+    apiKey: "key",
+    endpoint: "https://api.deepseek.com/anthropic/v1/messages",
+    model: "deepseek-v4-pro",
+  } as any);
+
+  assert.equal(deepseek.provider, "deepseek");
+  assert.equal(deepseek.endpoint, "https://api.deepseek.com/anthropic/v1/messages");
+  assert.equal(deepseek.model, "deepseek-v4-pro");
 });

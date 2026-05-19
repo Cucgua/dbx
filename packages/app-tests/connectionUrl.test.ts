@@ -93,6 +93,28 @@ test("parses SQL Server JDBC URLs with semicolon properties", () => {
   assert.equal(parsed.urlParams, "encrypt=true");
 });
 
+test("parses Oracle JDBC service URLs", () => {
+  const parsed = parseConnectionUrl("jdbc:oracle:thin:@//oracle.example.com:1522/ORCLPDB1");
+
+  assert.equal(parsed.dbType, "oracle");
+  assert.equal(parsed.driverProfile, "oracle");
+  assert.equal(parsed.host, "oracle.example.com");
+  assert.equal(parsed.port, 1522);
+  assert.equal(parsed.database, "ORCLPDB1");
+  assert.equal(parsed.oracleConnectionType, "service_name");
+});
+
+test("parses Oracle JDBC SID URLs", () => {
+  const parsed = parseConnectionUrl("jdbc:oracle:thin:@oracle.example.com:1521:ORCL");
+
+  assert.equal(parsed.dbType, "oracle");
+  assert.equal(parsed.driverProfile, "oracle");
+  assert.equal(parsed.host, "oracle.example.com");
+  assert.equal(parsed.port, 1521);
+  assert.equal(parsed.database, "ORCL");
+  assert.equal(parsed.oracleConnectionType, "sid");
+});
+
 test("keeps MongoDB URLs as connection strings", () => {
   const source = "mongodb+srv://reader:secret@cluster.example.com/app?retryWrites=true";
   const parsed = parseConnectionUrl(source);

@@ -49,7 +49,9 @@ export function supportsObjectRename(
 ): boolean {
   if (!databaseType) return false;
   if (databaseType === "sqlserver") return true;
-  if (objectType === "PROCEDURE" || objectType === "FUNCTION") return false;
+  if (objectType === "PROCEDURE" || objectType === "FUNCTION") {
+    return false;
+  }
   if (databaseType === "sqlite") return objectType === "TABLE";
   if (databaseType === "mysql" || databaseType === "goldendb") return objectType === "TABLE" || objectType === "VIEW";
   if (postgresLikeRenameTypes.has(databaseType)) return objectType === "TABLE" || objectType === "VIEW";
@@ -79,7 +81,7 @@ export function buildRenameObjectSql(options: BuildRenameObjectSqlOptions): stri
     postgresLikeRenameTypes.has(databaseType as DatabaseType) ||
     oracleLikeRenameTypes.has(databaseType as DatabaseType)
   ) {
-    const keyword = objectType === "VIEW" ? "VIEW" : "TABLE";
+    const keyword = objectType;
     return `ALTER ${keyword} ${qualifiedName(databaseType, schema, oldName)} RENAME TO ${quoteRenameIdentifier(databaseType, newName)};`;
   }
 

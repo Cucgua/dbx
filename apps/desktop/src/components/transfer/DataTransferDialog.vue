@@ -159,19 +159,23 @@ watch(targetConnectionId, (id) => {
   loadDatabases(id, "target");
 });
 
-watch(open, async (val) => {
-  if (val) {
-    resetState();
-    if (props.prefillConnectionId) {
-      skipSourceWatch.value = true;
-      sourceConnectionId.value = props.prefillConnectionId;
-      await loadDatabases(props.prefillConnectionId, "source");
-      if (props.prefillDatabase) {
-        sourceDatabase.value = props.prefillDatabase;
+watch(
+  open,
+  async (val) => {
+    if (val) {
+      resetState();
+      if (props.prefillConnectionId) {
+        skipSourceWatch.value = true;
+        sourceConnectionId.value = props.prefillConnectionId;
+        await loadDatabases(props.prefillConnectionId, "source");
+        if (props.prefillDatabase) {
+          sourceDatabase.value = props.prefillDatabase;
+        }
       }
     }
-  }
-});
+  },
+  { immediate: true },
+);
 
 function resetState() {
   sourceConnectionId.value = "";

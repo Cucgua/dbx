@@ -38,6 +38,34 @@ export function buildCreateDatabaseSql(options: CreateDatabaseSqlOptions): strin
   return `CREATE DATABASE ${name} CHARACTER SET ${charset}${collateClause};`;
 }
 
+export function buildDuckDbAttachDatabaseSql(path: string, name: string): string {
+  return `ATTACH ${quoteSqlString(path)} AS ${quoteTableIdentifier("duckdb", name)};`;
+}
+
+export function duckDbAttachedDatabaseNameFromPath(path: string): string {
+  const fileName = path.split(/[\\/]/).pop() ?? "";
+  const withoutExtension = fileName.replace(/\.[^.\\/]+$/, "");
+  const normalized = withoutExtension
+    .trim()
+    .replace(/[^\p{L}\p{N}_]+/gu, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "duckdb_database";
+}
+
+export function uniqueDuckDbAttachedDatabaseName(baseName: string, existingNames: string[]): string {
+  const existing = new Set(existingNames.map((name) => name.toLowerCase()));
+  if (!existing.has(baseName.toLowerCase())) return baseName;
+  for (let index = 2; index < Number.MAX_SAFE_INTEGER; index++) {
+    const candidate = `${baseName}_${index}`;
+    if (!existing.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${baseName}_${Date.now()}`;
+}
+
 function cleanSqlOption(value: string | undefined): string {
   return value?.trim().replace(/[;\s]+/g, "") ?? "";
+}
+
+function quoteSqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }

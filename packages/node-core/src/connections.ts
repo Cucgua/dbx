@@ -25,6 +25,7 @@ export interface ConnectionConfig {
   proxy_username?: string;
   proxy_password?: string;
   ssl: boolean;
+  oracle_connection_type?: "service_name" | "sid";
 }
 
 export interface ConnectionStoreOptions {
@@ -198,6 +199,7 @@ export async function addConnection(config: Omit<ConnectionConfig, "id">): Promi
     proxy_password: "",
     ssl: normalized.ssl ?? false,
     sysdba: false,
+    oracle_connection_type: normalized.oracle_connection_type ?? null,
     connection_string: null,
   };
   const configJson = JSON.stringify(full);

@@ -20,9 +20,12 @@ import type {
 } from "@/types/database";
 import type { AiConfig, AppSettings } from "@/stores/settingsStore";
 import type {
+  AgentDriverInfo,
   AiCompletionRequest,
   AiStreamChunk,
   AiConversation,
+  DriverInstallProgress,
+  JavaRuntimeConfig,
   UpdateInfo,
   RedisDatabaseInfo,
   RedisValue,
@@ -148,15 +151,83 @@ export async function deleteJdbcDriver(_path: string): Promise<JdbcDriverInfo[]>
 }
 
 export async function jdbcPluginStatus(): Promise<JdbcPluginStatus> {
-  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
+  return {
+    installed: false,
+    version: null,
+    protocol_version: null,
+    compatible: true,
+    latest_version: null,
+    latest_protocol_version: null,
+    update_available: false,
+    path: "",
+  };
 }
 
 export async function installJdbcPlugin(): Promise<JdbcPluginStatus> {
-  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
+  return jdbcPluginStatus();
+}
+
+export async function installJdbcPluginLocal(_path: string): Promise<JdbcPluginStatus> {
+  return jdbcPluginStatus();
 }
 
 export async function uninstallJdbcPlugin(): Promise<JdbcPluginStatus> {
-  return { installed: false, version: null, protocol_version: null, compatible: true, path: "" };
+  return jdbcPluginStatus();
+}
+
+export async function listInstalledAgentsLocal(): Promise<AgentDriverInfo[]> {
+  return get("/api/agents/installed-local");
+}
+
+export async function listInstalledAgents(): Promise<AgentDriverInfo[]> {
+  return get("/api/agents/installed");
+}
+
+export async function installAgent(dbType: string): Promise<void> {
+  await post("/api/agents/install", { dbType });
+}
+
+export async function upgradeAllAgents(): Promise<number> {
+  const result: { count: number } = await post("/api/agents/upgrade-all", {});
+  return result.count;
+}
+
+export async function uninstallAgent(dbType: string): Promise<void> {
+  await post("/api/agents/uninstall", { dbType });
+}
+
+export async function getAgentJavaRuntimeConfig(): Promise<JavaRuntimeConfig> {
+  return get("/api/agents/java-runtime");
+}
+
+export async function setAgentJavaRuntimeConfig(config: JavaRuntimeConfig): Promise<JavaRuntimeConfig> {
+  return post("/api/agents/java-runtime", { config });
+}
+
+export async function invalidateAgentRegistryCache(): Promise<void> {
+  await post("/api/agents/invalidate-registry-cache", {});
+}
+
+export async function reinstallJre(jreKey?: string): Promise<void> {
+  await post("/api/agents/reinstall-jre", { jreKey });
+}
+
+export async function uninstallJre(jreKey: string): Promise<void> {
+  await post("/api/agents/uninstall-jre", { jreKey });
+}
+
+export async function listenAgentInstallProgress(
+  handler: (progress: DriverInstallProgress) => void,
+): Promise<() => void> {
+  const es = new EventSource("/api/agents/progress/global");
+  es.onmessage = (event) => {
+    try {
+      handler(JSON.parse(event.data));
+    } catch {
+      /* ignore malformed progress events */
+    }
+  };
+  return () => es.close();
 }
 
 export async function loadSavedSqlLibrary(): Promise<SavedSqlLibrary> {
@@ -450,6 +521,10 @@ export async function pendingOpenSqlFiles(): Promise<string[]> {
   return [];
 }
 
+export async function readExternalSqlFile(_path: string): Promise<string> {
+  throw new Error("Opening external SQL file paths is only available in the desktop app");
+}
+
 // ---------------------------------------------------------------------------
 // Data Transfer
 // ---------------------------------------------------------------------------
@@ -600,6 +675,17 @@ export async function redisScanKeys(
   count: number,
 ): Promise<RedisScanResult> {
   return post("/api/redis/scan-keys", { connectionId, db, cursor, pattern, count });
+}
+
+export async function redisScanValues(
+  connectionId: string,
+  db: number,
+  cursor: number,
+  pattern: string,
+  query: string,
+  count: number,
+): Promise<RedisScanResult> {
+  return post("/api/redis/scan-values", { connectionId, db, cursor, pattern, query, count });
 }
 
 export async function redisGetValue(connectionId: string, db: number, keyRaw: string): Promise<RedisValue> {

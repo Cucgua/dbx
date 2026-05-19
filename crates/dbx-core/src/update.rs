@@ -13,8 +13,17 @@ pub struct TauriRelease {
     pub version: String,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default)]
+    pub jdbc_plugin: Option<JdbcPluginLatest>,
     #[serde(skip)]
     pub github: Option<GithubReleaseMetadata>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct JdbcPluginLatest {
+    pub version: String,
+    pub protocol_version: u32,
+    pub url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,10 +174,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_jdbc_plugin_metadata_from_latest_json() {
+        let release: TauriRelease = serde_json::from_str(
+            r#"{
+              "version": "0.5.12",
+              "jdbc_plugin": {
+                "version": "0.1.3",
+                "protocol_version": 1,
+                "url": "https://github.com/Cucgua/dbx/releases/latest/download/dbx-jdbc-plugin-latest.zip"
+              },
+              "platforms": {}
+            }"#,
+        )
+        .unwrap();
+
+        let jdbc = release.jdbc_plugin.unwrap();
+
+        assert_eq!(jdbc.version, "0.1.3");
+        assert_eq!(jdbc.protocol_version, 1);
+        assert_eq!(jdbc.url, "https://github.com/Cucgua/dbx/releases/latest/download/dbx-jdbc-plugin-latest.zip");
+    }
+
+    #[test]
     fn update_info_prefers_github_release_metadata() {
         let release = TauriRelease {
             version: "0.5.3".to_string(),
             notes: Some("See the assets below to download and install.".to_string()),
+            jdbc_plugin: None,
             github: Some(GithubReleaseMetadata {
                 name: Some("DBX v0.5.3".to_string()),
                 html_url: Some("https://github.com/Cucgua/dbx/releases/tag/v0.5.3".to_string()),

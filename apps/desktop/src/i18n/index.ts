@@ -1,12 +1,20 @@
 import { createI18n } from "vue-i18n";
-import en from "./locales/en";
-import es from "./locales/es";
 import zhCN from "./locales/zh-CN";
 
 export type Locale = "en" | "es" | "zh-CN";
+type LocaleMessages = Record<string, unknown>;
+type I18nGlobal = {
+  locale: { value: Locale };
+  setLocaleMessage: (locale: Locale, messages: LocaleMessages) => void;
+};
 
 const supportedLocales: Locale[] = ["en", "es", "zh-CN"];
 const defaultLocale: Locale = "zh-CN";
+const loadedLocales = new Set<Locale>([defaultLocale]);
+const localeLoaders: Record<Exclude<Locale, "zh-CN">, () => Promise<{ default: LocaleMessages }>> = {
+  en: () => import("./locales/en"),
+  es: () => import("./locales/es"),
+};
 
 function normalizeLocale(value: string | null): Locale {
   if (value && supportedLocales.includes(value as Locale)) {
@@ -20,21 +28,34 @@ const savedLocale = normalizeLocale(localStorage.getItem("dbx-locale"));
 const i18n = createI18n({
   legacy: false,
   locale: savedLocale,
-  fallbackLocale: "en",
+  fallbackLocale: defaultLocale,
   messages: {
-    en,
-    es,
     "zh-CN": zhCN,
   },
 });
+const i18nGlobal = i18n.global as unknown as I18nGlobal;
 
-export function setLocale(locale: Locale) {
-  i18n.global.locale.value = locale;
+export async function loadLocaleMessages(locale: Locale) {
+  if (loadedLocales.has(locale)) return;
+  const loader = localeLoaders[locale as Exclude<Locale, "zh-CN">];
+  if (!loader) return;
+  const messages = await loader();
+  i18nGlobal.setLocaleMessage(locale, messages.default);
+  loadedLocales.add(locale);
+}
+
+export async function loadSavedLocale() {
+  await loadLocaleMessages(savedLocale);
+}
+
+export async function setLocale(locale: Locale) {
+  await loadLocaleMessages(locale);
+  i18nGlobal.locale.value = locale;
   localStorage.setItem("dbx-locale", locale);
 }
 
 export function currentLocale(): Locale {
-  return i18n.global.locale.value as Locale;
+  return i18nGlobal.locale.value;
 }
 
 export function nextLocale(current: Locale): Locale {

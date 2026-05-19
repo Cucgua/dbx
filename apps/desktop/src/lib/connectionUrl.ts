@@ -12,6 +12,7 @@ export interface ParsedConnectionUrl {
   urlParams: string;
   ssl: boolean;
   connectionString?: string;
+  oracleConnectionType?: "service_name" | "sid";
   useMongoUrl?: boolean;
 }
 
@@ -40,6 +41,7 @@ const SCHEME_PROFILES: Record<string, ConnectionProfile> = {
   dm: { type: "dameng", profile: "dm", label: "DM (Dameng)", defaultPort: 5236 },
   dameng: { type: "dameng", profile: "dm", label: "DM (Dameng)", defaultPort: 5236 },
   gaussdb: { type: "gaussdb", profile: "gaussdb", label: "GaussDB", defaultPort: 5432 },
+  yashandb: { type: "yashandb", profile: "yashandb", label: "崖山 YashanDB", defaultPort: 1688 },
   opengauss: { type: "gaussdb", profile: "opengauss", label: "openGauss", defaultPort: 5432 },
   tdengine: { type: "tdengine", profile: "tdengine", label: "TDengine", defaultPort: 6041 },
   "taos-ws": { type: "tdengine", profile: "tdengine", label: "TDengine", defaultPort: 6041 },
@@ -107,6 +109,46 @@ function parseJdbcSqlServerUrl(source: string): ParsedConnectionUrl | null {
   };
 }
 
+function parseJdbcOracleUrl(source: string): ParsedConnectionUrl | null {
+  const serviceMatch = source.match(/^jdbc:oracle:thin:@\/\/([^:/?#]+)(?::(\d+))?\/([^?]+)(?:\?(.*))?$/i);
+  if (serviceMatch) {
+    const profile = SCHEME_PROFILES.oracle;
+    return {
+      dbType: profile.type,
+      driverProfile: profile.profile,
+      driverLabel: profile.label,
+      host: serviceMatch[1],
+      port: serviceMatch[2] ? Number(serviceMatch[2]) : profile.defaultPort,
+      username: "",
+      password: "",
+      database: decodeUrlPart(serviceMatch[3]),
+      urlParams: serviceMatch[4] || "",
+      ssl: false,
+      oracleConnectionType: "service_name",
+    };
+  }
+
+  const sidMatch = source.match(/^jdbc:oracle:thin:@([^:/?#]+)(?::(\d+))?:([^?]+)(?:\?(.*))?$/i);
+  if (sidMatch) {
+    const profile = SCHEME_PROFILES.oracle;
+    return {
+      dbType: profile.type,
+      driverProfile: profile.profile,
+      driverLabel: profile.label,
+      host: sidMatch[1],
+      port: sidMatch[2] ? Number(sidMatch[2]) : profile.defaultPort,
+      username: "",
+      password: "",
+      database: decodeUrlPart(sidMatch[3]),
+      urlParams: sidMatch[4] || "",
+      ssl: false,
+      oracleConnectionType: "sid",
+    };
+  }
+
+  return null;
+}
+
 function parseJdbcUCanAccessUrl(source: string): ParsedConnectionUrl | null {
   const match = source.match(/^jdbc:ucanaccess:\/\/(.+?)(?:;.*)?$/i);
   if (!match) return null;
@@ -137,6 +179,8 @@ export function parseConnectionUrl(value: string, preferredProfile?: string): Pa
   }
   const jdbcUCanAccess = parseJdbcUCanAccessUrl(input);
   if (jdbcUCanAccess) return jdbcUCanAccess;
+  const jdbcOracle = parseJdbcOracleUrl(input);
+  if (jdbcOracle) return jdbcOracle;
   const jdbcSqlServer = parseJdbcSqlServerUrl(input);
   if (jdbcSqlServer) return jdbcSqlServer;
   const source = input.replace(/^jdbc:/i, "");
@@ -203,5 +247,6 @@ export function applyParsedConnectionUrl(
     url_params: parsed.urlParams,
     ssl: parsed.ssl,
     connection_string: parsed.connectionString,
+    oracle_connection_type: parsed.oracleConnectionType,
   };
 }

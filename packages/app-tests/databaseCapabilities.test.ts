@@ -37,6 +37,28 @@ test("treats Access as a local single-database agent driver", () => {
   assert.equal(supportsTableImport("access"), true);
 });
 
+test("exposes the extended JDBC agent ecosystem through driver management", () => {
+  for (const dbType of [
+    "databricks",
+    "saphana",
+    "teradata",
+    "vertica",
+    "firebird",
+    "exasol",
+    "opengauss",
+    "oceanbase-oracle",
+    "gbase",
+  ] as const) {
+    assert.equal(supportsDriverManagement(dbType), true, `${dbType} should be agent-managed`);
+    assert.equal(supportsDatabaseSearch(dbType), true, `${dbType} should support database search`);
+  }
+
+  assert.equal(SCHEMA_AWARE_TYPES.has("databricks"), true);
+  assert.equal(SCHEMA_AWARE_TYPES.has("opengauss"), true);
+  assert.equal(SCHEMA_AWARE_TYPES.has("oceanbase-oracle"), true);
+  assert.equal(SCHEMA_AWARE_TYPES.has("firebird"), false);
+});
+
 test("describes schema tree mode through the capability helper", () => {
   assert.equal(usesTreeSchemaMode("trino"), true);
   assert.equal(usesTreeSchemaMode("h2"), true);
@@ -59,6 +81,22 @@ test("describes table editing capabilities for special database engines", () => 
 
   assert.deepEqual(getDatabaseCapability("trino").tableData, {
     insert: true,
+    updateRequiresPrimaryKey: true,
+    deleteRequiresPrimaryKey: true,
+    requiresTransactionalTableForExistingRows: false,
+    transaction: false,
+  });
+
+  assert.deepEqual(getDatabaseCapability("jdbc").tableData, {
+    insert: false,
+    updateRequiresPrimaryKey: true,
+    deleteRequiresPrimaryKey: true,
+    requiresTransactionalTableForExistingRows: false,
+    transaction: false,
+  });
+
+  assert.deepEqual(getDatabaseCapability("yashandb").tableData, {
+    insert: false,
     updateRequiresPrimaryKey: true,
     deleteRequiresPrimaryKey: true,
     requiresTransactionalTableForExistingRows: false,
@@ -96,7 +134,14 @@ test("describes feature support through capability helpers", () => {
   assert.equal(supportsTableImport("duckdb"), true);
   assert.equal(supportsTableImport("hive"), false);
   assert.equal(supportsTableStructureEditing("postgres"), true);
-  assert.equal(supportsTableStructureEditing("oracle"), false);
+  assert.equal(supportsTableStructureEditing("duckdb"), true);
+  assert.equal(supportsTableStructureEditing("oracle"), true);
+  assert.equal(supportsTableStructureEditing("dameng"), true);
+  assert.equal(supportsTableStructureEditing("gaussdb"), true);
+  assert.equal(supportsTableStructureEditing("opengauss"), true);
+  assert.equal(supportsTableStructureEditing("redshift"), true);
+  assert.equal(supportsTableStructureEditing("clickhouse"), true);
+  assert.equal(supportsTableStructureEditing("mongodb"), false);
   assert.equal(supportsDatabaseCreation("clickhouse"), true);
   assert.equal(supportsDatabaseCreation("sqlite"), false);
   assert.equal(supportsFieldLineage("gaussdb"), true);

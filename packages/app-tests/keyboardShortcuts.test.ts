@@ -7,6 +7,7 @@ import {
   isExecuteSqlShortcut,
   isFocusSearchShortcut,
   isObjectSourceSaveShortcutTarget,
+  isRefreshDataShortcut,
   isSaveShortcut,
 } from "../../apps/desktop/src/lib/keyboardShortcuts.ts";
 import { shortcutToCodeMirrorKey } from "../../apps/desktop/src/lib/shortcutRegistry.ts";
@@ -65,6 +66,18 @@ test("matches Ctrl+F for focusing search", () => {
 
 test("matches Cmd+F for focusing search", () => {
   assert.equal(isFocusSearchShortcut({ key: "F", metaKey: true }), true);
+});
+
+test("matches F5 for refreshing data", () => {
+  assert.equal(isRefreshDataShortcut({ key: "F5" }), true);
+});
+
+test("matches custom shortcut settings for refreshing data", () => {
+  assert.equal(isRefreshDataShortcut({ key: "F5" }, { refreshData: "Shift+Mod+R" } as any), false);
+  assert.equal(
+    isRefreshDataShortcut({ key: "r", metaKey: true, shiftKey: true } as any, { refreshData: "Shift+Mod+R" } as any),
+    true,
+  );
 });
 
 test("ignores focus search shortcut while composing", () => {

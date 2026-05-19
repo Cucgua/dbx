@@ -412,21 +412,25 @@ watch(sourceTable, (table, previous) => {
   }
 });
 watch(targetTable, () => clearResult());
-watch(open, async (value) => {
-  if (!value) return;
-  result.value = null;
-  syncSql.value = "";
-  if (props.prefillConnectionId) {
-    sourceConnectionId.value = props.prefillConnectionId;
-    await loadDatabases(props.prefillConnectionId, "source");
-    if (props.prefillDatabase) sourceDatabase.value = props.prefillDatabase;
-    if (props.prefillDatabase) await loadSchemas("source", props.prefillSchema);
-    if (props.prefillTable) {
-      await loadTables("source");
-      if (sourceTables.value.includes(props.prefillTable)) sourceTable.value = props.prefillTable;
+watch(
+  open,
+  async (value) => {
+    if (!value) return;
+    result.value = null;
+    syncSql.value = "";
+    if (props.prefillConnectionId) {
+      sourceConnectionId.value = props.prefillConnectionId;
+      await loadDatabases(props.prefillConnectionId, "source");
+      if (props.prefillDatabase) sourceDatabase.value = props.prefillDatabase;
+      if (props.prefillDatabase) await loadSchemas("source", props.prefillSchema);
+      if (props.prefillTable) {
+        await loadTables("source");
+        if (sourceTables.value.includes(props.prefillTable)) sourceTable.value = props.prefillTable;
+      }
     }
-  }
-});
+  },
+  { immediate: true },
+);
 </script>
 
 <template>

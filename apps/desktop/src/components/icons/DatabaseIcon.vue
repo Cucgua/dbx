@@ -27,8 +27,10 @@ const assetIcons: Record<string, string> = {
   opengauss: "opengauss",
   gaussdb: "gaussdb",
   kingbase: "kingbase",
+  highgo: "highgo.png",
   goldendb: "goldendb.png",
   vastbase: "vastbase.png",
+  yashandb: "yashandb.png",
   snowflake: "snowflake",
   h2: "h2",
   dm: "dm",
@@ -50,11 +52,19 @@ const assetIcons: Record<string, string> = {
   redshift: "redshift",
   neo4j: "neo4j",
   informix: "informix",
+  databricks: "databricks.webp",
+  saphana: "saphana.webp",
+  teradata: "teradata.webp",
+  vertica: "vertica.webp",
+  firebird: "firebird.webp",
+  exasol: "exasol.webp",
+  gbase: "gbase.webp",
+  tdsql: "tdsql.webp",
+  polardb: "polardb.webp",
+  greatsql: "greatsql.webp",
 };
 
-const letterIcons: Record<string, { letter: string; color: string }> = {
-  highgo: { letter: "瀚", color: "#005bac" },
-};
+const letterIcons: Record<string, { letter: string; color: string }> = {};
 
 const normalizedType = computed(() => props.dbType.toLowerCase().replace(/[\s-]+/g, "_"));
 const assetName = computed(() => assetIcons[normalizedType.value]);

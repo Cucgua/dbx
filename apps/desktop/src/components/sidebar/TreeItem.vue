@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, nextTick, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
 import {
@@ -87,12 +87,26 @@ import {
   usesTreeSchemaMode,
   usesFetchFirst,
 } from "@/lib/databaseCapabilities";
-import { sidebarSelectionCopyAction, treeNodeRowAction, treeNodeRowDoubleClickAction } from "@/lib/treeNodeClick";
+import {
+  objectSourceKindForTreeNode,
+  sidebarSelectionCopyAction,
+  treeNodeRowAction,
+  treeNodeRowDoubleClickAction,
+} from "@/lib/treeNodeClick";
 import { formatCsv, formatJson, formatSqlInsert } from "@/lib/exportFormats";
 import { fetchTableDataForExport } from "@/lib/tableDataExport";
-import { buildCreateDatabaseSql, supportsCreateDatabaseCharset } from "@/lib/createDatabaseSql";
+import {
+  buildCreateDatabaseSql,
+  buildDuckDbAttachDatabaseSql,
+  duckDbAttachedDatabaseNameFromPath,
+  supportsCreateDatabaseCharset,
+  uniqueDuckDbAttachedDatabaseName,
+} from "@/lib/createDatabaseSql";
 import { buildRenameObjectSql, supportsObjectRename, type RenameableObjectType } from "@/lib/objectRenameSql";
+import { buildRoutineRenameObjectSourceStatements, supportsSourceBackedRoutineRename } from "@/lib/objectSourceEditor";
 import { hexToRgba } from "@/lib/color";
+import { focusSidebarRenameInput, shouldPreventRenameCloseAutoFocus } from "@/lib/sidebarRenameFocus";
+import { hasTreeNodeDatabaseContext } from "@/lib/treeNodeContext";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
@@ -128,6 +142,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "rename-started": [];
+  "node-toggled": [node: TreeNode, wasExpanded: boolean];
   "search-toggle": [node: TreeNode];
 }>();
 
@@ -237,6 +252,7 @@ function isGroupLabel(node: TreeNode): boolean {
 
 function displayLabel(node: TreeNode): string {
   if (node.type === "object-browser") return t(node.label, { count: node.objectCount ?? 0 });
+  if (node.label === "tree.defaultDatabase") return t(node.label);
   return isGroupLabel(node) ? t(node.label) : node.label;
 }
 
@@ -249,11 +265,13 @@ async function toggle() {
   if (node.type === "connection-group") {
     node.isExpanded = !node.isExpanded;
     connectionStore.toggleConnectionGroupCollapsed(node.id);
+    emit("node-toggled", node, wasExpanded);
     return;
   }
 
   if (node.type === "saved-sql-root" || node.type === "saved-sql-folder") {
     node.isExpanded = !node.isExpanded;
+    emit("node-toggled", node, wasExpanded);
     return;
   }
 
@@ -264,11 +282,13 @@ async function toggle() {
     node.type === "group-functions"
   ) {
     node.isExpanded = !node.isExpanded;
+    emit("node-toggled", node, wasExpanded);
     return;
   }
 
   if (node.isExpanded) {
     node.isExpanded = false;
+    emit("node-toggled", node, wasExpanded);
     return;
   }
 
@@ -291,7 +311,7 @@ async function toggle() {
       const tabTitle = `${node.database}.${node.label}`;
       const tab = queryStore.createTab(node.connectionId, node.database, tabTitle, "mongo");
       queryStore.updateSql(tab, node.label);
-    } else if (node.type === "database" && node.connectionId && node.database) {
+    } else if (node.type === "database" && node.connectionId && hasTreeNodeDatabaseContext(node)) {
       const config = connectionStore.getConfig(node.connectionId);
       if (config?.db_type === "sqlserver") {
         await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database);
@@ -300,19 +320,39 @@ async function toggle() {
       } else {
         await connectionStore.loadTables(node.connectionId, node.database);
       }
-    } else if (node.type === "schema" && node.connectionId && node.database && node.schema) {
+    } else if (node.type === "schema" && node.connectionId && hasTreeNodeDatabaseContext(node) && node.schema) {
       await connectionStore.loadTables(node.connectionId, node.database, node.schema);
-    } else if ((node.type === "table" || node.type === "view") && node.connectionId && node.database) {
-      await connectionStore.loadTableGroups(node.connectionId, node.database, node.label, node.schema);
-    } else if (node.type === "group-columns" && node.connectionId && node.database && node.tableName) {
-      await connectionStore.loadColumns(node.connectionId, node.database, node.tableName, node.schema);
-    } else if (node.type === "group-indexes" && node.connectionId && node.database && node.tableName) {
-      await connectionStore.loadIndexes(node.connectionId, node.database, node.tableName, node.schema);
-    } else if (node.type === "group-fkeys" && node.connectionId && node.database && node.tableName) {
-      await connectionStore.loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema);
-    } else if (node.type === "group-triggers" && node.connectionId && node.database && node.tableName) {
-      await connectionStore.loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (
+      (node.type === "table" || node.type === "view") &&
+      node.connectionId &&
+      hasTreeNodeDatabaseContext(node)
+    ) {
+      await connectionStore.loadTableGroups(node.connectionId, node.database, node.label, node.schema, node.id);
+    } else if (
+      node.type === "group-columns" &&
+      node.connectionId &&
+      hasTreeNodeDatabaseContext(node) &&
+      node.tableName
+    ) {
+      await connectionStore.loadColumns(node.connectionId, node.database, node.tableName, node.schema, node.id);
+    } else if (
+      node.type === "group-indexes" &&
+      node.connectionId &&
+      hasTreeNodeDatabaseContext(node) &&
+      node.tableName
+    ) {
+      await connectionStore.loadIndexes(node.connectionId, node.database, node.tableName, node.schema, node.id);
+    } else if (node.type === "group-fkeys" && node.connectionId && hasTreeNodeDatabaseContext(node) && node.tableName) {
+      await connectionStore.loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema, node.id);
+    } else if (
+      node.type === "group-triggers" &&
+      node.connectionId &&
+      hasTreeNodeDatabaseContext(node) &&
+      node.tableName
+    ) {
+      await connectionStore.loadTriggers(node.connectionId, node.database, node.tableName, node.schema, node.id);
     }
+    emit("node-toggled", node, wasExpanded);
   } catch (e: any) {
     if (!wasExpanded) node.isExpanded = false;
     const errMsg = e?.message || String(e);
@@ -637,7 +677,8 @@ function buildDropObjectSql(): string {
 function viewObjectSource() {
   const node = props.node;
   if (!node.connectionId || !node.database) return;
-  const objectType = node.type === "procedure" ? "PROCEDURE" : "FUNCTION";
+  const objectType = objectSourceKindForTreeNode(node.type);
+  if (!objectType) return;
   const schema = node.schema || node.database;
   connectionStore
     .ensureConnected(node.connectionId)
@@ -651,7 +692,7 @@ function viewObjectSource() {
       queryStore.setObjectSource(tabId, {
         schema,
         name: node.label,
-        objectType: objectType as "PROCEDURE" | "FUNCTION",
+        objectType,
       });
     })
     .catch((e: any) => {
@@ -673,7 +714,11 @@ function nodeRenameObjectType(): RenameableObjectType | null {
 
 const canRenameObject = computed(() => {
   const objectType = nodeRenameObjectType();
-  return !!objectType && supportsObjectRename(currentDatabaseType(), objectType);
+  return (
+    !!objectType &&
+    (supportsObjectRename(currentDatabaseType(), objectType) ||
+      supportsSourceBackedRoutineRename(currentDatabaseType(), objectType as any))
+  );
 });
 
 function openRenameObjectDialog() {
@@ -686,6 +731,9 @@ function buildRenameObjectPreviewSql(): string {
   const objectType = nodeRenameObjectType();
   const newName = renameObjectName.value.trim();
   if (!objectType || !newName || newName === props.node.label) return "";
+  if (supportsSourceBackedRoutineRename(currentDatabaseType(), objectType as any)) {
+    return `-- Recreate ${objectType} from source, then drop the original object.`;
+  }
   try {
     return buildRenameObjectSql({
       databaseType: currentDatabaseType(),
@@ -706,15 +754,32 @@ async function confirmRenameObject() {
   if (!objectType || !newName || newName === node.label || !node.connectionId || !node.database) return;
   renameObjectError.value = "";
   try {
-    const sql = buildRenameObjectSql({
-      databaseType: currentDatabaseType(),
-      objectType,
-      schema: node.schema,
-      oldName: node.label,
-      newName,
-    });
+    const dbType = currentDatabaseType();
     await connectionStore.ensureConnected(node.connectionId);
-    await api.executeQuery(node.connectionId, node.database, sql, node.schema);
+    if (supportsSourceBackedRoutineRename(dbType, objectType as any)) {
+      const schema = node.schema || node.database;
+      const source = await api.getObjectSource(node.connectionId, node.database, schema, node.label, objectType as any);
+      const statements = buildRoutineRenameObjectSourceStatements({
+        databaseType: dbType!,
+        objectType: objectType as any,
+        schema,
+        name: node.label,
+        newName,
+        source: source.source,
+      });
+      for (const sql of statements) {
+        await api.executeQuery(node.connectionId, node.database, sql, schema);
+      }
+    } else {
+      const sql = buildRenameObjectSql({
+        databaseType: dbType,
+        objectType,
+        schema: node.schema,
+        oldName: node.label,
+        newName,
+      });
+      await api.executeQuery(node.connectionId, node.database, sql, node.schema);
+    }
     toast(t("contextMenu.renameObjectSuccess", { oldName: node.label, newName }), 3000);
     showRenameObjectDialog.value = false;
     await refreshTableList(node);
@@ -754,7 +819,14 @@ const canCreateTable = computed(() => {
 
 const canCreateDatabase = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return props.node.type === "connection" && supportsDatabaseCreation(config?.db_type);
+  return (
+    props.node.type === "connection" && (supportsDatabaseCreation(config?.db_type) || config?.db_type === "duckdb")
+  );
+});
+
+const isDuckDbConnection = computed(() => {
+  const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
+  return props.node.type === "connection" && config?.db_type === "duckdb";
 });
 
 const canSetCreateDatabaseCharset = computed(() => {
@@ -798,14 +870,7 @@ function dropTable() {
 
 async function refreshTableList(node: TreeNode) {
   if (!node.connectionId || !node.database) return;
-  const config = connectionStore.getConfig(node.connectionId);
-  if (config?.db_type === "sqlserver" && node.schema?.toLowerCase() === "dbo") {
-    await connectionStore.loadSqlServerDatabaseObjects(node.connectionId, node.database, { force: true });
-  } else if (node.schema) {
-    await connectionStore.loadTables(node.connectionId, node.database, node.schema, { force: true });
-  } else {
-    await connectionStore.loadTables(node.connectionId, node.database, undefined, { force: true });
-  }
+  await connectionStore.refreshObjectListTreeNode(node.connectionId, node.database, node.schema);
 }
 
 async function confirmDropTable() {
@@ -864,11 +929,63 @@ function buildDropSchemaSql(): string {
   return `DROP SCHEMA ${name};`;
 }
 
+async function openCreateDatabase() {
+  if (isDuckDbConnection.value) {
+    await createDuckDbAttachedDatabaseFile();
+    return;
+  }
+  openCreateDatabaseDialog();
+}
+
 function openCreateDatabaseDialog() {
   createDatabaseName.value = "";
   createDatabaseCharset.value = "utf8mb4";
   createDatabaseCollation.value = "utf8mb4_unicode_ci";
   showCreateDatabaseDialog.value = true;
+}
+
+function ensureDuckDbFileExtension(path: string): string {
+  return /\.(duckdb|db)$/i.test(path) ? path : `${path}.duckdb`;
+}
+
+async function createDuckDbAttachedDatabaseFile() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  if (!isTauriRuntime()) {
+    toast(t("contextMenu.createDuckDbFileDesktopOnly"), 4000);
+    return;
+  }
+
+  try {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const selectedPath = await save({
+      defaultPath: "database.duckdb",
+      filters: [{ name: "DuckDB", extensions: ["duckdb", "db"] }],
+    });
+    if (!selectedPath) return;
+
+    const path = ensureDuckDbFileExtension(selectedPath);
+    await connectionStore.ensureConnected(node.connectionId);
+    const existingDatabases = await api.listDatabases(node.connectionId);
+    const name = uniqueDuckDbAttachedDatabaseName(
+      duckDbAttachedDatabaseNameFromPath(path),
+      existingDatabases.map((database) => database.name),
+    );
+    await api.executeQuery(node.connectionId, "", buildDuckDbAttachDatabaseSql(path, name));
+
+    const config = connectionStore.getConfig(node.connectionId);
+    if (config) {
+      await connectionStore.updateConnection({
+        ...config,
+        attached_databases: [...(config.attached_databases ?? []), { name, path }],
+      });
+    }
+    await connectionStore.loadDatabases(node.connectionId, { force: true });
+    connectionStore.selectedTreeNodeId = `${node.connectionId}:${name}`;
+    toast(t("contextMenu.createDuckDbFileSuccess", { name }), 3000);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 async function confirmCreateDatabase() {
@@ -1391,11 +1508,23 @@ function openVisibleDatabasesDialog() {
 // --- Connection Group Management ---
 const isRenamingGroup = ref(false);
 const renameInput = ref("");
+const renameInputRef = ref<HTMLInputElement>();
+const preventRenameCloseAutoFocus = ref(false);
 
 function startRenameGroup() {
   renameInput.value = props.node.label;
   isRenamingGroup.value = true;
+  preventRenameCloseAutoFocus.value = true;
   emit("rename-started");
+  nextTick(() => {
+    focusSidebarRenameInput(() => (isRenamingGroup.value ? renameInputRef.value : undefined));
+  });
+}
+
+function onContextMenuCloseAutoFocus(event: Event) {
+  if (shouldPreventRenameCloseAutoFocus(preventRenameCloseAutoFocus)) {
+    event.preventDefault();
+  }
 }
 
 watch(
@@ -1623,13 +1752,13 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
           />
           <input
             v-if="isRenamingGroup"
+            ref="renameInputRef"
             v-model="renameInput"
-            class="min-w-0 flex-1 truncate bg-transparent border border-primary/50 rounded px-1 text-xs outline-none"
+            class="min-w-0 flex-1 truncate bg-transparent border border-primary/50 rounded px-1 outline-none"
             @blur="finishRenameGroup"
             @keydown.enter.prevent="finishRenameGroup"
             @keydown.escape.prevent="isRenamingGroup = false"
             @click.stop
-            @vue:mounted="($event: any) => $event.el.focus()"
           />
           <Tooltip v-else :disabled="!isTruncated">
             <TooltipTrigger as-child>
@@ -1678,7 +1807,7 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       </div>
     </ContextMenuTrigger>
 
-    <ContextMenuContent class="w-auto min-w-36">
+    <ContextMenuContent class="w-auto min-w-36" @close-auto-focus="onContextMenuCloseAutoFocus">
       <ContextMenuItem v-if="canPin" @click="togglePin">
         <Pin class="w-4 h-4" :class="{ 'fill-current': isPinned }" />
         {{ isPinned ? t("contextMenu.unpin") : t("contextMenu.pin") }}
@@ -1698,8 +1827,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem v-if="canOpenSqlFileExecution" @click="openSqlFileExecution">
           <FileCode class="w-4 h-4" /> {{ t("sqlFile.title") }}
         </ContextMenuItem>
-        <ContextMenuItem v-if="canCreateDatabase" @click="openCreateDatabaseDialog">
-          <Plus class="w-4 h-4" /> {{ t("contextMenu.createDatabase") }}
+        <ContextMenuItem v-if="canCreateDatabase" @click="openCreateDatabase">
+          <Plus class="w-4 h-4" />
+          {{ isDuckDbConnection ? t("contextMenu.createDuckDbFile") : t("contextMenu.createDatabase") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub v-if="availableGroups.length > 0 || currentGroupId">
@@ -1751,7 +1881,7 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
           <Plus class="w-4 h-4" /> {{ t("toolbar.newConnection") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem @click="startRenameGroup">
+        <ContextMenuItem @select="startRenameGroup">
           <Pencil class="w-4 h-4" /> {{ t("connectionGroup.renameGroup") }}
         </ContextMenuItem>
         <ContextMenuSeparator />
@@ -1831,6 +1961,9 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
       <template v-if="node.type === 'table' || node.type === 'view'">
         <ContextMenuItem @click="openData">
           <TableProperties class="w-4 h-4" /> {{ t("contextMenu.viewData") }}
+        </ContextMenuItem>
+        <ContextMenuItem v-if="node.type === 'view'" @click="viewObjectSource">
+          <Code2 class="w-4 h-4" /> {{ t("contextMenu.viewSource") }}
         </ContextMenuItem>
         <ContextMenuItem v-if="canOpenStructureEditor" @click="openStructureEditor">
           <PencilRuler class="w-4 h-4" /> {{ t("contextMenu.editStructure") }}

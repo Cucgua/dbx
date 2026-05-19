@@ -2,6 +2,7 @@ import type { DatabaseType } from "../types/database.ts";
 import { usesFetchFirst } from "./databaseCapabilities.ts";
 import { quoteTableIdentifier } from "./tableSelectSql.ts";
 import { findStatementAtCursor } from "./sqlStatementSplit.ts";
+import { sqlServerStatementForDerivedTable } from "./sqlServerQueryWrapping.ts";
 
 export interface PaginatedQuerySqlResult {
   ok: true;
@@ -84,12 +85,14 @@ export function buildPaginatedQuerySql(
   const safeLimit = Math.max(1, Math.floor(limit));
   const safeOffset = Math.max(0, Math.floor(offset));
   const alias = quoteTableIdentifier(databaseType, "dbx_page");
-  const base = `SELECT * FROM (${statement.sql}) ${alias}`;
+  const wrappedSql = databaseType === "sqlserver" ? sqlServerStatementForDerivedTable(statement.sql) : statement.sql;
+  const base = `SELECT * FROM (${wrappedSql}) ${alias}`;
 
   if (databaseType === "sqlserver") {
+    if (safeOffset > 0) return { ok: false, reason: "unsupported" };
     return {
       ok: true,
-      sql: `${base} ORDER BY (SELECT NULL) OFFSET ${safeOffset} ROWS FETCH NEXT ${safeLimit} ROWS ONLY`,
+      sql: `SELECT TOP (${safeLimit}) * FROM (${wrappedSql}) ${alias}`,
     };
   }
 
@@ -111,7 +114,8 @@ export function buildCountQuerySql(
   if (unsupportedPaginationTypes.has(databaseType)) return { ok: false, reason: "unsupported" };
 
   const alias = quoteTableIdentifier(databaseType, "dbx_count");
-  return { ok: true, sql: `SELECT COUNT(*) AS dbx_total_rows FROM (${statement.sql}) ${alias};` };
+  const wrappedSql = databaseType === "sqlserver" ? sqlServerStatementForDerivedTable(statement.sql) : statement.sql;
+  return { ok: true, sql: `SELECT COUNT(*) AS dbx_total_rows FROM (${wrappedSql}) ${alias};` };
 }
 
 function singleSelectableStatement(
@@ -131,6 +135,121 @@ function singleSelectableStatement(
   if (!/^\s*(SELECT|WITH)\b/i.test(statement)) {
     return { ok: false, reason: "not_select" };
   }
+  if (hasTopLevelSelectInto(statement)) {
+    return { ok: false, reason: "not_select" };
+  }
 
   return { ok: true, sql: statement };
+}
+
+function hasTopLevelSelectInto(sql: string): boolean {
+  let sawSelect = false;
+  for (const token of topLevelSqlTokens(sql)) {
+    if (!sawSelect) {
+      sawSelect = token === "SELECT";
+      continue;
+    }
+    if (token === "INTO") return true;
+  }
+  return false;
+}
+
+function topLevelSqlTokens(sql: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  let depth = 0;
+
+  while (i < sql.length) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+
+    if (ch === "-" && next === "-") {
+      i += 2;
+      while (i < sql.length && sql[i] !== "\n") i++;
+      continue;
+    }
+
+    if (ch === "/" && next === "*") {
+      i += 2;
+      while (i < sql.length - 1 && !(sql[i] === "*" && sql[i + 1] === "/")) i++;
+      i = Math.min(i + 2, sql.length);
+      continue;
+    }
+
+    if (ch === "'" || ch === '"' || ch === "`") {
+      i = skipSqlQuoted(sql, i, ch);
+      continue;
+    }
+
+    if (ch === "[") {
+      i = skipSqlBracketIdentifier(sql, i);
+      continue;
+    }
+
+    if (ch === "(") {
+      depth++;
+      i++;
+      continue;
+    }
+
+    if (ch === ")") {
+      depth = Math.max(0, depth - 1);
+      i++;
+      continue;
+    }
+
+    if (depth === 0 && isSqlTokenStart(ch)) {
+      const start = i;
+      i++;
+      while (i < sql.length && isSqlTokenPart(sql[i])) i++;
+      tokens.push(sql.slice(start, i).toUpperCase());
+      continue;
+    }
+
+    i++;
+  }
+
+  return tokens;
+}
+
+function skipSqlQuoted(sql: string, pos: number, quote: string): number {
+  let i = pos + 1;
+  while (i < sql.length) {
+    if (sql[i] === quote) {
+      if (sql[i + 1] === quote) {
+        i += 2;
+        continue;
+      }
+      return i + 1;
+    }
+    if (quote === "'" && sql[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  return sql.length;
+}
+
+function skipSqlBracketIdentifier(sql: string, pos: number): number {
+  let i = pos + 1;
+  while (i < sql.length) {
+    if (sql[i] === "]") {
+      if (sql[i + 1] === "]") {
+        i += 2;
+        continue;
+      }
+      return i + 1;
+    }
+    i++;
+  }
+  return sql.length;
+}
+
+function isSqlTokenStart(ch: string): boolean {
+  return /[A-Za-z_]/.test(ch);
+}
+
+function isSqlTokenPart(ch: string): boolean {
+  return /[A-Za-z0-9_$#]/.test(ch);
 }

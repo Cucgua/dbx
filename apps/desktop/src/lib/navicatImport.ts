@@ -134,6 +134,12 @@ async function parseConnection(node: ParsedNode): Promise<ConnectionConfig | nul
     (profile.dbType === "sqlite" ? "" : "127.0.0.1");
   const portValue = Number(getAny(node.values, ["port", "serverPort"]));
   const database = getAny(node.values, ["database", "databaseName", "initialDatabase", "serviceName", "sid", "schema"]);
+  const oracleConnectionType =
+    profile.dbType === "oracle" && getAny(node.values, ["sid"])
+      ? "sid"
+      : profile.dbType === "oracle"
+        ? "service_name"
+        : undefined;
   const username = getAny(node.values, ["user", "username", "userName", "uid"]) || profile.user;
   const password = await decryptNavicatPassword(getAny(node.values, ["password"]));
 
@@ -159,6 +165,7 @@ async function parseConnection(node: ParsedNode): Promise<ConnectionConfig | nul
     ssh_expose_lan: false,
     ssh_connect_timeout_secs: 5,
     ssl: false,
+    oracle_connection_type: oracleConnectionType,
     connection_string: undefined,
     jdbc_driver_class: undefined,
     jdbc_driver_paths: [],

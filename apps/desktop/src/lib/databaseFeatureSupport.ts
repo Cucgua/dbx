@@ -1,4 +1,5 @@
 import type { DatabaseType, TreeNodeType } from "@/types/database";
+import { canEditTableStructure } from "./tableStructureCapabilities";
 import {
   AGENT_DRIVER_TYPES,
   CREATE_DATABASE_SUPPORTED_TYPES,
@@ -11,7 +12,6 @@ import {
   SINGLE_DATABASE_TYPES,
   SQL_FILE_UNSUPPORTED_TYPES,
   TABLE_IMPORT_SUPPORTED_TYPES,
-  TABLE_STRUCTURE_SUPPORTED_TYPES,
   TRANSFER_SQL_TYPES,
   TREE_SCHEMA_TYPES,
 } from "./databaseCapabilitySets";
@@ -49,7 +49,7 @@ export function supportsTableImport(dbType?: DatabaseType): boolean {
 }
 
 export function supportsTableStructureEditing(dbType?: DatabaseType): boolean {
-  return !!dbType && TABLE_STRUCTURE_SUPPORTED_TYPES.has(dbType);
+  return canEditTableStructure(dbType);
 }
 
 export function supportsDatabaseCreation(dbType?: DatabaseType): boolean {

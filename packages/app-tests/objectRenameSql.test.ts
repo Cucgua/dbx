@@ -83,6 +83,22 @@ test("builds Oracle-family table and view rename statements", () => {
   );
 });
 
+test("does not build direct Oracle-family routine rename statements", () => {
+  assert.equal(supportsObjectRename("oracle", "FUNCTION"), false);
+  assert.equal(supportsObjectRename("dameng", "PROCEDURE"), false);
+  assert.throws(
+    () =>
+      buildRenameObjectSql({
+        databaseType: "dameng",
+        objectType: "PROCEDURE",
+        schema: "SYSDBA",
+        oldName: "REFRESH_CACHE",
+        newName: "REFRESH_CACHE_V2",
+      }),
+    /Renaming PROCEDURE is not supported/,
+  );
+});
+
 test("reports unsupported routine rename cases", () => {
   assert.equal(supportsObjectRename("mysql", "PROCEDURE"), false);
   assert.equal(supportsObjectRename("postgres", "FUNCTION"), false);

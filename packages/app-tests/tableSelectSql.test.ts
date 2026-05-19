@@ -90,6 +90,18 @@ test("builds Access table data queries with backtick identifiers", () => {
   assert.equal(sql, "SELECT * FROM `Order Details` ORDER BY `Order ID` ASC LIMIT 100 OFFSET 200;");
 });
 
+test("qualifies JDBC table data default order columns with a table alias", () => {
+  const sql = buildTableSelectSql({
+    databaseType: "jdbc",
+    schema: "SJT_THEME",
+    tableName: "BATCH_QUERY",
+    primaryKeys: ["TABLE_NAME"],
+    limit: 100,
+  });
+
+  assert.equal(sql, 'SELECT * FROM "SJT_THEME"."BATCH_QUERY" dbx_t ORDER BY dbx_t."TABLE_NAME" ASC LIMIT 100;');
+});
+
 test("expands Hive table data queries into aliased table columns", () => {
   const sql = buildTableSelectSql({
     databaseType: "hive",
@@ -101,7 +113,7 @@ test("expands Hive table data queries into aliased table columns", () => {
   assert.equal(sql, "SELECT `id` AS `id`, `name` AS `name` FROM `departments` LIMIT 100;");
 });
 
-test("builds SQL Server first page query with schema-aware brackets", () => {
+test("builds SQL Server first page query with TOP for SQL Server 2008 compatibility", () => {
   const sql = buildTableSelectSql({
     databaseType: "sqlserver",
     schema: "dbo",
@@ -111,23 +123,36 @@ test("builds SQL Server first page query with schema-aware brackets", () => {
     primaryKeys: ["id"],
   });
 
-  assert.equal(
-    sql,
-    "SELECT * FROM [dbo].[accounts] WHERE (id = 1) ORDER BY [id] ASC OFFSET 0 ROWS FETCH NEXT 25 ROWS ONLY",
-  );
+  assert.equal(sql, "SELECT TOP (25) * FROM [dbo].[accounts] WHERE (id = 1) ORDER BY [id] ASC");
 });
 
-test("builds SQL Server later pages with OFFSET and FETCH", () => {
+test("builds SQL Server first page query without a synthetic ORDER BY when no order is available", () => {
+  const sql = buildTableSelectSql({
+    databaseType: "sqlserver",
+    schema: "dbo",
+    tableName: "logs",
+    columns: ["message"],
+    limit: 25,
+  });
+
+  assert.equal(sql, "SELECT TOP (25) [message] FROM [dbo].[logs]");
+});
+
+test("builds SQL Server later pages with ROW_NUMBER for SQL Server 2008 compatibility", () => {
   const sql = buildTableSelectSql({
     databaseType: "sqlserver",
     schema: "sales",
     tableName: "orders",
+    columns: ["order_id", "customer"],
     primaryKeys: ["order_id"],
     limit: 50,
     offset: 100,
   });
 
-  assert.equal(sql, "SELECT * FROM [sales].[orders] ORDER BY [order_id] ASC OFFSET 100 ROWS FETCH NEXT 50 ROWS ONLY");
+  assert.equal(
+    sql,
+    "WITH [dbx_page] AS (SELECT [order_id], [customer], ROW_NUMBER() OVER (ORDER BY [order_id] ASC) AS [__dbx_row_num] FROM [sales].[orders]) SELECT [order_id], [customer] FROM [dbx_page] WHERE [__dbx_row_num] > 100 AND [__dbx_row_num] <= 150 ORDER BY [__dbx_row_num]",
+  );
 });
 
 test("builds SQL Server pages with fallback order columns when there is no primary key", () => {
@@ -135,12 +160,16 @@ test("builds SQL Server pages with fallback order columns when there is no prima
     databaseType: "sqlserver",
     schema: "dbo",
     tableName: "logs",
+    columns: ["created_at", "message"],
     fallbackOrderColumns: ["created_at"],
     limit: 50,
     offset: 50,
   });
 
-  assert.equal(sql, "SELECT * FROM [dbo].[logs] ORDER BY [created_at] ASC OFFSET 50 ROWS FETCH NEXT 50 ROWS ONLY");
+  assert.equal(
+    sql,
+    "WITH [dbx_page] AS (SELECT [created_at], [message], ROW_NUMBER() OVER (ORDER BY [created_at] ASC) AS [__dbx_row_num] FROM [dbo].[logs]) SELECT [created_at], [message] FROM [dbx_page] WHERE [__dbx_row_num] > 50 AND [__dbx_row_num] <= 100 ORDER BY [__dbx_row_num]",
+  );
 });
 
 test("builds Oracle table data queries with ROWID for keyless editing", () => {

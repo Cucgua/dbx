@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -18,8 +17,21 @@ import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { applyParsedConnectionUrl, parseConnectionUrl } from "@/lib/connectionUrl";
 import { connectionUrlPlaceholder as getUrlPlaceholder } from "@/lib/connectionPresentation";
+import { mongodbAuthFailureHint, mongoUrlParam, setMongoUrlParam } from "@/lib/mongoConnectionOptions";
 import { showAgentDriverInstallHint, type AgentDriverInstallState } from "@/lib/agentDriverInstallHint";
-import { ArrowLeft, ChevronRight, Copy, ExternalLink, FolderOpen, Grid3X3, Link2, List, Search } from "lucide-vue-next";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  FilePlus2,
+  FolderOpen,
+  Grid3X3,
+  Link2,
+  List,
+  Pencil,
+  Search,
+} from "lucide-vue-next";
 
 type DbOption = { value: string; label: string };
 type DbCategory = { key: string; title: string; options: DbOption[] };
@@ -81,6 +93,7 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   ssl: false,
   sysdba: false,
   oracle_connect_method: "service_name",
+  oracle_connection_type: "service_name",
   connection_string: undefined,
   jdbc_driver_class: undefined,
   jdbc_driver_paths: [],
@@ -157,9 +170,26 @@ const driverProfiles: Record<
   mariadb: { type: "mysql", port: 3306, user: "root", label: "MariaDB", icon: "mariadb" },
   tidb: { type: "mysql", port: 4000, user: "root", label: "TiDB", icon: "tidb" },
   oceanbase: { type: "mysql", port: 2881, user: "root", label: "OceanBase", icon: "oceanbase" },
+  "oceanbase-oracle": {
+    type: "oceanbase-oracle",
+    port: 2881,
+    user: "SYS",
+    label: "OceanBase Oracle Mode",
+    icon: "oceanbase",
+  },
   goldendb: { type: "goldendb", port: 3306, user: "root", label: "GoldenDB", icon: "goldendb" },
+  tdsql: { type: "mysql", port: 3306, user: "root", label: "TDSQL", icon: "tdsql" },
+  polardb: { type: "mysql", port: 3306, user: "root", label: "PolarDB", icon: "polardb" },
+  greatsql: { type: "mysql", port: 3306, user: "root", label: "GreatSQL", icon: "greatsql" },
+  databricks: { type: "databricks", port: 443, user: "token", label: "Databricks SQL", icon: "databricks" },
+  saphana: { type: "saphana", port: 30015, user: "SYSTEM", label: "SAP HANA", icon: "saphana" },
+  teradata: { type: "teradata", port: 1025, user: "", label: "Teradata", icon: "teradata" },
+  vertica: { type: "vertica", port: 5433, user: "dbadmin", label: "Vertica", icon: "vertica" },
+  firebird: { type: "firebird", port: 3050, user: "SYSDBA", label: "Firebird", icon: "firebird" },
+  exasol: { type: "exasol", port: 8563, user: "sys", label: "Exasol", icon: "exasol" },
+  gbase: { type: "gbase", port: 5258, user: "gbasedbt", label: "GBase", icon: "gbase" },
   opengauss: {
-    type: "gaussdb",
+    type: "opengauss",
     port: 5432,
     user: "gaussdb",
     label: "openGauss",
@@ -168,6 +198,7 @@ const driverProfiles: Record<
   gaussdb: { type: "gaussdb", port: 5432, user: "gaussdb", label: "GaussDB", icon: "gaussdb" },
   kingbase: { type: "kingbase", port: 54321, user: "system", label: "KingBase", icon: "kingbase" },
   highgo: { type: "highgo", port: 5866, user: "highgo", label: "瀚高 HighGo", icon: "highgo" },
+  yashandb: { type: "yashandb", port: 1688, user: "sys", label: "崖山 YashanDB", icon: "yashandb" },
   vastbase: { type: "vastbase", port: 5432, user: "vastbase", label: "Vastbase", icon: "vastbase" },
   doris: { type: "mysql", port: 9030, user: "root", label: "Doris", icon: "doris", urlParams: "" },
   selectdb: {
@@ -228,6 +259,7 @@ const driverProfiles: Record<
 
 function profileForConfig(config: ConnectionConfig) {
   if (config.driver_profile && driverProfiles[config.driver_profile]) return config.driver_profile;
+  if (config.db_type === "dameng") return "dm";
   return config.db_type;
 }
 
@@ -309,7 +341,10 @@ watch(
         proxy_password: config.proxy_password || "",
         ssl: config.ssl || false,
         sysdba: config.sysdba || false,
-        oracle_connect_method: config.oracle_connect_method || "service_name",
+        oracle_connect_method:
+          config.oracle_connect_method || (config.oracle_connection_type === "sid" ? "sid" : "service_name"),
+        oracle_connection_type:
+          config.oracle_connection_type || (config.oracle_connect_method === "sid" ? "sid" : "service_name"),
         connection_string: config.connection_string,
         jdbc_driver_class: config.jdbc_driver_class,
         jdbc_driver_paths: config.jdbc_driver_paths || [],
@@ -336,6 +371,7 @@ watch(
     }
     resetTestState();
   },
+  { immediate: true },
 );
 
 const isEditing = ref(false);
@@ -361,6 +397,7 @@ function defaultDatabaseForProfile() {
   if (form.value.db_type === "gaussdb") return "postgres";
   if (selectedType.value === "cockroachdb") return "defaultdb";
   if (form.value.db_type === "highgo") return "highgo";
+  if (form.value.db_type === "yashandb") return "yasdb";
   if (form.value.db_type === "postgres" || form.value.db_type === "kingbase" || form.value.db_type === "vastbase")
     return "postgres";
   if (form.value.db_type === "sqlserver") return "master";
@@ -391,11 +428,23 @@ const iconTypeMap: Record<string, string> = {
   mariadb: "mariadb",
   tidb: "tidb",
   oceanbase: "oceanbase",
+  "oceanbase-oracle": "oceanbase",
   goldendb: "goldendb",
+  tdsql: "tdsql",
+  polardb: "polardb",
+  greatsql: "greatsql",
+  databricks: "databricks",
+  saphana: "saphana",
+  teradata: "teradata",
+  vertica: "vertica",
+  firebird: "firebird",
+  exasol: "exasol",
+  gbase: "gbase",
   opengauss: "opengauss",
   gaussdb: "gaussdb",
   kingbase: "kingbase",
   highgo: "highgo",
+  yashandb: "yashandb",
   vastbase: "vastbase",
   doris: "doris",
   selectdb: "selectdb",
@@ -438,14 +487,26 @@ const dbOptions = [
   { value: "gaussdb", label: "GaussDB" },
   { value: "tidb", label: "TiDB" },
   { value: "oceanbase", label: "OceanBase" },
+  { value: "oceanbase-oracle", label: "OceanBase Oracle Mode" },
   { value: "goldendb", label: "GoldenDB" },
+  { value: "tdsql", label: "TDSQL" },
+  { value: "polardb", label: "PolarDB" },
+  { value: "greatsql", label: "GreatSQL" },
   { value: "doris", label: "Doris" },
   { value: "selectdb", label: "SelectDB" },
   { value: "starrocks", label: "StarRocks" },
   { value: "tdengine", label: "TDengine" },
+  { value: "databricks", label: "Databricks SQL" },
+  { value: "saphana", label: "SAP HANA" },
+  { value: "teradata", label: "Teradata" },
+  { value: "vertica", label: "Vertica" },
+  { value: "firebird", label: "Firebird" },
+  { value: "exasol", label: "Exasol" },
+  { value: "gbase", label: "GBase" },
   { value: "opengauss", label: "openGauss" },
   { value: "kingbase", label: "KingBase" },
   { value: "highgo", label: "瀚高 HighGo" },
+  { value: "yashandb", label: "崖山 YashanDB" },
   { value: "vastbase", label: "Vastbase" },
   { value: "redshift", label: "Redshift" },
   { value: "cockroachdb", label: "CockroachDB" },
@@ -494,10 +555,11 @@ const isJdbcConnection = computed(() => form.value.db_type === "jdbc");
 
 const connectionUrlPlaceholder = computed(() => getUrlPlaceholder(form.value.db_type));
 const filePathPlaceholder = computed(() => {
-  if (form.value.db_type === "duckdb") return "/path/to/database.duckdb";
+  if (form.value.db_type === "duckdb") return "/path/to/database.duckdb or :memory:";
   if (form.value.db_type === "access") return "/path/to/database.accdb";
-  return "/path/to/database.db";
+  return "/path/to/database.db or :memory:";
 });
+const supportsMemoryDatabasePath = computed(() => form.value.db_type === "sqlite" || form.value.db_type === "duckdb");
 const canUseSsh = computed(() => form.value.db_type !== "sqlite" && form.value.db_type !== "access");
 const canUseProxy = computed(
   () => form.value.db_type !== "sqlite" && form.value.db_type !== "duckdb" && form.value.db_type !== "access",
@@ -514,6 +576,18 @@ const canSubmit = computed(() => {
 const testResultMessage = computed(() => {
   if (!testResult.value) return "";
   return testResult.value.ok ? t("connection.testSuccess") : testResult.value.message;
+});
+const mongoAuthDatabase = computed({
+  get: () => mongoUrlParam(form.value.url_params, "authSource"),
+  set: (value: string) => {
+    form.value.url_params = setMongoUrlParam(form.value.url_params, "authSource", value);
+  },
+});
+const mongoAuthMechanism = computed({
+  get: () => mongoUrlParam(form.value.url_params, "authMechanism") || "default",
+  set: (value: string) => {
+    form.value.url_params = setMongoUrlParam(form.value.url_params, "authMechanism", value === "default" ? "" : value);
+  },
 });
 
 function goToConnectionStep(value = selectedType.value) {
@@ -547,7 +621,7 @@ async function testConnection() {
     testResult.value = { ok: true, message: msg };
   } catch (e: any) {
     if (runId !== testRunId) return;
-    testResult.value = { ok: false, message: String(e) };
+    testResult.value = { ok: false, message: mongodbAuthFailureHint(String(e)) };
   } finally {
     if (runId === testRunId) {
       isTesting.value = false;
@@ -607,17 +681,21 @@ function resetForm() {
   resetTestState();
 }
 
-watch(open, (value) => {
-  if (!value) {
-    resetForm();
-    return;
-  }
-  if (!props.editConfig) {
-    resetForm();
-  }
-  void loadJdbcDrivers();
-  void loadAgentDrivers();
-});
+watch(
+  open,
+  (value) => {
+    if (!value) {
+      resetForm();
+      return;
+    }
+    if (!props.editConfig) {
+      resetForm();
+    }
+    void loadJdbcDrivers();
+    void loadAgentDrivers();
+  },
+  { immediate: true },
+);
 
 watch(canUseSsh, (value) => {
   if (!value && configTab.value === "ssh") {
@@ -656,13 +734,13 @@ async function save() {
           emit("connectSucceeded", config.name);
         })
         .catch((e: any) => {
-          emit("connectFailed", String(e?.message || e));
+          emit("connectFailed", mongodbAuthFailureHint(String(e?.message || e)));
         });
       return;
     }
     open.value = false;
   } catch (e: any) {
-    testResult.value = { ok: false, message: String(e?.message || e) };
+    testResult.value = { ok: false, message: mongodbAuthFailureHint(String(e?.message || e)) };
   } finally {
     isSaving.value = false;
   }
@@ -684,10 +762,14 @@ function buildSubmitConfig(id: string): ConnectionConfig {
   }
   if (config.db_type === "oracle") {
     config.sysdba = !!config.sysdba;
-    config.oracle_connect_method =
-      oracleUseConnectString.value && isOracleOci.value
-        ? "connect_string"
-        : config.oracle_connect_method || "service_name";
+    const oracleMode = config.oracle_connection_type === "sid" || config.oracle_connect_method === "sid"
+      ? "sid"
+      : "service_name";
+    config.oracle_connection_type = oracleMode;
+    config.oracle_connect_method = oracleUseConnectString.value && isOracleOci.value ? "connect_string" : oracleMode;
+  } else {
+    config.oracle_connection_type = undefined;
+    config.oracle_connect_method = "service_name";
   }
   if (config.db_type === "jdbc") {
     config.host = "";
@@ -699,6 +781,9 @@ function buildSubmitConfig(id: string): ConnectionConfig {
       .map((path) => path.trim())
       .filter(Boolean);
   }
+  config.attached_databases = Array.isArray(config.attached_databases)
+    ? config.attached_databases.filter((database) => database.name?.trim() && database.path?.trim())
+    : [];
   return config;
 }
 
@@ -740,6 +825,24 @@ async function browseDbFilePath() {
   }
 }
 
+function ensureDuckDbFileExtension(path: string): string {
+  return /\.(duckdb|db)$/i.test(path) ? path : `${path}.duckdb`;
+}
+
+async function createDuckDbFilePath() {
+  if (!isTauriRuntime()) return;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({
+    title: t("connection.createDuckDbFile"),
+    defaultPath: "database.duckdb",
+    filters: [{ name: "DuckDB", extensions: ["duckdb", "db"] }],
+  });
+  if (!selected) return;
+
+  const path = ensureDuckDbFileExtension(selected);
+  form.value.host = path;
+}
+
 async function browseJdbcDriverPaths() {
   if (!isTauriRuntime()) return;
   const { open } = await import("@tauri-apps/plugin-dialog");
@@ -771,10 +874,10 @@ async function loadJdbcDrivers() {
 }
 
 async function loadAgentDrivers() {
-  if (!isDesktop) return;
   try {
-    agentDrivers.value = await invoke<AgentDriverInstallState[]>("list_installed_agents_local");
-    invoke<AgentDriverInstallState[]>("list_installed_agents")
+    agentDrivers.value = await api.listInstalledAgentsLocal();
+    api
+      .listInstalledAgents()
       .then((drivers) => {
         agentDrivers.value = drivers;
       })
@@ -1097,16 +1200,34 @@ function openExternalUrl(url: string) {
                 >
                   <div class="grid grid-cols-4 items-center gap-4">
                     <Label class="text-right">{{ t("connection.filePath") }}</Label>
-                    <div class="col-span-3 flex items-center gap-1">
-                      <Input v-model="form.host" class="flex-1" :placeholder="filePathPlaceholder" />
-                      <Tooltip v-if="isDesktop">
-                        <TooltipTrigger as-child>
-                          <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseDbFilePath">
-                            <FolderOpen class="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>{{ t("connection.sshKeyPathBrowse") }}</TooltipContent>
-                      </Tooltip>
+                    <div class="col-span-3 space-y-1">
+                      <div class="flex items-center gap-1">
+                        <Input v-model="form.host" class="flex-1" :placeholder="filePathPlaceholder" />
+                        <Tooltip v-if="isDesktop">
+                          <TooltipTrigger as-child>
+                            <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseDbFilePath">
+                              <FolderOpen class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.sshKeyPathBrowse") }}</TooltipContent>
+                        </Tooltip>
+                        <Tooltip v-if="isDesktop && form.db_type === 'duckdb'">
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              class="h-9 w-9 shrink-0"
+                              @click="createDuckDbFilePath"
+                            >
+                              <FilePlus2 class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.createDuckDbFile") }}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <p v-if="supportsMemoryDatabasePath" class="text-xs text-muted-foreground">
+                        {{ t("connection.memoryDatabasePathHint") }}
+                      </p>
                     </div>
                   </div>
                 </template>
@@ -1178,12 +1299,33 @@ function openExternalUrl(url: string) {
                       <Input v-model="form.password" type="password" class="col-span-3" />
                     </div>
                     <div class="grid grid-cols-4 items-center gap-4">
-                      <Label class="text-right">{{ t("connection.database") }}</Label>
+                      <Label class="text-right">{{ t("connection.defaultDatabase") }}</Label>
                       <Input
                         v-model="form.database"
                         class="col-span-3"
                         :placeholder="t('connection.databasePlaceholder')"
                       />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.authDatabase") }}</Label>
+                      <Input
+                        v-model="mongoAuthDatabase"
+                        class="col-span-3"
+                        :placeholder="t('connection.authDatabasePlaceholder')"
+                      />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.authMechanism") }}</Label>
+                      <Select v-model="mongoAuthMechanism">
+                        <SelectTrigger class="col-span-3">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">{{ t("connection.authMechanismDefault") }}</SelectItem>
+                          <SelectItem value="SCRAM-SHA-1">SCRAM-SHA-1</SelectItem>
+                          <SelectItem value="SCRAM-SHA-256">SCRAM-SHA-256</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div class="grid grid-cols-4 items-center gap-4">
                       <Label class="text-right">{{ t("connection.urlParams") }}</Label>
@@ -1265,26 +1407,43 @@ function openExternalUrl(url: string) {
                     </p>
                   </div>
 
-                  <div
-                    v-if="isOracle && !(isOracleOci && oracleUseConnectString)"
-                    class="grid grid-cols-4 items-center gap-4"
-                  >
-                    <Label class="text-right text-xs">Identifier</Label>
-                    <div class="col-span-3 flex gap-2">
-                      <Button
-                        size="sm"
-                        :variant="form.oracle_connect_method === 'sid' ? 'outline' : 'default'"
-                        @click="form.oracle_connect_method = 'service_name'"
+                  <div v-if="form.db_type === 'oracle'" class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right text-xs">连接方式</Label>
+                    <div
+                      class="col-span-3 grid h-8 grid-cols-2 overflow-hidden rounded-md border border-input bg-muted/30 p-0.5"
+                    >
+                      <button
+                        type="button"
+                        class="h-7 rounded-sm px-3 text-sm transition-colors"
+                        :class="
+                          form.oracle_connection_type !== 'sid'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'
+                        "
+                        :aria-pressed="form.oracle_connection_type !== 'sid'"
+                        @click="
+                          form.oracle_connection_type = 'service_name';
+                          form.oracle_connect_method = 'service_name';
+                        "
                       >
-                        Service Name
-                      </Button>
-                      <Button
-                        size="sm"
-                        :variant="form.oracle_connect_method === 'sid' ? 'default' : 'outline'"
-                        @click="form.oracle_connect_method = 'sid'"
+                        服务名
+                      </button>
+                      <button
+                        type="button"
+                        class="h-7 rounded-sm px-3 text-sm transition-colors"
+                        :class="
+                          form.oracle_connection_type === 'sid'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'
+                        "
+                        :aria-pressed="form.oracle_connection_type === 'sid'"
+                        @click="
+                          form.oracle_connection_type = 'sid';
+                          form.oracle_connect_method = 'sid';
+                        "
                       >
                         SID
-                      </Button>
+                      </button>
                     </div>
                   </div>
 
@@ -1331,6 +1490,7 @@ function openExternalUrl(url: string) {
                       form.db_type === 'informix' ||
                       form.db_type === 'kingbase' ||
                       form.db_type === 'highgo' ||
+                      form.db_type === 'yashandb' ||
                       form.db_type === 'vastbase' ||
                       form.db_type === 'goldendb'
                     "

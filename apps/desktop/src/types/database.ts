@@ -18,6 +18,16 @@ export type DatabaseType =
   | "highgo"
   | "vastbase"
   | "goldendb"
+  | "yashandb"
+  | "databricks"
+  | "saphana"
+  | "teradata"
+  | "vertica"
+  | "firebird"
+  | "exasol"
+  | "opengauss"
+  | "oceanbase-oracle"
+  | "gbase"
   | "access"
   | "h2"
   | "snowflake"
@@ -47,6 +57,7 @@ export interface ConnectionConfig {
   database?: string;
   default_database?: string | null;
   visible_databases?: string[];
+  attached_databases?: AttachedDatabaseConfig[];
   color?: string;
   ssh_enabled?: boolean;
   ssh_host?: string;
@@ -66,9 +77,15 @@ export interface ConnectionConfig {
   ssl?: boolean;
   sysdba?: boolean;
   oracle_connect_method?: "service_name" | "sid" | "connect_string";
+  oracle_connection_type?: "service_name" | "sid";
   connection_string?: string;
   jdbc_driver_class?: string;
   jdbc_driver_paths?: string[];
+}
+
+export interface AttachedDatabaseConfig {
+  name: string;
+  path: string;
 }
 
 export interface PluginDriverManifest {
@@ -104,6 +121,9 @@ export interface JdbcPluginStatus {
   version?: string | null;
   protocol_version?: number | null;
   compatible: boolean;
+  latest_version?: string | null;
+  latest_protocol_version?: number | null;
+  update_available: boolean;
   path: string;
 }
 

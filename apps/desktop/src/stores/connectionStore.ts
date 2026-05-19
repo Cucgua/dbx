@@ -33,6 +33,11 @@ import {
   expandCachedObjectBrowserNodes,
   objectGroupRefreshParentId,
 } from "@/lib/tableTree";
+import {
+  hasTreeNodeDatabaseContext,
+  normalizeCataloglessDatabaseNodes,
+  treeNodeSchemaCachePrefix,
+} from "@/lib/treeNodeContext";
 import { decodeSchemaTreeCache, encodeSchemaTreeCache } from "@/lib/schemaTreeCache";
 import { useSavedSqlStore } from "@/stores/savedSqlStore";
 
@@ -196,6 +201,7 @@ export const useConnectionStore = defineStore("connection", () => {
       gaussdb: "GaussDB",
       kingbase: "KingBase",
       highgo: "瀚高 HighGo",
+      yashandb: "崖山 YashanDB",
       vastbase: "Vastbase",
       goldendb: "GoldenDB",
       access: "Microsoft Access",
@@ -235,6 +241,10 @@ export const useConnectionStore = defineStore("connection", () => {
       driver_label: config.driver_label || labelMap[profile] || config.db_type,
       url_params: config.url_params || "",
       oracle_connect_method: config.oracle_connect_method || "service_name",
+      attached_databases: Array.isArray(config.attached_databases)
+        ? config.attached_databases.filter((database) => database.name?.trim() && database.path?.trim())
+        : [],
+      oracle_connection_type: config.oracle_connection_type || (config.oracle_connect_method === "sid" ? "sid" : undefined),
       ssh_connect_timeout_secs: config.ssh_connect_timeout_secs || 5,
       proxy_type: config.proxy_type || "socks5",
       proxy_port: config.proxy_port || 1080,
@@ -354,7 +364,7 @@ export const useConnectionStore = defineStore("connection", () => {
     const payload = await api.loadSchemaCache<unknown>(cacheKey).catch(() => null);
     const decoded = decodeSchemaTreeCache<TreeNode[]>(payload);
     if (!decoded) return { hit: false, isStale: false };
-    const normalizedChildren = expandCachedObjectBrowserNodes(decoded.children);
+    const normalizedChildren = normalizeCataloglessDatabaseNodes(expandCachedObjectBrowserNodes(decoded.children));
     setChildren(
       node,
       node.type === "connection" && node.connectionId
@@ -393,16 +403,7 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   function schemaCachePrefixForNode(node: TreeNode): string | null {
-    if (node.type === "connection" && node.connectionId) {
-      return `${schemaCacheKey(node.connectionId)}:`;
-    }
-    if (node.type === "database" && node.connectionId && node.database) {
-      return `${schemaCacheKey(node.connectionId, node.database)}:`;
-    }
-    if (node.type === "schema" && node.connectionId && node.database && node.schema) {
-      return `${schemaCacheKey(node.connectionId, node.database, node.schema)}:`;
-    }
-    return null;
+    return treeNodeSchemaCachePrefix(node);
   }
 
   async function clearPersistedTreeCacheForNode(node: TreeNode) {
@@ -691,7 +692,13 @@ export const useConnectionStore = defineStore("connection", () => {
         );
         const visibleNameSet = new Set(visibleNames);
         const visibleDatabases = databases.filter((database) => visibleNameSet.has(database.name));
-        const children = withSavedSqlRoot(connectionId, buildDatabaseTreeNodes(connectionId, visibleDatabases), node);
+        const children = withSavedSqlRoot(
+          connectionId,
+          buildDatabaseTreeNodes(connectionId, visibleDatabases, {
+            includeDefaultWhenEmpty: usesTreeSchemaMode(config?.db_type),
+          }),
+          node,
+        );
         setChildren(node, children);
         await savePersistedTreeChildren(cacheKey, children);
       }
@@ -997,10 +1004,12 @@ export const useConnectionStore = defineStore("connection", () => {
     node.isExpanded = true;
   }
 
-  async function loadColumns(connectionId: string, database: string, table: string, schema?: string) {
-    const parentId = schema
-      ? `${connectionId}:${database}:${schema}:${table}:__columns`
-      : `${connectionId}:${database}:${table}:__columns`;
+  async function loadColumns(connectionId: string, database: string, table: string, schema?: string, nodeId?: string) {
+    const parentId =
+      nodeId ??
+      (schema
+        ? `${connectionId}:${database}:${schema}:${table}:__columns`
+        : `${connectionId}:${database}:${table}:__columns`);
     const node = findNode(treeNodes.value, parentId);
     if (!node) return;
 
@@ -1030,10 +1039,12 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function loadIndexes(connectionId: string, database: string, table: string, schema?: string) {
-    const parentId = schema
-      ? `${connectionId}:${database}:${schema}:${table}:__indexes`
-      : `${connectionId}:${database}:${table}:__indexes`;
+  async function loadIndexes(connectionId: string, database: string, table: string, schema?: string, nodeId?: string) {
+    const parentId =
+      nodeId ??
+      (schema
+        ? `${connectionId}:${database}:${schema}:${table}:__indexes`
+        : `${connectionId}:${database}:${table}:__indexes`);
     const node = findNode(treeNodes.value, parentId);
     if (!node) return;
 
@@ -1062,10 +1073,18 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function loadForeignKeys(connectionId: string, database: string, table: string, schema?: string) {
-    const parentId = schema
-      ? `${connectionId}:${database}:${schema}:${table}:__fkeys`
-      : `${connectionId}:${database}:${table}:__fkeys`;
+  async function loadForeignKeys(
+    connectionId: string,
+    database: string,
+    table: string,
+    schema?: string,
+    nodeId?: string,
+  ) {
+    const parentId =
+      nodeId ??
+      (schema
+        ? `${connectionId}:${database}:${schema}:${table}:__fkeys`
+        : `${connectionId}:${database}:${table}:__fkeys`);
     const node = findNode(treeNodes.value, parentId);
     if (!node) return;
 
@@ -1094,10 +1113,12 @@ export const useConnectionStore = defineStore("connection", () => {
     }
   }
 
-  async function loadTriggers(connectionId: string, database: string, table: string, schema?: string) {
-    const parentId = schema
-      ? `${connectionId}:${database}:${schema}:${table}:__triggers`
-      : `${connectionId}:${database}:${table}:__triggers`;
+  async function loadTriggers(connectionId: string, database: string, table: string, schema?: string, nodeId?: string) {
+    const parentId =
+      nodeId ??
+      (schema
+        ? `${connectionId}:${database}:${schema}:${table}:__triggers`
+        : `${connectionId}:${database}:${table}:__triggers`);
     const node = findNode(treeNodes.value, parentId);
     if (!node) return;
 
@@ -1146,7 +1167,7 @@ export const useConnectionStore = defineStore("connection", () => {
       }
     } else if (node.type === "mongo-db" && node.connectionId && node.database) {
       await loadMongoCollections(node.connectionId, node.database);
-    } else if (node.type === "database" && node.connectionId && node.database) {
+    } else if (node.type === "database" && node.connectionId && hasTreeNodeDatabaseContext(node)) {
       const config = getConfig(node.connectionId);
       if (config?.db_type === "sqlserver") {
         await loadSqlServerDatabaseObjects(node.connectionId, node.database, options);
@@ -1155,18 +1176,37 @@ export const useConnectionStore = defineStore("connection", () => {
       } else {
         await loadTables(node.connectionId, node.database, undefined, options);
       }
-    } else if (node.type === "schema" && node.connectionId && node.database && node.schema) {
+    } else if (node.type === "schema" && node.connectionId && hasTreeNodeDatabaseContext(node) && node.schema) {
       await loadTables(node.connectionId, node.database, node.schema, options);
-    } else if ((node.type === "table" || node.type === "view") && node.connectionId && node.database) {
+    } else if (
+      (node.type === "table" || node.type === "view") &&
+      node.connectionId &&
+      hasTreeNodeDatabaseContext(node)
+    ) {
       await loadTableGroups(node.connectionId, node.database, node.label, node.schema, node.id);
-    } else if (node.type === "group-columns" && node.connectionId && node.database && node.tableName) {
-      await loadColumns(node.connectionId, node.database, node.tableName, node.schema);
-    } else if (node.type === "group-indexes" && node.connectionId && node.database && node.tableName) {
-      await loadIndexes(node.connectionId, node.database, node.tableName, node.schema);
-    } else if (node.type === "group-fkeys" && node.connectionId && node.database && node.tableName) {
-      await loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema);
-    } else if (node.type === "group-triggers" && node.connectionId && node.database && node.tableName) {
-      await loadTriggers(node.connectionId, node.database, node.tableName, node.schema);
+    } else if (
+      node.type === "group-columns" &&
+      node.connectionId &&
+      hasTreeNodeDatabaseContext(node) &&
+      node.tableName
+    ) {
+      await loadColumns(node.connectionId, node.database, node.tableName, node.schema, node.id);
+    } else if (
+      node.type === "group-indexes" &&
+      node.connectionId &&
+      hasTreeNodeDatabaseContext(node) &&
+      node.tableName
+    ) {
+      await loadIndexes(node.connectionId, node.database, node.tableName, node.schema, node.id);
+    } else if (node.type === "group-fkeys" && node.connectionId && hasTreeNodeDatabaseContext(node) && node.tableName) {
+      await loadForeignKeys(node.connectionId, node.database, node.tableName, node.schema, node.id);
+    } else if (
+      node.type === "group-triggers" &&
+      node.connectionId &&
+      hasTreeNodeDatabaseContext(node) &&
+      node.tableName
+    ) {
+      await loadTriggers(node.connectionId, node.database, node.tableName, node.schema, node.id);
     } else if (
       node.type === "group-tables" ||
       node.type === "group-views" ||

@@ -59,12 +59,17 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
+import ImagePreviewDialog from "@/components/grid/ImagePreviewDialog.vue";
+import TemporalCellEditor from "@/components/grid/TemporalCellEditor.vue";
 import type { QueryResult, ColumnInfo, DatabaseType, ForeignKeyInfo, IndexInfo, TriggerInfo } from "@/types/database";
 import * as api from "@/lib/api";
 import {
@@ -73,6 +78,7 @@ import {
   normalizeWhereInput,
   quoteTableIdentifier,
 } from "@/lib/tableSelectSql";
+import { uuid } from "@/lib/utils";
 import {
   canEditExistingTableRows,
   hiveTablePropertiesIndicateTransactional,
@@ -83,14 +89,15 @@ import {
 import { formatGridSqlLiteral } from "@/lib/dataGridSql";
 import {
   buildTransposeRows,
+  nextContextTransposeState,
   nextTransposeState,
-  transposeAnchorRowIndex,
   transposeFieldWidth,
   transposeScrollLeftForRecord,
   visibleTransposeRecordWindow,
 } from "@/lib/dataGridTranspose";
 import { matchesRowStatusFilter, type RowStatus, type RowStatusFilter } from "@/lib/gridRowStatus";
 import { displayCellValue, type CellValue } from "@/lib/cellValue";
+import { cellImagePreviewUrl } from "@/lib/cellImageUrl";
 import {
   applyColumnFormatter,
   buildColumnFormatterKey,
@@ -99,8 +106,22 @@ import {
   type ColumnFormatterConfig,
   type DateTimeFormatterUnit,
 } from "@/lib/columnFormatter";
+import { temporalCellEditorKind, type TemporalCellEditorKind } from "@/lib/dataGridTemporalEditor";
 import { isCancelSearchShortcut, isFocusSearchShortcut } from "@/lib/keyboardShortcuts";
 import { dataGridHeaderContentWidth, scrollbarGutterWidth } from "@/lib/dataGridScrollGutter";
+import { dataGridSaveActionMode, dataGridSaveToolbarState } from "@/lib/dataGridSaveUi";
+import { appendColumnValueFilterCondition, buildColumnValueFilterCondition } from "@/lib/dataGridColumnFilter";
+import {
+  MAX_RESULT_PAGE_SIZE,
+  MIN_RESULT_PAGE_SIZE,
+  normalizeResultPageSize,
+  resultPageSizeMenuOptions,
+} from "@/lib/paginationPageSize";
+import {
+  filterColumnVisibilityOptions,
+  nextHiddenColumnIndexes,
+  visibleColumnIndexesForFilter,
+} from "@/lib/dataGridColumnVisibility";
 
 import { useToast } from "@/composables/useToast";
 import { useDataGridExport } from "@/composables/useDataGridExport";
@@ -248,6 +269,11 @@ function typeColorClass(t: string): string {
 const contextCell = ref<{ rowId: number; rowIndex: number; col: number } | null>(null);
 const detailCell = ref<{ rowIndex: number; col: number } | null>(null);
 const showCellDetail = ref(false);
+const detailWidth = ref(320);
+const isResizingDetail = ref(false);
+const imagePreviewOpen = ref(false);
+const imagePreviewSrc = ref("");
+const imagePreviewTitle = ref("");
 const transposeRowIndex = ref<number | null>(null);
 const showTranspose = ref(false);
 const transposeScrollRef = ref<HTMLElement | { $el?: HTMLElement }>();
@@ -398,6 +424,23 @@ const localFilterAllVisibleSelected = computed(() => {
   return localFilterOptions.value.every((option) => draft.values.has(option.key));
 });
 
+const localFilterTypedValue = computed(() => localFilterSearch.value.trim());
+
+const localFilterDraftIsAllSelected = computed(() => {
+  const draft = localFilterDraft.value;
+  if (!draft) return false;
+  const allKeys = localFilterAllOptions.value.map((option) => option.key);
+  return allKeys.length > 0 && allKeys.every((key) => draft.values.has(key));
+});
+
+const canApplyTypedLocalFilterValue = computed(() => {
+  const draft = localFilterDraft.value;
+  const typed = localFilterTypedValue.value;
+  if (!draft || !typed || !canUseWhereSearch.value) return false;
+  const normalized = typed.toLowerCase();
+  return !localFilterAllOptions.value.some((option) => option.label.toLowerCase() === normalized);
+});
+
 function openLocalFilter(colIdx: number) {
   localFilterSearch.value = "";
   const allKeys = buildLocalFilterOptions(colIdx).map((option) => option.key);
@@ -540,8 +583,7 @@ function selectCustomFormatter(value: string) {
 }
 
 function createCustomFormatterId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `fmt_${crypto.randomUUID()}`;
-  return `fmt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  return `fmt_${uuid()}`;
 }
 
 function formatterPreviewRows(columnIndex: number) {
@@ -581,9 +623,17 @@ function toggleAllLocalFilterOptions() {
   localFilterDraft.value = { ...draft, values: next };
 }
 
-function applyLocalFilter() {
+async function applyLocalFilter() {
   const draft = localFilterDraft.value;
   if (!draft) return;
+  if (
+    canApplyTypedLocalFilterValue.value &&
+    localFilterDraftIsAllSelected.value &&
+    localFilterOptions.value.length === 0
+  ) {
+    await applyTypedLocalFilterValue();
+    return;
+  }
   const allKeys = new Set(localFilterAllOptions.value.map((option) => option.key));
   const next = { ...localColumnFilters.value };
   let selected = draft.values;
@@ -599,6 +649,26 @@ function applyLocalFilter() {
   localColumnFilters.value = next;
   closeLocalFilter();
   resetGridVerticalScroll();
+}
+
+async function applyTypedLocalFilterValue() {
+  const draft = localFilterDraft.value;
+  if (!draft) return;
+  const columnName = props.result.columns[draft.columnIndex];
+  if (!columnName) return;
+  const condition = buildColumnValueFilterCondition({
+    databaseType: props.databaseType,
+    columnName,
+    columnInfo: props.tableMeta?.columns.find((column) => column.name === columnName),
+    rawValue: localFilterTypedValue.value,
+  });
+  if (!condition) return;
+  const next = { ...localColumnFilters.value };
+  delete next[draft.columnIndex];
+  localColumnFilters.value = next;
+  whereFilterInput.value = appendColumnValueFilterCondition(whereFilterInput.value, condition);
+  closeLocalFilter();
+  await applyWhereFilter();
 }
 
 function clearLocalFilter(colIdx?: number) {
@@ -972,16 +1042,40 @@ const rowStatusFilter = ref<RowStatusFilter>("all");
 const gridRef = ref<HTMLDivElement>();
 const headerRef = ref<HTMLDivElement>();
 const gridScrollbarGutter = ref(0);
-const visibleColumnIndexes = computed(() =>
+const hiddenColumnIndexes = ref<Set<number>>(new Set());
+const displayableColumnIndexes = computed(() =>
   props.result.columns
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => !isHiddenGridColumn(props.databaseType, column, props.tableMeta?.primaryKeys ?? []))
     .map(({ index }) => index),
 );
+const visibleColumnIndexes = computed(() =>
+  visibleColumnIndexesForFilter(displayableColumnIndexes.value, hiddenColumnIndexes.value),
+);
 const visibleColumns = computed(() => visibleColumnIndexes.value.map((index) => props.result.columns[index]));
 const visibleRows = computed(() =>
   props.result.rows.map((row) => visibleColumnIndexes.value.map((index) => row[index])),
 );
+const visibleColumnCount = computed(() => visibleColumnIndexes.value.length);
+const displayableColumnCount = computed(() => displayableColumnIndexes.value.length);
+const hiddenColumnCount = computed(() => displayableColumnCount.value - visibleColumnCount.value);
+function filteredColumnVisibilityOptions(query: string) {
+  const displayable = new Set(displayableColumnIndexes.value);
+  return filterColumnVisibilityOptions(props.result.columns, query).filter((option) => displayable.has(option.index));
+}
+function isColumnVisible(columnIndex: number): boolean {
+  return !hiddenColumnIndexes.value.has(columnIndex);
+}
+function toggleColumnVisibility(columnIndex: number) {
+  hiddenColumnIndexes.value = nextHiddenColumnIndexes({
+    columnIndex,
+    hiddenIndexes: hiddenColumnIndexes.value,
+    totalColumns: displayableColumnCount.value,
+  });
+}
+function showAllColumns() {
+  hiddenColumnIndexes.value = new Set();
+}
 const firstVisibleColumnIndex = computed(() => visibleColumnIndexes.value[0] ?? 0);
 function actualColumnIndex(visibleColumnIndex: number): number {
   return visibleColumnIndexes.value[visibleColumnIndex] ?? visibleColumnIndex;
@@ -1025,23 +1119,39 @@ watch(
   () => props.result,
   () => {
     localColumnFilters.value = {};
+    hiddenColumnIndexes.value = new Set();
     closeLocalFilter();
   },
 );
 
 // --- Pagination ---
-const pageSize = ref(settingsStore.editorSettings.pageSize);
+const pageSize = ref(normalizeResultPageSize(settingsStore.editorSettings.pageSize));
 const currentPage = ref(1);
+const pageSizeOptions = computed(() => resultPageSizeMenuOptions(pageSize.value));
+const customPageSizeInput = ref(String(pageSize.value));
+watch(pageSize, (value) => {
+  customPageSizeInput.value = String(value);
+});
+watch(
+  () => settingsStore.editorSettings.pageSize,
+  (value) => {
+    pageSize.value = normalizeResultPageSize(value, pageSize.value);
+  },
+);
 watch(
   () => [props.pageOffset, props.pageLimit],
   ([offset, limit]) => {
     if (typeof offset !== "number" || typeof limit !== "number" || limit <= 0) return;
-    pageSize.value = limit;
-    currentPage.value = Math.floor(offset / limit) + 1;
+    const normalizedLimit = normalizeResultPageSize(limit);
+    pageSize.value = normalizedLimit;
+    currentPage.value = Math.floor(offset / normalizedLimit) + 1;
   },
 );
 const canGoNextPage = computed(() => props.result.has_more === true || props.result.rows.length >= pageSize.value);
 const canJumpLastPage = computed(() => canGoNextPage.value && (!!props.tableMeta || !!props.countSql));
+const showTruncationWarning = computed(
+  () => props.result.truncated === true && typeof props.pageLimit !== "number" && props.result.has_more !== true,
+);
 const isResultsContext = computed(() => props.context === "results");
 const resultEditStatus = computed(() => {
   if (!isResultsContext.value || !hasData.value) return null;
@@ -1132,11 +1242,16 @@ function nextPage() {
   emit("paginate", (currentPage.value - 1) * pageSize.value, pageSize.value, currentWhereInput(), currentOrderBy());
 }
 function changePageSize(size: number) {
-  pageSize.value = size;
-  settingsStore.updateEditorSettings({ pageSize: size });
+  const normalizedSize = normalizeResultPageSize(size);
+  pageSize.value = normalizedSize;
+  settingsStore.updateEditorSettings({ pageSize: normalizedSize });
   currentPage.value = 1;
   resetGridVerticalScroll(true);
-  emit("paginate", 0, size, currentWhereInput(), currentOrderBy());
+  emit("paginate", 0, normalizedSize, currentWhereInput(), currentOrderBy());
+}
+
+function applyCustomPageSize() {
+  changePageSize(normalizeResultPageSize(customPageSizeInput.value, pageSize.value));
 }
 
 async function lastPage() {
@@ -1223,6 +1338,7 @@ const {
   startEdit,
   commitEdit,
   applyCellValue,
+  cancelEdit,
   onEditKeydown,
   addRow,
   cloneRow,
@@ -1245,6 +1361,21 @@ const {
   cleanupFrames,
 } = editor;
 
+const saveActionMode = computed(() =>
+  dataGridSaveActionMode({
+    pendingChangeCount: pendingChangeCount.value,
+    useTransaction: !!useTransaction.value,
+  }),
+);
+const saveToolbarState = computed(() =>
+  dataGridSaveToolbarState({
+    editable: props.editable,
+    hasSaveTarget: !!props.tableMeta || !!props.customSave,
+    hasPendingChanges: hasPendingChanges.value,
+    isSaving: isSaving.value,
+  }),
+);
+
 function canEditRowItem(item: RowItem | undefined): boolean {
   return !!props.editable && !!item && !item.isDeleted && (item.isNew || canEditExistingRows.value);
 }
@@ -1256,6 +1387,16 @@ function canEditCellItem(item: RowItem | undefined, columnIndex: number): boolea
     if (isTdengineExistingRowReadonlyColumn(props.databaseType, column, props.tableMeta?.columns ?? [])) return false;
   }
   return true;
+}
+
+function tableColumnForGridColumn(columnIndex: number): ColumnInfo | undefined {
+  const columnName = props.sourceColumns?.[columnIndex] ?? props.result.columns[columnIndex];
+  if (!columnName) return undefined;
+  return props.tableMeta?.columns.find((column) => column.name.toLowerCase() === columnName.toLowerCase());
+}
+
+function temporalEditorKindForColumn(columnIndex: number): TemporalCellEditorKind | undefined {
+  return temporalCellEditorKind(tableColumnForGridColumn(columnIndex)?.data_type, props.databaseType);
 }
 
 function canDeleteRowItem(item: RowItem | undefined): boolean {
@@ -1566,6 +1707,7 @@ const activeCellDetail = computed(() => {
     value,
     rawValue,
     displayValue,
+    imagePreviewUrl: cellImagePreviewUrl(value),
     length: value === null ? 0 : String(value).length,
     formattedJson,
     isEditable: canEditCellItem(item, cell.col),
@@ -1864,6 +2006,12 @@ function showCellDetails(rowIndex: number, colIndex: number) {
   showCellDetail.value = true;
 }
 
+function openImagePreview(src: string, title: string) {
+  imagePreviewSrc.value = src;
+  imagePreviewTitle.value = title;
+  imagePreviewOpen.value = true;
+}
+
 function eventTargetAllowsNativeClipboard(event: KeyboardEvent): boolean {
   const target = event.target as HTMLElement | null;
   return !!target?.closest("input, textarea, [contenteditable='true'], [role='textbox']");
@@ -2019,24 +2167,23 @@ function scrollTransposeRecordIntoView(rowIndex: number) {
   });
 }
 
-function openTranspose(rowIndex: number) {
-  transposeRowIndex.value = rowIndex;
-  showTranspose.value = true;
-  showCellDetail.value = false;
-  nextTick(updateTransposeViewport);
-  scrollTransposeRecordIntoView(rowIndex);
-}
-
 function openContextTranspose() {
   if (!contextCell.value) return;
-  openTranspose(
-    transposeAnchorRowIndex({
-      requestedRowIndex: contextCell.value.rowIndex,
-      rowIds: displayItems.value.map((item) => item.id),
-      selectedRowIds: selectedRowIds.value,
-      selectedRange: selectedRange.value,
-    }),
-  );
+  const next = nextContextTransposeState({
+    showTranspose: showTranspose.value,
+    transposeRowIndex: transposeRowIndex.value,
+    requestedRowIndex: contextCell.value.rowIndex,
+    rowIds: displayItems.value.map((item) => item.id),
+    selectedRowIds: selectedRowIds.value,
+    selectedRange: selectedRange.value,
+  });
+  transposeRowIndex.value = next.transposeRowIndex;
+  showTranspose.value = next.showTranspose;
+  if (next.showTranspose) {
+    showCellDetail.value = false;
+    nextTick(updateTransposeViewport);
+    if (next.transposeRowIndex !== null) scrollTransposeRecordIntoView(next.transposeRowIndex);
+  }
 }
 
 function toggleTranspose(rowIndex: number) {
@@ -2114,6 +2261,8 @@ const ddlWrap = ref(true);
 const isResizingDdl = ref(false);
 let ddlResizeStartX = 0;
 let ddlResizeStartWidth = 0;
+let detailResizeStartX = 0;
+let detailResizeStartWidth = 0;
 const indexes = ref<IndexInfo[]>([]);
 const indexesLoaded = ref(false);
 const indexesLoading = ref(false);
@@ -2129,6 +2278,10 @@ const triggersError = ref("");
 
 const ddlDrawerStyle = computed(() => ({
   width: `${ddlWidth.value}px`,
+}));
+
+const detailDrawerStyle = computed(() => ({
+  width: `${detailWidth.value}px`,
 }));
 
 const tableInfoTabs = computed(
@@ -2296,6 +2449,28 @@ function onDdlResizeEnd() {
   window.removeEventListener("mouseup", onDdlResizeEnd);
 }
 
+function onDetailResizeStart(event: MouseEvent) {
+  isResizingDetail.value = true;
+  detailResizeStartX = event.clientX;
+  detailResizeStartWidth = detailWidth.value;
+  document.body.classList.add("select-none", "cursor-col-resize");
+  window.addEventListener("mousemove", onDetailResizeMove);
+  window.addEventListener("mouseup", onDetailResizeEnd);
+}
+
+function onDetailResizeMove(event: MouseEvent) {
+  if (!isResizingDetail.value) return;
+  const nextWidth = detailResizeStartWidth + detailResizeStartX - event.clientX;
+  detailWidth.value = Math.min(Math.max(nextWidth, 260), 900);
+}
+
+function onDetailResizeEnd() {
+  isResizingDetail.value = false;
+  document.body.classList.remove("select-none", "cursor-col-resize");
+  window.removeEventListener("mousemove", onDetailResizeMove);
+  window.removeEventListener("mouseup", onDetailResizeEnd);
+}
+
 const loadingElapsed = ref(0);
 let _loadingTimer: ReturnType<typeof setInterval> | undefined;
 let _loadingStart = 0;
@@ -2317,6 +2492,7 @@ watch(
 onUnmounted(() => {
   cleanupFrames();
   onDdlResizeEnd();
+  onDetailResizeEnd();
   finishCellSelection();
   clearTimeout(_searchTimer);
   clearInterval(_loadingTimer);
@@ -2363,6 +2539,13 @@ defineExpose({
   showTableInfo,
   toggleTableInfo,
   focusSearch,
+  visibleColumnCount,
+  displayableColumnCount,
+  hiddenColumnCount,
+  filteredColumnVisibilityOptions,
+  isColumnVisible,
+  toggleColumnVisibility,
+  showAllColumns,
 });
 </script>
 
@@ -2578,37 +2761,44 @@ defineExpose({
                 <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 {{ t("grid.transactionActive") }}
               </span>
-              <Button
-                v-if="useTransaction"
-                :variant="transactionActive ? 'default' : 'secondary'"
-                size="sm"
-                class="h-5 text-xs px-1.5"
-                :disabled="!transactionActive || isSaving"
-                @click="onToolbarCommit"
-              >
-                <Loader2 v-if="isSaving" class="w-3 h-3 mr-1 animate-spin" />
-                <Save v-else class="w-3 h-3 mr-1" />
-                {{ t("grid.commit") }}
-              </Button>
-              <Button
-                v-if="useTransaction"
-                variant="outline"
-                size="sm"
-                class="h-5 text-xs px-1.5"
-                :disabled="!transactionActive"
-                @click="onToolbarRollback"
-              >
-                <RotateCcw class="w-3 h-3 mr-1" />
-                {{ t("grid.rollback") }}
-              </Button>
+              <template v-if="saveToolbarState.showActions">
+                <Tooltip>
+                  <TooltipTrigger as-child>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      class="h-5 text-xs px-1.5 shrink-0"
+                      :disabled="saveToolbarState.actionsDisabled"
+                      @click="onToolbarCommit"
+                    >
+                      <Loader2 v-if="isSaving" class="w-3 h-3 mr-1 animate-spin" />
+                      <Save v-else class="w-3 h-3 mr-1" />
+                      {{ t(saveActionMode.labelKey, { count: pendingChangeCount }) }}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" class="max-w-sm">
+                    {{ t(saveActionMode.tooltipKey, { count: pendingChangeCount }) }}
+                  </TooltipContent>
+                </Tooltip>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="h-5 text-xs px-1.5 shrink-0"
+                  :disabled="saveToolbarState.actionsDisabled"
+                  @click="useTransaction ? onToolbarRollback() : discardChanges()"
+                >
+                  <RotateCcw class="w-3 h-3 mr-1" />
+                  {{ t(saveActionMode.secondaryActionKey) }}
+                </Button>
+              </template>
             </div>
           </div>
           <!-- Truncation warning banner -->
           <div
-            v-if="result.truncated"
+            v-if="showTruncationWarning"
             class="shrink-0 px-3 py-1 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5"
           >
-            <span>{{ t("grid.truncatedHint") }}</span>
+            <span>{{ t("grid.truncatedHint", { count: pageSize }) }}</span>
           </div>
           <!-- Content area: table + DDL drawer -->
           <div class="flex-1 flex min-h-0 overflow-hidden">
@@ -3149,8 +3339,19 @@ defineExpose({
                                       })
                                     }}
                                   </div>
+                                  <button
+                                    v-if="canApplyTypedLocalFilterValue"
+                                    type="button"
+                                    class="grid w-full grid-cols-[2rem_minmax(0,1fr)] items-center px-3 py-2 text-left text-sm text-blue-700 hover:bg-sky-50"
+                                    @click="applyTypedLocalFilterValue"
+                                  >
+                                    <Search class="h-4 w-4" />
+                                    <span class="truncate font-mono">
+                                      {{ t("grid.filterTypedValue", { value: localFilterTypedValue }) }}
+                                    </span>
+                                  </button>
                                   <div
-                                    v-if="localFilterOptions.length === 0"
+                                    v-if="localFilterOptions.length === 0 && !canApplyTypedLocalFilterValue"
                                     class="px-3 py-8 text-center text-sm text-slate-500"
                                   >
                                     {{ t("grid.noSearchResults") }}
@@ -3311,7 +3512,15 @@ defineExpose({
                         @contextmenu="onCellContext(item.id, index, actualColIdx, visibleColIdx)"
                       >
                         <template v-if="editingCell?.rowId === item.id && editingCell?.col === actualColIdx">
+                          <TemporalCellEditor
+                            v-if="temporalEditorKindForColumn(actualColIdx)"
+                            v-model="editValue"
+                            :kind="temporalEditorKindForColumn(actualColIdx)!"
+                            @cancel="cancelEdit"
+                            @commit="commitEdit"
+                          />
                           <input
+                            v-else
                             v-model="editValue"
                             autocapitalize="off"
                             autocorrect="off"
@@ -3501,8 +3710,14 @@ defineExpose({
             <!-- Cell Detail Drawer -->
             <div
               v-if="showCellDetail && activeCellDetail"
-              class="relative w-80 shrink-0 border-l flex flex-col bg-background min-w-0"
+              class="relative shrink-0 border-l flex flex-col bg-background min-w-0"
+              :class="{ 'detail-drawer-resizing': isResizingDetail }"
+              :style="detailDrawerStyle"
             >
+              <div
+                class="absolute left-0 top-0 bottom-0 z-20 w-1.5 -translate-x-1/2 cursor-col-resize hover:bg-primary/30"
+                @mousedown.prevent="onDetailResizeStart"
+              />
               <div class="h-9 flex items-center gap-2 px-3 border-b shrink-0 bg-muted/20">
                 <Info class="w-3.5 h-3.5 text-muted-foreground" />
                 <span class="text-xs font-medium flex-1 min-w-0 truncate">{{ t("grid.cellDetails") }}</span>
@@ -3546,6 +3761,24 @@ defineExpose({
                 </div>
                 <div class="space-y-1">
                   <div class="text-muted-foreground">{{ t("grid.cellValue") }}</div>
+                  <div v-if="activeCellDetail.imagePreviewUrl && !isEditingDetail" class="space-y-1.5">
+                    <div class="text-muted-foreground">{{ t("grid.imagePreview") }}</div>
+                    <a
+                      :href="activeCellDetail.imagePreviewUrl"
+                      role="button"
+                      class="block overflow-hidden rounded border bg-muted/20"
+                      @click.prevent="openImagePreview(activeCellDetail.imagePreviewUrl, activeCellDetail.column)"
+                    >
+                      <img
+                        :src="activeCellDetail.imagePreviewUrl"
+                        :alt="activeCellDetail.column"
+                        loading="lazy"
+                        decoding="async"
+                        referrerpolicy="no-referrer"
+                        class="max-h-72 w-full object-contain"
+                      />
+                    </a>
+                  </div>
                   <template v-if="isEditingDetail">
                     <textarea
                       v-model="detailEditValue"
@@ -3744,21 +3977,15 @@ defineExpose({
     <!-- Bottom status bar -->
     <div class="flex items-center gap-2 px-3 py-1 border-t text-xs text-muted-foreground bg-muted/30 shrink-0">
       <span v-if="hasData">{{ t("grid.totalRows", { count: result.rows.length }) }}</span>
-      <span v-if="result.truncated" class="text-amber-500 text-xs ml-1">(truncated)</span>
+      <span v-if="showTruncationWarning" class="text-amber-500 text-xs ml-1">(truncated)</span>
       <span v-if="!hasData">{{ t("grid.rowsAffected", { count: result.affected_rows }) }}</span>
       <span>{{ result.execution_time_ms }}ms</span>
       <span v-if="selectedRowCount > 0 || hasCellSelection" class="text-foreground">{{ selectionSummary }}</span>
 
-      <template v-if="editable && (tableMeta || customSave) && !useTransaction">
+      <template v-if="editable && (tableMeta || customSave)">
         <span v-if="hasPendingChanges" class="ml-2 text-foreground">
           {{ t("grid.pendingChanges", { count: pendingChangeCount }) }}
         </span>
-        <Button v-if="hasPendingChanges" variant="default" size="sm" class="h-5 text-xs ml-2" @click="saveChanges">
-          <Save class="w-3 h-3 mr-1" /> {{ t("grid.save") }}
-        </Button>
-        <Button v-if="hasPendingChanges" variant="ghost" size="sm" class="h-5 text-xs" @click="discardChanges">
-          {{ t("grid.discard") }}
-        </Button>
       </template>
 
       <span class="ml-auto flex items-center gap-1">
@@ -3769,10 +3996,37 @@ defineExpose({
               {{ pageSize }}{{ t("grid.rowsPerPageShort") }}
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem v-for="s in [50, 100, 500, 1000]" :key="s" @click="changePageSize(s)">
+          <DropdownMenuContent align="end" class="w-36">
+            <DropdownMenuItem v-for="s in pageSizeOptions" :key="s" @click="changePageSize(s)">
               {{ s }} {{ t("grid.rowsPerPageShort") }}
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel class="text-xs">{{ t("grid.customRowsPerPage") }}</DropdownMenuLabel>
+            <div class="flex items-center gap-1 px-2 pb-2" @click.stop @keydown.stop>
+              <Input
+                v-model="customPageSizeInput"
+                type="number"
+                inputmode="numeric"
+                :min="MIN_RESULT_PAGE_SIZE"
+                :max="MAX_RESULT_PAGE_SIZE"
+                class="h-7 w-24 text-xs tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                @keydown.enter.prevent.stop="applyCustomPageSize"
+              />
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    class="h-7 w-7 shrink-0"
+                    :aria-label="t('grid.applyPageSize')"
+                    @click.stop="applyCustomPageSize"
+                  >
+                    <Check class="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{{ t("grid.applyPageSize") }}</TooltipContent>
+              </Tooltip>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
         <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="currentPage <= 1" @click="firstPage">
@@ -3840,6 +4094,7 @@ defineExpose({
       "
       @confirm="confirmDeleteRow"
     />
+    <ImagePreviewDialog v-model:open="imagePreviewOpen" :src="imagePreviewSrc" :title="imagePreviewTitle" />
   </div>
 </template>
 
@@ -3878,6 +4133,10 @@ defineExpose({
 }
 
 .ddl-drawer-resizing {
+  transition: none;
+}
+
+.detail-drawer-resizing {
   transition: none;
 }
 

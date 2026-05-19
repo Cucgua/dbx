@@ -53,6 +53,11 @@ export interface TransposeAnchorOptions {
   selectedRange: TransposeSelectionRange | null;
 }
 
+export interface ContextTransposeStateOptions extends TransposeAnchorOptions {
+  showTranspose: boolean;
+  transposeRowIndex: number | null;
+}
+
 export interface TransposeFieldWidthOptions {
   minWidth?: number;
   maxWidth?: number;
@@ -77,6 +82,11 @@ export function nextTransposeState(
     return { showTranspose: false, transposeRowIndex: null };
   }
   return { showTranspose: true, transposeRowIndex: requestedRowIndex };
+}
+
+export function nextContextTransposeState(options: ContextTransposeStateOptions): DataGridTransposeState {
+  const anchorRowIndex = transposeAnchorRowIndex(options);
+  return nextTransposeState(options.showTranspose, options.transposeRowIndex, anchorRowIndex);
 }
 
 export function buildTransposeRows<T>(options: BuildTransposeRowsOptions<T>): Array<DataGridTransposeRow<T>> {

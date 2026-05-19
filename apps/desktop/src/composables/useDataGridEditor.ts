@@ -1,4 +1,4 @@
-import { ref, computed, nextTick, type ComputedRef, type Ref } from "vue";
+import { ref, computed, nextTick, watch, type ComputedRef, type Ref } from "vue";
 import * as api from "@/lib/api";
 import {
   buildDataGridRollbackStatements,
@@ -703,6 +703,15 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
     editingCell.value = null;
     exitTransaction();
   }
+
+  // Pending changes reference rows by sourceIndex. When the result set changes
+  // (e.g. different WHERE clause, pagination), stale indices point to wrong rows.
+  watch(
+    () => result.value.rows,
+    () => {
+      discardChanges();
+    },
+  );
 
   return {
     editingCell,

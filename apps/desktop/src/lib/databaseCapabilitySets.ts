@@ -10,6 +10,15 @@ export const SCHEMA_AWARE_TYPES = new Set<DatabaseType>([
   "kingbase",
   "highgo",
   "vastbase",
+  "yashandb",
+  "databricks",
+  "saphana",
+  "teradata",
+  "vertica",
+  "exasol",
+  "opengauss",
+  "oceanbase-oracle",
+  "gbase",
   "jdbc",
   "h2",
   "snowflake",
@@ -33,6 +42,16 @@ export const DIAGRAM_SUPPORTED_TYPES = new Set<DatabaseType>([
   "highgo",
   "vastbase",
   "goldendb",
+  "yashandb",
+  "databricks",
+  "saphana",
+  "teradata",
+  "vertica",
+  "firebird",
+  "exasol",
+  "opengauss",
+  "oceanbase-oracle",
+  "gbase",
   "access",
   "h2",
   "db2",
@@ -53,6 +72,16 @@ export const DATABASE_SEARCH_SUPPORTED_TYPES = new Set<DatabaseType>([
   "highgo",
   "vastbase",
   "goldendb",
+  "yashandb",
+  "databricks",
+  "saphana",
+  "teradata",
+  "vertica",
+  "firebird",
+  "exasol",
+  "opengauss",
+  "oceanbase-oracle",
+  "gbase",
   "access",
   "h2",
   "snowflake",
@@ -85,10 +114,32 @@ export const TABLE_IMPORT_SUPPORTED_TYPES = new Set<DatabaseType>([
   "highgo",
   "vastbase",
   "goldendb",
+  "yashandb",
   "access",
 ]);
 
-export const TABLE_STRUCTURE_SUPPORTED_TYPES = new Set<DatabaseType>(["mysql", "postgres", "sqlite", "sqlserver"]);
+export const TABLE_STRUCTURE_SUPPORTED_TYPES = new Set<DatabaseType>([
+  "mysql",
+  "postgres",
+  "sqlite",
+  "duckdb",
+  "clickhouse",
+  "sqlserver",
+  "oracle",
+  "doris",
+  "starrocks",
+  "redshift",
+  "dameng",
+  "gaussdb",
+  "kingbase",
+  "highgo",
+  "vastbase",
+  "goldendb",
+  "opengauss",
+  "oceanbase-oracle",
+  "h2",
+  "sundb",
+]);
 
 export const CREATE_DATABASE_SUPPORTED_TYPES = new Set<DatabaseType>([
   "mysql",
@@ -98,6 +149,8 @@ export const CREATE_DATABASE_SUPPORTED_TYPES = new Set<DatabaseType>([
   "oracle",
   "dameng",
   "gaussdb",
+  "opengauss",
+  "oceanbase-oracle",
   "doris",
   "starrocks",
   "redshift",
@@ -112,9 +165,17 @@ export const FIELD_LINEAGE_SUPPORTED_TYPES = new Set<DatabaseType>([
   "redshift",
   "dameng",
   "gaussdb",
+  "opengauss",
+  "oceanbase-oracle",
 ]);
 
-export const SINGLE_DATABASE_TYPES = new Set<DatabaseType>(["oracle", "dameng", "access"]);
+export const SINGLE_DATABASE_TYPES = new Set<DatabaseType>([
+  "oracle",
+  "dameng",
+  "firebird",
+  "oceanbase-oracle",
+  "access",
+]);
 
 export const FETCH_FIRST_TYPES = new Set<DatabaseType>(["oracle", "dameng"]);
 
@@ -126,20 +187,39 @@ export const TREE_SCHEMA_TYPES = new Set<DatabaseType>([
   "kingbase",
   "highgo",
   "vastbase",
+  "yashandb",
+  "databricks",
+  "saphana",
+  "teradata",
+  "vertica",
+  "exasol",
+  "opengauss",
+  "oceanbase-oracle",
+  "gbase",
   "jdbc",
   "trino",
   "h2",
   "tdengine",
 ]);
 
-export const PG_LIKE_STRUCTURE_TYPES = new Set<DatabaseType>(["postgres", "redshift", "gaussdb"]);
+export const PG_LIKE_STRUCTURE_TYPES = new Set<DatabaseType>(["postgres", "redshift", "gaussdb", "opengauss"]);
 
 export const AGENT_DRIVER_TYPES = new Set<DatabaseType>([
   "dameng",
   "kingbase",
   "highgo",
   "vastbase",
+  "yashandb",
   "goldendb",
+  "databricks",
+  "saphana",
+  "teradata",
+  "vertica",
+  "firebird",
+  "exasol",
+  "opengauss",
+  "oceanbase-oracle",
+  "gbase",
   "access",
   "oracle",
   "h2",
@@ -167,6 +247,8 @@ export const TRANSFER_SQL_TYPES = new Set<DatabaseType>([
   "duckdb",
   "dameng",
   "gaussdb",
+  "opengauss",
+  "oceanbase-oracle",
 ]);
 
 export const DIAGRAM_SQL_TYPES = new Set<DatabaseType>([
@@ -178,4 +260,6 @@ export const DIAGRAM_SQL_TYPES = new Set<DatabaseType>([
   "redshift",
   "dameng",
   "gaussdb",
+  "opengauss",
+  "oceanbase-oracle",
 ]);

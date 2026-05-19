@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import RedisValueViewer from "./RedisValueViewer.vue";
 import * as api from "@/lib/api";
-import type { RedisKeyInfo } from "@/lib/api";
+import type { RedisKeyInfo, RedisScanResult } from "@/lib/api";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
@@ -41,6 +41,8 @@ const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const settingsStore = useSettingsStore();
 
+type RedisSearchMode = "key" | "value";
+
 const props = defineProps<{
   connectionId: string;
   db: number;
@@ -52,6 +54,7 @@ const loading = ref(false);
 const loadingMore = ref(false);
 const rootRef = ref<HTMLElement>();
 const searchPattern = ref("*");
+const searchMode = ref<RedisSearchMode>("key");
 const selectedKeyRaw = ref<string | null>(null);
 const hasMore = ref(false);
 const scanCursor = ref(0);
@@ -68,13 +71,23 @@ const commandText = ref("");
 const commandResult = ref<any>(null);
 const commandError = ref("");
 const commandRunning = ref(false);
+let searchRequestId = 0;
 
 const keyGridStyle = {
   gridTemplateColumns: "minmax(12rem, 0.35fr) 80px 1fr 60px 60px",
 };
 
-const effectivePattern = computed(() => searchPattern.value.trim() || "*");
-const isSearchMode = computed(() => effectivePattern.value !== "*");
+const valueQuery = computed(() => searchPattern.value.trim());
+const effectivePattern = computed(() => (searchMode.value === "key" ? searchPattern.value.trim() || "*" : "*"));
+const isSearchMode = computed(() =>
+  searchMode.value === "key" ? effectivePattern.value !== "*" : valueQuery.value !== "",
+);
+const searchPlaceholder = computed(() =>
+  searchMode.value === "key" ? t("redis.pattern") : t("redis.valueSearchPlaceholder"),
+);
+const loadingEmptyText = computed(() =>
+  searchMode.value === "value" && valueQuery.value ? t("redis.searchingValues") : t("redis.loadingKeys"),
+);
 const selectedKey = computed(() => flatKeys.value.find((key) => key.key_raw === selectedKeyRaw.value) ?? null);
 const dangerDetails = computed(() => {
   if (!pendingDanger.value) return "";
@@ -124,14 +137,14 @@ function rebuildTree(expandAll = false) {
   }
 }
 
-async function scanNextPage() {
-  const result = await api.redisScanKeys(
-    props.connectionId,
-    props.db,
-    scanCursor.value,
-    effectivePattern.value,
-    settingsStore.editorSettings.redisScanPageSize,
-  );
+async function fetchScanPage(): Promise<RedisScanResult> {
+  const pageSize = settingsStore.editorSettings.redisScanPageSize;
+  return searchMode.value === "value"
+    ? await api.redisScanValues(props.connectionId, props.db, scanCursor.value, "*", valueQuery.value, pageSize)
+    : await api.redisScanKeys(props.connectionId, props.db, scanCursor.value, effectivePattern.value, pageSize);
+}
+
+function appendScanResult(result: RedisScanResult) {
   const existingKeys = new Set(flatKeys.value.map((key) => key.key_raw));
   flatKeys.value = [...flatKeys.value, ...result.keys.filter((key) => !existingKeys.has(key.key_raw))];
   scanCursor.value = result.cursor;
@@ -143,24 +156,51 @@ async function scanNextPage() {
   });
 }
 
+async function scanNextPage(requestId = searchRequestId): Promise<boolean> {
+  const result = await fetchScanPage();
+  if (requestId !== searchRequestId) return false;
+  appendScanResult(result);
+  return true;
+}
+
+async function streamValueSearch(requestId: number) {
+  while (requestId === searchRequestId && searchMode.value === "value" && valueQuery.value && hasMore.value) {
+    const applied = await scanNextPage(requestId);
+    if (!applied) return;
+  }
+}
+
 async function loadKeys() {
+  const requestId = ++searchRequestId;
   loading.value = true;
   flatKeys.value = [];
+  treeKeys.value = [];
   selectedKeyRaw.value = null;
   checkedKeys.value = new Set();
+  expandedGroupIds.value = new Set();
   scanCursor.value = 0;
   try {
-    await scanNextPage();
+    if (searchMode.value === "value" && !valueQuery.value) {
+      hasMore.value = false;
+      return;
+    }
+    const applied = await scanNextPage(requestId);
+    if (applied && searchMode.value === "value") {
+      await streamValueSearch(requestId);
+    }
   } finally {
-    loading.value = false;
+    if (requestId === searchRequestId) {
+      loading.value = false;
+    }
   }
 }
 
 async function loadMore() {
   if (!hasMore.value || loadingMore.value) return;
+  const requestId = searchRequestId;
   loadingMore.value = true;
   try {
-    await scanNextPage();
+    await scanNextPage(requestId);
   } finally {
     loadingMore.value = false;
   }
@@ -341,6 +381,15 @@ function onSearchInput() {
   searchTimer = setTimeout(loadKeys, 400);
 }
 
+function setSearchMode(mode: RedisSearchMode) {
+  if (searchMode.value === mode) return;
+  searchMode.value = mode;
+  if (mode === "key" && !searchPattern.value.trim()) {
+    searchPattern.value = "*";
+  }
+  void loadKeys();
+}
+
 function getSearchInput(): HTMLInputElement | null {
   return rootRef.value?.querySelector<HTMLInputElement>("[data-redis-search-input]") ?? null;
 }
@@ -360,11 +409,12 @@ function onSearchKeydown(event: KeyboardEvent) {
   }
   if (!isCancelSearchShortcut(event)) return;
   event.preventDefault();
-  searchPattern.value = "*";
+  searchPattern.value = searchMode.value === "key" ? "*" : "";
   void loadKeys();
 }
 
 onUnmounted(() => {
+  searchRequestId++;
   if (searchTimer) clearTimeout(searchTimer);
 });
 
@@ -381,11 +431,37 @@ defineExpose({ focusSearch });
         <!-- Toolbar -->
         <div class="h-9 flex items-center gap-1 px-2 border-b shrink-0">
           <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <div class="h-6 flex rounded-md border bg-muted/30 p-0.5 shrink-0" role="group">
+            <button
+              type="button"
+              class="h-5 px-2 text-xs rounded-sm transition-colors"
+              :class="
+                searchMode === 'key'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              "
+              @click="setSearchMode('key')"
+            >
+              {{ t("redis.searchByKey") }}
+            </button>
+            <button
+              type="button"
+              class="h-5 px-2 text-xs rounded-sm transition-colors"
+              :class="
+                searchMode === 'value'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              "
+              @click="setSearchMode('value')"
+            >
+              {{ t("redis.searchByValue") }}
+            </button>
+          </div>
           <Input
             v-model="searchPattern"
             data-redis-search-input
             class="h-6 text-xs border-0 shadow-none focus-visible:ring-0"
-            :placeholder="t('redis.pattern')"
+            :placeholder="searchPlaceholder"
             @input="onSearchInput"
             @keydown="onSearchKeydown"
           />
@@ -394,7 +470,7 @@ defineExpose({ focusSearch });
             <RefreshCw v-else class="h-3 w-3" />
           </Button>
           <span class="text-xs text-muted-foreground shrink-0 ml-1">{{
-            loading && flatKeys.length === 0 ? t("redis.loadingKeys") : t("redis.keys", { count: flatKeys.length })
+            loading && flatKeys.length === 0 ? loadingEmptyText : t("redis.keys", { count: flatKeys.length })
           }}</span>
           <Button
             v-if="checkedKeys.size > 0"
@@ -407,12 +483,19 @@ defineExpose({ focusSearch });
           </Button>
         </div>
 
-        <div class="min-h-9 flex items-center gap-1 px-2 border-b shrink-0">
+        <div class="min-h-9 flex items-center gap-1 px-2 border-b bg-muted/20 shrink-0">
           <Terminal class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span
+            class="h-5 px-1.5 rounded border bg-background/70 text-[10px] font-medium uppercase tracking-wide text-muted-foreground shrink-0"
+          >
+            {{ t("redis.commandPrefix") }}
+          </span>
+          <span class="font-mono text-xs text-muted-foreground shrink-0">&gt;</span>
           <Input
             v-model="commandText"
-            class="h-6 text-xs border-0 shadow-none focus-visible:ring-0 font-mono"
-            :placeholder="t('redis.commandPlaceholder')"
+            data-redis-command-input
+            class="h-6 text-xs border-0 shadow-none focus-visible:ring-0 font-mono bg-transparent"
+            :placeholder="t('redis.commandHint')"
             @keydown.enter="executeCommand"
           />
           <Button
@@ -467,7 +550,7 @@ defineExpose({ focusSearch });
           class="flex-1 flex items-center justify-center gap-2 text-muted-foreground text-xs"
         >
           <Loader2 class="w-3.5 h-3.5 animate-spin" />
-          <span>{{ t("redis.loadingKeys") }}</span>
+          <span>{{ loadingEmptyText }}</span>
         </div>
         <RecycleScroller
           v-else
@@ -554,7 +637,13 @@ defineExpose({ focusSearch });
           </template>
         </RecycleScroller>
         <div v-if="hasMore" class="shrink-0 border-t px-2 py-1.5 flex items-center justify-center">
-          <Button variant="outline" size="sm" class="h-7 text-xs w-full" :disabled="loadingMore" @click="loadMore">
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-7 text-xs w-full"
+            :disabled="loadingMore || loading"
+            @click="loadMore"
+          >
             <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
             {{ t("redis.loadMoreKeys") }}
           </Button>

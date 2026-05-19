@@ -14,7 +14,7 @@ import {
 } from "@/lib/sqlCompletion";
 import { extractIdentifierAt, isSqlKeyword, matchTable } from "@/lib/sqlNavigation";
 import { lineColumnToOffset, parseSqlErrorLocation } from "@/lib/sqlDiagnostics";
-import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
+import { loadEditorTheme, editorFontTheme, sqlCompletionTheme } from "@/lib/editorThemes";
 import { shortcutToCodeMirrorKey } from "@/lib/shortcutRegistry";
 import type { SqlCompletionColumn } from "@/lib/sqlCompletion";
 
@@ -496,7 +496,7 @@ async function provideSqlCompletions(
             })
           : {
               label: item.label,
-              type: item.type === "keyword" ? "keyword" : item.type === "table" ? "class" : "property",
+              type: item.type,
               detail: item.detail,
               boost: item.boost,
             },
@@ -606,6 +606,7 @@ onMounted(async () => {
           async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos, context.explicit),
         ],
       }),
+      sqlCompletionTheme(EditorView),
       codeMirrorTheme.of(theme),
       closeBrackets(),
       bracketMatching(),

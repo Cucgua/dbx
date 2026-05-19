@@ -96,12 +96,17 @@ async fn ch_query_with_limit(
     resp.json::<ChJsonResult>().await.map_err(|e| format!("ClickHouse parse error: {e}"))
 }
 
-fn limited_query_result(result: ChJsonResult, execution_time_ms: u128) -> QueryResult {
+fn query_result_row_limit(max_rows: Option<usize>) -> usize {
+    max_rows.unwrap_or(MAX_ROWS).max(1)
+}
+
+fn limited_query_result(result: ChJsonResult, execution_time_ms: u128, max_rows: Option<usize>) -> QueryResult {
     let columns: Vec<String> = result.meta.iter().map(|c| c.name.clone()).collect();
     let mut rows = result.data;
-    let truncated = rows.len() > MAX_ROWS;
+    let row_limit = query_result_row_limit(max_rows);
+    let truncated = rows.len() > row_limit;
     if truncated {
-        rows.truncate(MAX_ROWS);
+        rows.truncate(row_limit);
     }
     QueryResult { columns, rows, affected_rows: 0, execution_time_ms, truncated, session_id: None, has_more: false }
 }
@@ -155,7 +160,7 @@ pub async fn list_tables(client: &ChClient, database: &str) -> Result<Vec<TableI
 
 pub async fn get_columns(client: &ChClient, database: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let sql = format!(
-        "SELECT name, type, default_kind, default_expression, is_in_primary_key \
+        "SELECT name, type, default_kind, default_expression, is_in_primary_key, comment \
          FROM system.columns WHERE database = '{}' AND table = '{}' ORDER BY position",
         database.replace('\'', "\\'"),
         table.replace('\'', "\\'")
@@ -178,7 +183,7 @@ pub async fn get_columns(client: &ChClient, database: &str, table: &str) -> Resu
                 column_default,
                 is_primary_key: is_pk,
                 extra: None,
-                comment: None,
+                comment: row.get(5).and_then(|v| v.as_str()).filter(|value| !value.is_empty()).map(str::to_string),
                 numeric_precision: None,
                 numeric_scale: None,
                 character_maximum_length: None,
@@ -188,11 +193,21 @@ pub async fn get_columns(client: &ChClient, database: &str, table: &str) -> Resu
 }
 
 pub async fn execute_query(client: &ChClient, database: &str, sql: &str) -> Result<QueryResult, String> {
+    execute_query_with_max_rows(client, database, sql, None).await
+}
+
+pub async fn execute_query_with_max_rows(
+    client: &ChClient,
+    database: &str,
+    sql: &str,
+    max_rows: Option<usize>,
+) -> Result<QueryResult, String> {
     let start = Instant::now();
+    let row_limit = query_result_row_limit(max_rows);
 
     if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH"]) {
-        let result = ch_query_with_limit(client, sql, Some(database), QueryResultLimit::Limited(MAX_ROWS + 1)).await?;
-        Ok(limited_query_result(result, start.elapsed().as_millis()))
+        let result = ch_query_with_limit(client, sql, Some(database), QueryResultLimit::Limited(row_limit + 1)).await?;
+        Ok(limited_query_result(result, start.elapsed().as_millis(), Some(row_limit)))
     } else {
         let url = build_query_url(&client.base_url, Some(database), QueryResultLimit::Unlimited);
         let req = build_request(client, client.http.post(&url).body(sql.to_string()));
@@ -239,7 +254,7 @@ mod tests {
             rows: crate::query::MAX_ROWS + 1,
         };
 
-        let result = limited_query_result(result, 12);
+        let result = limited_query_result(result, 12, None);
 
         assert_eq!(result.columns, vec!["id"]);
         assert_eq!(result.rows.len(), crate::query::MAX_ROWS);

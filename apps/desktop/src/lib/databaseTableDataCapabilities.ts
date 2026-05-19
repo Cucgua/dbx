@@ -35,6 +35,24 @@ const DEFAULT_CAPABILITY: DatabaseCapability = {
 };
 
 const DATABASE_CAPABILITY_OVERRIDES: Partial<Record<DatabaseType, Partial<DatabaseCapability>>> = {
+  sqlite: {
+    tableData: {
+      insert: true,
+      updateRequiresPrimaryKey: true,
+      deleteRequiresPrimaryKey: true,
+      requiresTransactionalTableForExistingRows: false,
+      transaction: true,
+    },
+  },
+  duckdb: {
+    tableData: {
+      insert: true,
+      updateRequiresPrimaryKey: true,
+      deleteRequiresPrimaryKey: true,
+      requiresTransactionalTableForExistingRows: false,
+      transaction: true,
+    },
+  },
   access: {
     tableData: {
       insert: true,
@@ -60,6 +78,24 @@ const DATABASE_CAPABILITY_OVERRIDES: Partial<Record<DatabaseType, Partial<Databa
       deleteRequiresPrimaryKey: true,
       requiresTransactionalTableForExistingRows: false,
       transaction: true,
+    },
+  },
+  jdbc: {
+    tableData: {
+      insert: false,
+      updateRequiresPrimaryKey: true,
+      deleteRequiresPrimaryKey: true,
+      requiresTransactionalTableForExistingRows: false,
+      transaction: false,
+    },
+  },
+  yashandb: {
+    tableData: {
+      insert: false,
+      updateRequiresPrimaryKey: true,
+      deleteRequiresPrimaryKey: true,
+      requiresTransactionalTableForExistingRows: false,
+      transaction: false,
     },
   },
   neo4j: {

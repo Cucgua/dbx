@@ -1,21 +1,28 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { useI18n } from "vue-i18n";
-import { FolderOpen, Trash2, Download, RotateCcw, Loader2, RefreshCw, Check } from "lucide-vue-next";
+import { FolderOpen, Trash2, Download, RotateCcw, Loader2, RefreshCw, Check, Clock3 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import DriverInstallProgressCircle from "@/components/config/DriverInstallProgressCircle.vue";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useToast } from "@/composables/useToast";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { countAvailableAgentDriverUpdates } from "@/lib/agentDriverUpdateBadge";
+import { countAvailableDriverUpdates } from "@/lib/agentDriverUpdateBadge";
 import type { JdbcDriverInfo, JdbcPluginStatus } from "@/types/database";
 import * as api from "@/lib/api";
+import type { AgentDriverInfo, JavaRuntimeConfig } from "@/lib/api";
+import {
+  addDriverInstallQueue,
+  driverInstallProgressPercent,
+  isDriverInstallProgressTarget,
+  removeDriverInstallQueue,
+  takeNextDriverInstallQueue,
+  type DriverInstallProgress,
+} from "@/lib/driverInstallProgressUi";
 
 const { t } = useI18n();
 const { toast } = useToast();
@@ -27,45 +34,21 @@ const emit = defineEmits<{
 
 // ──────────── Agent drivers ────────────
 
-interface AgentDriverInfo {
-  db_type: string;
-  label: string;
-  version: string;
-  size: number;
-  installed: boolean;
-  installed_version: string | null;
-  update_available: boolean;
-  jre: string;
-  jre_installed: boolean;
-}
-
-interface InstallProgress {
-  step: string;
-  downloaded?: number;
-  total?: number;
-}
-
-type JavaRuntimeMode = "managed" | "system" | "custom";
-
-interface JavaRuntimeConfig {
-  mode: JavaRuntimeMode;
-  custom_java_path: string | null;
-}
-
 const drivers = ref<AgentDriverInfo[]>([]);
 const installing = ref<string | null>(null);
 const upgradingAll = ref(false);
 const upgradingCurrent = ref("");
 const upgradingIndex = ref(0);
 const upgradingTotal = ref(0);
+const queuedDriverInstalls = ref<string[]>([]);
 const reinstallingJre = ref<string | null>(null);
 const refreshing = ref(false);
-const progress = ref<InstallProgress | null>(null);
+const progress = ref<DriverInstallProgress | null>(null);
 const javaRuntimeConfig = ref<JavaRuntimeConfig>({ mode: "managed", custom_java_path: null });
 const customJavaPath = ref("");
 const savingJavaRuntime = ref(false);
 
-let unlisten: UnlistenFn | null = null;
+let unlisten: (() => void) | null = null;
 
 const installedJres = computed(() => {
   const jreMap = new Map<string, boolean>();
@@ -95,27 +78,56 @@ const progressText = computed(() => {
   return `${prefix}${label}  ${dl} / ${total}  (${pct}%)`;
 });
 
-const progressPercent = computed(() => {
-  const p = progress.value;
-  if (!p || !p.total) return 0;
-  return Math.round(((p.downloaded ?? 0) / p.total) * 100);
-});
+const progressNumber = computed(() => driverInstallProgressPercent(progress.value));
 
 const updatableCount = computed(() => drivers.value.filter((d) => d.update_available).length);
 
 function updateAgentDrivers(nextDrivers: AgentDriverInfo[]) {
   drivers.value = nextDrivers;
-  emit("update-count-change", countAvailableAgentDriverUpdates(nextDrivers));
+  emitDriverUpdateCount();
+}
+
+function emitDriverUpdateCount() {
+  emit("update-count-change", countAvailableDriverUpdates(drivers.value, jdbcPluginStatus.value));
+}
+
+function isDriverProgressActive(dbType: string): boolean {
+  return isDriverInstallProgressTarget(dbType, {
+    installing: installing.value,
+    upgradingAll: upgradingAll.value,
+    progress: progress.value,
+  });
+}
+
+function progressTitle(fallback: string): string {
+  return progressText.value || fallback;
+}
+
+function isDriverQueued(dbType: string): boolean {
+  return queuedDriverInstalls.value.includes(dbType);
+}
+
+function canInstallOrUpdateDriver(dbType: string): boolean {
+  const driver = drivers.value.find((d) => d.db_type === dbType);
+  return Boolean(driver && (!driver.installed || driver.update_available));
+}
+
+function queueDriverInstall(dbType: string) {
+  queuedDriverInstalls.value = addDriverInstallQueue(queuedDriverInstalls.value, dbType, installing.value);
+}
+
+function removeQueuedDriverInstall(dbType: string) {
+  queuedDriverInstalls.value = removeDriverInstallQueue(queuedDriverInstalls.value, dbType);
 }
 
 async function refreshAgents() {
-  updateAgentDrivers(await invoke<AgentDriverInfo[]>("list_installed_agents"));
+  updateAgentDrivers(await api.listInstalledAgents());
 }
 
 async function forceRefresh() {
   refreshing.value = true;
   try {
-    await invoke("invalidate_agent_registry_cache");
+    await api.invalidateAgentRegistryCache();
     await refreshAgents();
   } finally {
     refreshing.value = false;
@@ -123,7 +135,7 @@ async function forceRefresh() {
 }
 
 async function loadJavaRuntimeConfig() {
-  const config = await invoke<JavaRuntimeConfig>("get_agent_java_runtime_config");
+  const config = await api.getAgentJavaRuntimeConfig();
   javaRuntimeConfig.value = config;
   customJavaPath.value = config.custom_java_path ?? "";
 }
@@ -137,11 +149,9 @@ function setJavaRuntimeMode(value: any) {
 async function saveJavaRuntimeConfig() {
   savingJavaRuntime.value = true;
   try {
-    const config = await invoke<JavaRuntimeConfig>("set_agent_java_runtime_config", {
-      config: {
-        mode: javaRuntimeConfig.value.mode,
-        custom_java_path: javaRuntimeConfig.value.mode === "custom" ? customJavaPath.value.trim() || null : null,
-      },
+    const config = await api.setAgentJavaRuntimeConfig({
+      mode: javaRuntimeConfig.value.mode,
+      custom_java_path: javaRuntimeConfig.value.mode === "custom" ? customJavaPath.value.trim() || null : null,
     });
     javaRuntimeConfig.value = config;
     customJavaPath.value = config.custom_java_path ?? "";
@@ -166,11 +176,20 @@ async function chooseCustomJavaPath() {
 }
 
 async function installDriver(dbType: string) {
+  if (installing.value !== null || upgradingAll.value) {
+    queueDriverInstall(dbType);
+    return;
+  }
+  await runDriverInstall(dbType);
+  await runQueuedDriverInstalls();
+}
+
+async function runDriverInstall(dbType: string) {
   const label = drivers.value.find((d) => d.db_type === dbType)?.label ?? dbType;
   installing.value = dbType;
   progress.value = null;
   try {
-    await invoke("install_agent", { dbType });
+    await api.installAgent(dbType);
     await refreshAgents();
     toast(`${label} 驱动安装成功`);
   } catch (e: any) {
@@ -181,11 +200,23 @@ async function installDriver(dbType: string) {
   }
 }
 
+async function runQueuedDriverInstalls() {
+  if (installing.value !== null || upgradingAll.value) return;
+
+  const result = takeNextDriverInstallQueue(queuedDriverInstalls.value, canInstallOrUpdateDriver);
+  queuedDriverInstalls.value = result.queue;
+  if (!result.next) return;
+
+  await runDriverInstall(result.next);
+  await runQueuedDriverInstalls();
+}
+
 async function upgradeAll() {
   upgradingAll.value = true;
+  queuedDriverInstalls.value = [];
   progress.value = null;
   try {
-    const count = await invoke<number>("upgrade_all_agents");
+    const count = await api.upgradeAllAgents();
     await refreshAgents();
     toast(`${count} 个驱动升级完成`);
   } catch (e: any) {
@@ -202,7 +233,7 @@ async function upgradeAll() {
 async function uninstallDriver(dbType: string) {
   const label = drivers.value.find((d) => d.db_type === dbType)?.label ?? dbType;
   try {
-    await invoke("uninstall_agent", { dbType });
+    await api.uninstallAgent(dbType);
     await refreshAgents();
     toast(`${label} 驱动已卸载`);
   } catch (e: any) {
@@ -214,7 +245,7 @@ async function reinstallJre(jreKey: string) {
   reinstallingJre.value = jreKey;
   progress.value = null;
   try {
-    await invoke("reinstall_jre", { jreKey });
+    await api.reinstallJre(jreKey);
     await refreshAgents();
     toast(`JRE ${jreKey} 重新安装成功`);
   } catch (e: any) {
@@ -227,7 +258,7 @@ async function reinstallJre(jreKey: string) {
 
 async function uninstallJre(jreKey: string) {
   try {
-    await invoke("uninstall_jre", { jreKey });
+    await api.uninstallJre(jreKey);
     await refreshAgents();
     toast(`JRE ${jreKey} 已卸载`);
   } catch (e: any) {
@@ -272,6 +303,7 @@ async function loadJdbcPluginStatus() {
   if (isWeb) return;
   try {
     jdbcPluginStatus.value = await api.jdbcPluginStatus();
+    emitDriverUpdateCount();
   } catch (e: any) {
     toast(String(e?.message || e), 5000);
   }
@@ -282,6 +314,7 @@ async function installJdbcPlugin() {
   isInstallingJdbcPlugin.value = true;
   try {
     jdbcPluginStatus.value = await api.installJdbcPlugin();
+    emitDriverUpdateCount();
     toast(t("settings.jdbcPluginInstallSuccess"));
     await loadJdbcDrivers();
   } catch (e: any) {
@@ -302,7 +335,8 @@ async function installJdbcPluginLocal() {
   if (typeof selected !== "string") return;
   isInstallingJdbcPlugin.value = true;
   try {
-    jdbcPluginStatus.value = await invoke<JdbcPluginStatus>("install_jdbc_plugin_local", { path: selected });
+    jdbcPluginStatus.value = await api.installJdbcPluginLocal(selected);
+    emitDriverUpdateCount();
     toast(t("settings.jdbcPluginInstallSuccess"));
     await loadJdbcDrivers();
   } catch (e: any) {
@@ -317,6 +351,7 @@ async function uninstallJdbcPlugin() {
   isUninstallingJdbcPlugin.value = true;
   try {
     jdbcPluginStatus.value = await api.uninstallJdbcPlugin();
+    emitDriverUpdateCount();
     toast(t("settings.jdbcPluginUninstallSuccess"));
     await loadJdbcDrivers();
   } catch (e: any) {
@@ -373,19 +408,18 @@ async function deleteJdbcDriver(path: string) {
 // ──────────── Lifecycle ────────────
 
 onMounted(async () => {
-  updateAgentDrivers(await invoke<AgentDriverInfo[]>("list_installed_agents_local"));
+  updateAgentDrivers(await api.listInstalledAgentsLocal());
   void loadJavaRuntimeConfig();
 
-  invoke<AgentDriverInfo[]>("list_installed_agents").then((result) => {
+  api.listInstalledAgents().then((result) => {
     updateAgentDrivers(result);
   });
 
-  unlisten = await listen<InstallProgress>("agent-install-progress", (event) => {
-    const payload = event.payload as any;
+  unlisten = await api.listenAgentInstallProgress((payload) => {
     if (payload.step === "done" || payload.step === "all-done") {
       progress.value = null;
     } else {
-      progress.value = payload;
+      progress.value = payload as DriverInstallProgress;
     }
     if (payload.db_type && payload.total_drivers) {
       upgradingCurrent.value = drivers.value.find((d) => d.db_type === payload.db_type)?.label ?? payload.db_type;
@@ -415,7 +449,7 @@ onUnmounted(() => {
             <Button
               variant="ghost"
               size="sm"
-              class="h-7 text-xs gap-1 text-muted-foreground"
+              class="h-7 rounded-full text-xs gap-1 text-muted-foreground"
               :disabled="refreshing"
               @click="forceRefresh"
             >
@@ -443,7 +477,7 @@ onUnmounted(() => {
                   </Select>
                 </div>
                 <Button
-                  class="h-8 shrink-0 text-xs"
+                  class="h-8 shrink-0 rounded-full text-xs"
                   :disabled="savingJavaRuntime || (javaRuntimeConfig.mode === 'custom' && !customJavaPath.trim())"
                   @click="saveJavaRuntimeConfig"
                 >
@@ -457,7 +491,7 @@ onUnmounted(() => {
                   placeholder="/path/to/java 或 /path/to/jdk"
                   @keydown.enter.prevent="saveJavaRuntimeConfig"
                 />
-                <Button variant="outline" class="h-8 shrink-0 text-xs" @click="chooseCustomJavaPath">
+                <Button variant="outline" class="h-8 shrink-0 rounded-full text-xs" @click="chooseCustomJavaPath">
                   <FolderOpen class="h-3.5 w-3.5" />
                   选择
                 </Button>
@@ -476,34 +510,41 @@ onUnmounted(() => {
                 <div class="flex shrink-0 items-center gap-3">
                   <Check v-if="jre.installed" class="h-4 w-4 text-green-600" />
                   <span v-else class="text-xs text-muted-foreground">未安装</span>
+                  <DriverInstallProgressCircle
+                    v-if="reinstallingJre === jre.key"
+                    :percent="progressNumber"
+                    :title="progressTitle(jre.installed ? '重装中' : '安装中')"
+                  />
                   <Button
-                    v-if="!jre.installed"
+                    v-else-if="!jre.installed"
                     type="button"
                     variant="default"
                     size="sm"
+                    class="h-8 rounded-full text-xs"
                     :disabled="reinstallingJre !== null || installing !== null"
                     @click="reinstallJre(jre.key)"
                   >
                     <Download class="h-3.5 w-3.5 mr-1" />
-                    {{ reinstallingJre === jre.key ? "安装中..." : "安装" }}
+                    安装
                   </Button>
                   <Button
-                    v-if="jre.installed"
+                    v-else-if="jre.installed"
                     type="button"
                     variant="outline"
                     size="sm"
+                    class="h-8 rounded-full text-xs"
                     :disabled="reinstallingJre !== null || installing !== null"
                     @click="reinstallJre(jre.key)"
                   >
                     <RotateCcw class="h-3.5 w-3.5 mr-1" />
-                    {{ reinstallingJre === jre.key ? "重装中..." : "重新安装" }}
+                    重新安装
                   </Button>
                   <Button
                     v-if="jre.installed"
                     type="button"
                     variant="ghost"
                     size="sm"
-                    class="text-muted-foreground hover:text-destructive"
+                    class="h-8 rounded-full text-xs text-muted-foreground hover:text-destructive"
                     :disabled="reinstallingJre !== null || installing !== null"
                     @click="uninstallJre(jre.key)"
                   >
@@ -517,17 +558,6 @@ onUnmounted(() => {
               <p class="text-xs text-muted-foreground mt-0.5">首次安装驱动时自动下载</p>
             </div>
 
-            <!-- Progress bar -->
-            <div v-if="progress" class="space-y-1.5 px-1">
-              <div class="text-xs text-muted-foreground">{{ progressText }}</div>
-              <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  class="h-full rounded-full bg-primary transition-all duration-200"
-                  :style="{ width: `${progressPercent}%` }"
-                />
-              </div>
-            </div>
-
             <!-- Driver List -->
             <div v-if="drivers.length === 0" class="py-12 text-center text-sm text-muted-foreground">加载中...</div>
             <div v-else class="rounded-md border divide-y">
@@ -535,7 +565,7 @@ onUnmounted(() => {
                 <span class="text-xs text-muted-foreground">{{ updatableCount }} 个驱动可更新</span>
                 <Button
                   size="sm"
-                  class="h-7 text-xs"
+                  class="h-7 rounded-full text-xs"
                   :disabled="installing !== null || upgradingAll"
                   @click="upgradeAll"
                 >
@@ -587,33 +617,64 @@ onUnmounted(() => {
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
                   <Button
-                    v-if="!driver.installed"
+                    v-if="!driver.installed && isDriverQueued(driver.db_type)"
                     size="sm"
-                    class="h-7 text-xs"
-                    :disabled="installing !== null || upgradingAll"
+                    variant="outline"
+                    class="h-7 rounded-full border-green-500/30 bg-green-500/10 text-xs text-green-700 hover:bg-green-500/15"
+                    :disabled="upgradingAll"
+                    @click="removeQueuedDriverInstall(driver.db_type)"
+                  >
+                    <Clock3 class="h-3 w-3 mr-1" />
+                    排队中
+                  </Button>
+                  <DriverInstallProgressCircle
+                    v-else-if="!driver.installed && isDriverProgressActive(driver.db_type)"
+                    :percent="progressNumber"
+                    :title="progressTitle('安装中')"
+                  />
+                  <Button
+                    v-else-if="!driver.installed"
+                    size="sm"
+                    class="h-7 rounded-full text-xs"
+                    :disabled="upgradingAll"
                     @click="installDriver(driver.db_type)"
                   >
-                    <Loader2 v-if="installing === driver.db_type" class="h-3 w-3 animate-spin mr-1" />
-                    <Download v-else class="h-3 w-3 mr-1" />
-                    {{ installing === driver.db_type ? "安装中..." : "安装" }}
+                    <Download class="h-3 w-3 mr-1" />
+                    安装
                   </Button>
                   <template v-else>
                     <Check class="h-4 w-4 text-green-600" />
                     <Button
-                      v-if="driver.update_available"
+                      v-if="driver.update_available && isDriverQueued(driver.db_type)"
                       size="sm"
                       variant="outline"
-                      class="h-7 text-xs"
-                      :disabled="installing !== null || upgradingAll"
+                      class="h-7 rounded-full border-green-500/30 bg-green-500/10 text-xs text-green-700 hover:bg-green-500/15"
+                      :disabled="upgradingAll"
+                      @click="removeQueuedDriverInstall(driver.db_type)"
+                    >
+                      <Clock3 class="h-3 w-3 mr-1" />
+                      排队中
+                    </Button>
+                    <DriverInstallProgressCircle
+                      v-else-if="driver.update_available && isDriverProgressActive(driver.db_type)"
+                      :percent="progressNumber"
+                      :title="progressTitle('更新中')"
+                    />
+                    <Button
+                      v-else-if="driver.update_available"
+                      size="sm"
+                      variant="outline"
+                      class="h-7 rounded-full text-xs"
+                      :disabled="upgradingAll"
                       @click="installDriver(driver.db_type)"
                     >
-                      {{ installing === driver.db_type ? "更新中..." : "更新" }}
+                      更新
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
-                      class="h-7 text-xs text-muted-foreground hover:text-destructive"
-                      :disabled="upgradingAll"
+                      class="h-7 rounded-full text-xs text-muted-foreground hover:text-destructive"
+                      :disabled="installing !== null || upgradingAll || isDriverQueued(driver.db_type)"
                       @click="uninstallDriver(driver.db_type)"
                     >
                       卸载
@@ -649,10 +710,26 @@ onUnmounted(() => {
                         : t("settings.jdbcPluginIncompatible")
                     }}
                   </span>
+                  <span
+                    v-if="jdbcPluginStatus?.installed && jdbcPluginStatus.update_available"
+                    class="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-600"
+                    >→ v{{ jdbcPluginStatus.latest_version }}</span
+                  >
+                  <Button
+                    v-if="jdbcPluginStatus?.installed && jdbcPluginStatus.update_available"
+                    type="button"
+                    variant="outline"
+                    class="rounded-full"
+                    :disabled="isInstallingJdbcPlugin"
+                    @click="installJdbcPlugin"
+                  >
+                    {{ isInstallingJdbcPlugin ? t("common.loading") : t("settings.jdbcPluginUpdate") }}
+                  </Button>
                   <Button
                     v-if="jdbcPluginStatus?.installed"
                     type="button"
                     variant="outline"
+                    class="rounded-full"
                     :disabled="isUninstallingJdbcPlugin"
                     @click="uninstallJdbcPlugin"
                   >
@@ -662,6 +739,7 @@ onUnmounted(() => {
                     v-else
                     type="button"
                     variant="default"
+                    class="rounded-full"
                     :disabled="isInstallingJdbcPlugin"
                     @click="installJdbcPlugin"
                   >
@@ -671,6 +749,7 @@ onUnmounted(() => {
                     v-if="!jdbcPluginStatus?.installed"
                     type="button"
                     variant="outline"
+                    class="rounded-full"
                     :disabled="isInstallingJdbcPlugin"
                     @click="installJdbcPluginLocal"
                   >
@@ -693,10 +772,15 @@ onUnmounted(() => {
                   :placeholder="t('settings.jdbcDriverPathPlaceholder')"
                   @keydown.enter.prevent="importJdbcDriverPathInput"
                 />
-                <Button variant="outline" :disabled="!jdbcDriverPathInput.trim()" @click="importJdbcDriverPathInput">
+                <Button
+                  variant="outline"
+                  class="rounded-full"
+                  :disabled="!jdbcDriverPathInput.trim()"
+                  @click="importJdbcDriverPathInput"
+                >
                   {{ t("settings.jdbcImportPath") }}
                 </Button>
-                <Button class="shrink-0" @click="importJdbcDrivers">
+                <Button class="shrink-0 rounded-full" @click="importJdbcDrivers">
                   <FolderOpen class="h-4 w-4" />
                   {{ t("settings.jdbcImport") }}
                 </Button>
@@ -717,7 +801,12 @@ onUnmounted(() => {
                     <div class="truncate text-xs text-muted-foreground">{{ driver.path }}</div>
                   </div>
                   <div class="shrink-0 text-xs text-muted-foreground">{{ formatBytes(driver.size) }}</div>
-                  <Button variant="ghost" size="icon" class="h-8 w-8 shrink-0" @click="deleteJdbcDriver(driver.path)">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="h-8 w-8 shrink-0 rounded-full"
+                    @click="deleteJdbcDriver(driver.path)"
+                  >
                     <Trash2 class="h-4 w-4" />
                   </Button>
                 </div>

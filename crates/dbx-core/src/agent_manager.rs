@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::database_capabilities;
-use crate::db::agent_driver::AgentDriverClient;
+use crate::db::agent_driver::{AgentDriverClient, AgentMethod};
 use crate::models::connection::DatabaseType;
 
 pub const DEFAULT_JRE_KEY: &str = "17";
@@ -105,6 +105,14 @@ mod tests {
     }
 
     #[test]
+    fn stores_configured_app_version_for_agent_handshake() {
+        let dir = std::env::temp_dir().join(format!("dbx-agent-manager-version-{}", uuid::Uuid::new_v4()));
+        let manager = AgentManager::new_with_base_dir_and_app_version(dir, "0.5.13");
+
+        assert_eq!(manager.agent_app_version(), "0.5.13");
+    }
+
+    #[test]
     fn resolves_system_java_runtime_from_path() {
         let manager = test_manager("system");
         let system_java = manager.base_dir().join("bin").join(if cfg!(windows) { "java.exe" } else { "java" });
@@ -190,6 +198,7 @@ pub struct AgentDriverInfo {
 
 pub struct AgentManager {
     base_dir: PathBuf,
+    app_version: String,
     daemons: Mutex<std::collections::HashMap<String, AgentDriverClient>>,
 }
 
@@ -201,7 +210,12 @@ impl AgentManager {
     }
 
     pub fn new_with_base_dir(base_dir: PathBuf) -> Self {
-        let mgr = Self { base_dir, daemons: Mutex::new(std::collections::HashMap::new()) };
+        Self::new_with_base_dir_and_app_version(base_dir, env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn new_with_base_dir_and_app_version(base_dir: PathBuf, app_version: impl Into<String>) -> Self {
+        let mgr =
+            Self { base_dir, app_version: app_version.into(), daemons: Mutex::new(std::collections::HashMap::new()) };
         mgr.migrate_legacy_jre();
         mgr
     }
@@ -216,6 +230,10 @@ impl AgentManager {
 
     pub fn base_dir(&self) -> &PathBuf {
         &self.base_dir
+    }
+
+    pub fn agent_app_version(&self) -> &str {
+        &self.app_version
     }
 
     pub fn jre_dir(&self, jre_key: &str) -> PathBuf {
@@ -320,7 +338,9 @@ impl AgentManager {
 
         let java = self.resolve_java_runtime(&state, jre_key)?.to_string_lossy().to_string();
         let jar = self.driver_jar_path(key).to_string_lossy().to_string();
-        AgentDriverClient::spawn(&java, &jar).await
+        let mut client = AgentDriverClient::spawn(&java, &jar).await?;
+        client.try_optional_handshake(self.agent_app_version()).await;
+        Ok(client)
     }
 
     pub async fn call_daemon<T: serde::de::DeserializeOwned + Send + 'static>(
@@ -345,7 +365,8 @@ impl AgentManager {
             }
             let java = self.resolve_java_runtime(&state, jre_key)?.to_string_lossy().to_string();
             let jar = self.driver_jar_path(&key).to_string_lossy().to_string();
-            let client = AgentDriverClient::spawn(&java, &jar).await?;
+            let mut client = AgentDriverClient::spawn(&java, &jar).await?;
+            client.try_optional_handshake(self.agent_app_version()).await;
             daemons.insert(key.clone(), client);
         }
 
@@ -360,11 +381,22 @@ impl AgentManager {
                 let java = self.resolve_java_runtime(&state, jre_key)?.to_string_lossy().to_string();
                 let jar = self.driver_jar_path(&key).to_string_lossy().to_string();
                 let mut new_client = AgentDriverClient::spawn(&java, &jar).await?;
+                new_client.try_optional_handshake(self.agent_app_version()).await;
                 let result = new_client.call::<T>(method, params).await?;
                 daemons.insert(key, new_client);
                 Ok(result)
             }
         }
+    }
+
+    pub async fn call_daemon_method<T: serde::de::DeserializeOwned + Send + 'static>(
+        &self,
+        db_type: &DatabaseType,
+        driver_profile: Option<&str>,
+        method: AgentMethod,
+        params: serde_json::Value,
+    ) -> Result<T, String> {
+        self.call_daemon(db_type, driver_profile, method.as_str(), params).await
     }
 
     pub async fn download_file(url: &str, dest: &Path) -> Result<(), String> {

@@ -119,6 +119,7 @@ function parseJdbcUrl(url: string, profile: ConnectionProfile) {
     params?: string;
     username?: string;
     password?: string;
+    oracleConnectionType?: "service_name" | "sid";
   } = {};
   const source = url.trim();
   if (!source) return result;
@@ -143,6 +144,7 @@ function parseJdbcUrl(url: string, profile: ConnectionProfile) {
     result.host = oracleServiceMatch[1];
     result.port = getNumber(oracleServiceMatch[2]);
     result.database = oracleServiceMatch[3];
+    result.oracleConnectionType = "service_name";
     return result;
   }
 
@@ -151,6 +153,7 @@ function parseJdbcUrl(url: string, profile: ConnectionProfile) {
     result.host = oracleSidMatch[1];
     result.port = getNumber(oracleSidMatch[2]);
     result.database = oracleSidMatch[3];
+    result.oracleConnectionType = "sid";
     return result;
   }
 
@@ -228,6 +231,7 @@ function buildConnection(
     ssh_expose_lan: false,
     ssh_connect_timeout_secs: 5,
     ssl: false,
+    oracle_connection_type: profile.dbType === "oracle" ? parsedUrl.oracleConnectionType || "service_name" : undefined,
     connection_string: profile.dbType === "jdbc" || profile.dbType === "mongodb" ? url || undefined : undefined,
     jdbc_driver_class:
       profile.dbType === "jdbc" ? getString(config["driver-class"] || entry.driver) || undefined : undefined,

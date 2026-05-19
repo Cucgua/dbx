@@ -2,12 +2,14 @@ use std::sync::Arc;
 use tauri::State;
 
 use dbx_core::plugins::{InstalledPlugin, PluginManifest, SUPPORTED_PLUGIN_PROTOCOL_VERSION};
+use dbx_core::update::{fetch_latest_release, is_newer_version, JdbcPluginLatest};
 use serde::Serialize;
 
 use super::connection::AppState;
 
-const JDBC_PLUGIN_DOWNLOAD_URL: &str = "https://github.com/t8y2/dbx/releases/latest/download/dbx-jdbc-plugin-0.1.1.zip";
-const JDBC_PLUGIN_R2_PATH: &str = "releases/latest/dbx-jdbc-plugin-0.1.1.zip";
+const JDBC_PLUGIN_DOWNLOAD_URL: &str =
+    "https://github.com/Cucgua/dbx/releases/latest/download/dbx-jdbc-plugin-latest.zip";
+const JDBC_PLUGIN_R2_PATH: &str = "releases/latest/dbx-jdbc-plugin-latest.zip";
 
 #[tauri::command]
 pub async fn list_plugins(state: State<'_, Arc<AppState>>) -> Result<Vec<InstalledPlugin>, String> {
@@ -27,12 +29,15 @@ pub struct JdbcPluginStatus {
     pub version: Option<String>,
     pub protocol_version: Option<u32>,
     pub compatible: bool,
+    pub latest_version: Option<String>,
+    pub latest_protocol_version: Option<u32>,
+    pub update_available: bool,
     pub path: String,
 }
 
 #[tauri::command]
 pub async fn jdbc_plugin_status(state: State<'_, Arc<AppState>>) -> Result<JdbcPluginStatus, String> {
-    jdbc_plugin_status_from_state(&state)
+    jdbc_plugin_status_from_state(&state).await
 }
 
 #[tauri::command]
@@ -40,7 +45,7 @@ pub async fn install_jdbc_plugin(state: State<'_, Arc<AppState>>) -> Result<Jdbc
     let bytes = download_jdbc_plugin_zip().await?;
     let plugin_dir = state.plugins.root_dir().join("jdbc");
     install_jdbc_plugin_zip(&bytes, &plugin_dir)?;
-    jdbc_plugin_status_from_state(&state)
+    jdbc_plugin_status_from_state(&state).await
 }
 
 #[tauri::command]
@@ -51,7 +56,7 @@ pub async fn install_jdbc_plugin_local(
     let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read file: {e}"))?;
     let plugin_dir = state.plugins.root_dir().join("jdbc");
     install_jdbc_plugin_zip(&bytes, &plugin_dir)?;
-    jdbc_plugin_status_from_state(&state)
+    jdbc_plugin_status_from_state(&state).await
 }
 
 #[tauri::command]
@@ -68,7 +73,7 @@ pub async fn uninstall_jdbc_plugin(state: State<'_, Arc<AppState>>) -> Result<Jd
             std::fs::remove_file(path).map_err(|err| err.to_string())?;
         }
     }
-    jdbc_plugin_status_from_state(&state)
+    jdbc_plugin_status_from_state(&state).await
 }
 
 #[tauri::command]
@@ -123,7 +128,7 @@ fn jdbc_drivers_dir(state: &AppState) -> std::path::PathBuf {
     state.plugins.root_dir().join("jdbc").join("drivers")
 }
 
-fn jdbc_plugin_status_from_state(state: &AppState) -> Result<JdbcPluginStatus, String> {
+async fn jdbc_plugin_status_from_state(state: &AppState) -> Result<JdbcPluginStatus, String> {
     let plugin_dir = state.plugins.root_dir().join("jdbc");
     let manifest_path = plugin_dir.join("manifest.json");
     let manifest = match std::fs::read_to_string(&manifest_path) {
@@ -138,13 +143,28 @@ fn jdbc_plugin_status_from_state(state: &AppState) -> Result<JdbcPluginStatus, S
         Some(manifest) => manifest.protocol_version == SUPPORTED_PLUGIN_PROTOCOL_VERSION,
         None => true,
     };
+    let latest = latest_jdbc_plugin().await;
+    let latest_version = latest.as_ref().map(|plugin| plugin.version.clone());
+    let latest_protocol_version = latest.as_ref().map(|plugin| plugin.protocol_version);
+    let update_available = match (version.as_deref(), latest.as_ref()) {
+        (Some(current), Some(latest)) if manifest.is_some() => is_newer_version(&latest.version, current),
+        (None, Some(_)) if manifest.is_some() => true,
+        _ => false,
+    };
     Ok(JdbcPluginStatus {
         installed: manifest.is_some(),
         version,
         protocol_version,
         compatible,
+        latest_version,
+        latest_protocol_version,
+        update_available,
         path: plugin_dir.to_string_lossy().to_string(),
     })
+}
+
+async fn latest_jdbc_plugin() -> Option<JdbcPluginLatest> {
+    fetch_latest_release().await.ok().and_then(|release| release.jdbc_plugin)
 }
 
 async fn download_jdbc_plugin_zip() -> Result<Vec<u8>, String> {

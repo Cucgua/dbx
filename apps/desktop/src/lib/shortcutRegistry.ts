@@ -1,4 +1,4 @@
-export type ShortcutActionId = "executeSql" | "saveSql" | "closeTab" | "focusSearch" | "cancelSearch";
+export type ShortcutActionId = "executeSql" | "saveSql" | "closeTab" | "focusSearch" | "refreshData" | "cancelSearch";
 
 export type ShortcutScope = "global" | "editor" | "search";
 
@@ -35,6 +35,12 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     labelKey: "settings.shortcutFocusSearch",
     scope: "global",
     defaultShortcut: "Mod+F",
+  },
+  {
+    id: "refreshData",
+    labelKey: "settings.shortcutRefreshData",
+    scope: "global",
+    defaultShortcut: "F5",
   },
   {
     id: "cancelSearch",

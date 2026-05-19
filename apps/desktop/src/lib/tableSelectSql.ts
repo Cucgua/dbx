@@ -36,7 +36,8 @@ function isOracleRowId(databaseType: DatabaseType | undefined, name: string): bo
 function quoteOrderIdentifier(databaseType: DatabaseType | undefined, name: string, tableAlias?: string): string {
   if (isOracleRowId(databaseType, name)) return tableAlias ? `${tableAlias}.ROWID` : "ROWID";
   if (isTdengineTbname(databaseType, name)) return DBX_TDENGINE_TBNAME_COLUMN;
-  return quoteTableIdentifier(databaseType, name);
+  const quoted = quoteTableIdentifier(databaseType, name);
+  return tableAlias ? `${tableAlias}.${quoted}` : quoted;
 }
 
 export function qualifiedTableName(
@@ -63,8 +64,9 @@ export function buildTableSelectSql(options: BuildTableSelectSqlOptions): string
   const predicate = normalizeWhereInput(options.whereInput);
   const where = predicate ? ` WHERE (${predicate})` : "";
   const rowIdAlias = options.includeRowId && databaseType === "oracle" ? "t" : undefined;
+  const defaultOrderAlias = databaseType === "jdbc" ? "dbx_t" : rowIdAlias;
   const defaultOrderBy = options.primaryKeys?.length
-    ? options.primaryKeys.map((pk) => `${quoteOrderIdentifier(databaseType, pk, rowIdAlias)} ASC`).join(", ")
+    ? options.primaryKeys.map((pk) => `${quoteOrderIdentifier(databaseType, pk, defaultOrderAlias)} ASC`).join(", ")
     : options.fallbackOrderColumns?.length
       ? options.fallbackOrderColumns.map((column) => `${quoteTableIdentifier(databaseType, column)} ASC`).join(", ")
       : undefined;
@@ -75,7 +77,12 @@ export function buildTableSelectSql(options: BuildTableSelectSqlOptions): string
     options.includeRowId && databaseType === "oracle"
       ? `ROWIDTOCHAR(t.ROWID) AS "${DBX_ROWID_COLUMN}", t.*`
       : buildSelectColumns(databaseType, options.columns);
-  const tableAlias = options.includeRowId && usesFetchFirst(databaseType) ? `${table} t` : table;
+  const tableAlias =
+    options.includeRowId && usesFetchFirst(databaseType)
+      ? `${table} t`
+      : databaseType === "jdbc" && defaultOrderBy
+        ? `${table} dbx_t`
+        : table;
 
   if (usesFetchFirst(databaseType)) {
     const offset = options.offset ? ` OFFSET ${options.offset} ROWS` : "";
@@ -83,12 +90,18 @@ export function buildTableSelectSql(options: BuildTableSelectSqlOptions): string
   }
 
   if (databaseType === "sqlserver") {
-    const stableOrder = order || " ORDER BY (SELECT NULL)";
-    return `SELECT * FROM ${table}${where}${stableOrder} OFFSET ${options.offset ?? 0} ROWS FETCH NEXT ${limit} ROWS ONLY`;
+    return buildSqlServerTableSelectSql({
+      table,
+      where,
+      orderBy: orderBy ?? "(SELECT NULL)",
+      columns: options.columns,
+      limit,
+      offset: options.offset ?? 0,
+    });
   }
 
   const offset = options.offset ? ` OFFSET ${options.offset}` : "";
-  return `SELECT ${selectColumns} FROM ${table}${where}${order} LIMIT ${limit}${offset};`;
+  return `SELECT ${selectColumns} FROM ${tableAlias}${where}${order} LIMIT ${limit}${offset};`;
 }
 
 function buildSelectColumns(databaseType: DatabaseType | undefined, columns?: string[]): string {
@@ -112,6 +125,34 @@ function buildSelectColumns(databaseType: DatabaseType | undefined, columns?: st
       return `${ident} AS ${ident}`;
     })
     .join(", ");
+}
+
+function buildSqlServerTableSelectSql(options: {
+  table: string;
+  where: string;
+  orderBy: string;
+  columns?: string[];
+  limit: number;
+  offset: number;
+}): string {
+  const columns = options.columns?.length
+    ? options.columns.map((column) => quoteTableIdentifier("sqlserver", column)).join(", ")
+    : "*";
+  const order = options.orderBy === "(SELECT NULL)" ? "" : ` ORDER BY ${options.orderBy}`;
+  if (options.offset <= 0) {
+    return `SELECT TOP (${options.limit}) ${columns} FROM ${options.table}${options.where}${order}`;
+  }
+
+  const pageAlias = quoteTableIdentifier("sqlserver", "dbx_page");
+  const rowNumberAlias = quoteTableIdentifier("sqlserver", "__dbx_row_num");
+  const end = options.offset + options.limit;
+  const rowNumberOrder = `ORDER BY ${options.orderBy}`;
+  return (
+    `WITH ${pageAlias} AS (` +
+    `SELECT ${columns}, ROW_NUMBER() OVER (${rowNumberOrder}) AS ${rowNumberAlias} FROM ${options.table}${options.where}` +
+    `) SELECT ${columns} FROM ${pageAlias}` +
+    ` WHERE ${rowNumberAlias} > ${options.offset} AND ${rowNumberAlias} <= ${end} ORDER BY ${rowNumberAlias}`
+  );
 }
 
 function isTdengineTbname(databaseType: DatabaseType | undefined, name: string): boolean {

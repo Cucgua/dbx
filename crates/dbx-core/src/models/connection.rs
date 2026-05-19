@@ -19,6 +19,8 @@ pub struct ConnectionConfig {
     pub database: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_databases: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attached_databases: Vec<AttachedDatabaseConfig>,
     #[serde(default)]
     pub default_database: Option<String>,
     #[serde(default)]
@@ -57,6 +59,8 @@ pub struct ConnectionConfig {
     pub ssl: bool,
     #[serde(default)]
     pub sysdba: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_connection_type: Option<String>,
     #[serde(default)]
     pub oracle_connect_method: OracleConnectMethod,
     #[serde(default)]
@@ -68,6 +72,12 @@ pub struct ConnectionConfig {
     pub jdbc_driver_class: Option<String>,
     #[serde(default)]
     pub jdbc_driver_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AttachedDatabaseConfig {
+    pub name: String,
+    pub path: String,
 }
 
 fn default_ssh_port() -> u16 {
@@ -124,6 +134,19 @@ pub enum DatabaseType {
     Vastbase,
     Goldendb,
     Gaussdb,
+    Yashandb,
+    Databricks,
+    #[serde(rename = "saphana")]
+    SapHana,
+    Teradata,
+    Vertica,
+    Firebird,
+    Exasol,
+    #[serde(rename = "opengauss")]
+    OpenGauss,
+    #[serde(rename = "oceanbase-oracle")]
+    OceanbaseOracle,
+    Gbase,
     Access,
     #[serde(rename = "h2")]
     H2,
@@ -188,9 +211,11 @@ impl ConnectionConfig {
                 _ => Some("postgres"),
             },
             DatabaseType::Redshift => Some("dev"),
-            DatabaseType::Gaussdb => Some("postgres"),
+            DatabaseType::Gaussdb | DatabaseType::OpenGauss => Some("postgres"),
             DatabaseType::Kingbase | DatabaseType::Vastbase => Some("postgres"),
             DatabaseType::Highgo => Some("highgo"),
+            DatabaseType::Yashandb => Some("yasdb"),
+            DatabaseType::Firebird => Some("employee"),
             _ => None,
         }
     }
@@ -283,6 +308,16 @@ impl ConnectionConfig {
             DatabaseType::Vastbase => format!("vastbase://{host}:{port}{db_part}"),
             DatabaseType::Goldendb => format!("goldendb://{host}:{port}{db_part}"),
             DatabaseType::Gaussdb => format!("gaussdb://{host}:{port}{db_part}"),
+            DatabaseType::Yashandb => format!("yashandb://{host}:{port}{db_part}"),
+            DatabaseType::Databricks => format!("databricks://{host}:{port}{db_part}"),
+            DatabaseType::SapHana => format!("saphana://{host}:{port}{db_part}"),
+            DatabaseType::Teradata => format!("teradata://{host}:{port}{db_part}"),
+            DatabaseType::Vertica => format!("vertica://{host}:{port}{db_part}"),
+            DatabaseType::Firebird => format!("firebird://{host}:{port}{db_part}"),
+            DatabaseType::Exasol => format!("exasol://{host}:{port}{db_part}"),
+            DatabaseType::OpenGauss => format!("opengauss://{host}:{port}{db_part}"),
+            DatabaseType::OceanbaseOracle => format!("oceanbase-oracle://{host}:{port}{db_part}"),
+            DatabaseType::Gbase => format!("gbase://{host}:{port}{db_part}"),
             DatabaseType::H2 => format!("h2://{host}:{port}{db_part}"),
             DatabaseType::Snowflake => format!("snowflake://{host}/{db_part}"),
             DatabaseType::Trino => format!("trino://{host}:{port}{db_part}"),
@@ -381,6 +416,36 @@ impl ConnectionConfig {
             }
             DatabaseType::Gaussdb => {
                 format!("gaussdb://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Yashandb => {
+                format!("yashandb://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Databricks => {
+                format!("databricks://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::SapHana => {
+                format!("saphana://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Teradata => {
+                format!("teradata://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Vertica => {
+                format!("vertica://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Firebird => {
+                format!("firebird://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Exasol => {
+                format!("exasol://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::OpenGauss => {
+                format!("opengauss://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::OceanbaseOracle => {
+                format!("oceanbase-oracle://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Gbase => {
+                format!("gbase://{}:{}@{host}:{port}{db_part}", username, password)
             }
             DatabaseType::H2 => {
                 format!("h2://{}:{}@{host}:{port}{db_part}", username, password)
@@ -603,6 +668,7 @@ mod tests {
             database: database.map(str::to_string),
             default_database: None,
             visible_databases: None,
+            attached_databases: Vec::new(),
             color: None,
             ssh_enabled: false,
             ssh_host: String::new(),
@@ -622,6 +688,7 @@ mod tests {
             ssl: false,
             sysdba: false,
             oracle_connect_method: Default::default(),
+            oracle_connection_type: None,
             connection_string: None,
             external_config: None,
             jdbc_driver_class: None,
@@ -711,6 +778,29 @@ mod tests {
         let saved = serde_json::to_value(config).unwrap();
 
         assert_eq!(saved["visible_databases"], serde_json::json!(["app", "billing"]));
+    }
+
+    #[test]
+    fn duckdb_attached_databases_round_trip_through_connection_config() {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "id",
+            "name": "DuckDB",
+            "db_type": "duckdb",
+            "host": "/tmp/main.duckdb",
+            "port": 0,
+            "username": "",
+            "password": "",
+            "database": null,
+            "attached_databases": [{ "name": "analytics", "path": "/tmp/analytics.duckdb" }]
+        }))
+        .unwrap();
+
+        let saved = serde_json::to_value(config).unwrap();
+
+        assert_eq!(
+            saved["attached_databases"],
+            serde_json::json!([{ "name": "analytics", "path": "/tmp/analytics.duckdb" }])
+        );
     }
 
     #[test]
@@ -825,6 +915,14 @@ mod tests {
         config.db_type = DatabaseType::Gaussdb;
 
         assert_eq!(config.connection_url(), "gaussdb://gaussdb:secret@10.1.2.3:2883/postgres");
+    }
+
+    #[test]
+    fn yashandb_url_defaults_to_yasdb_database() {
+        let mut config = mysql_config("sys", "secret", None);
+        config.db_type = DatabaseType::Yashandb;
+
+        assert_eq!(config.connection_url(), "yashandb://sys:secret@10.1.2.3:2883/yasdb");
     }
 
     #[test]

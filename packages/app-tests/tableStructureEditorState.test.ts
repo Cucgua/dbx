@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildStructureTargetLabel,
   createColumnDrafts,
   createIndexDrafts,
   toColumnNames,
@@ -101,4 +102,15 @@ test("creates editable index drafts and splits pasted column lists", () => {
     },
   ]);
   assert.equal(toColumnNames(["id", "name"]), "id, name");
+});
+
+test("structure editor target label omits duplicate database and schema", () => {
+  assert.equal(
+    buildStructureTargetLabel("online-clickhouse", "testdb", "testdb", "users"),
+    "online-clickhouse / testdb / users",
+  );
+  assert.equal(
+    buildStructureTargetLabel("online-postgres", "app", "public", "users"),
+    "online-postgres / app / public / users",
+  );
 });

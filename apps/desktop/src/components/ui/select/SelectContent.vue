@@ -10,18 +10,22 @@ defineOptions({
   inheritAttrs: false,
 });
 
-const props = withDefaults(defineProps<SelectContentProps & { class?: HTMLAttributes["class"] }>(), {
-  position: "popper",
-});
+const props = withDefaults(
+  defineProps<SelectContentProps & { class?: HTMLAttributes["class"]; disablePortal?: boolean }>(),
+  {
+    position: "popper",
+    disablePortal: false,
+  },
+);
 const emits = defineEmits<SelectContentEmits>();
 
-const delegatedProps = reactiveOmit(props, "class");
+const delegatedProps = reactiveOmit(props, "class", "disablePortal");
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits);
 </script>
 
 <template>
-  <SelectPortal>
+  <SelectPortal :disabled="disablePortal">
     <SelectContent
       data-slot="select-content"
       :data-align-trigger="position === 'item-aligned'"

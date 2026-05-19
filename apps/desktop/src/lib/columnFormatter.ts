@@ -103,12 +103,22 @@ export function applyColumnFormatter(value: CellValue, formatter: ColumnFormatte
 
 function formatDateTime(value: CellValue, unit: DateTimeFormatterUnit): string {
   if (value === null) return displayCellValue(value);
+  if (typeof value === "string" && !isTimestampString(value, unit)) return displayCellValue(value);
   const numeric = typeof value === "number" ? value : Number(String(value).trim());
   if (!Number.isFinite(numeric)) return displayCellValue(value);
   const timestamp =
     unit === "seconds" || (unit === "auto" && Math.abs(numeric) < 100_000_000_000) ? numeric * 1000 : numeric;
   const date = new Date(timestamp);
   return Number.isNaN(date.getTime()) ? displayCellValue(value) : date.toLocaleString();
+}
+
+function isTimestampString(value: string, unit: DateTimeFormatterUnit): boolean {
+  const text = value.trim();
+  if (!/^-?\d+$/.test(text)) return false;
+  const digits = text.startsWith("-") ? text.length - 1 : text.length;
+  if (unit === "seconds") return digits === 10;
+  if (unit === "milliseconds") return digits === 13;
+  return digits === 10 || digits === 13;
 }
 
 function formatJsonPath(value: CellValue, path: string): string {

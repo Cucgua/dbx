@@ -21,6 +21,8 @@ pub struct DatabaseExportRequest {
     pub include_structure: bool,
     pub include_data: bool,
     pub include_objects: bool,
+    #[serde(default)]
+    pub drop_table_if_exists: bool,
     pub batch_size: usize,
 }
 
@@ -159,6 +161,10 @@ pub async fn export_database_sql_core(
 
         // Export structure
         if request.include_structure {
+            if request.drop_table_if_exists {
+                writeln!(file, "{}\n", drop_table_if_exists_sql(table_name, &request.schema, &db_type))
+                    .map_err(|e| format!("Failed to write file: {e}"))?;
+            }
             match crate::schema::get_table_ddl_core(
                 state,
                 &request.connection_id,
@@ -448,9 +454,14 @@ fn filter_selected_table_infos(
     tables.into_iter().filter(|table| selected.contains(table.name.as_str())).collect()
 }
 
+fn drop_table_if_exists_sql(table_name: &str, schema: &str, db_type: &DatabaseType) -> String {
+    format!("DROP TABLE IF EXISTS {};", crate::transfer::qualified_table(table_name, schema, db_type))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::filter_selected_table_infos;
+    use super::{drop_table_if_exists_sql, filter_selected_table_infos};
+    use crate::models::connection::DatabaseType;
     use crate::types::TableInfo;
 
     fn table(name: &str, table_type: &str) -> TableInfo {
@@ -473,5 +484,19 @@ mod tests {
         let filtered = filter_selected_table_infos(tables.clone(), &[]);
 
         assert_eq!(filtered.iter().map(|table| table.name.as_str()).collect::<Vec<_>>(), vec!["users", "orders"]);
+    }
+
+    #[test]
+    fn builds_drop_table_if_exists_with_qualified_mysql_name() {
+        let sql = drop_table_if_exists_sql("users", "app", &DatabaseType::Mysql);
+
+        assert_eq!(sql, "DROP TABLE IF EXISTS `app`.`users`;");
+    }
+
+    #[test]
+    fn builds_drop_table_if_exists_without_empty_schema() {
+        let sql = drop_table_if_exists_sql("users", "", &DatabaseType::Postgres);
+
+        assert_eq!(sql, "DROP TABLE IF EXISTS \"users\";");
     }
 }

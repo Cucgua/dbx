@@ -1,5 +1,6 @@
 import type { DatabaseType, QueryResult } from "../types/database.ts";
 import { buildTableSelectSql } from "./tableSelectSql.ts";
+import { uuid } from "./utils.ts";
 
 type SqlValue = QueryResult["rows"][number][number];
 
@@ -70,6 +71,10 @@ export function buildExportPageSql(options: BuildExportPageSqlOptions): string {
     limit: options.limit ?? DATABASE_EXPORT_PAGE_SIZE,
     offset: options.offset,
   });
+}
+
+export function generateDatabaseExportId(): string {
+  return uuid();
 }
 
 export function buildDatabaseSqlExport(options: BuildDatabaseSqlExportOptions): string {

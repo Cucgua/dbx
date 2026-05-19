@@ -27,6 +27,9 @@ function mdTable(headers: string[], rows: string[][]): string {
   return `${header}\n${sep}\n${body}`;
 }
 
+export const DBX_CONNECTION_TYPE_DESCRIPTION =
+  "Database type: postgres, mysql, sqlite, redis, duckdb, clickhouse, sqlserver, mongodb, oracle, elasticsearch, doris, starrocks, redshift, dameng, kingbase, highgo, vastbase, goldendb, gaussdb, yashandb, databricks, saphana, teradata, vertica, firebird, exasol, opengauss, oceanbase-oracle, gbase, h2, snowflake, trino, hive, db2, informix, neo4j, cassandra, bigquery, kylin, sundb, tdengine, jdbc, access";
+
 export function createDbxMcpServer(backend: Backend, options: { isWebMode?: boolean } = {}): McpServer {
   const isWebMode = options.isWebMode ?? !!process.env.DBX_WEB_URL;
   const server = new McpServer({
@@ -131,9 +134,7 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
     name: z.string().describe("Connection name"),
     db_type: z
       .string()
-      .describe(
-        "Database type: postgres, mysql, sqlite, redis, duckdb, clickhouse, sqlserver, mongodb, oracle, elasticsearch, doris, starrocks, redshift, dameng, kingbase, highgo, vastbase, goldendb, gaussdb, h2, snowflake, trino, hive, db2, informix, neo4j, cassandra, bigquery, kylin, sundb, tdengine, jdbc, access",
-      ),
+      .describe(DBX_CONNECTION_TYPE_DESCRIPTION),
     host: z.string().describe("Database host"),
     port: z.number().optional().describe("Database port (TDengine defaults to 6041)"),
     username: z.string().default("").describe("Username"),

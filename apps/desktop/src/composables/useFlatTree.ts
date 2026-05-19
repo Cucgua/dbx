@@ -29,3 +29,27 @@ export function flattenTree(nodes: TreeNode[]): FlatTreeNode[] {
 export function shouldVirtualizeFlatTree(count: number): boolean {
   return count > 0;
 }
+
+export function scrollTopForExpandedTreeNode(options: {
+  expandedIndex: number;
+  insertedRowCount: number;
+  currentScrollTop: number;
+  viewportHeight: number;
+  rowHeight?: number;
+}): number {
+  const rowHeight = options.rowHeight ?? SIDEBAR_TREE_ROW_HEIGHT;
+  if (options.expandedIndex < 0 || options.insertedRowCount <= 0 || options.viewportHeight <= 0) {
+    return options.currentScrollTop;
+  }
+
+  const visibleRowCapacity = Math.max(1, Math.floor(options.viewportHeight / rowHeight) - 1);
+  const rowsToReveal = Math.min(options.insertedRowCount, visibleRowCapacity);
+  const expandedContentBottom = (options.expandedIndex + 1 + rowsToReveal) * rowHeight;
+  const viewportBottom = options.currentScrollTop + options.viewportHeight;
+
+  if (expandedContentBottom <= viewportBottom) {
+    return options.currentScrollTop;
+  }
+
+  return Math.max(0, expandedContentBottom - options.viewportHeight);
+}

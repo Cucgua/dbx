@@ -7,6 +7,7 @@ import {
   buildDatabaseSqlExport,
   buildInsertStatements,
   formatSqlLiteral,
+  generateDatabaseExportId,
 } from "../../apps/desktop/src/lib/databaseExport.ts";
 
 test("formats SQL literals for exported INSERT statements", () => {
@@ -14,6 +15,24 @@ test("formats SQL literals for exported INSERT statements", () => {
   assert.equal(formatSqlLiteral(42), "42");
   assert.equal(formatSqlLiteral(true), "TRUE");
   assert.equal(formatSqlLiteral("O'Hara"), "'O''Hara'");
+});
+
+test("generates export ids when crypto.randomUUID is unavailable", () => {
+  const originalCrypto = globalThis.crypto;
+
+  try {
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: {},
+    });
+
+    assert.match(generateDatabaseExportId(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  } finally {
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      value: originalCrypto,
+    });
+  }
 });
 
 test("builds batched INSERT statements for one exported table", () => {
@@ -53,7 +72,7 @@ test("builds capped export page queries", () => {
       tableName: "accounts",
       limit: DATABASE_EXPORT_ROW_LIMIT,
     }),
-    `SELECT * FROM [dbo].[accounts] ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT ${DATABASE_EXPORT_ROW_LIMIT} ROWS ONLY`,
+    `SELECT TOP (${DATABASE_EXPORT_ROW_LIMIT}) * FROM [dbo].[accounts]`,
   );
 });
 

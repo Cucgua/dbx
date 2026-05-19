@@ -697,7 +697,9 @@ watch(
                   </SelectContent>
                 </Select>
               </div>
+            </div>
 
+            <div class="grid gap-4 md:grid-cols-2">
               <div class="flex items-start justify-between gap-4">
                 <div class="space-y-1">
                   <Label for="editor-word-wrap">{{ t("settings.wordWrap") }}</Label>
@@ -1349,7 +1351,7 @@ watch(
               <button
                 type="button"
                 class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                @click="openExternalUrl('https://github.com/t8y2/dbx')"
+                @click="openExternalUrl('https://github.com/Cucgua/dbx')"
               >
                 <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   {{ t("settings.project") }}
@@ -1363,7 +1365,7 @@ watch(
                   {{ t("settings.openSource") }}
                   <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
                 </div>
-                <div class="mt-1 text-sm text-primary">github.com/t8y2/dbx</div>
+                <div class="mt-1 text-sm text-primary">github.com/Cucgua/dbx</div>
               </button>
               <button
                 type="button"

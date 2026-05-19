@@ -504,7 +504,8 @@ pub async fn stream(
 ) -> Result<(), String> {
     validate_config(&request.config)?;
 
-    let client = build_ai_http_client(&request.config, 120)?;
+    let stream_timeout = if request.config.enable_thinking { 600 } else { 120 };
+    let client = build_ai_http_client(&request.config, stream_timeout)?;
 
     match request.config.provider {
         AiProvider::Claude => stream_claude(&client, session_id, request, cancelled, &on_chunk).await,

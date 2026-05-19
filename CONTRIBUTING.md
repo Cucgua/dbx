@@ -59,6 +59,16 @@ pnpm publish:dry-run
 
 For Docker or deployment changes, run the relevant Docker Compose or Docker build checks from `deploy/`.
 
+## Database Driver Metadata
+
+When adding or changing a database type, update `crates/dbx-core/assets/database-drivers.manifest.json` first. The manifest is the shared source for driver mode, MCP/CLI routing, agent keys, and core capability expectations. Then run:
+
+```bash
+cargo test -p dbx-core --test database_capabilities
+pnpm --filter @dbx-app/node-core exec tsx --test tests/driver-manifest.test.ts
+pnpm --filter @dbx-app/mcp-server exec tsx --test tests/driver-manifest.test.ts
+```
+
 ## Pull Requests
 
 - Keep changes focused and reviewable.

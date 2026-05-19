@@ -6,11 +6,13 @@ use tokio::sync::RwLock;
 
 use crate::database_capabilities;
 use crate::db;
+use crate::db::agent_driver::AgentMethod;
 use crate::db::proxy_tunnel::ProxyTunnelManager;
 use crate::db::ssh_tunnel::TunnelManager;
 use crate::external;
 use crate::models::connection::{
     parse_jdbc_host_port, parse_mongo_first_host, rewrite_jdbc_url_host, ConnectionConfig, DatabaseType,
+    OracleConnectMethod,
 };
 use crate::plugins::{PluginDriverSession, PluginRegistry};
 use crate::query_cancel::RunningQueries;
@@ -96,7 +98,7 @@ pub fn metadata_connection_config(config: &ConnectionConfig) -> ConnectionConfig
 pub fn database_connection_config(config: &ConnectionConfig, database: Option<&str>) -> ConnectionConfig {
     let mut db_config = if database.is_some() { config.clone() } else { metadata_connection_config(config) };
     if let Some(db) = database {
-        if !matches!(db_config.db_type, DatabaseType::Oracle | DatabaseType::Dameng) {
+        if !matches!(db_config.db_type, DatabaseType::Oracle | DatabaseType::Dameng | DatabaseType::OceanbaseOracle) {
             db_config.database = Some(db.to_string());
         }
     }
@@ -109,6 +111,14 @@ impl AppState {
     }
 
     pub fn new_with_plugin_dir(storage: Storage, plugin_dir: PathBuf) -> Self {
+        Self::new_with_plugin_dir_and_app_version(storage, plugin_dir, env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn new_with_plugin_dir_and_app_version(
+        storage: Storage,
+        plugin_dir: PathBuf,
+        app_version: impl Into<String>,
+    ) -> Self {
         Self {
             connections: RwLock::new(HashMap::new()),
             configs: RwLock::new(HashMap::new()),
@@ -117,7 +127,10 @@ impl AppState {
             proxy_tunnels: ProxyTunnelManager::new(),
             storage,
             plugins: PluginRegistry::new(plugin_dir),
-            agent_manager: crate::agent_manager::AgentManager::new(),
+            agent_manager: crate::agent_manager::AgentManager::new_with_base_dir_and_app_version(
+                default_agent_dir(),
+                app_version,
+            ),
         }
     }
 
@@ -195,6 +208,12 @@ impl AppState {
             }
             DatabaseType::DuckDb => {
                 let con = db::duckdb_driver::connect_path(&expand_tilde(&db_config.host))?;
+                {
+                    let locked = con.lock().map_err(|e| e.to_string())?;
+                    for attached in &db_config.attached_databases {
+                        crate::schema::duckdb_attach_database(&locked, &attached.name, &expand_tilde(&attached.path))?;
+                    }
+                }
                 PoolKind::DuckDb(con)
             }
             DatabaseType::MongoDb => {
@@ -212,7 +231,7 @@ impl AppState {
                     log::info!("Native MongoDB driver failed ({native_err}), falling back to agent driver");
                     let connect_params = serde_json::json!({ "connection": agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or("")) });
                     let mut client = self.agent_manager.spawn(&DatabaseType::MongoDb, None).await?;
-                    client.call::<serde_json::Value>("connect", connect_params).await?;
+                    client.connect(connect_params).await.map_err(|err| mongo_legacy_error_with_auth_hint(&err))?;
                     PoolKind::Agent(Arc::new(tokio::sync::Mutex::new(client)))
                 } else {
                     return Err(native_err);
@@ -267,6 +286,16 @@ impl AppState {
             | DatabaseType::Highgo
             | DatabaseType::Vastbase
             | DatabaseType::Goldendb
+            | DatabaseType::Yashandb
+            | DatabaseType::Databricks
+            | DatabaseType::SapHana
+            | DatabaseType::Teradata
+            | DatabaseType::Vertica
+            | DatabaseType::Firebird
+            | DatabaseType::Exasol
+            | DatabaseType::OpenGauss
+            | DatabaseType::OceanbaseOracle
+            | DatabaseType::Gbase
             | DatabaseType::H2
             | DatabaseType::Snowflake
             | DatabaseType::Trino
@@ -284,8 +313,8 @@ impl AppState {
                 let mut client =
                     self.agent_manager.spawn(&db_config.db_type, db_config.driver_profile.as_deref()).await?;
                 client
-                    .call::<serde_json::Value>(
-                        "connect",
+                    .call_method::<serde_json::Value>(
+                        AgentMethod::Connect,
                         agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or("")),
                     )
                     .await?;
@@ -423,6 +452,38 @@ impl AppState {
         self.get_or_create_pool(connection_id, database).await
     }
 
+    pub async fn duckdb_existing_pool_is_usable_for_config(&self, config: &ConnectionConfig) -> Result<bool, String> {
+        if config.db_type != DatabaseType::DuckDb {
+            return Ok(false);
+        }
+
+        let matches_existing_config = {
+            let configs = self.configs.read().await;
+            configs.get(&config.id).is_some_and(|existing| {
+                existing.db_type == DatabaseType::DuckDb && duckdb_paths_match(&existing.host, &config.host)
+            })
+        };
+        if !matches_existing_config {
+            return Ok(false);
+        }
+
+        let duckdb_pool = {
+            let conns = self.connections.read().await;
+            match conns.get(&config.id) {
+                Some(PoolKind::DuckDb(con)) => Some(con.clone()),
+                _ => None,
+            }
+        };
+
+        let Some(con) = duckdb_pool else {
+            return Ok(false);
+        };
+
+        let locked = con.lock().map_err(|e| e.to_string())?;
+        locked.execute_batch("SELECT 1;").map_err(|e| format!("DuckDb connection failed: {e}"))?;
+        Ok(true)
+    }
+
     pub async fn reset_connection_transport(&self, connection_id: &str) {
         self.tunnels.stop_tunnel(connection_id).await;
         self.proxy_tunnels.stop_tunnel(connection_id).await;
@@ -450,8 +511,16 @@ impl AppState {
 }
 
 fn default_plugin_dir() -> PathBuf {
+    default_dbx_dir().join("plugins")
+}
+
+fn default_agent_dir() -> PathBuf {
+    default_dbx_dir().join("agents")
+}
+
+fn default_dbx_dir() -> PathBuf {
     let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".dbx").join("plugins")
+    PathBuf::from(home).join(".dbx")
 }
 
 pub fn connection_url_for_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> String {
@@ -471,6 +540,14 @@ pub fn redacted_connection_url_for_endpoint(config: &ConnectionConfig, host: &st
 }
 
 pub fn agent_connect_params(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> serde_json::Value {
+    let connection_string = if config.db_type == DatabaseType::MongoDb {
+        config.connection_url_with_host(host, port)
+    } else if config.db_type == DatabaseType::Oracle {
+        oracle_jdbc_connection_string(config, host, port, database)
+    } else {
+        config.connection_string.as_deref().unwrap_or("").to_string()
+    };
+
     serde_json::json!({
         "host": host,
         "port": port,
@@ -478,26 +555,88 @@ pub fn agent_connect_params(config: &ConnectionConfig, host: &str, port: u16, da
         "username": config.username,
         "password": config.password,
         "url_params": config.url_params.as_deref().unwrap_or(""),
-        "connection_string": config.connection_string.as_deref().unwrap_or(""),
+        "connection_string": connection_string,
     })
 }
 
-pub async fn probe_connection_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> Result<(), String> {
-    let has_oracle_oci_connect_string =
-        config.is_oracle_oci() && config.connection_string.as_deref().is_some_and(|value| !value.trim().is_empty());
+pub fn mongo_legacy_error_with_auth_hint(err: &str) -> String {
+    let Some(source_start) = err.find("source='") else {
+        return err.to_string();
+    };
+    if !err.contains("Exception authenticating MongoCredential") || err.contains("Current authentication database:") {
+        return err.to_string();
+    }
+    let source = &err[source_start + "source='".len()..];
+    let Some(source_end) = source.find('\'') else {
+        return err.to_string();
+    };
+    let source = &source[..source_end];
+    format!(
+        "{err}\n\nCurrent authentication database: {source}. If this user was created in admin, set Authentication database to admin or add authSource=admin to URL params."
+    )
+}
 
-    if config.db_type == DatabaseType::MongoDb
-        && config.connection_string.as_deref().is_some_and(|value| !value.is_empty())
+fn oracle_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> String {
+    let database = database.trim();
+    if database.is_empty() {
+        return config.connection_string.as_deref().unwrap_or("").to_string();
+    }
+
+    if config.oracle_connect_method == OracleConnectMethod::Sid
+        || config.oracle_connection_type.as_deref() == Some("sid")
     {
-        return Ok(());
+        format!("jdbc:oracle:thin:@{host}:{port}:{database}")
+    } else {
+        format!("jdbc:oracle:thin:@//{host}:{port}/{database}")
     }
-    if has_oracle_oci_connect_string {
-        return Ok(());
+}
+
+fn duckdb_paths_match(left: &str, right: &str) -> bool {
+    let left = expand_tilde(left);
+    let right = expand_tilde(right);
+
+    if db::duckdb_driver::is_memory_database_path(&left) || db::duckdb_driver::is_memory_database_path(&right) {
+        return left.trim().eq_ignore_ascii_case(right.trim());
     }
-    if database_capabilities::skips_tcp_probe(&config.db_type) {
+
+    if let (Ok(left_path), Ok(right_path)) = (std::fs::canonicalize(&left), std::fs::canonicalize(&right)) {
+        return left_path == right_path;
+    }
+
+    if cfg!(windows) {
+        left.eq_ignore_ascii_case(&right)
+    } else {
+        left == right
+    }
+}
+
+pub async fn probe_connection_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> Result<(), String> {
+    if !uses_tcp_probe(config, host, port) {
         return Ok(());
     }
     db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port).await
+}
+
+fn uses_tcp_probe(config: &ConnectionConfig, host: &str, port: u16) -> bool {
+    if config.db_type == DatabaseType::MongoDb
+        && config.connection_string.as_deref().is_some_and(|value| !value.is_empty())
+    {
+        return false;
+    }
+    if config.is_oracle_oci() && config.connection_string.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+        return false;
+    }
+    if database_capabilities::skips_tcp_probe(&config.db_type) {
+        return false;
+    }
+    if is_original_hostname_endpoint(config, host, port) {
+        return false;
+    }
+    true
+}
+
+fn is_original_hostname_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> bool {
+    host == config.host && port == config.port && host.parse::<std::net::IpAddr>().is_err()
 }
 
 async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &sqlx::mysql::MySqlPool) -> MysqlMode {
@@ -516,8 +655,11 @@ async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &sqlx::mysql::My
 
 #[cfg(test)]
 mod tests {
-    use super::{agent_connect_params, database_connection_config, metadata_connection_config, AppState, PoolKind};
-    use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
+    use super::{
+        agent_connect_params, database_connection_config, metadata_connection_config, uses_tcp_probe, AppState,
+        PoolKind,
+    };
+    use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType};
     use crate::schema;
     use crate::storage::Storage;
 
@@ -535,6 +677,7 @@ mod tests {
             password: "secret".to_string(),
             database: database.map(str::to_string),
             visible_databases: None,
+            attached_databases: Vec::new(),
             color: None,
             ssh_enabled: false,
             ssh_host: String::new(),
@@ -553,6 +696,8 @@ mod tests {
             proxy_password: String::new(),
             ssl: false,
             sysdba: false,
+            oracle_connect_method: OracleConnectMethod::ServiceName,
+            oracle_connection_type: None,
             connection_string: None,
             external_config: None,
             jdbc_driver_class: None,
@@ -575,6 +720,57 @@ mod tests {
         assert_eq!(params["username"], "informix");
         assert_eq!(params["password"], "in4mix");
         assert_eq!(params["url_params"], "INFORMIXSERVER=informix;CLIENT_LOCALE=en_US.utf8");
+    }
+
+    #[test]
+    fn agent_connect_params_build_mongodb_connection_string_from_form_fields() {
+        let mut config = mysql_config(Some("RestCloud_V45PUB_Gateway"));
+        config.db_type = DatabaseType::MongoDb;
+        config.host = "172.22.4.42".to_string();
+        config.port = 27017;
+        config.username = "mongouser".to_string();
+        config.password = "secret".to_string();
+        config.url_params = Some("authSource=admin&authMechanism=SCRAM-SHA-1".to_string());
+
+        let params = agent_connect_params(&config, "172.22.4.42", 27017, "RestCloud_V45PUB_Gateway");
+
+        assert_eq!(params["connection_string"], "mongodb://mongouser:secret@172.22.4.42:27017/RestCloud%5FV45PUB%5FGateway?authSource=admin&authMechanism=SCRAM-SHA-1");
+    }
+
+    #[test]
+    fn mongo_legacy_auth_error_adds_auth_source_hint() {
+        let err = "Agent RPC error: Exception authenticating MongoCredential{mechanism=SCRAM-SHA-1, userName='rwuser', source='gray_lite_twin_fat'}";
+
+        assert_eq!(
+            super::mongo_legacy_error_with_auth_hint(err),
+            "Agent RPC error: Exception authenticating MongoCredential{mechanism=SCRAM-SHA-1, userName='rwuser', source='gray_lite_twin_fat'}\n\nCurrent authentication database: gray_lite_twin_fat. If this user was created in admin, set Authentication database to admin or add authSource=admin to URL params."
+        );
+    }
+
+    #[test]
+    fn agent_connect_params_build_oracle_service_connection_string() {
+        let mut config = mysql_config(Some("ORCLPDB1"));
+        config.db_type = DatabaseType::Oracle;
+        config.host = "oracle.example.com".to_string();
+        config.port = 1521;
+        config.username = "system".to_string();
+        config.password = "oracle".to_string();
+
+        let params = agent_connect_params(&config, "oracle.example.com", 1521, "ORCLPDB1");
+
+        assert_eq!(params["database"], "ORCLPDB1");
+        assert_eq!(params["connection_string"], "jdbc:oracle:thin:@//oracle.example.com:1521/ORCLPDB1");
+    }
+
+    #[test]
+    fn agent_connect_params_build_oracle_sid_connection_string() {
+        let mut config = mysql_config(Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+        config.oracle_connection_type = Some("sid".to_string());
+
+        let params = agent_connect_params(&config, "127.0.0.1", 11521, "ORCL");
+
+        assert_eq!(params["connection_string"], "jdbc:oracle:thin:@127.0.0.1:11521:ORCL");
     }
 
     async fn test_app_state() -> (AppState, std::path::PathBuf) {
@@ -623,6 +819,36 @@ mod tests {
         assert_eq!(scoped.database.as_deref(), Some("ORCL"));
     }
 
+    #[test]
+    fn mysql_hostname_connections_skip_tcp_probe() {
+        let mut config = mysql_config(Some("app"));
+        config.host = "mysql.example.com".to_string();
+
+        assert!(!uses_tcp_probe(&config, "mysql.example.com", 3306));
+        assert!(uses_tcp_probe(&config, "192.0.2.10", 3306));
+        assert!(uses_tcp_probe(&config, "127.0.0.1", 53306));
+    }
+
+    #[test]
+    fn native_hostname_connections_skip_tcp_probe() {
+        for db_type in [
+            DatabaseType::Postgres,
+            DatabaseType::Redshift,
+            DatabaseType::Redis,
+            DatabaseType::ClickHouse,
+            DatabaseType::SqlServer,
+            DatabaseType::Elasticsearch,
+        ] {
+            let mut config = mysql_config(Some("app"));
+            config.db_type = db_type;
+            config.host = "db.example.com".to_string();
+
+            assert!(!uses_tcp_probe(&config, "db.example.com", config.port), "{db_type:?} hostname");
+            assert!(uses_tcp_probe(&config, "192.0.2.10", config.port), "{db_type:?} ip");
+            assert!(uses_tcp_probe(&config, "127.0.0.1", 54000), "{db_type:?} forwarded");
+        }
+    }
+
     #[tokio::test]
     async fn sqlite_get_or_create_pool_initializes_connection_for_web_route() {
         let (state, dir) = test_app_state().await;
@@ -643,6 +869,26 @@ mod tests {
         let databases = schema::list_databases_core(&state, "sqlite-conn").await.unwrap();
         assert_eq!(databases.len(), 1);
         assert_eq!(databases[0].name, "main");
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn duckdb_existing_pool_can_be_used_for_connection_test() {
+        let (state, dir) = test_app_state().await;
+        let db_path = dir.join("app.duckdb");
+        duckdb::Connection::open(&db_path).unwrap();
+        let mut config = mysql_config(None);
+        config.id = "duckdb-conn".to_string();
+        config.name = "DuckDB".to_string();
+        config.db_type = DatabaseType::DuckDb;
+        config.host = db_path.to_string_lossy().to_string();
+        config.port = 0;
+
+        state.configs.write().await.insert(config.id.clone(), config.clone());
+        state.get_or_create_pool("duckdb-conn", None).await.unwrap();
+
+        assert!(state.duckdb_existing_pool_is_usable_for_config(&config).await.unwrap());
 
         let _ = std::fs::remove_dir_all(dir);
     }

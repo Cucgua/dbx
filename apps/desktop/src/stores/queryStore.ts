@@ -466,9 +466,9 @@ export const useQueryStore = defineStore("query", () => {
       const connStore = useConnectionStore();
       const conn = connStore.getConfig(tab.connectionId);
       const useAgentCursor = !!conn?.db_type && AGENT_DRIVER_TYPES.has(conn.db_type);
+      const settingsStore = useSettingsStore();
       await closeResultSession(tab, options?.pagination?.sessionId);
       if (tab.mode === "query") {
-        const settingsStore = useSettingsStore();
         const pagination = options?.pagination ?? { limit: settingsStore.editorSettings.pageSize, offset: 0 };
         const plan = buildQueryPaginationExecutionPlan({
           sql,
@@ -483,6 +483,8 @@ export const useQueryStore = defineStore("query", () => {
         pageOffset = plan.pageOffset;
         countSql = plan.countSql;
         useAgentResultSession = plan.useAgentResultSession;
+      } else if (tab.mode === "data") {
+        pageLimit = settingsStore.editorSettings.pageSize;
       }
       const mongoFind = conn?.db_type === "mongodb" ? parseMongoFindCommand(sql) : null;
       if (mongoFind) {
@@ -522,7 +524,7 @@ export const useQueryStore = defineStore("query", () => {
         typeof pageLimit === "number"
           ? useAgentResultSession
             ? {
-                maxRows: 10000,
+                maxRows: pageLimit,
                 fetchSize: pageLimit,
                 pageSize: pageLimit,
                 resultSessionId: options?.pagination?.sessionId,

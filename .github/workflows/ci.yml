@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -64,6 +66,15 @@ jobs:
 
       - name: Cargo check
         run: cargo check --workspace --locked
+
+      - name: JDBC plugin version guard
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE_SHA" ] || echo "$BASE_SHA" | grep -Eq '^0+$'; then
+            BASE_SHA="HEAD~1"
+          fi
+          node .github/scripts/check-jdbc-plugin-version.mjs "$BASE_SHA" HEAD
 
       - name: JDBC plugin package check
         run: ./plugins/jdbc/package.sh

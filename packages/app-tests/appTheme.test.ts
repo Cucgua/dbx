@@ -10,8 +10,8 @@ test("normalizes stored app theme modes", () => {
   assert.equal(normalizeAppThemeMode("dark"), "dark");
   assert.equal(normalizeAppThemeMode("light"), "light");
   assert.equal(normalizeAppThemeMode("system"), "system");
-  assert.equal(normalizeAppThemeMode(null), "light");
-  assert.equal(normalizeAppThemeMode("unexpected"), "light");
+  assert.equal(normalizeAppThemeMode(null), "dark");
+  assert.equal(normalizeAppThemeMode("unexpected"), "dark");
 });
 
 test("resolves system app theme from current system preference", () => {

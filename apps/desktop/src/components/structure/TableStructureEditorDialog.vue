@@ -38,7 +38,13 @@ import {
   type EditableStructureColumn,
   type EditableStructureIndex,
 } from "@/lib/tableStructureEditorSql";
-import { createColumnDrafts, createIndexDrafts, toColumnNames } from "@/lib/tableStructureEditorState";
+import { getTableStructureCapabilities } from "@/lib/tableStructureCapabilities";
+import {
+  buildStructureTargetLabel,
+  createColumnDrafts,
+  createIndexDrafts,
+  toColumnNames,
+} from "@/lib/tableStructureEditorState";
 import type { ForeignKeyInfo, TriggerInfo } from "@/types/database";
 import * as api from "@/lib/api";
 
@@ -89,6 +95,7 @@ function onIndexColResize(e: MouseEvent, col: number) {
 
 const connection = computed(() => (props.prefillConnectionId ? store.getConfig(props.prefillConnectionId) : undefined));
 const databaseType = computed(() => connection.value?.db_type);
+const structureCapabilities = computed(() => getTableStructureCapabilities(databaseType.value));
 
 const indexTypesByDb: Record<string, string[]> = {
   postgres: ["BTREE", "HASH", "GIST", "SPGIST", "GIN", "BRIN"],
@@ -97,7 +104,9 @@ const indexTypesByDb: Record<string, string[]> = {
   oracle: ["NORMAL", "BITMAP", "FUNCTION-BASED NORMAL", "FUNCTION-BASED DOMAIN", "DOMAIN", "CLUSTER"],
   sqlite: ["BTREE"],
 };
-const indexTypeOptions = computed(() => indexTypesByDb[databaseType.value ?? ""] ?? []);
+const indexTypeOptions = computed(() =>
+  structureCapabilities.value.indexType ? (indexTypesByDb[databaseType.value ?? ""] ?? []) : [],
+);
 
 const indexColLabels = computed(() => [
   t("structureEditor.indexName"),
@@ -112,11 +121,14 @@ const indexColLabels = computed(() => [
 const targetSchema = computed(() => props.prefillSchema || props.prefillDatabase || "");
 const isCreateMode = computed(() => !props.prefillTable);
 const newTableName = ref("");
-const targetLabel = computed(() => {
-  const parts = [connection.value?.name, props.prefillDatabase, props.prefillSchema];
-  if (!isCreateMode.value) parts.push(props.prefillTable);
-  return parts.filter(Boolean).join(" / ");
-});
+const targetLabel = computed(() =>
+  buildStructureTargetLabel(
+    connection.value?.name,
+    props.prefillDatabase,
+    props.prefillSchema,
+    isCreateMode.value ? undefined : props.prefillTable,
+  ),
+);
 
 const changeSql = computed(() => {
   if (isCreateMode.value) {
@@ -195,6 +207,7 @@ async function loadStructure() {
 }
 
 function addColumn() {
+  if (!structureCapabilities.value.addColumn) return;
   columns.value.push({
     id: `new:${uuid()}`,
     name: "",
@@ -212,11 +225,38 @@ function removeNewColumn(column: EditableStructureColumn) {
 }
 
 function toggleDropColumn(column: EditableStructureColumn) {
-  if (!column.original || column.isPrimaryKey) return;
+  if (!canDropColumn(column)) return;
   column.markedForDrop = !column.markedForDrop;
 }
 
+function isColumnNameDisabled(column: EditableStructureColumn): boolean {
+  return column.markedForDrop || (!!column.original && !structureCapabilities.value.renameColumn);
+}
+
+function isColumnTypeDisabled(column: EditableStructureColumn): boolean {
+  return column.markedForDrop || (!!column.original && !structureCapabilities.value.alterType);
+}
+
+function isColumnNullableDisabled(column: EditableStructureColumn): boolean {
+  return (
+    column.markedForDrop || column.isPrimaryKey || (!!column.original && !structureCapabilities.value.alterNullability)
+  );
+}
+
+function isColumnDefaultDisabled(column: EditableStructureColumn): boolean {
+  return column.markedForDrop || (!!column.original && !structureCapabilities.value.alterDefault);
+}
+
+function isColumnCommentDisabled(column: EditableStructureColumn): boolean {
+  return column.markedForDrop || !structureCapabilities.value.comment;
+}
+
+function canDropColumn(column: EditableStructureColumn): boolean {
+  return !!column.original && !column.isPrimaryKey && structureCapabilities.value.dropColumn;
+}
+
 function addIndex() {
+  if (!structureCapabilities.value.createIndex) return;
   indexes.value.push({
     id: `new:${uuid()}`,
     name: "",
@@ -252,6 +292,7 @@ function toggleIndexColumn(index: EditableStructureIndex, col: string) {
 }
 
 function toggleIncludedColumn(index: EditableStructureIndex, col: string) {
+  if (!structureCapabilities.value.indexInclude) return;
   const i = index.includedColumns.indexOf(col);
   if (i >= 0) index.includedColumns.splice(i, 1);
   else index.includedColumns.push(col);
@@ -262,8 +303,20 @@ function removeNewIndex(index: EditableStructureIndex) {
 }
 
 function toggleDropIndex(index: EditableStructureIndex) {
-  if (!index.original || index.isPrimary) return;
+  if (!canDropIndex(index)) return;
   index.markedForDrop = !index.markedForDrop;
+}
+
+function canEditIndexDraft(index: EditableStructureIndex): boolean {
+  return !index.original && !index.markedForDrop && structureCapabilities.value.createIndex;
+}
+
+function canEditIndexFilter(index: EditableStructureIndex): boolean {
+  return canEditIndexDraft(index) && structureCapabilities.value.indexFilter;
+}
+
+function canDropIndex(index: EditableStructureIndex): boolean {
+  return !!index.original && !index.isPrimary && structureCapabilities.value.dropIndex;
 }
 
 async function applyChanges() {
@@ -286,12 +339,16 @@ async function applyChanges() {
   }
 }
 
-watch(open, (value) => {
-  if (value) {
-    resetState();
-    void loadStructure();
-  }
-});
+watch(
+  open,
+  (value) => {
+    if (value) {
+      resetState();
+      void loadStructure();
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -346,11 +403,23 @@ watch(open, (value) => {
                   <TabsTrigger value="foreignKeys">{{ t("structureEditor.foreignKeys") }}</TabsTrigger>
                   <TabsTrigger value="triggers">{{ t("structureEditor.triggers") }}</TabsTrigger>
                 </TabsList>
-                <Button v-if="activeTab === 'columns'" size="sm" class="h-7 gap-1" @click="addColumn">
+                <Button
+                  v-if="activeTab === 'columns'"
+                  size="sm"
+                  class="h-7 gap-1"
+                  :disabled="!structureCapabilities.addColumn"
+                  @click="addColumn"
+                >
                   <Plus class="h-3.5 w-3.5" />
                   {{ t("structureEditor.addColumn") }}
                 </Button>
-                <Button v-if="activeTab === 'indexes'" size="sm" class="h-7 gap-1" @click="addIndex">
+                <Button
+                  v-if="activeTab === 'indexes'"
+                  size="sm"
+                  class="h-7 gap-1"
+                  :disabled="!structureCapabilities.createIndex"
+                  @click="addIndex"
+                >
                   <Plus class="h-3.5 w-3.5" />
                   {{ t("structureEditor.addIndex") }}
                 </Button>
@@ -394,13 +463,17 @@ watch(open, (value) => {
                         </div>
                       </td>
                       <td class="border-b border-r px-2 py-1.5">
-                        <Input v-model="column.name" class="h-7 min-w-32 text-xs" :disabled="column.markedForDrop" />
+                        <Input
+                          v-model="column.name"
+                          class="h-7 min-w-32 text-xs"
+                          :disabled="isColumnNameDisabled(column)"
+                        />
                       </td>
                       <td class="border-b border-r px-2 py-1.5">
                         <Input
                           v-model="column.dataType"
                           class="h-7 min-w-36 font-mono text-xs"
-                          :disabled="column.markedForDrop"
+                          :disabled="isColumnTypeDisabled(column)"
                         />
                       </td>
                       <td class="border-b border-r px-2 py-1.5">
@@ -409,7 +482,7 @@ watch(open, (value) => {
                             v-model="column.isNullable"
                             type="checkbox"
                             class="h-3.5 w-3.5"
-                            :disabled="column.markedForDrop || column.isPrimaryKey"
+                            :disabled="isColumnNullableDisabled(column)"
                           />
                           <span>{{ column.isNullable ? t("structureEditor.yes") : t("structureEditor.no") }}</span>
                         </label>
@@ -418,7 +491,7 @@ watch(open, (value) => {
                         <Input
                           v-model="column.defaultValue"
                           class="h-7 min-w-28 font-mono text-xs"
-                          :disabled="column.markedForDrop"
+                          :disabled="isColumnDefaultDisabled(column)"
                         />
                       </td>
                       <td class="border-b border-r px-2 py-1.5">
@@ -426,7 +499,7 @@ watch(open, (value) => {
                           <Input
                             v-model="column.comment"
                             class="h-7 min-w-0 flex-1 text-xs"
-                            :disabled="column.markedForDrop"
+                            :disabled="isColumnCommentDisabled(column)"
                           />
                           <Popover>
                             <PopoverTrigger as-child>
@@ -434,7 +507,7 @@ watch(open, (value) => {
                                 variant="ghost"
                                 size="icon"
                                 class="h-7 w-7 shrink-0"
-                                :disabled="column.markedForDrop"
+                                :disabled="isColumnCommentDisabled(column)"
                                 :aria-label="t('structureEditor.editComment')"
                                 :title="t('structureEditor.editComment')"
                               >
@@ -454,7 +527,7 @@ watch(open, (value) => {
                                 v-model="column.comment"
                                 class="min-h-36 w-full resize-y rounded-md border bg-background px-2.5 py-2 text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
                                 :placeholder="t('structureEditor.commentPlaceholder')"
-                                :disabled="column.markedForDrop"
+                                :disabled="isColumnCommentDisabled(column)"
                               />
                             </PopoverContent>
                           </Popover>
@@ -466,7 +539,7 @@ watch(open, (value) => {
                           variant="ghost"
                           size="sm"
                           class="h-7 gap-1"
-                          :disabled="column.isPrimaryKey"
+                          :disabled="!canDropColumn(column)"
                           @click="toggleDropColumn(column)"
                         >
                           <Trash2 class="h-3.5 w-3.5" />
@@ -512,14 +585,10 @@ watch(open, (value) => {
                       :class="index.markedForDrop ? 'bg-destructive/5 opacity-60' : ''"
                     >
                       <td class="border-b border-r px-2 py-1.5">
-                        <Input
-                          v-model="index.name"
-                          class="h-7 text-xs"
-                          :disabled="!!index.original || index.markedForDrop"
-                        />
+                        <Input v-model="index.name" class="h-7 text-xs" :disabled="!canEditIndexDraft(index)" />
                       </td>
                       <td class="overflow-hidden border-b border-r px-2 py-1.5">
-                        <DropdownMenu v-if="!index.original && !index.markedForDrop">
+                        <DropdownMenu v-if="canEditIndexDraft(index)">
                           <DropdownMenuTrigger as-child>
                             <Button variant="outline" class="h-7 w-full justify-between font-mono text-xs">
                               <span class="truncate">{{
@@ -565,7 +634,7 @@ watch(open, (value) => {
                             v-model="index.isUnique"
                             type="checkbox"
                             class="h-3.5 w-3.5"
-                            :disabled="!!index.original || index.markedForDrop"
+                            :disabled="!canEditIndexDraft(index)"
                           />
                           <span>{{ index.isUnique ? t("structureEditor.yes") : t("structureEditor.no") }}</span>
                         </label>
@@ -577,7 +646,7 @@ watch(open, (value) => {
                         <Select
                           v-else-if="indexTypeOptions.length > 0"
                           :model-value="index.indexType || 'BTREE'"
-                          :disabled="index.markedForDrop"
+                          :disabled="!canEditIndexDraft(index)"
                           @update:model-value="(v: any) => (index.indexType = String(v ?? ''))"
                         >
                           <SelectTrigger class="h-7 font-mono text-xs">
@@ -592,11 +661,11 @@ watch(open, (value) => {
                           v-model="index.indexType"
                           class="h-7 font-mono text-xs"
                           placeholder="BTREE"
-                          :disabled="index.markedForDrop"
+                          :disabled="!canEditIndexDraft(index)"
                         />
                       </td>
                       <td class="overflow-hidden border-b border-r px-2 py-1.5">
-                        <DropdownMenu v-if="!index.original && !index.markedForDrop">
+                        <DropdownMenu v-if="canEditIndexDraft(index) && structureCapabilities.indexInclude">
                           <DropdownMenuTrigger as-child>
                             <Button variant="outline" class="h-7 w-full justify-between font-mono text-xs">
                               <span class="truncate">{{
@@ -639,12 +708,17 @@ watch(open, (value) => {
                           v-model="index.filter"
                           class="h-7 font-mono text-xs"
                           :placeholder="index.original?.filter || ''"
-                          :disabled="!!index.original || index.markedForDrop"
+                          :disabled="!canEditIndexFilter(index)"
                         />
                       </td>
                       <td class="border-b border-r px-2 py-1.5">
                         <span v-if="index.original" class="text-muted-foreground text-xs">{{ index.comment }}</span>
-                        <Input v-else v-model="index.comment" class="h-7 text-xs" :disabled="index.markedForDrop" />
+                        <Input
+                          v-else
+                          v-model="index.comment"
+                          class="h-7 text-xs"
+                          :disabled="!canEditIndexDraft(index) || !structureCapabilities.indexComment"
+                        />
                       </td>
                       <td class="border-b px-2 py-1.5">
                         <Badge v-if="index.isPrimary" variant="outline">{{ t("structureEditor.primary") }}</Badge>
@@ -653,6 +727,7 @@ watch(open, (value) => {
                           variant="ghost"
                           size="sm"
                           class="h-7 gap-1"
+                          :disabled="!canDropIndex(index)"
                           @click="toggleDropIndex(index)"
                         >
                           <Trash2 class="h-3.5 w-3.5" />

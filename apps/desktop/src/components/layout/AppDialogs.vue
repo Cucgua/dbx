@@ -3,9 +3,9 @@ import { computed, watch, defineAsyncComponent } from "vue";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import ConnectionDialog from "@/components/connection/ConnectionDialog.vue";
-import EditorSettingsDialog from "@/components/editor/EditorSettingsDialog.vue";
-import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
+const ConnectionDialog = defineAsyncComponent(() => import("@/components/connection/ConnectionDialog.vue"));
+const EditorSettingsDialog = defineAsyncComponent(() => import("@/components/editor/EditorSettingsDialog.vue"));
+const DangerConfirmDialog = defineAsyncComponent(() => import("@/components/editor/DangerConfirmDialog.vue"));
 const DataTransferDialog = defineAsyncComponent(() => import("@/components/transfer/DataTransferDialog.vue"));
 const SchemaDiffDialog = defineAsyncComponent(() => import("@/components/diff/SchemaDiffDialog.vue"));
 const DataCompareDialog = defineAsyncComponent(() => import("@/components/diff/DataCompareDialog.vue"));
@@ -70,6 +70,7 @@ const editConfig = computed(() => {
   if (!id) return undefined;
   return connectionStore.getConfig(id);
 });
+const shouldShowConnectionDialog = computed(() => props.showConnectionDialog || !!editConfig.value);
 
 watch(editConfig, (v) => {
   if (v) emit("update:showConnectionDialog", true);
@@ -95,7 +96,8 @@ watch(
 
 <template>
   <ConnectionDialog
-    :open="showConnectionDialog"
+    v-if="shouldShowConnectionDialog"
+    :open="shouldShowConnectionDialog"
     :edit-config="editConfig"
     @update:open="emit('update:showConnectionDialog', $event)"
     @connect-started="emit('connectStarted', $event)"
@@ -104,29 +106,34 @@ watch(
     @open-driver-store="emit('openDriverStore')"
   />
   <EditorSettingsDialog
+    v-if="showSettingsDialog"
     :open="showSettingsDialog"
     :initial-tab="settingsInitialTab || 'editor'"
     :app-version="appVersion"
     @update:open="emit('update:showSettingsDialog', $event)"
   />
   <DangerConfirmDialog
+    v-if="showDangerDialog"
     :open="showDangerDialog"
     :sql="dangerSql"
     @update:open="emit('update:showDangerDialog', $event)"
     @confirm="emit('dangerConfirm')"
   />
   <DataTransferDialog
+    v-if="dialogs.showTransferDialog.value"
     v-model:open="dialogs.showTransferDialog.value"
     :prefill-connection-id="dialogs.transferPrefillConnectionId.value"
     :prefill-database="dialogs.transferPrefillDatabase.value"
   />
   <SchemaDiffDialog
+    v-if="dialogs.showSchemaDiffDialog.value"
     v-model:open="dialogs.showSchemaDiffDialog.value"
     :prefill-connection-id="dialogs.schemaDiffPrefillConnectionId.value"
     :prefill-database="dialogs.schemaDiffPrefillDatabase.value"
     :prefill-schema="dialogs.schemaDiffPrefillSchema.value"
   />
   <DataCompareDialog
+    v-if="dialogs.showDataCompareDialog.value"
     v-model:open="dialogs.showDataCompareDialog.value"
     :prefill-connection-id="dialogs.dataComparePrefillConnectionId.value"
     :prefill-database="dialogs.dataComparePrefillDatabase.value"
@@ -134,11 +141,13 @@ watch(
     :prefill-table="dialogs.dataComparePrefillTable.value"
   />
   <SqlFileExecutionDialog
+    v-if="dialogs.showSqlFileDialog.value"
     v-model:open="dialogs.showSqlFileDialog.value"
     :prefill-connection-id="dialogs.sqlFilePrefillConnectionId.value"
     :prefill-database="dialogs.sqlFilePrefillDatabase.value"
   />
   <SchemaDiagramDialog
+    v-if="dialogs.showDiagramDialog.value"
     v-model:open="dialogs.showDiagramDialog.value"
     :prefill-connection-id="dialogs.diagramPrefillConnectionId.value"
     :prefill-database="dialogs.diagramPrefillDatabase.value"
@@ -146,6 +155,7 @@ watch(
     :focus-table-name="dialogs.diagramFocusTableName.value"
   />
   <TableImportDialog
+    v-if="dialogs.showTableImportDialog.value"
     v-model:open="dialogs.showTableImportDialog.value"
     :prefill-connection-id="dialogs.tableImportPrefillConnectionId.value"
     :prefill-database="dialogs.tableImportPrefillDatabase.value"
@@ -153,6 +163,7 @@ watch(
     :prefill-table="dialogs.tableImportPrefillTable.value"
   />
   <TableStructureEditorDialog
+    v-if="dialogs.showStructureEditorDialog.value"
     v-model:open="dialogs.showStructureEditorDialog.value"
     :prefill-connection-id="dialogs.structurePrefillConnectionId.value"
     :prefill-database="dialogs.structurePrefillDatabase.value"
@@ -161,6 +172,7 @@ watch(
     @saved="emit('structureEditorSaved')"
   />
   <FieldLineageDialog
+    v-if="dialogs.showFieldLineageDialog.value"
     v-model:open="dialogs.showFieldLineageDialog.value"
     :prefill-connection-id="dialogs.lineagePrefillConnectionId.value"
     :prefill-database="dialogs.lineagePrefillDatabase.value"
@@ -170,6 +182,7 @@ watch(
     @open-target="emit('openLineageTarget', $event)"
   />
   <DatabaseSearchDialog
+    v-if="dialogs.showDatabaseSearchDialog.value"
     v-model:open="dialogs.showDatabaseSearchDialog.value"
     :prefill-connection-id="dialogs.databaseSearchPrefillConnectionId.value"
     :prefill-database="dialogs.databaseSearchPrefillDatabase.value"
@@ -177,6 +190,7 @@ watch(
     @open-target="emit('openDatabaseSearchTarget', $event)"
   />
   <DatabaseExportDialog
+    v-if="dialogs.showDatabaseExportDialog.value"
     v-model:open="dialogs.showDatabaseExportDialog.value"
     :prefill-connection-id="dialogs.databaseExportPrefillConnectionId.value"
     :prefill-database="dialogs.databaseExportPrefillDatabase.value"
@@ -184,6 +198,7 @@ watch(
     :prefill-table="dialogs.databaseExportPrefillTable.value"
   />
   <ConfigPassphraseDialog
+    v-if="dialogs.showConfigPassphraseDialog.value"
     v-model:open="dialogs.showConfigPassphraseDialog.value"
     :mode="dialogs.configPassphraseMode.value"
     :external-error="dialogs.configPassphraseError.value"

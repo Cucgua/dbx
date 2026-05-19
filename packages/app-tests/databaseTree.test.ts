@@ -3,15 +3,35 @@ import test from "node:test";
 import { buildDatabaseTreeNodes } from "../../apps/desktop/src/lib/databaseTree.ts";
 
 test("设置默认库后侧边栏数据库树仍保留全部数据库", () => {
-  const nodes = buildDatabaseTreeNodes("conn-1", [
-    { name: "campaign_data" },
-    { name: "cms" },
-    { name: "mk_campaign" },
-  ]);
+  const nodes = buildDatabaseTreeNodes("conn-1", [{ name: "campaign_data" }, { name: "cms" }, { name: "mk_campaign" }]);
 
   assert.deepEqual(
     nodes.map((node) => node.database),
     ["campaign_data", "cms", "mk_campaign"],
   );
   assert.equal(nodes.find((node) => node.database === "mk_campaign")?.id, "conn-1:mk_campaign");
+});
+
+test("catalogless database metadata gets a visible default node", () => {
+  const nodes = buildDatabaseTreeNodes("conn-1", [{ name: "   " }], { includeDefaultWhenEmpty: true });
+
+  assert.deepEqual(nodes, [
+    {
+      id: "conn-1:",
+      label: "tree.defaultDatabase",
+      type: "database",
+      connectionId: "conn-1",
+      database: "",
+      isExpanded: false,
+      children: [],
+    },
+  ]);
+});
+
+test("tree schema mode can show a default node when no catalog is returned", () => {
+  const nodes = buildDatabaseTreeNodes("conn-1", [], { includeDefaultWhenEmpty: true });
+
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0].database, "");
+  assert.equal(nodes[0].label, "tree.defaultDatabase");
 });

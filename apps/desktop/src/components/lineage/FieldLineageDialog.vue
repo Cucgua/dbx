@@ -119,15 +119,19 @@ const filteredItems = computed(() => {
 
 const filteredCounts = computed(() => summarizeLineageCounts(filteredItems.value));
 
-watch(dialogOpen, (open) => {
-  if (open) {
-    confidenceFilter.value = "all";
-    searchText.value = "";
-    void loadLineage();
-  } else {
-    cancelLoad();
-  }
-});
+watch(
+  dialogOpen,
+  (open) => {
+    if (open) {
+      confidenceFilter.value = "all";
+      searchText.value = "";
+      void loadLineage();
+    } else {
+      cancelLoad();
+    }
+  },
+  { immediate: true },
+);
 
 function cancelLoad() {
   cancelled.value = true;

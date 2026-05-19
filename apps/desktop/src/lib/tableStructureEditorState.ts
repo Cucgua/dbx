@@ -34,3 +34,15 @@ export function createIndexDrafts(indexes: IndexInfo[]): EditableStructureIndex[
 export function toColumnNames(columns: string[]): string {
   return columns.join(", ");
 }
+
+export function buildStructureTargetLabel(
+  connectionName: string | undefined,
+  database: string | undefined,
+  schema: string | undefined,
+  tableName: string | undefined,
+): string {
+  const parts = [connectionName, database];
+  if (schema && schema !== database) parts.push(schema);
+  if (tableName) parts.push(tableName);
+  return parts.filter(Boolean).join(" / ");
+}

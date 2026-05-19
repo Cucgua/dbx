@@ -231,12 +231,16 @@ async function cancelImport() {
   await api.cancelTableImport(importId.value);
 }
 
-watch(open, (value) => {
-  if (value) {
-    resetState();
-    void loadTargetColumns();
-  }
-});
+watch(
+  open,
+  (value) => {
+    if (value) {
+      resetState();
+      void loadTargetColumns();
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>

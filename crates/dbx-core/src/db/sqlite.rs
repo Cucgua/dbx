@@ -1,6 +1,7 @@
 use futures::StreamExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 use sqlx::{Column, Executor, Row};
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use super::file_validator::validate_file_path;
@@ -8,17 +9,23 @@ use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryResult, TableInfo, TriggerInfo};
 
 pub async fn connect_path(path: &str) -> Result<SqlitePool, String> {
-    // Validate file path using universal validator
-    validate_file_path(path, is_network_path)?;
+    let is_memory = is_memory_database_path(path);
+    if !is_memory {
+        validate_file_path(path, is_network_path)?;
+    }
 
-    let mut options = SqliteConnectOptions::new().filename(path).create_if_missing(false);
+    let mut options = if is_memory {
+        SqliteConnectOptions::from_str("sqlite::memory:").map_err(|e| format!("SQLite connection failed: {e}"))?
+    } else {
+        SqliteConnectOptions::new().filename(path).create_if_missing(false)
+    };
 
     if is_network_path(path) {
         options = options.vfs("unix-nolock");
     }
 
     SqlitePoolOptions::new()
-        .max_connections(5)
+        .max_connections(if is_memory { 1 } else { 5 })
         .acquire_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(300))
         .connect_with(options)
@@ -28,6 +35,28 @@ pub async fn connect_path(path: &str) -> Result<SqlitePool, String> {
 
 fn is_network_path(path: &str) -> bool {
     path.starts_with("\\\\") || path.starts_with("//") || path.contains("wsl.localhost") || path.contains("wsl$")
+}
+
+pub fn is_memory_database_path(path: &str) -> bool {
+    path.trim().eq_ignore_ascii_case(":memory:")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn connect_path_supports_memory_database_across_statements() {
+        let pool = connect_path(":memory:").await.expect("connect in-memory SQLite");
+
+        execute_query(&pool, "CREATE TABLE memory_probe (id INTEGER PRIMARY KEY, name TEXT);")
+            .await
+            .expect("create table");
+        execute_query(&pool, "INSERT INTO memory_probe (name) VALUES ('Ada');").await.expect("insert row");
+        let result = execute_query(&pool, "SELECT name FROM memory_probe WHERE id = 1;").await.expect("select row");
+
+        assert_eq!(result.rows[0][0], serde_json::json!("Ada"));
+    }
 }
 
 pub async fn list_databases(_pool: &SqlitePool) -> Result<Vec<DatabaseInfo>, String> {
@@ -162,7 +191,20 @@ pub async fn list_triggers(pool: &SqlitePool, _schema: &str, table: &str) -> Res
 }
 
 pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, String> {
+    execute_query_with_max_rows(pool, sql, None).await
+}
+
+fn query_result_row_limit(max_rows: Option<usize>) -> usize {
+    max_rows.unwrap_or(crate::query::MAX_ROWS).max(1)
+}
+
+pub async fn execute_query_with_max_rows(
+    pool: &SqlitePool,
+    sql: &str,
+    max_rows: Option<usize>,
+) -> Result<QueryResult, String> {
     let start = Instant::now();
+    let row_limit = query_result_row_limit(max_rows);
 
     if starts_with_executable_sql_keyword(sql, &["SELECT", "PRAGMA", "EXPLAIN", "WITH"]) {
         let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
@@ -191,14 +233,14 @@ pub async fn execute_query(pool: &SqlitePool, sql: &str) -> Result<QueryResult, 
                     })
                     .collect(),
             );
-            if result_rows.len() > crate::query::MAX_ROWS {
+            if result_rows.len() > row_limit {
                 break;
             }
         }
 
-        let truncated = result_rows.len() > crate::query::MAX_ROWS;
+        let truncated = result_rows.len() > row_limit;
         if truncated {
-            result_rows.truncate(crate::query::MAX_ROWS);
+            result_rows.truncate(row_limit);
         }
 
         Ok(QueryResult {

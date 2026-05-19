@@ -8,6 +8,7 @@ import {
   type CustomColumnFormatterConfig,
 } from "@/lib/columnFormatter";
 import { normalizeShortcutSettings, type ShortcutSettings } from "@/lib/shortcutRegistry";
+import { normalizeResultPageSize } from "@/lib/paginationPageSize";
 import type { SidebarActivation } from "@/lib/treeNodeClick";
 
 export type AiProvider =
@@ -120,7 +121,8 @@ const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = Object.from
 ) as Record<AiProvider, Omit<AiConfig, "apiKey">>;
 
 export function normalizeAiConfig(config: Partial<AiConfig> | null | undefined): AiConfig {
-  const provider = config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : "claude";
+  const provider =
+    config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : inferAiProviderFromConfig(config);
   return {
     ...defaultConfigs[provider],
     apiKey: config?.apiKey ?? "",
@@ -131,6 +133,17 @@ export function normalizeAiConfig(config: Partial<AiConfig> | null | undefined):
     proxyUrl: config?.proxyUrl ?? "",
     enableThinking: config?.enableThinking ?? true,
   };
+}
+
+function inferAiProviderFromConfig(config: Partial<AiConfig> | null | undefined): AiProvider {
+  const endpoint = config?.endpoint?.toLowerCase() ?? "";
+  const model = config?.model?.toLowerCase() ?? "";
+  if (endpoint.includes("deepseek") || model.includes("deepseek")) return "deepseek";
+  if (endpoint.includes("dashscope") || endpoint.includes("aliyuncs") || model.includes("qwen")) return "qwen";
+  if (endpoint.includes("generativelanguage.googleapis.com") || model.includes("gemini")) return "gemini";
+  if (endpoint.includes("localhost:11434") || endpoint.includes("127.0.0.1:11434")) return "ollama";
+  if (endpoint.includes("openai.com") || model.startsWith("gpt-")) return "openai";
+  return "claude";
 }
 
 export type EditorTheme =
@@ -243,7 +256,7 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>): Edit
     executeMode: settings.executeMode ?? DEFAULT_EDITOR_SETTINGS.executeMode,
     wordWrap: settings.wordWrap ?? DEFAULT_EDITOR_SETTINGS.wordWrap,
     appLayout: settings.appLayout ?? DEFAULT_EDITOR_SETTINGS.appLayout,
-    pageSize: settings.pageSize ?? DEFAULT_EDITOR_SETTINGS.pageSize,
+    pageSize: normalizeResultPageSize(settings.pageSize),
     redisScanPageSize: settings.redisScanPageSize ?? DEFAULT_EDITOR_SETTINGS.redisScanPageSize,
     shortcuts: normalizeShortcutSettings(settings.shortcuts),
     sidebarActivation:
@@ -348,7 +361,11 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   function updateEditorSettings(partial: Partial<EditorSettings>) {
-    Object.assign(editorSettings.value, partial);
+    const normalizedPartial = {
+      ...partial,
+      ...(partial.pageSize !== undefined ? { pageSize: normalizeResultPageSize(partial.pageSize) } : {}),
+    };
+    Object.assign(editorSettings.value, normalizedPartial);
     saveEditorSettings(editorSettings.value);
   }
 

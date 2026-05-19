@@ -1,4 +1,5 @@
 pub mod agent_manager;
+pub mod agent_service;
 pub mod ai;
 pub mod connection;
 pub mod connection_secrets;
@@ -24,7 +25,9 @@ pub mod update;
 
 pub const R2_CDN_BASE: &str = "https://dl.dbxio.com/";
 
-pub const GITHUB_PROXIES: &[&str] = &["https://gh-proxy.org/", ""];
+pub fn download_candidate_urls(github_url: &str, r2_path: &str) -> Vec<String> {
+    vec![format!("{R2_CDN_BASE}{r2_path}"), github_url.to_string()]
+}
 
 pub async fn race_download(
     client: &reqwest::Client,
@@ -35,28 +38,11 @@ pub async fn race_download(
     use futures::future::select_ok;
     use std::pin::Pin;
 
+    let urls = download_candidate_urls(github_url, r2_path);
     let mut futs: Vec<Pin<Box<dyn std::future::Future<Output = Result<reqwest::Response, String>> + Send>>> =
-        Vec::with_capacity(GITHUB_PROXIES.len() + 1);
+        Vec::with_capacity(urls.len());
 
-    // R2 CDN source
-    {
-        let url = format!("{R2_CDN_BASE}{r2_path}");
-        let client = client.clone();
-        let ua = user_agent.to_string();
-        futs.push(Box::pin(async move {
-            client
-                .get(&url)
-                .header(reqwest::header::USER_AGENT, ua)
-                .send()
-                .await
-                .and_then(|r| r.error_for_status())
-                .map_err(|e| format!("{e}"))
-        }));
-    }
-
-    // GitHub proxies + direct
-    for proxy in GITHUB_PROXIES {
-        let url = format!("{proxy}{github_url}");
+    for url in urls {
         let client = client.clone();
         let ua = user_agent.to_string();
         futs.push(Box::pin(async move {
@@ -73,5 +59,26 @@ pub async fn race_download(
     match select_ok(futs).await {
         Ok((resp, _)) => Ok(resp),
         Err(last_err) => Err(last_err),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::download_candidate_urls;
+
+    #[test]
+    fn download_candidates_exclude_third_party_github_proxy() {
+        let urls = download_candidate_urls(
+            "https://github.com/t8y2/dbx/releases/latest/download/latest.json",
+            "releases/latest/latest.json",
+        );
+
+        assert_eq!(
+            urls,
+            vec![
+                "https://dl.dbxio.com/releases/latest/latest.json",
+                "https://github.com/t8y2/dbx/releases/latest/download/latest.json",
+            ]
+        );
     }
 }

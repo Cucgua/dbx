@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { countAvailableAgentDriverUpdates } from "../../apps/desktop/src/lib/agentDriverUpdateBadge.ts";
+import {
+  countAvailableAgentDriverUpdates,
+  countAvailableDriverUpdates,
+} from "../../apps/desktop/src/lib/agentDriverUpdateBadge.ts";
 
 test("returns zero when there are no available agent driver updates", () => {
   assert.equal(countAvailableAgentDriverUpdates([]), 0);
@@ -15,6 +18,13 @@ test("counts available agent driver updates", () => {
       { update_available: false },
       { update_available: true },
     ]),
+    2,
+  );
+});
+
+test("counts JDBC plugin update alongside agent driver updates", () => {
+  assert.equal(
+    countAvailableDriverUpdates([{ update_available: true }, { update_available: false }], { update_available: true }),
     2,
   );
 });

@@ -38,9 +38,20 @@ import java.util.logging.Logger;
 public final class DbxJdbcPlugin {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int MAX_ROWS = 10_000;
+    private static final JdbcDriverQuirks DEFAULT_QUIRKS = new JdbcDriverQuirks(false);
+    private static final JdbcDriverQuirks YASHAN_QUIRKS = new JdbcDriverQuirks(true);
+    private static final List<JdbcDriverQuirkRule> DRIVER_QUIRK_RULES = List.of(
+        new JdbcDriverQuirkRule("jdbc:yasdb:", YASHAN_QUIRKS)
+    );
     private static String registeredDriverKey = "";
     private static String sharedConnectionKey = "";
     private static Connection sharedConnection;
+
+    record JdbcDriverQuirks(boolean skipExecutionContext) {
+    }
+
+    private record JdbcDriverQuirkRule(String urlPrefix, JdbcDriverQuirks quirks) {
+    }
 
     private DbxJdbcPlugin() {
     }
@@ -109,7 +120,11 @@ public final class DbxJdbcPlugin {
             case "listDatabases" -> listDatabases(connection);
             case "listSchemas" -> listSchemas(connection, optionalText(params, "database"));
             case "listTables" -> listTables(connection, optionalText(params, "database"), optionalText(params, "schema"));
-            case "list_objects" -> listObjects(connection, optionalText(params, "database"), optionalText(params, "schema"));
+            case "listObjects", "list_objects" -> listObjects(
+                connection,
+                optionalText(params, "database"),
+                optionalText(params, "schema")
+            );
             case "getColumns" -> getColumns(
                 connection,
                 optionalText(params, "database"),
@@ -188,10 +203,10 @@ public final class DbxJdbcPlugin {
     private static JsonNode executeQuery(JsonNode connection, String sql, String database, String schema) throws SQLException {
         long start = System.nanoTime();
         Connection conn = openConnection(connection);
-        applyExecutionContext(conn, database, schema);
+        applyExecutionContext(connection, conn, database, schema);
         try (Statement statement = conn.createStatement()) {
             statement.setMaxRows(MAX_ROWS + 1);
-            boolean hasResultSet = statement.execute(sql);
+            boolean hasResultSet = statement.execute(trimStatementSql(sql));
             ObjectNode result = MAPPER.createObjectNode();
             ArrayNode columns = MAPPER.createArrayNode();
             ArrayNode rows = MAPPER.createArrayNode();
@@ -228,7 +243,14 @@ public final class DbxJdbcPlugin {
         }
     }
 
-    private static void applyExecutionContext(Connection conn, String database, String schema) throws SQLException {
+    private static String trimStatementSql(String sql) {
+        return sql == null ? "" : sql.trim().replaceFirst(";\\s*$", "");
+    }
+
+    private static void applyExecutionContext(JsonNode connection, Connection conn, String database, String schema) throws SQLException {
+        if (driverQuirks(connection).skipExecutionContext()) {
+            return;
+        }
         if (database != null) {
             try {
                 conn.setCatalog(database);
@@ -243,25 +265,49 @@ public final class DbxJdbcPlugin {
         }
     }
 
+    static JdbcDriverQuirks driverQuirks(JsonNode connection) {
+        String url = optionalText(connection, "connection_string");
+        for (JdbcDriverQuirkRule rule : DRIVER_QUIRK_RULES) {
+            if (urlMatchesPrefix(url, rule.urlPrefix())) {
+                return rule.quirks();
+            }
+        }
+        return DEFAULT_QUIRKS;
+    }
+
+    private static boolean urlMatchesPrefix(String url, String prefix) {
+        return url != null && url.regionMatches(true, 0, prefix, 0, prefix.length());
+    }
+
     private static JsonNode listDatabases(JsonNode connection) throws SQLException {
         ArrayNode result = MAPPER.createArrayNode();
         Connection conn = openConnection(connection);
-            try (ResultSet rs = conn.getMetaData().getCatalogs()) {
-                while (rs.next()) {
-                    String name = rs.getString("TABLE_CAT");
-                    if (name != null && !name.isBlank()) {
-                        ObjectNode item = MAPPER.createObjectNode();
-                        item.put("name", name);
-                        result.add(item);
-                    }
-                }
+        try (ResultSet rs = conn.getMetaData().getCatalogs()) {
+            while (rs.next()) {
+                String name = rs.getString("TABLE_CAT");
+                addDatabase(result, name);
             }
-            if (result.isEmpty() && conn.getCatalog() != null) {
-                ObjectNode item = MAPPER.createObjectNode();
-                item.put("name", conn.getCatalog());
-                result.add(item);
-            }
+        }
+        addDatabase(result, optionalText(connection, "database"));
+        try {
+            addDatabase(result, conn.getCatalog());
+        } catch (SQLFeatureNotSupportedException | AbstractMethodError ignored) {
+        }
         return result;
+    }
+
+    private static void addDatabase(ArrayNode result, String name) {
+        if (name == null || name.isBlank()) {
+            return;
+        }
+        for (JsonNode item : result) {
+            if (name.equals(item.path("name").asText())) {
+                return;
+            }
+        }
+        ObjectNode item = MAPPER.createObjectNode();
+        item.put("name", name);
+        result.add(item);
     }
 
     private static JsonNode listSchemas(JsonNode connection, String database) throws SQLException {
@@ -269,24 +315,26 @@ public final class DbxJdbcPlugin {
         Connection conn = openConnection(connection);
             DatabaseMetaData meta = conn.getMetaData();
             try (ResultSet rs = meta.getSchemas(emptyToNull(database), null)) {
-                while (rs.next()) {
-                    String schema = rs.getString("TABLE_SCHEM");
-                    if (schema != null && !schema.isBlank()) {
-                        result.add(schema);
-                    }
-                }
+                appendSchemas(result, rs);
             } catch (SQLFeatureNotSupportedException ignored) {
                 try (ResultSet rs = meta.getSchemas()) {
-                    while (rs.next()) {
-                        String schema = rs.getString("TABLE_SCHEM");
-                        if (schema != null && !schema.isBlank()) {
-                            result.add(schema);
-                        }
-                    }
+                    appendSchemas(result, rs);
                 }
             }
-            if (result.isEmpty() && conn.getSchema() != null) {
-                result.add(conn.getSchema());
+            if (result.isEmpty() && database != null) {
+                try (ResultSet rs = meta.getSchemas(null, null)) {
+                    appendSchemas(result, rs);
+                } catch (SQLFeatureNotSupportedException ignored) {
+                }
+            }
+            if (result.isEmpty()) {
+                try {
+                    String schema = conn.getSchema();
+                    if (schema != null) {
+                        result.add(schema);
+                    }
+                } catch (SQLFeatureNotSupportedException | AbstractMethodError ignored) {
+                }
             }
         return result;
     }
@@ -295,14 +343,10 @@ public final class DbxJdbcPlugin {
         ArrayNode result = MAPPER.createArrayNode();
         String[] types = new String[] {"TABLE", "VIEW", "MATERIALIZED VIEW", "SYSTEM TABLE", "SYSTEM VIEW"};
         Connection conn = openConnection(connection);
-        try (ResultSet rs = conn.getMetaData().getTables(emptyToNull(database), emptyToNull(schema), "%", types)) {
-            while (rs.next()) {
-                ObjectNode item = MAPPER.createObjectNode();
-                item.put("name", rs.getString("TABLE_NAME"));
-                item.put("table_type", rs.getString("TABLE_TYPE"));
-                putNullable(item, "comment", rs.getString("REMARKS"));
-                result.add(item);
-            }
+        DatabaseMetaData meta = conn.getMetaData();
+        appendTables(result, meta, emptyToNull(database), emptyToNull(schema), types);
+        if (result.isEmpty() && database != null) {
+            appendTables(result, meta, null, emptyToNull(schema), types);
         }
         return result;
     }
@@ -315,15 +359,9 @@ public final class DbxJdbcPlugin {
         String schemaPattern = emptyToNull(schema);
 
         String[] tableTypes = new String[] {"TABLE", "VIEW", "MATERIALIZED VIEW", "SYSTEM TABLE", "SYSTEM VIEW"};
-        try (ResultSet rs = meta.getTables(catalog, schemaPattern, "%", tableTypes)) {
-            while (rs.next()) {
-                ObjectNode item = MAPPER.createObjectNode();
-                item.put("name", rs.getString("TABLE_NAME"));
-                item.put("object_type", rs.getString("TABLE_TYPE"));
-                putNullable(item, "schema", schema);
-                putNullable(item, "comment", rs.getString("REMARKS"));
-                result.add(item);
-            }
+        appendTableObjects(result, meta, catalog, schemaPattern, schema, tableTypes);
+        if (result.isEmpty() && database != null) {
+            appendTableObjects(result, meta, null, schemaPattern, schema, tableTypes);
         }
 
         try (ResultSet rs = meta.getProcedures(catalog, schemaPattern, "%")) {
@@ -367,24 +405,86 @@ public final class DbxJdbcPlugin {
         Connection conn = openConnection(connection);
             DatabaseMetaData meta = conn.getMetaData();
             Set<String> primaryKeys = primaryKeys(meta, database, schema, table);
-            try (ResultSet rs = meta.getColumns(emptyToNull(database), emptyToNull(schema), table, "%")) {
-                while (rs.next()) {
-                    String name = rs.getString("COLUMN_NAME");
-                    ObjectNode item = MAPPER.createObjectNode();
-                    item.put("name", name);
-                    item.put("data_type", rs.getString("TYPE_NAME"));
-                    item.put("is_nullable", rs.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls);
-                    putNullable(item, "column_default", rs.getString("COLUMN_DEF"));
-                    item.put("is_primary_key", primaryKeys.contains(name));
-                    item.putNull("extra");
-                    putNullable(item, "comment", rs.getString("REMARKS"));
-                    putNullableInt(item, "numeric_precision", rs.getObject("COLUMN_SIZE"));
-                    putNullableInt(item, "numeric_scale", rs.getObject("DECIMAL_DIGITS"));
-                    putNullableInt(item, "character_maximum_length", rs.getObject("COLUMN_SIZE"));
-                    result.add(item);
-                }
+            appendColumns(result, meta, emptyToNull(database), emptyToNull(schema), table, primaryKeys);
+            if (result.isEmpty() && database != null) {
+                primaryKeys = primaryKeys(meta, null, schema, table);
+                appendColumns(result, meta, null, emptyToNull(schema), table, primaryKeys);
             }
         return result;
+    }
+
+    private static void appendSchemas(ArrayNode result, ResultSet rs) throws SQLException {
+        while (rs.next()) {
+            String schema = rs.getString("TABLE_SCHEM");
+            if (schema != null && !schema.isBlank()) {
+                result.add(schema);
+            }
+        }
+    }
+
+    private static void appendTables(
+        ArrayNode result,
+        DatabaseMetaData meta,
+        String catalog,
+        String schema,
+        String[] types
+    ) throws SQLException {
+        try (ResultSet rs = meta.getTables(catalog, schema, "%", types)) {
+            while (rs.next()) {
+                ObjectNode item = MAPPER.createObjectNode();
+                item.put("name", rs.getString("TABLE_NAME"));
+                item.put("table_type", rs.getString("TABLE_TYPE"));
+                putNullable(item, "comment", rs.getString("REMARKS"));
+                result.add(item);
+            }
+        }
+    }
+
+    private static void appendTableObjects(
+        ArrayNode result,
+        DatabaseMetaData meta,
+        String catalog,
+        String schemaPattern,
+        String schema,
+        String[] tableTypes
+    ) throws SQLException {
+        try (ResultSet rs = meta.getTables(catalog, schemaPattern, "%", tableTypes)) {
+            while (rs.next()) {
+                ObjectNode item = MAPPER.createObjectNode();
+                item.put("name", rs.getString("TABLE_NAME"));
+                item.put("object_type", rs.getString("TABLE_TYPE"));
+                putNullable(item, "schema", schema);
+                putNullable(item, "comment", rs.getString("REMARKS"));
+                result.add(item);
+            }
+        }
+    }
+
+    private static void appendColumns(
+        ArrayNode result,
+        DatabaseMetaData meta,
+        String catalog,
+        String schema,
+        String table,
+        Set<String> primaryKeys
+    ) throws SQLException {
+        try (ResultSet rs = meta.getColumns(catalog, schema, table, "%")) {
+            while (rs.next()) {
+                String name = rs.getString("COLUMN_NAME");
+                ObjectNode item = MAPPER.createObjectNode();
+                item.put("name", name);
+                item.put("data_type", rs.getString("TYPE_NAME"));
+                item.put("is_nullable", rs.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls);
+                putNullable(item, "column_default", rs.getString("COLUMN_DEF"));
+                item.put("is_primary_key", primaryKeys.contains(name));
+                item.putNull("extra");
+                putNullable(item, "comment", rs.getString("REMARKS"));
+                putNullableInt(item, "numeric_precision", rs.getObject("COLUMN_SIZE"));
+                putNullableInt(item, "numeric_scale", rs.getObject("DECIMAL_DIGITS"));
+                putNullableInt(item, "character_maximum_length", rs.getObject("COLUMN_SIZE"));
+                result.add(item);
+            }
+        }
     }
 
     private static void closeSharedConnection() {

@@ -95,13 +95,17 @@ const progressLabel = computed(() =>
   t("databaseSearch.progress", { done: progressDone.value, total: progressTotal.value }),
 );
 
-watch(dialogOpen, (open) => {
-  if (open) {
-    resetSearchState();
-  } else {
-    stopSearch();
-  }
-});
+watch(
+  dialogOpen,
+  (open) => {
+    if (open) {
+      resetSearchState();
+    } else {
+      stopSearch();
+    }
+  },
+  { immediate: true },
+);
 
 function resetSearchState() {
   running.value = false;

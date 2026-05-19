@@ -80,6 +80,10 @@ export function isFocusSearchShortcut(event: ShortcutLikeEvent, shortcuts?: Part
   return matchesShortcut(event, actionShortcut("focusSearch", shortcuts));
 }
 
+export function isRefreshDataShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  return matchesShortcut(event, actionShortcut("refreshData", shortcuts));
+}
+
 export function isSaveShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
   return matchesShortcut(event, actionShortcut("saveSql", shortcuts));
 }

@@ -23,6 +23,11 @@ test("formats unix timestamps in seconds, milliseconds, and auto mode", () => {
   );
 });
 
+test("does not treat compact date strings as unix timestamps", () => {
+  assert.equal(applyColumnFormatter("20260514", { kind: "datetime", unit: "auto" }), "20260514");
+  assert.equal(applyColumnFormatter("2026-05-14", { kind: "datetime", unit: "auto" }), "2026-05-14");
+});
+
 test("extracts simple JSON paths from object and array strings", () => {
   const payload = JSON.stringify({ user: { name: "Ada" }, items: [{ id: 7 }] });
 

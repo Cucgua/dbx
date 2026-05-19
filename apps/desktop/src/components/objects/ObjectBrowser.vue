@@ -34,7 +34,12 @@ import type { ConnectionConfig, ObjectInfo, ObjectSourceKind } from "@/types/dat
 import { isSchemaAware } from "@/lib/databaseCapabilities";
 import { buildTableSelectSql, qualifiedTableName } from "@/lib/tableSelectSql";
 import { useToast } from "@/composables/useToast";
-import { buildExecutableObjectSourceSql, objectSourceSaveExecutionMode } from "@/lib/objectSourceEditor";
+import {
+  buildExecutableObjectSourceStatements,
+  buildRoutineRenameObjectSourceStatements,
+  objectSourceSaveExecutionMode,
+  supportsSourceBackedRoutineRename,
+} from "@/lib/objectSourceEditor";
 import { buildRenameObjectSql, supportsObjectRename } from "@/lib/objectRenameSql";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
@@ -42,14 +47,7 @@ import QueryEditor from "@/components/editor/QueryEditor.vue";
 import type { SqlFormatDialect } from "@/lib/sqlFormatter";
 import { isCancelSearchShortcut } from "@/lib/keyboardShortcuts";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-
-type ObjectRow = {
-  id: string;
-  name: string;
-  schema?: string;
-  type: "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
-  comment?: string | null;
-};
+import { buildObjectBrowserRows, filterObjectBrowserRows, type ObjectBrowserRow } from "@/lib/objectBrowserRows";
 
 type ObjectFilter = "all" | "tables" | "views" | "procedures" | "functions";
 
@@ -71,7 +69,7 @@ const queryStore = useQueryStore();
 
 const schemas = ref<string[]>([]);
 const selectedSchema = ref<string | undefined>(props.schema);
-const rows = ref<ObjectRow[]>([]);
+const rows = ref<ObjectBrowserRow[]>([]);
 const rootRef = ref<HTMLElement>();
 const search = ref("");
 const objectFilter = ref<ObjectFilter>("all");
@@ -80,16 +78,16 @@ const loadingObjects = ref(false);
 const sourceLoading = ref(false);
 const sourceContent = ref("");
 const sourceError = ref("");
-const sourceRow = ref<ObjectRow | null>(null);
+const sourceRow = ref<ObjectBrowserRow | null>(null);
 const sourceEditing = ref(false);
 const sourceDraft = ref("");
 const sourceSaving = ref(false);
 const sourceSaveError = ref("");
 const error = ref("");
 const showDropConfirm = ref(false);
-const dropTarget = ref<ObjectRow | null>(null);
+const dropTarget = ref<ObjectBrowserRow | null>(null);
 const showRenameDialog = ref(false);
-const renameTarget = ref<ObjectRow | null>(null);
+const renameTarget = ref<ObjectBrowserRow | null>(null);
 const renameInput = ref("");
 const renameError = ref("");
 let loadId = 0;
@@ -131,16 +129,10 @@ const objectFilters = computed<ObjectFilter[]>(() =>
 const showObjectFilter = computed(() => objectFilters.value.length > 2);
 const hasComments = computed(() => rows.value.some((row) => row.comment?.trim()));
 const gridTemplateColumns = computed(() =>
-  hasComments.value ? "minmax(0,1fr) 120px 160px minmax(160px,0.7fr)" : "minmax(0,1fr) 120px 160px",
+  hasComments.value ? "minmax(0,1fr) 120px minmax(160px,0.7fr)" : "minmax(0,1fr) 120px",
 );
 const searchedRows = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  if (!q) return rows.value;
-  return rows.value.filter((row) =>
-    [row.name, row.schema, row.type, row.comment]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(q)),
-  );
+  return filterObjectBrowserRows(rows.value, search.value);
 });
 const filteredRows = computed(() => {
   if (objectFilter.value === "tables") return searchedRows.value.filter((row) => row.type === "TABLE");
@@ -150,49 +142,44 @@ const filteredRows = computed(() => {
   return searchedRows.value;
 });
 
-function normalizeType(type: string): ObjectRow["type"] {
-  const value = type.toUpperCase();
-  if (value.includes("VIEW")) return "VIEW";
-  if (value.includes("PROC")) return "PROCEDURE";
-  if (value.includes("FUNC")) return "FUNCTION";
-  return "TABLE";
-}
-
-function iconFor(row: ObjectRow) {
+function iconFor(row: ObjectBrowserRow) {
   if (row.type === "VIEW") return Eye;
   if (row.type === "PROCEDURE") return ScrollText;
   if (row.type === "FUNCTION") return Braces;
   return Table2;
 }
 
-function typeLabel(type: ObjectRow["type"]) {
+function typeLabel(type: ObjectBrowserRow["type"]) {
   if (type === "VIEW") return t("objects.view");
   if (type === "PROCEDURE") return t("objects.procedure");
   if (type === "FUNCTION") return t("objects.function");
   return t("objects.table");
 }
 
-function iconClass(type: ObjectRow["type"]) {
+function iconClass(type: ObjectBrowserRow["type"]) {
   if (type === "VIEW") return "text-purple-500";
   if (type === "PROCEDURE") return "text-blue-500";
   if (type === "FUNCTION") return "text-amber-500";
   return "text-green-500";
 }
 
-function canOpenSource(row: ObjectRow) {
+function canOpenSource(row: ObjectBrowserRow) {
   return row.type === "VIEW" || row.type === "PROCEDURE" || row.type === "FUNCTION";
 }
 
-function canRename(row: ObjectRow) {
-  return supportsObjectRename(props.connection.db_type, row.type);
+function canRename(row: ObjectBrowserRow) {
+  return (
+    supportsObjectRename(props.connection.db_type, row.type) ||
+    supportsSourceBackedRoutineRename(props.connection.db_type, row.type as ObjectSourceKind)
+  );
 }
 
-function sourceTitle(row: ObjectRow | null) {
+function sourceTitle(row: ObjectBrowserRow | null) {
   if (!row) return t("objects.source");
   return `${row.name} ${t("objects.source")}`;
 }
 
-function openRow(row: ObjectRow) {
+function openRow(row: ObjectBrowserRow) {
   if (row.type === "TABLE") {
     emit("openTable", { tableName: row.name, schema: row.schema });
     return;
@@ -202,7 +189,7 @@ function openRow(row: ObjectRow) {
   }
 }
 
-async function openSource(row: ObjectRow) {
+async function openSource(row: ObjectBrowserRow) {
   sourceRow.value = row;
   sourceContent.value = "";
   sourceError.value = "";
@@ -219,6 +206,8 @@ async function openSource(row: ObjectRow) {
       row.type as ObjectSourceKind,
     );
     sourceContent.value = result.source;
+    sourceDraft.value = result.source;
+    sourceEditing.value = true;
   } catch (e: any) {
     sourceError.value = e?.message || String(e);
   } finally {
@@ -226,7 +215,7 @@ async function openSource(row: ObjectRow) {
   }
 }
 
-function openNewQuery(row: ObjectRow) {
+function openNewQuery(row: ObjectBrowserRow) {
   const tabId = queryStore.createTab(props.connection.id, props.database, row.name);
   queryStore.updateSql(
     tabId,
@@ -239,7 +228,7 @@ function openNewQuery(row: ObjectRow) {
   );
 }
 
-function qualifiedName(row: ObjectRow): string {
+function qualifiedName(row: ObjectBrowserRow): string {
   return qualifiedTableName({
     databaseType: props.connection.db_type,
     schema: row.schema || selectedSchema.value,
@@ -247,12 +236,12 @@ function qualifiedName(row: ObjectRow): string {
   });
 }
 
-function requestDrop(row: ObjectRow) {
+function requestDrop(row: ObjectBrowserRow) {
   dropTarget.value = row;
   showDropConfirm.value = true;
 }
 
-function requestRename(row: ObjectRow) {
+function requestRename(row: ObjectBrowserRow) {
   renameTarget.value = row;
   renameInput.value = row.name;
   renameError.value = "";
@@ -263,6 +252,9 @@ function renamePreviewSql() {
   const row = renameTarget.value;
   const newName = renameInput.value.trim();
   if (!row || !newName || newName === row.name) return "";
+  if (supportsSourceBackedRoutineRename(props.connection.db_type, row.type as ObjectSourceKind)) {
+    return `-- Recreate ${row.type} from source, then drop the original object.`;
+  }
   try {
     return buildRenameObjectSql({
       databaseType: props.connection.db_type,
@@ -283,14 +275,35 @@ async function confirmRename() {
   renameError.value = "";
   try {
     const schema = row.schema || selectedSchema.value || props.database;
-    const sql = buildRenameObjectSql({
-      databaseType: props.connection.db_type,
-      objectType: row.type,
-      schema,
-      oldName: row.name,
-      newName,
-    });
-    await api.executeQuery(props.connection.id, props.database, sql, schema);
+    if (supportsSourceBackedRoutineRename(props.connection.db_type, row.type as ObjectSourceKind)) {
+      const source = await api.getObjectSource(
+        props.connection.id,
+        props.database,
+        schema,
+        row.name,
+        row.type as ObjectSourceKind,
+      );
+      const statements = buildRoutineRenameObjectSourceStatements({
+        databaseType: props.connection.db_type,
+        objectType: row.type as ObjectSourceKind,
+        schema,
+        name: row.name,
+        newName,
+        source: source.source,
+      });
+      for (const sql of statements) {
+        await api.executeQuery(props.connection.id, props.database, sql, schema);
+      }
+    } else {
+      const sql = buildRenameObjectSql({
+        databaseType: props.connection.db_type,
+        objectType: row.type,
+        schema,
+        oldName: row.name,
+        newName,
+      });
+      await api.executeQuery(props.connection.id, props.database, sql, schema);
+    }
     toast(t("contextMenu.renameObjectSuccess", { oldName: row.name, newName }));
     showRenameDialog.value = false;
     if (sourceRow.value?.id === row.id) closeSource();
@@ -394,17 +407,19 @@ async function saveSource() {
   sourceSaving.value = true;
   sourceSaveError.value = "";
   try {
-    const sql = buildExecutableObjectSourceSql({
+    const statements = buildExecutableObjectSourceStatements({
       databaseType: props.connection.db_type,
       objectType: row.type as ObjectSourceKind,
       schema,
       name: row.name,
       source: sourceDraft.value,
     });
-    if (objectSourceSaveExecutionMode(props.connection.db_type) === "single") {
-      await api.executeQuery(props.connection.id, props.database, sql, schema);
-    } else {
-      await api.executeScript(props.connection.id, props.database, sql, schema);
+    for (const sql of statements) {
+      if (objectSourceSaveExecutionMode(props.connection.db_type) === "single") {
+        await api.executeQuery(props.connection.id, props.database, sql, schema);
+      } else {
+        await api.executeScript(props.connection.id, props.database, sql, schema);
+      }
     }
     toast(t("objects.sourceSaved"));
     sourceEditing.value = false;
@@ -444,13 +459,12 @@ async function loadObjects() {
     const schema = needsSchema.value ? selectedSchema.value || "" : props.database;
     const objects: ObjectInfo[] = await api.listObjects(props.connection.id, props.database, schema);
     if (id !== loadId) return;
-    rows.value = objects.map((object) => ({
-      id: `${object.schema || schema || props.database}:${object.name}:${object.object_type}`,
-      name: object.name,
-      schema: object.schema || (needsSchema.value ? schema : undefined),
-      type: normalizeType(object.object_type),
-      comment: object.comment,
-    }));
+    rows.value = buildObjectBrowserRows({
+      objects,
+      database: props.database,
+      fallbackSchema: schema,
+      needsSchema: needsSchema.value,
+    });
   } catch (e: any) {
     if (id !== loadId) return;
     error.value = e?.message || String(e);
@@ -594,7 +608,6 @@ watch(
       >
         <div class="truncate">{{ t("objects.name") }}</div>
         <div class="truncate">{{ t("objects.type") }}</div>
-        <div class="truncate">{{ t("objects.schemaColumn") }}</div>
         <div v-if="hasComments" class="truncate">{{ t("objects.comment") }}</div>
       </div>
       <RecycleScroller
@@ -619,7 +632,6 @@ watch(
                   <span class="truncate text-[13px] font-medium text-foreground">{{ item.name }}</span>
                 </div>
                 <div class="truncate text-xs text-muted-foreground">{{ typeLabel(item.type) }}</div>
-                <div class="truncate text-xs text-muted-foreground">{{ item.schema || props.database }}</div>
                 <div v-if="hasComments" class="truncate text-xs text-muted-foreground" :title="item.comment || ''">
                   {{ item.comment || "" }}
                 </div>

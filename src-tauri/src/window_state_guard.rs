@@ -1,143 +1,127 @@
-const DEFAULT_LOGICAL_WIDTH: f64 = 1280.0;
-const DEFAULT_LOGICAL_HEIGHT: f64 = 800.0;
-
-use tauri::{AppHandle, Manager, PhysicalSize, Runtime, WebviewWindow, Window};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PhysicalWindowSize {
+pub(crate) struct PhysicalWindowRect {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
     pub(crate) width: u32,
     pub(crate) height: u32,
 }
 
-pub(crate) fn corrected_window_size(
-    window_size: PhysicalWindowSize,
-    monitor_size: PhysicalWindowSize,
-    scale_factor: f64,
-) -> Option<PhysicalWindowSize> {
-    if window_size.width <= monitor_size.width && window_size.height <= monitor_size.height {
-        return None;
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PhysicalMonitorRect {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
 
-    Some(default_window_size_for_monitor(monitor_size, scale_factor))
+pub(crate) fn corrected_window_rect(
+    window: PhysicalWindowRect,
+    monitor: PhysicalMonitorRect,
+) -> Option<PhysicalWindowRect> {
+    let width = window.width.min(monitor.width);
+    let height = window.height.min(monitor.height);
+    let x = centered_axis_position(window.x, width, monitor.x, monitor.width);
+    let y = centered_axis_position(window.y, height, monitor.y, monitor.height);
+    let corrected = PhysicalWindowRect { x, y, width, height };
+
+    (corrected != window).then_some(corrected)
 }
 
 pub(crate) fn enforce_main_window_bounds<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
-        if enforce_webview_window_bounds(&window) {
+        if enforce_window_bounds(&window) {
             let _ = app.save_window_state(StateFlags::all());
         }
     }
 }
 
-pub(crate) fn enforce_window_bounds<R: Runtime>(window: &Window<R>) {
-    if enforce_tauri_window_bounds(window) {
-        let _ = window.app_handle().save_window_state(StateFlags::all());
-    }
-}
-
-fn enforce_webview_window_bounds<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+fn enforce_window_bounds<R: Runtime>(window: &WebviewWindow<R>) -> bool {
     if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
         return false;
     }
 
-    match window.current_monitor() {
-        Ok(Some(monitor)) => {
-            let monitor_size = monitor.size();
-            match window.outer_size() {
-                Ok(window_size) => {
-                    if let Some(corrected) = corrected_window_size(
-                        PhysicalWindowSize { width: window_size.width, height: window_size.height },
-                        PhysicalWindowSize { width: monitor_size.width, height: monitor_size.height },
-                        monitor.scale_factor(),
-                    ) {
-                        let _ = window.set_size(PhysicalSize::new(corrected.width, corrected.height));
-                        let _ = window.center();
-                        true
-                    } else {
-                        false
-                    }
-                }
-                Err(_) => false,
-            }
-        }
-        _ => false,
+    let monitor = match window.current_monitor().ok().flatten().or_else(|| window.primary_monitor().ok().flatten()) {
+        Some(monitor) => monitor,
+        None => return false,
+    };
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let window_position = match window.outer_position() {
+        Ok(position) => position,
+        Err(_) => return false,
+    };
+    let window_size = match window.outer_size() {
+        Ok(size) => size,
+        Err(_) => return false,
+    };
+
+    let corrected = corrected_window_rect(
+        PhysicalWindowRect {
+            x: window_position.x,
+            y: window_position.y,
+            width: window_size.width,
+            height: window_size.height,
+        },
+        PhysicalMonitorRect {
+            x: monitor_position.x,
+            y: monitor_position.y,
+            width: monitor_size.width,
+            height: monitor_size.height,
+        },
+    );
+
+    if let Some(rect) = corrected {
+        let _ = window.set_size(PhysicalSize::new(rect.width, rect.height));
+        let _ = window.set_position(PhysicalPosition::new(rect.x, rect.y));
+        true
+    } else {
+        false
     }
 }
 
-fn enforce_tauri_window_bounds<R: Runtime>(window: &Window<R>) -> bool {
-    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
-        return false;
-    }
-
-    match window.current_monitor() {
-        Ok(Some(monitor)) => {
-            let monitor_size = monitor.size();
-            match window.outer_size() {
-                Ok(window_size) => {
-                    if let Some(corrected) = corrected_window_size(
-                        PhysicalWindowSize { width: window_size.width, height: window_size.height },
-                        PhysicalWindowSize { width: monitor_size.width, height: monitor_size.height },
-                        monitor.scale_factor(),
-                    ) {
-                        let _ = window.set_size(PhysicalSize::new(corrected.width, corrected.height));
-                        let _ = window.center();
-                        true
-                    } else {
-                        false
-                    }
-                }
-                Err(_) => false,
-            }
-        }
-        _ => false,
-    }
-}
-
-fn default_window_size_for_monitor(monitor_size: PhysicalWindowSize, scale_factor: f64) -> PhysicalWindowSize {
-    let fallback_width = (DEFAULT_LOGICAL_WIDTH * scale_factor).round() as u32;
-    let fallback_height = (DEFAULT_LOGICAL_HEIGHT * scale_factor).round() as u32;
-
-    PhysicalWindowSize {
-        width: fallback_width.min(monitor_size.width),
-        height: fallback_height.min(monitor_size.height),
+fn centered_axis_position(window_start: i32, window_length: u32, monitor_start: i32, monitor_length: u32) -> i32 {
+    let max_start = monitor_start + monitor_length.saturating_sub(window_length) as i32;
+    if window_start < monitor_start || window_start > max_start {
+        monitor_start + monitor_length.saturating_sub(window_length) as i32 / 2
+    } else {
+        window_start
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{corrected_window_size, PhysicalWindowSize};
+    use super::{corrected_window_rect, PhysicalMonitorRect, PhysicalWindowRect};
 
     #[test]
-    fn clamps_width_that_exceeds_current_monitor() {
-        let corrected = corrected_window_size(
-            PhysicalWindowSize { width: 43_152, height: 1_888 },
-            PhysicalWindowSize { width: 3_024, height: 1_964 },
-            2.0,
+    fn moves_window_back_onto_monitor_when_restored_above_screen() {
+        let corrected = corrected_window_rect(
+            PhysicalWindowRect { x: 118, y: -1042, width: 1512, height: 866 },
+            PhysicalMonitorRect { x: 0, y: 0, width: 1512, height: 982 },
         );
 
-        assert_eq!(corrected, Some(PhysicalWindowSize { width: 2_560, height: 1_600 }));
+        assert_eq!(corrected, Some(PhysicalWindowRect { x: 0, y: 58, width: 1512, height: 866 }));
     }
 
     #[test]
-    fn leaves_window_size_unchanged_when_it_fits_monitor() {
-        let corrected = corrected_window_size(
-            PhysicalWindowSize { width: 1_280, height: 800 },
-            PhysicalWindowSize { width: 1_920, height: 1_080 },
-            1.0,
+    fn leaves_window_unchanged_when_it_fits_monitor() {
+        let corrected = corrected_window_rect(
+            PhysicalWindowRect { x: 80, y: 60, width: 1280, height: 800 },
+            PhysicalMonitorRect { x: 0, y: 0, width: 1512, height: 982 },
         );
 
         assert_eq!(corrected, None);
     }
 
     #[test]
-    fn clamps_default_size_to_smaller_monitor() {
-        let corrected = corrected_window_size(
-            PhysicalWindowSize { width: 2_400, height: 1_400 },
-            PhysicalWindowSize { width: 1_920, height: 1_080 },
-            2.0,
+    fn shrinks_window_that_is_larger_than_monitor() {
+        let corrected = corrected_window_rect(
+            PhysicalWindowRect { x: -200, y: -120, width: 4096, height: 2160 },
+            PhysicalMonitorRect { x: 0, y: 0, width: 1440, height: 900 },
         );
 
-        assert_eq!(corrected, Some(PhysicalWindowSize { width: 1_920, height: 1_080 }));
+        assert_eq!(corrected, Some(PhysicalWindowRect { x: 0, y: 0, width: 1440, height: 900 }));
     }
 }

@@ -7,7 +7,7 @@ export type AppThemeAppearance = "light" | "dark";
 
 export function normalizeAppThemeMode(value: string | null): AppThemeMode {
   if (value === "dark" || value === "light" || value === "system") return value;
-  return "light";
+  return "dark";
 }
 
 export function resolveAppThemeAppearance(mode: AppThemeMode, systemPrefersDark: boolean): AppThemeAppearance {

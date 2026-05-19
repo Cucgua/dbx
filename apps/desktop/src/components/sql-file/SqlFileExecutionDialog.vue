@@ -376,13 +376,17 @@ watch(sqlConnections, () => {
   connectionId.value = resolveInitialConnectionId();
 });
 
-watch(open, (value) => {
-  if (!value) return;
-  resetState();
-  if (connectionId.value) {
-    loadDatabasesForConnection(connectionId.value);
-  }
-});
+watch(
+  open,
+  (value) => {
+    if (!value) return;
+    resetState();
+    if (connectionId.value) {
+      loadDatabasesForConnection(connectionId.value);
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>

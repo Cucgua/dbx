@@ -10,6 +10,10 @@ use dbx_core::storage::Storage;
 use dbx_mcp::{DesktopEventSink, McpExecuteQueryEvent, McpOpenTableEvent};
 use std::sync::Arc;
 use std::time::Instant;
+use tauri::{
+    menu::MenuBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 use tauri::{Emitter, Manager, RunEvent};
 
 #[derive(Clone)]
@@ -29,6 +33,60 @@ impl DesktopEventSink for TauriMcpEvents {
 
     async fn reload_connections(&self) -> Result<(), String> {
         self.app.emit("mcp-reload-connections", ()).map_err(|e| e.to_string())
+    }
+}
+
+fn should_hide_window_on_close(target_os: &str) -> bool {
+    matches!(target_os, "macos" | "windows")
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn setup_windows_tray(app: &mut tauri::App) -> tauri::Result<()> {
+    let menu = MenuBuilder::new(app).text("show", "Show DBX").separator().text("quit", "Quit DBX").build()?;
+    let mut tray = TrayIconBuilder::with_id("main-tray").tooltip("DBX").menu(&menu).show_menu_on_left_click(false);
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.on_menu_event(|app, event| {
+        if event.id() == "show" {
+            show_main_window(app);
+        } else if event.id() == "quit" {
+            app.exit(0);
+        }
+    })
+    .on_tray_icon_event(|tray, event| match event {
+        TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }
+        | TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => show_main_window(tray.app_handle()),
+        _ => {}
+    })
+    .build(app)?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_hide_window_on_close;
+
+    #[test]
+    fn hides_window_on_close_for_windows_and_macos() {
+        assert!(should_hide_window_on_close("windows"));
+        assert!(should_hide_window_on_close("macos"));
+    }
+
+    #[test]
+    fn does_not_hide_window_on_close_for_other_platforms() {
+        assert!(!should_hide_window_on_close("linux"));
     }
 }
 
@@ -83,7 +141,11 @@ pub fn run() {
             });
             eprintln!("[STARTUP] storage ready in {:?}", t.elapsed());
 
-            let state = Arc::new(AppState::new_with_plugin_dir(storage, data_dir.join("plugins")));
+            let state = Arc::new(AppState::new_with_plugin_dir_and_app_version(
+                storage,
+                data_dir.join("plugins"),
+                env!("CARGO_PKG_VERSION"),
+            ));
             app.manage(state.clone());
             app.manage(commands::external_sql::ExternalSqlOpenState::default());
 
@@ -107,20 +169,18 @@ pub fn run() {
                     let _ = window.set_decorations(false);
                 }
             }
-
+            #[cfg(target_os = "windows")]
+            setup_windows_tray(app)?;
             window_state_guard::enforce_main_window_bounds(app.handle());
 
             Ok(())
         })
         .on_window_event(|window, event| {
-            #[cfg(target_os = "macos")]
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                window.hide().unwrap();
-                api.prevent_close();
-            }
-
-            if matches!(event, tauri::WindowEvent::Resized(_)) {
-                window_state_guard::enforce_window_bounds(window);
+                if should_hide_window_on_close(std::env::consts::OS) {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -175,11 +235,13 @@ pub fn run() {
             commands::sql_file::execute_sql_file,
             commands::sql_file::cancel_sql_file_execution,
             commands::external_sql::pending_open_sql_files,
+            commands::external_sql::read_external_sql_file,
             commands::table_import::preview_table_import_file,
             commands::table_import::import_table_file,
             commands::table_import::cancel_table_import,
             commands::redis_cmd::redis_list_databases,
             commands::redis_cmd::redis_scan_keys,
+            commands::redis_cmd::redis_scan_values,
             commands::redis_cmd::redis_get_value,
             commands::redis_cmd::redis_set_string,
             commands::redis_cmd::redis_delete_key,
@@ -255,10 +317,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let RunEvent::Reopen { has_visible_windows, .. } = &event {
                 if !has_visible_windows {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    show_main_window(app_handle);
                 }
             }
         });

@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 import {
   buildTransposeRows,
+  nextContextTransposeState,
   nextTransposeState,
   transposeAnchorRowIndex,
   transposeFieldWidth,
@@ -28,6 +29,23 @@ test("row number double click closes transpose for the same row", () => {
     showTranspose: false,
     transposeRowIndex: null,
   });
+});
+
+test("context menu transpose closes when invoked for the current anchor row", () => {
+  assert.deepEqual(
+    nextContextTransposeState({
+      showTranspose: true,
+      transposeRowIndex: 2,
+      requestedRowIndex: 3,
+      rowIds: [10, 11, 12, 13, 14],
+      selectedRowIds: new Set([12, 13]),
+      selectedRange: null,
+    }),
+    {
+      showTranspose: false,
+      transposeRowIndex: null,
+    },
+  );
 });
 
 test("builds one virtualizable transpose row per field with all record values", () => {

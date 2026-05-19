@@ -5,6 +5,7 @@ import {
   SIDEBAR_TREE_PRERENDER_COUNT,
   SIDEBAR_TREE_SCROLL_BUFFER,
   flattenTree,
+  scrollTopForExpandedTreeNode,
   shouldVirtualizeFlatTree,
 } from "../../apps/desktop/src/composables/useFlatTree.ts";
 import type { TreeNode } from "../../apps/desktop/src/types/database.ts";
@@ -56,4 +57,28 @@ test("sidebar virtual tree keeps enough buffered rows for fast scrolling", () =>
 
 test("sidebar virtual tree prerenders enough rows for the first frame", () => {
   assert.ok(SIDEBAR_TREE_PRERENDER_COUNT >= 40);
+});
+
+test("expanded sidebar nodes scroll enough to reveal inserted rows", () => {
+  assert.equal(
+    scrollTopForExpandedTreeNode({
+      expandedIndex: 20,
+      insertedRowCount: 2,
+      currentScrollTop: 15 * SIDEBAR_TREE_ROW_HEIGHT,
+      viewportHeight: 6 * SIDEBAR_TREE_ROW_HEIGHT,
+    }),
+    17 * SIDEBAR_TREE_ROW_HEIGHT,
+  );
+});
+
+test("expanded sidebar nodes keep scroll position when children are already visible", () => {
+  assert.equal(
+    scrollTopForExpandedTreeNode({
+      expandedIndex: 4,
+      insertedRowCount: 2,
+      currentScrollTop: 0,
+      viewportHeight: 8 * SIDEBAR_TREE_ROW_HEIGHT,
+    }),
+    0,
+  );
 });

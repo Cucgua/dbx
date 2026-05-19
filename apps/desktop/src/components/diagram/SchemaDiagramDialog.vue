@@ -661,9 +661,13 @@ function stopDrag() {
   window.removeEventListener("mouseup", stopDrag);
 }
 
-watch(open, (value) => {
-  if (value) void initialize();
-});
+watch(
+  open,
+  (value) => {
+    if (value) void initialize();
+  },
+  { immediate: true },
+);
 
 watch(
   () => visibleTables.value.map((table) => table.name).join("\n"),

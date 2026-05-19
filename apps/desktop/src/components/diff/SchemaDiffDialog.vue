@@ -356,23 +356,27 @@ watch(targetDatabase, (database) => {
 watch(sourceSchema, () => resetResult());
 watch(targetSchema, () => resetResult());
 
-watch(open, async (val) => {
-  if (val) {
-    step.value = "select";
-    diffs.value = [];
-    syncErrors.value = [];
-    executedCount.value = 0;
-    executeTotal.value = 0;
-    if (props.prefillConnectionId) {
-      sourceConnectionId.value = props.prefillConnectionId;
-      await loadDatabases(props.prefillConnectionId, "source");
-      if (props.prefillDatabase) {
-        sourceDatabase.value = props.prefillDatabase;
-        await loadSchemas("source", props.prefillSchema);
+watch(
+  open,
+  async (val) => {
+    if (val) {
+      step.value = "select";
+      diffs.value = [];
+      syncErrors.value = [];
+      executedCount.value = 0;
+      executeTotal.value = 0;
+      if (props.prefillConnectionId) {
+        sourceConnectionId.value = props.prefillConnectionId;
+        await loadDatabases(props.prefillConnectionId, "source");
+        if (props.prefillDatabase) {
+          sourceDatabase.value = props.prefillDatabase;
+          await loadSchemas("source", props.prefillSchema);
+        }
       }
     }
-  }
-});
+  },
+  { immediate: true },
+);
 </script>
 
 <template>

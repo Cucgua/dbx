@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const REPO = 't8y2/dbx';
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const OUT_CN = 'releases-cn.json';
 const OUT_EN = 'releases-en.json';
+const EN_CACHE_URL = process.env.CHANGELOG_EN_CACHE_URL || 'https://dl.dbxio.com/changelog/releases-en.json';
 
 const SECTION_MAP = {
   '新功能': 'added',
@@ -19,7 +25,7 @@ const SECTION_MAP = {
   'Removed': 'removed',
 };
 
-async function fetchAllReleases() {
+export async function fetchAllReleases() {
   const releases = [];
   let page = 1;
   while (true) {
@@ -36,7 +42,7 @@ async function fetchAllReleases() {
   return releases;
 }
 
-function stripDownloadSection(body) {
+export function stripDownloadSection(body) {
   const markers = ['### 下载安装', '### Download', '### 系统要求', '### System Requirements'];
   let idx = body.length;
   for (const m of markers) {
@@ -46,7 +52,7 @@ function stripDownloadSection(body) {
   return body.slice(0, idx).trim();
 }
 
-function parseBody(body) {
+export function parseBody(body) {
   const cleaned = stripDownloadSection(body);
   const sections = [];
   let current = null;
@@ -78,9 +84,22 @@ function parseBody(body) {
   return sections.filter((s) => s.items.length > 0);
 }
 
-function buildReleasesJson(releases) {
+export function buildReleaseSourceHash(release) {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        tag: release.tag_name,
+        name: release.name || release.tag_name,
+        publishedAt: release.published_at || '',
+        body: release.body || '',
+      }),
+    )
+    .digest('hex');
+}
+
+export function buildReleasesJson(releases, now = new Date()) {
   return {
-    updatedAt: new Date().toISOString(),
+    updatedAt: now.toISOString(),
     releases: releases
       .filter((r) => !r.draft && !r.prerelease)
       .sort((a, b) => new Date(b.published_at) - new Date(a.published_at))
@@ -88,35 +107,80 @@ function buildReleasesJson(releases) {
         tag: r.tag_name,
         name: r.name || r.tag_name,
         date: r.published_at.slice(0, 10),
+        _sourceHash: buildReleaseSourceHash(r),
         sections: parseBody(r.body || ''),
       })),
   };
 }
 
-async function translateToEnglish(cnJson) {
-  if (!DEEPSEEK_API_KEY) {
+function releaseToMarkdown(release) {
+  return release.sections
+    .map((s) => {
+      const items = s.items.map((i) => (i.desc ? `- **${i.title}** — ${i.desc}` : `- ${i.title}`)).join('\n');
+      return `### ${s.title}\n${items}`;
+    })
+    .join('\n\n');
+}
+
+export async function fetchCachedEnglish({
+  cacheUrl = EN_CACHE_URL,
+  fetchImpl = fetch,
+} = {}) {
+  try {
+    const res = await fetchImpl(cacheUrl, { headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      console.warn(`English changelog cache unavailable: ${res.status}`);
+      return null;
+    }
+    return await res.json();
+  } catch (err) {
+    console.warn(`English changelog cache unavailable: ${err.message}`);
+    return null;
+  }
+}
+
+export async function translateToEnglish(
+  cnJson,
+  {
+    cachedEnJson = null,
+    deepseekApiKey = DEEPSEEK_API_KEY,
+    fetchImpl = fetch,
+    sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  } = {},
+) {
+  if (!deepseekApiKey) {
     console.warn('DEEPSEEK_API_KEY not set, skipping translation');
     return null;
   }
 
+  const cachedByTag = new Map((cachedEnJson?.releases || []).map((release) => [release.tag, release]));
   const enReleases = [];
+  let reusedCount = 0;
+  let translatedCount = 0;
 
   for (const release of cnJson.releases) {
-    const sectionsText = release.sections
-      .map((s) => {
-        const items = s.items.map((i) => (i.desc ? `- **${i.title}** — ${i.desc}` : `- ${i.title}`)).join('\n');
-        return `### ${s.title}\n${items}`;
-      })
-      .join('\n\n');
+    const cachedRelease = cachedByTag.get(release.tag);
+    if (cachedRelease?._sourceHash === release._sourceHash) {
+      enReleases.push({
+        ...cachedRelease,
+        name: release.name,
+        date: release.date,
+        _sourceHash: release._sourceHash,
+      });
+      reusedCount++;
+      continue;
+    }
+
+    const sectionsText = releaseToMarkdown(release);
 
     if (!sectionsText.trim()) {
       enReleases.push({ ...release, sections: [] });
       continue;
     }
 
-    const res = await fetch('https://api.deepseek.com/chat/completions', {
+    const res = await fetchImpl('https://api.deepseek.com/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${deepseekApiKey}` },
       body: JSON.stringify({
         model: 'deepseek-chat',
         messages: [
@@ -141,10 +205,12 @@ async function translateToEnglish(cnJson) {
     const translated = data.choices?.[0]?.message?.content || '';
     const enSections = parseBody(translated);
     enReleases.push({ ...release, sections: enSections.length > 0 ? enSections : release.sections });
+    translatedCount++;
 
-    await new Promise((r) => setTimeout(r, 200));
+    await sleep(200);
   }
 
+  console.log(`English changelog cache reused ${reusedCount} release(s), translated ${translatedCount} release(s)`);
   return { updatedAt: cnJson.updatedAt, releases: enReleases };
 }
 
@@ -156,12 +222,14 @@ async function main() {
   const cnJson = buildReleasesJson(releases);
   console.log(`Processed ${cnJson.releases.length} non-draft releases`);
 
-  const { writeFileSync } = await import('node:fs');
   writeFileSync(OUT_CN, JSON.stringify(cnJson, null, 2));
   console.log(`Wrote ${OUT_CN}`);
 
+  console.log('Fetching cached English changelog...');
+  const cachedEnJson = await fetchCachedEnglish();
+
   console.log('Translating to English...');
-  const enJson = await translateToEnglish(cnJson);
+  const enJson = await translateToEnglish(cnJson, { cachedEnJson });
   if (enJson) {
     writeFileSync(OUT_EN, JSON.stringify(enJson, null, 2));
     console.log(`Wrote ${OUT_EN}`);
@@ -170,7 +238,9 @@ async function main() {
   console.log('Done!');
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

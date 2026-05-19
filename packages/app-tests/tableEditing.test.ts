@@ -47,6 +47,8 @@ test("uses tbname and timestamp as TDengine editable keys", () => {
 
 test("allows Hive table data editing even without declared primary keys", () => {
   assert.equal(isTableDataEditable("access", []), true);
+  assert.equal(isTableDataEditable("sqlite", []), true);
+  assert.equal(isTableDataEditable("duckdb", []), true);
   assert.equal(isTableDataEditable("hive", []), true);
   assert.equal(isTableDataEditable("trino", []), true);
   assert.equal(isTableDataEditable("informix", []), true);
@@ -58,6 +60,8 @@ test("allows Hive table data editing even without declared primary keys", () => 
 test("does not use transactional grid saves for Hive", () => {
   assert.equal(supportsDataGridTransaction("hive"), false);
   assert.equal(supportsDataGridTransaction("trino"), false);
+  assert.equal(supportsDataGridTransaction("jdbc"), false);
+  assert.equal(supportsDataGridTransaction("yashandb"), false);
   assert.equal(supportsDataGridTransaction("postgres"), true);
 });
 
@@ -69,6 +73,10 @@ test("allows existing row edits according to database-specific key requirements"
   assert.equal(canEditExistingTableRows("hive", undefined), false);
   assert.equal(canEditExistingTableRows("trino", undefined, []), false);
   assert.equal(canEditExistingTableRows("trino", undefined, ["id"]), true);
+  assert.equal(canEditExistingTableRows("sqlite", undefined, []), false);
+  assert.equal(canEditExistingTableRows("sqlite", undefined, ["id"]), true);
+  assert.equal(canEditExistingTableRows("duckdb", undefined, []), false);
+  assert.equal(canEditExistingTableRows("duckdb", undefined, ["id"]), true);
   assert.equal(canEditExistingTableRows("informix", undefined, []), false);
   assert.equal(canEditExistingTableRows("informix", undefined, ["id"]), true);
   assert.equal(canEditExistingTableRows("tdengine", undefined, ["ts"]), false);

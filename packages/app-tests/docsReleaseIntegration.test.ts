@@ -57,11 +57,12 @@ test("legacy docs changelog pages do not keep stale release entries", () => {
   assert.match(cn, /\/cn\/changelog/);
 });
 
-test("docs deploy does not rerun just to refresh R2 changelog data", () => {
+test("docs deploy reruns after package publishing refreshes latest release data", () => {
   const source = readFileSync(".github/workflows/docs.yml", "utf8");
 
-  assert.equal(source.includes("workflow_run:"), false);
-  assert.equal(source.includes("Sync Changelog to R2"), false);
+  assert.match(source, /workflow_run:/);
+  assert.match(source, /workflows: \['Publish Packages'\]/);
+  assert.match(source, /github\.event\.workflow_run\.conclusion == 'success'/);
 });
 
 test("changelog sync does not configure bucket-level R2 CORS during upload", () => {

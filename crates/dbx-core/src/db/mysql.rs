@@ -314,11 +314,25 @@ pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Resul
         .collect())
 }
 
+fn query_result_row_limit(max_rows: Option<usize>) -> usize {
+    max_rows.unwrap_or(crate::query::MAX_ROWS).max(1)
+}
+
 pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<QueryResult, String> {
+    execute_query_with_max_rows(pool, sql, bare, None).await
+}
+
+pub async fn execute_query_with_max_rows(
+    pool: &MySqlPool,
+    sql: &str,
+    bare: bool,
+    max_rows: Option<usize>,
+) -> Result<QueryResult, String> {
     let start = Instant::now();
+    let row_limit = query_result_row_limit(max_rows);
 
     if is_result_set_query(sql) {
-        if bare {
+        if bare || requires_text_protocol_query(sql) {
             let mut stream = sqlx::raw_sql(sql).fetch(&*pool);
             let mut columns: Vec<String> = vec![];
             let mut column_types: Vec<String> = vec![];
@@ -335,14 +349,14 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
                         .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
                         .collect(),
                 );
-                if result_rows.len() > crate::query::MAX_ROWS {
+                if result_rows.len() > row_limit {
                     break;
                 }
             }
 
-            let truncated = result_rows.len() > crate::query::MAX_ROWS;
+            let truncated = result_rows.len() > row_limit;
             if truncated {
-                result_rows.truncate(crate::query::MAX_ROWS);
+                result_rows.truncate(row_limit);
             }
 
             Ok(QueryResult {
@@ -369,14 +383,14 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
                         .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
                         .collect(),
                 );
-                if result_rows.len() > crate::query::MAX_ROWS {
+                if result_rows.len() > row_limit {
                     break;
                 }
             }
 
-            let truncated = result_rows.len() > crate::query::MAX_ROWS;
+            let truncated = result_rows.len() > row_limit;
             if truncated {
-                result_rows.truncate(crate::query::MAX_ROWS);
+                result_rows.truncate(row_limit);
             }
 
             Ok(QueryResult {
@@ -406,6 +420,23 @@ pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<Qu
 
 fn is_result_set_query(sql: &str) -> bool {
     starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH"])
+}
+
+fn requires_text_protocol_query(sql: &str) -> bool {
+    if !starts_with_executable_sql_keyword(sql, &["SHOW"]) {
+        return false;
+    }
+
+    let tokens =
+        sql.trim().trim_end_matches(';').split_whitespace().map(|token| token.to_ascii_lowercase()).collect::<Vec<_>>();
+
+    matches!(
+        tokens.iter().map(String::as_str).collect::<Vec<_>>().as_slice(),
+        ["show", "processlist"]
+            | ["show", "full", "processlist"]
+            | ["show", "slave", "status"]
+            | ["show", "replica", "status"]
+    )
 }
 
 pub async fn list_indexes(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
@@ -515,5 +546,15 @@ mod tests {
         assert!(sql.contains("information_schema.ROUTINES"));
         assert!(sql.contains("'PROCEDURE'"));
         assert!(sql.contains("'FUNCTION'"));
+    }
+
+    #[test]
+    fn mysql_management_show_queries_use_text_protocol() {
+        assert!(requires_text_protocol_query("SHOW PROCESSLIST"));
+        assert!(requires_text_protocol_query("show full processlist"));
+        assert!(requires_text_protocol_query("SHOW SLAVE STATUS"));
+        assert!(requires_text_protocol_query("show replica status"));
+        assert!(!requires_text_protocol_query("SHOW TABLES"));
+        assert!(!requires_text_protocol_query("SELECT * FROM users"));
     }
 }

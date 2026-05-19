@@ -36,6 +36,27 @@ pub async fn redis_scan_keys_core(
     }
 }
 
+pub async fn redis_scan_values_core(
+    state: &AppState,
+    connection_id: &str,
+    db: u32,
+    cursor: u64,
+    pattern: &str,
+    query: &str,
+    count: usize,
+) -> Result<RedisScanResult, String> {
+    let connections = state.connections.read().await;
+    let pool = connections.get(connection_id).ok_or("Connection not found")?;
+    match pool {
+        PoolKind::Redis(con) => {
+            let mut con = con.lock().await;
+            redis_driver::select_db(&mut con, db).await?;
+            redis_driver::scan_values_page(&mut con, cursor, pattern, query, count).await
+        }
+        _ => Err("Not a Redis connection".to_string()),
+    }
+}
+
 pub async fn redis_get_value_core(state: &AppState, connection_id: &str, key: &str) -> Result<RedisValue, String> {
     redis_get_value_in_db_core(state, connection_id, 0, key).await
 }

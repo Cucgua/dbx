@@ -13,6 +13,7 @@ import {
 import { useToast } from "@/composables/useToast";
 import { displayCellValue, type CellValue } from "@/lib/cellValue";
 import { tryStartExclusiveActivation, type ActionActivationGuard } from "@/lib/actionActivation";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface RowItem {
   id: number;
@@ -65,9 +66,13 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     hasRowSelection,
   } = options;
 
-  function copyText(text: string) {
-    navigator.clipboard.writeText(text);
-    toast(t("grid.copied"));
+  async function copyText(text: string) {
+    try {
+      await copyToClipboard(text);
+      toast(t("grid.copied"));
+    } catch (e: any) {
+      toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+    }
   }
 
   function rowsToExport(rowIds?: number[]): RowItem[] {
@@ -77,35 +82,35 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
   }
 
   // --- Selection copy functions ---
-  function copySelectionTsv() {
+  async function copySelectionTsv() {
     if (!hasCellSelection.value) return;
-    copyText(formatSelectionAsTsv(selectedCells.value));
+    await copyText(formatSelectionAsTsv(selectedCells.value));
   }
 
-  function copySelectionCsv() {
+  async function copySelectionCsv() {
     if (!hasCellSelection.value) return;
-    copyText(formatSelectionAsCsv(selectedCells.value));
+    await copyText(formatSelectionAsCsv(selectedCells.value));
   }
 
-  function copySelectionJson() {
+  async function copySelectionJson() {
     if (!hasCellSelection.value) return;
-    copyText(formatSelectionAsJson(selectedCells.value));
+    await copyText(formatSelectionAsJson(selectedCells.value));
   }
 
-  function copySelectionSqlInList() {
+  async function copySelectionSqlInList() {
     if (!hasCellSelection.value) return;
-    copyText(formatSelectionAsSqlInList(selectedCells.value));
+    await copyText(formatSelectionAsSqlInList(selectedCells.value));
   }
 
   // --- Cell/row copy ---
-  function copyCell() {
+  async function copyCell() {
     if (!contextCell.value || contextCell.value.col < 0) return;
     const item = getRowItem(contextCell.value.rowId);
     const val = item?.data[contextCell.value.col] ?? null;
-    copyText(displayCellValue(val));
+    await copyText(displayCellValue(val));
   }
 
-  function copyRow() {
+  async function copyRow() {
     if (hasRowSelection.value && selectedRowIds.value.size > 0) {
       const items = displayItems.value.filter((item) => selectedRowIds.value.has(item.id));
       const objects = items.map((item) => {
@@ -115,7 +120,7 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
         });
         return obj;
       });
-      copyText(JSON.stringify(objects, null, 2));
+      await copyText(JSON.stringify(objects, null, 2));
       return;
     }
     const range = selectedRange.value;
@@ -128,7 +133,7 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
         });
         return obj;
       });
-      copyText(JSON.stringify(objects, null, 2));
+      await copyText(JSON.stringify(objects, null, 2));
       return;
     }
     if (!contextCell.value) return;
@@ -138,10 +143,10 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     columns.value.forEach((col, i) => {
       obj[col] = item.data[i];
     });
-    copyText(JSON.stringify(obj, null, 2));
+    await copyText(JSON.stringify(obj, null, 2));
   }
 
-  function copyRowAsInsert() {
+  async function copyRowAsInsert() {
     const table = tableMeta.value
       ? (tableMeta.value.schema ? `${quoteIdent(tableMeta.value.schema)}.` : "") + quoteIdent(tableMeta.value.tableName)
       : "table_name";
@@ -153,7 +158,7 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
         const vals = item.data.map((v) => escapeVal(v)).join(", ");
         return `INSERT INTO ${table} (${cols}) VALUES (${vals});`;
       });
-      copyText(statements.join("\n"));
+      await copyText(statements.join("\n"));
       return;
     }
 
@@ -164,7 +169,7 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
         const vals = item.data.map((v) => escapeVal(v)).join(", ");
         return `INSERT INTO ${table} (${cols}) VALUES (${vals});`;
       });
-      copyText(statements.join("\n"));
+      await copyText(statements.join("\n"));
       return;
     }
 
@@ -172,13 +177,13 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     const item = getRowItem(contextCell.value.rowId);
     if (!item) return;
     const vals = item.data.map((v) => escapeVal(v)).join(", ");
-    copyText(`INSERT INTO ${table} (${cols}) VALUES (${vals});`);
+    await copyText(`INSERT INTO ${table} (${cols}) VALUES (${vals});`);
   }
 
-  function copyAll() {
+  async function copyAll() {
     const header = columns.value.join("\t");
     const body = displayItems.value.map((item) => item.data.map((c) => displayCellValue(c)).join("\t")).join("\n");
-    copyText(`${header}\n${body}`);
+    await copyText(`${header}\n${body}`);
   }
 
   // --- File save helpers ---
@@ -311,10 +316,9 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     });
   }
 
-  function copySql() {
+  async function copySql() {
     if (!sql.value) return;
-    navigator.clipboard.writeText(sql.value);
-    toast(t("grid.copied"));
+    await copyText(sql.value);
   }
 
   return {

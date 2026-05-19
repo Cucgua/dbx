@@ -25,6 +25,17 @@ pub struct RedisScanRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RedisValueScanRequest {
+    pub connection_id: String,
+    pub db: u32,
+    pub cursor: u64,
+    pub pattern: String,
+    pub query: String,
+    pub count: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RedisKeyRequest {
     pub connection_id: String,
     pub db: u32,
@@ -112,6 +123,24 @@ pub async fn scan_keys(
         req.db,
         req.cursor,
         &req.pattern,
+        req.count,
+    )
+    .await
+    .map_err(AppError)?;
+    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+}
+
+pub async fn scan_values(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<RedisValueScanRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let result = dbx_core::redis_ops::redis_scan_values_core(
+        &state.app,
+        &req.connection_id,
+        req.db,
+        req.cursor,
+        &req.pattern,
+        &req.query,
         req.count,
     )
     .await

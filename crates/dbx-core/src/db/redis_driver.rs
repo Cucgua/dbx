@@ -254,6 +254,39 @@ pub fn redis_command_raw_to_json(value: RedisRawValue) -> serde_json::Value {
     }
 }
 
+pub fn is_redis_json_type(key_type: &str) -> bool {
+    matches!(key_type.to_ascii_uppercase().as_str(), "REJSON-RL" | "JSON")
+}
+
+pub fn redis_json_raw_to_json(value: RedisRawValue) -> Result<serde_json::Value, String> {
+    match redis_raw_to_json(value) {
+        serde_json::Value::Null => Ok(serde_json::Value::Null),
+        serde_json::Value::String(text) => {
+            serde_json::from_str(&text).map_err(|e| format!("Invalid RedisJSON value: {e}"))
+        }
+        other => Ok(other),
+    }
+}
+
+pub fn redis_json_value_preview(value: &serde_json::Value) -> String {
+    const MAX_PREVIEW_LEN: usize = 160;
+    let text = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+    if text.chars().count() <= MAX_PREVIEW_LEN {
+        return text;
+    }
+    let mut preview = text.chars().take(MAX_PREVIEW_LEN).collect::<String>();
+    preview.push('…');
+    preview
+}
+
+pub fn redis_key_value_preview(key_type: &str) -> String {
+    if is_redis_json_type(key_type) {
+        "{...}".to_string()
+    } else {
+        String::new()
+    }
+}
+
 pub async fn flush_db(con: &mut redis::aio::MultiplexedConnection) -> Result<(), String> {
     redis::cmd("FLUSHDB").query_async::<()>(con).await.map_err(|e| e.to_string())
 }
@@ -308,15 +341,63 @@ pub async fn scan_keys_page(
 
     let mut result = Vec::with_capacity(keys.len());
     for (index, key) in keys.iter().enumerate() {
+        let key_type = key_types.get(index).cloned().unwrap_or_else(|| "unknown".to_string());
         result.push(RedisKeyInfo {
             key_display: redis_key_bytes_to_display(key),
             key_raw: redis_key_bytes_to_raw(key),
-            key_type: key_types.get(index).cloned().unwrap_or_else(|| "unknown".to_string()),
+            key_type,
             ttl: -2,
             size: 0,
-            value_preview: String::new(),
+            value_preview: redis_key_value_preview(key_types.get(index).map(String::as_str).unwrap_or("unknown")),
         });
     }
+    Ok(RedisScanResult { cursor: next_cursor, keys: result, total_keys })
+}
+
+pub async fn scan_values_page(
+    con: &mut redis::aio::MultiplexedConnection,
+    cursor: u64,
+    pattern: &str,
+    query: &str,
+    count: usize,
+) -> Result<RedisScanResult, String> {
+    let total_keys: u64 = redis::cmd("DBSIZE").query_async(con).await.unwrap_or(0);
+    if query.trim().is_empty() {
+        return Ok(RedisScanResult { cursor, keys: Vec::new(), total_keys });
+    }
+
+    let scan_count = count.max(1);
+    let raw: RedisRawValue = redis::cmd("SCAN")
+        .arg(cursor)
+        .arg("MATCH")
+        .arg(pattern)
+        .arg("COUNT")
+        .arg(scan_count)
+        .query_async(con)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let (next_cursor, keys) = parse_scan_keys(raw)?;
+    let mut result = Vec::new();
+    for key in keys {
+        let Ok(value) = get_value(con, &key).await else {
+            continue;
+        };
+        if !redis_value_matches_query(&value.value, query) {
+            continue;
+        }
+
+        let value_preview = redis_search_value_preview(&value.value);
+        result.push(RedisKeyInfo {
+            key_display: value.key_display,
+            key_raw: value.key_raw,
+            key_type: value.key_type,
+            ttl: value.ttl,
+            size: redis_search_value_size(&value.value, value.total),
+            value_preview,
+        });
+    }
+
     Ok(RedisScanResult { cursor: next_cursor, keys: result, total_keys })
 }
 
@@ -358,6 +439,11 @@ pub async fn get_value(con: &mut redis::aio::MultiplexedConnection, key: &[u8]) 
             (serde_json::Value::Array(items), false, Some(len), cursor)
         }
         "stream" => (get_stream_entries(con, key).await?, false, None, None),
+        key_type if is_redis_json_type(key_type) => {
+            let raw: RedisRawValue =
+                redis::cmd("JSON.GET").arg(key).query_async(con).await.map_err(|e| e.to_string())?;
+            (redis_json_raw_to_json(raw)?, false, None, None)
+        }
         _ => (serde_json::Value::Null, false, None, None),
     };
 
@@ -371,6 +457,42 @@ pub async fn get_value(con: &mut redis::aio::MultiplexedConnection, key: &[u8]) 
         total,
         scan_cursor,
     })
+}
+
+fn redis_value_matches_query(value: &serde_json::Value, query: &str) -> bool {
+    let query = query.trim();
+    if query.is_empty() {
+        return false;
+    }
+    redis_search_value_text(value).to_lowercase().contains(&query.to_lowercase())
+}
+
+fn redis_search_value_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => serde_json::to_string(other).unwrap_or_else(|_| other.to_string()),
+    }
+}
+
+fn redis_search_value_preview(value: &serde_json::Value) -> String {
+    const MAX_PREVIEW_LEN: usize = 160;
+    let text = redis_search_value_text(value);
+    if text.chars().count() <= MAX_PREVIEW_LEN {
+        return text;
+    }
+    let mut preview = text.chars().take(MAX_PREVIEW_LEN).collect::<String>();
+    preview.push('…');
+    preview
+}
+
+fn redis_search_value_size(value: &serde_json::Value, total: Option<u64>) -> u64 {
+    if let Some(total) = total {
+        return total;
+    }
+    match value {
+        serde_json::Value::String(text) => text.len() as u64,
+        _ => 0,
+    }
 }
 
 async fn get_stream_entries(
@@ -777,9 +899,10 @@ fn parse_scan_members(raw: RedisRawValue) -> Result<(u64, Vec<serde_json::Value>
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_command, parse_command_argv, parse_database_count, parse_scan_keys, parse_stream_entries,
-        redis_command_raw_to_json, redis_key_bytes_to_display, redis_key_bytes_to_raw, redis_key_raw_to_bytes,
-        redis_raw_to_json, redis_value_contains_binary, RedisCommandSafety, RedisRawValue,
+        classify_command, is_redis_json_type, parse_command_argv, parse_database_count, parse_scan_keys,
+        parse_stream_entries, redis_command_raw_to_json, redis_json_raw_to_json, redis_json_value_preview,
+        redis_key_bytes_to_display, redis_key_bytes_to_raw, redis_key_raw_to_bytes, redis_key_value_preview,
+        redis_raw_to_json, redis_value_contains_binary, redis_value_matches_query, RedisCommandSafety, RedisRawValue,
     };
 
     fn bulk(value: &str) -> RedisRawValue {
@@ -911,6 +1034,14 @@ mod tests {
     }
 
     #[test]
+    fn matches_redis_values_case_insensitively() {
+        assert!(redis_value_matches_query(&serde_json::json!("Hello Redis"), "redis"));
+        assert!(redis_value_matches_query(&serde_json::json!({"field": "Ada Lovelace"}), "lovelace"));
+        assert!(!redis_value_matches_query(&serde_json::json!("Hello Redis"), ""));
+        assert!(!redis_value_matches_query(&serde_json::json!("Hello Redis"), "mysql"));
+    }
+
+    #[test]
     fn classifies_safe_confirmed_and_blocked_commands() {
         assert_eq!(classify_command("GET"), RedisCommandSafety::Allowed);
         assert_eq!(classify_command("set"), RedisCommandSafety::Confirm);
@@ -929,5 +1060,39 @@ mod tests {
         ]);
 
         assert_eq!(redis_command_raw_to_json(raw), serde_json::json!(["OK", 2, null]));
+    }
+
+    #[test]
+    fn recognizes_redis_json_module_key_types() {
+        assert!(is_redis_json_type("ReJSON-RL"));
+        assert!(is_redis_json_type("json"));
+        assert!(!is_redis_json_type("string"));
+    }
+
+    #[test]
+    fn parses_redis_json_get_bulk_string() {
+        let raw = bulk(r#"{"id":1,"embedding":[0.1,0.2],"meta":{"source":"test"}}"#);
+
+        assert_eq!(
+            redis_json_raw_to_json(raw).unwrap(),
+            serde_json::json!({
+                "id": 1,
+                "embedding": [0.1, 0.2],
+                "meta": { "source": "test" }
+            })
+        );
+    }
+
+    #[test]
+    fn builds_compact_redis_json_value_preview() {
+        let value = serde_json::json!({ "id": 1, "embedding": [0.1, 0.2] });
+
+        assert_eq!(redis_json_value_preview(&value), r#"{"id":1,"embedding":[0.1,0.2]}"#);
+    }
+
+    #[test]
+    fn uses_lightweight_redis_json_placeholder_for_key_scan_preview() {
+        assert_eq!(redis_key_value_preview("ReJSON-RL"), "{...}");
+        assert_eq!(redis_key_value_preview("string"), "");
     }
 }
