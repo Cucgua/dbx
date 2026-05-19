@@ -762,9 +762,8 @@ function buildSubmitConfig(id: string): ConnectionConfig {
   }
   if (config.db_type === "oracle") {
     config.sysdba = !!config.sysdba;
-    const oracleMode = config.oracle_connection_type === "sid" || config.oracle_connect_method === "sid"
-      ? "sid"
-      : "service_name";
+    const oracleMode =
+      config.oracle_connection_type === "sid" || config.oracle_connect_method === "sid" ? "sid" : "service_name";
     config.oracle_connection_type = oracleMode;
     config.oracle_connect_method = oracleUseConnectString.value && isOracleOci.value ? "connect_string" : oracleMode;
   } else {

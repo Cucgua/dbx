@@ -244,7 +244,8 @@ export const useConnectionStore = defineStore("connection", () => {
       attached_databases: Array.isArray(config.attached_databases)
         ? config.attached_databases.filter((database) => database.name?.trim() && database.path?.trim())
         : [],
-      oracle_connection_type: config.oracle_connection_type || (config.oracle_connect_method === "sid" ? "sid" : undefined),
+      oracle_connection_type:
+        config.oracle_connection_type || (config.oracle_connect_method === "sid" ? "sid" : undefined),
       ssh_connect_timeout_secs: config.ssh_connect_timeout_secs || 5,
       proxy_type: config.proxy_type || "socks5",
       proxy_port: config.proxy_port || 1080,
