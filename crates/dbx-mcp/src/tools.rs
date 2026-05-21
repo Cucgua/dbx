@@ -399,6 +399,7 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         external_config: None,
         jdbc_driver_class: clean_optional(args.jdbc_driver_class),
         jdbc_driver_paths: args.jdbc_driver_paths.unwrap_or_default(),
+        one_time: false,
     }
     .canonicalized())
 }
@@ -482,6 +483,7 @@ mod tests {
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
+            one_time: false,
         }
     }
 
