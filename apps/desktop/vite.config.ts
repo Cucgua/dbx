@@ -31,7 +31,6 @@ export default defineConfig(async () => ({
             "@codemirror/theme-one-dark",
           ],
           "sql-formatter": ["sql-formatter"],
-          echarts: ["echarts", "vue-echarts"],
           ui: ["reka-ui"],
           marked: ["marked"],
         },

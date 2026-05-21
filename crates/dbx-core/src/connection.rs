@@ -1,3 +1,4 @@
+use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -540,10 +541,17 @@ pub fn redacted_connection_url_for_endpoint(config: &ConnectionConfig, host: &st
 }
 
 pub fn agent_connect_params(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> serde_json::Value {
+    let agent_database = if config.db_type == DatabaseType::MongoDb {
+        mongo_agent_database(config, database)
+    } else {
+        database.to_string()
+    };
     let connection_string = if config.db_type == DatabaseType::MongoDb {
         config.connection_url_with_host(host, port)
     } else if config.db_type == DatabaseType::Oracle {
         oracle_jdbc_connection_string(config, host, port, database)
+    } else if config.db_type == DatabaseType::SapHana {
+        sap_hana_jdbc_connection_string(config, host, port, database)
     } else {
         config.connection_string.as_deref().unwrap_or("").to_string()
     };
@@ -551,12 +559,40 @@ pub fn agent_connect_params(config: &ConnectionConfig, host: &str, port: u16, da
     serde_json::json!({
         "host": host,
         "port": port,
-        "database": database,
+        "database": agent_database,
         "username": config.username,
         "password": config.password,
         "url_params": config.url_params.as_deref().unwrap_or(""),
         "connection_string": connection_string,
     })
+}
+
+fn mongo_agent_database(config: &ConnectionConfig, database: &str) -> String {
+    if let Some(database) = non_empty_database(database) {
+        return database.to_string();
+    }
+    if let Some(database) = config.database.as_deref().and_then(non_empty_database) {
+        return database.to_string();
+    }
+    if let Some(database) = config.connection_string.as_deref().and_then(mongo_uri_database) {
+        return database;
+    }
+    "admin".to_string()
+}
+
+fn non_empty_database(database: &str) -> Option<&str> {
+    let database = database.trim();
+    (!database.is_empty()).then_some(database)
+}
+
+fn mongo_uri_database(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("mongodb://").or_else(|| uri.strip_prefix("mongodb+srv://"))?;
+    let (_, after_hosts) = rest.split_once('/')?;
+    let database = after_hosts.split(['?', '#']).next()?.trim();
+    if database.is_empty() {
+        return None;
+    }
+    Some(percent_decode_str(database).decode_utf8_lossy().into_owned())
 }
 
 pub fn mongo_legacy_error_with_auth_hint(err: &str) -> String {
@@ -588,6 +624,28 @@ fn oracle_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u1
         format!("jdbc:oracle:thin:@{host}:{port}:{database}")
     } else {
         format!("jdbc:oracle:thin:@//{host}:{port}/{database}")
+    }
+}
+
+fn sap_hana_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> String {
+    let database = database.trim();
+    let params = config.url_params.as_deref().unwrap_or("").trim().trim_start_matches('?');
+    let has_database_name = params
+        .split(['&', ';'])
+        .any(|part| part.split_once('=').map(|(key, _)| key.eq_ignore_ascii_case("databaseName")).unwrap_or(false));
+
+    let mut query_parts = Vec::new();
+    if !database.is_empty() && !has_database_name {
+        query_parts.push(format!("databaseName={}", utf8_percent_encode(database, NON_ALPHANUMERIC)));
+    }
+    if !params.is_empty() {
+        query_parts.push(params.to_string());
+    }
+
+    if query_parts.is_empty() {
+        format!("jdbc:sap://{host}:{port}")
+    } else {
+        format!("jdbc:sap://{host}:{port}/?{}", query_parts.join("&"))
     }
 }
 
@@ -702,6 +760,7 @@ mod tests {
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
+            one_time: false,
         }
     }
 
@@ -738,6 +797,18 @@ mod tests {
     }
 
     #[test]
+    fn agent_connect_params_mongodb_uses_connection_string_database_when_database_is_empty() {
+        let mut config = mysql_config(None);
+        config.db_type = DatabaseType::MongoDb;
+        config.connection_string =
+            Some("mongodb://mongouser:secret@172.22.4.42:27017/RestCloud_V45PUB_Gateway?authSource=admin".to_string());
+
+        let params = agent_connect_params(&config, "172.22.4.42", 27017, "");
+
+        assert_eq!(params["database"], "RestCloud_V45PUB_Gateway");
+    }
+
+    #[test]
     fn mongo_legacy_auth_error_adds_auth_source_hint() {
         let err = "Agent RPC error: Exception authenticating MongoCredential{mechanism=SCRAM-SHA-1, userName='rwuser', source='gray_lite_twin_fat'}";
 
@@ -771,6 +842,22 @@ mod tests {
         let params = agent_connect_params(&config, "127.0.0.1", 11521, "ORCL");
 
         assert_eq!(params["connection_string"], "jdbc:oracle:thin:@127.0.0.1:11521:ORCL");
+    }
+
+    #[test]
+    fn agent_connect_params_build_saphana_connection_string_from_database_and_url_params() {
+        let mut config = mysql_config(Some("TENANT1"));
+        config.db_type = DatabaseType::SapHana;
+        config.host = "hana.example.com".to_string();
+        config.port = 30013;
+        config.username = "SYSTEM".to_string();
+        config.password = "secret".to_string();
+        config.url_params = Some("encrypt=true".to_string());
+
+        let params = agent_connect_params(&config, "hana.example.com", 30013, "TENANT1");
+
+        assert_eq!(params["database"], "TENANT1");
+        assert_eq!(params["connection_string"], "jdbc:sap://hana.example.com:30013/?databaseName=TENANT1&encrypt=true");
     }
 
     async fn test_app_state() -> (AppState, std::path::PathBuf) {

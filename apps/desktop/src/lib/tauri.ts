@@ -62,6 +62,11 @@ export interface AiCompletionRequest {
   temperature?: number;
 }
 
+export interface AiModelInfo {
+  id: string;
+  displayName?: string;
+}
+
 export async function aiComplete(request: AiCompletionRequest): Promise<string> {
   return invoke("ai_complete", { request });
 }
@@ -100,6 +105,10 @@ export async function aiTestConnection(config: AiConfig): Promise<string> {
   return invoke("ai_test_connection", { config });
 }
 
+export async function aiListModels(config: AiConfig): Promise<AiModelInfo[]> {
+  return invoke("ai_list_models", { config });
+}
+
 export async function aiCancelStream(sessionId: string): Promise<boolean> {
   return invoke("ai_cancel_stream", { sessionId });
 }
@@ -131,6 +140,10 @@ export async function loadMcpHttpStatus(): Promise<McpHttpStatus | null> {
 
 export async function pendingOpenSqlFiles(): Promise<string[]> {
   return invoke("pending_open_sql_files");
+}
+
+export async function pendingOpenConnectionLinks(): Promise<string[]> {
+  return invoke("pending_open_connection_links");
 }
 
 export async function readExternalSqlFile(path: string): Promise<string> {
@@ -395,6 +408,14 @@ export async function setAgentJavaRuntimeConfig(config: JavaRuntimeConfig): Prom
 
 export async function invalidateAgentRegistryCache(): Promise<void> {
   return invoke("invalidate_agent_registry_cache");
+}
+
+export async function importAgentsFromZip(path: string): Promise<number> {
+  return invoke("import_agents_from_zip", { path });
+}
+
+export async function importAgentJar(dbType: string, path: string): Promise<void> {
+  return invoke("import_agent_jar_cmd", { dbType, path });
 }
 
 export async function reinstallJre(jreKey?: string): Promise<void> {

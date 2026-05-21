@@ -14,7 +14,8 @@ import { generateDatabaseExportId } from "@/lib/databaseExport";
 import { buildSelectedTablesPayload } from "@/lib/databaseExportSelection";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { useToast } from "@/composables/useToast";
-import { Download, Square, CheckSquare, X } from "lucide-vue-next";
+import { Input } from "@/components/ui/input";
+import { Download, Square, CheckSquare, Search, X } from "lucide-vue-next";
 
 const { t } = useI18n();
 const { toast } = useToast();
@@ -38,6 +39,12 @@ const loadingMeta = ref(false);
 const tables = ref<string[]>([]);
 const selectedTables = ref<string[]>([]);
 const loadingTables = ref(false);
+const tableFilter = ref("");
+const filteredTables = computed(() => {
+  const q = tableFilter.value.trim().toLowerCase();
+  if (!q) return tables.value;
+  return tables.value.filter((name) => name.toLowerCase().includes(q));
+});
 const tableError = ref<string | null>(null);
 
 // Options
@@ -147,11 +154,14 @@ function toggleTable(table: string) {
 }
 
 function selectAllTables() {
-  selectedTables.value = [...tables.value];
+  const selected = new Set(selectedTables.value);
+  for (const name of filteredTables.value) selected.add(name);
+  selectedTables.value = tables.value.filter((name) => selected.has(name));
 }
 
 function clearSelectedTables() {
-  selectedTables.value = [];
+  const removing = new Set(filteredTables.value);
+  selectedTables.value = selectedTables.value.filter((name) => !removing.has(name));
 }
 
 async function startExport() {
@@ -386,6 +396,10 @@ watch(
               {{ t("databaseExport.tableLoadError", { error: tableError }) }}
             </div>
             <div v-else-if="tables.length" class="space-y-2 rounded border border-border/60 p-2">
+              <div class="relative">
+                <Search class="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input v-model="tableFilter" class="h-7 pl-7 text-xs" :placeholder="t('databaseExport.filterTables')" />
+              </div>
               <div class="flex items-center gap-2">
                 <Button variant="outline" size="sm" class="h-7 px-2 text-xs" @click="selectAllTables">
                   {{ t("databaseExport.selectAllTables") }}
@@ -396,7 +410,7 @@ watch(
               </div>
               <div class="max-h-40 overflow-auto space-y-1 pr-1">
                 <button
-                  v-for="table in tables"
+                  v-for="table in filteredTables"
                   :key="table"
                   type="button"
                   class="flex w-full min-w-0 items-center gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-muted"

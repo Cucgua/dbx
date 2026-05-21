@@ -63,6 +63,7 @@ pub struct SqlStatementSplitter {
     in_block_comment: bool,
     dollar_quote_tag: Option<String>,
     previous: Option<char>,
+    custom_delimiter: Option<String>,
 }
 
 impl SqlStatementSplitter {
@@ -144,13 +145,15 @@ impl SqlStatementSplitter {
                     continue;
                 }
                 if let Some(tag) = dollar_quote_tag_at(&chars, i) {
-                    for tag_ch in tag.chars() {
-                        self.buffer.push(tag_ch);
-                        self.previous = Some(tag_ch);
+                    if self.custom_delimiter.is_none() && !self.on_delimiter_line() {
+                        for tag_ch in tag.chars() {
+                            self.buffer.push(tag_ch);
+                            self.previous = Some(tag_ch);
+                        }
+                        i += tag.chars().count();
+                        self.dollar_quote_tag = Some(tag);
+                        continue;
                     }
-                    i += tag.chars().count();
-                    self.dollar_quote_tag = Some(tag);
-                    continue;
                 }
             }
 
@@ -168,9 +171,40 @@ impl SqlStatementSplitter {
                     self.buffer.push(ch);
                 }
                 ';' if !self.in_single_quote && !self.in_double_quote && !self.in_backtick => {
-                    self.push_current_statement(&mut statements);
+                    if self.custom_delimiter.is_some() {
+                        self.buffer.push(ch);
+                    } else {
+                        self.push_current_statement(&mut statements);
+                    }
                 }
                 _ => self.buffer.push(ch),
+            }
+
+            if !self.in_single_quote && !self.in_double_quote && !self.in_backtick && self.dollar_quote_tag.is_none() {
+                if ch == '\n' {
+                    let buf_end = self.buffer.len() - 1;
+                    let last_line_start = self.buffer[..buf_end].rfind('\n').map_or(0, |p| p + 1);
+                    let last_line = self.buffer[last_line_start..buf_end].trim();
+                    if let Some(new_delim) = parse_delimiter_command(last_line) {
+                        self.custom_delimiter = if new_delim == ";" { None } else { Some(new_delim.to_string()) };
+                        if last_line_start > 0 {
+                            let before = self.buffer[..last_line_start].trim();
+                            if has_executable_sql(before) {
+                                statements.push(before.to_string());
+                            }
+                        }
+                        self.buffer.clear();
+                        self.previous = None;
+                        i += 1;
+                        continue;
+                    }
+                }
+                if let Some(delim) = self.custom_delimiter.clone() {
+                    if self.buffer.ends_with(delim.as_str()) {
+                        self.buffer.truncate(self.buffer.len() - delim.len());
+                        self.push_current_statement(&mut statements);
+                    }
+                }
             }
 
             self.previous = Some(ch);
@@ -182,6 +216,19 @@ impl SqlStatementSplitter {
 
     pub fn finish(mut self) -> Vec<String> {
         let mut statements = Vec::new();
+        let trimmed = self.buffer.trim();
+        let last_line = trimmed.rsplit('\n').next().unwrap_or(trimmed).trim();
+        if parse_delimiter_command(last_line).is_some() {
+            let before = trimmed.rsplitn(2, '\n').nth(1).unwrap_or("").trim();
+            if has_executable_sql(before) {
+                statements.push(before.to_string());
+            }
+            self.buffer.clear();
+        } else if let Some(ref delim) = self.custom_delimiter {
+            if self.buffer.ends_with(delim.as_str()) {
+                self.buffer.truncate(self.buffer.len() - delim.len());
+            }
+        }
         self.push_current_statement(&mut statements);
         statements
     }
@@ -193,6 +240,12 @@ impl SqlStatementSplitter {
         }
         self.buffer.clear();
         self.previous = None;
+    }
+
+    fn on_delimiter_line(&self) -> bool {
+        let start = self.buffer.rfind('\n').map_or(0, |p| p + 1);
+        let line = self.buffer[start..].trim_start().as_bytes();
+        line.len() >= 9 && line[..9].eq_ignore_ascii_case(b"delimiter")
     }
 }
 
@@ -242,6 +295,18 @@ pub fn split_sql_batches(sql: &str) -> Vec<String> {
     }
 
     batches
+}
+
+fn parse_delimiter_command(line: &str) -> Option<&str> {
+    let bytes = line.as_bytes();
+    let rest = if bytes.len() > 10 && bytes[..10].eq_ignore_ascii_case(b"delimiter ") {
+        Some(&line[10..])
+    } else if bytes.len() > 10 && bytes[..10].eq_ignore_ascii_case(b"delimiter\t") {
+        Some(&line[10..])
+    } else {
+        None
+    };
+    rest.map(|r| r.trim()).filter(|r| !r.is_empty())
 }
 
 pub fn statement_summary(statement: &str) -> String {
@@ -795,5 +860,116 @@ mod tests {
     #[test]
     fn split_batches_trailing_go() {
         assert_eq!(super::split_sql_batches("SELECT 1\nGO"), vec!["SELECT 1"]);
+    }
+
+    // --- DELIMITER support ---
+
+    #[test]
+    fn delimiter_basic_procedure() {
+        let sql = "\
+DELIMITER //
+CREATE PROCEDURE foo()
+BEGIN
+  SELECT 1;
+  SELECT 2;
+END //
+DELIMITER ;
+SELECT 3;";
+        assert_eq!(
+            super::split_sql_statements(sql),
+            vec!["CREATE PROCEDURE foo()\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND", "SELECT 3",]
+        );
+    }
+
+    #[test]
+    fn delimiter_no_trailing_newline() {
+        let sql = "DELIMITER //\nSELECT 1//";
+        assert_eq!(super::split_sql_statements(sql), vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn delimiter_no_space_before_delim() {
+        let sql = "DELIMITER //\nCREATE PROCEDURE foo() BEGIN SELECT 1; END//\nDELIMITER ;";
+        assert_eq!(super::split_sql_statements(sql), vec!["CREATE PROCEDURE foo() BEGIN SELECT 1; END"]);
+    }
+
+    #[test]
+    fn delimiter_case_insensitive() {
+        let sql = "delimiter //\nSELECT 1//\ndelimiter ;\nSELECT 2;";
+        assert_eq!(super::split_sql_statements(sql), vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn delimiter_double_dollar() {
+        let sql = "DELIMITER $$\nCREATE FUNCTION f() RETURNS INT BEGIN RETURN 1; END $$\nDELIMITER ;";
+        assert_eq!(super::split_sql_statements(sql), vec!["CREATE FUNCTION f() RETURNS INT BEGIN RETURN 1; END"]);
+    }
+
+    #[test]
+    fn delimiter_semicolons_preserved_inside_body() {
+        let sql = "\
+DELIMITER //
+CREATE TRIGGER t BEFORE INSERT ON tbl FOR EACH ROW
+BEGIN
+  SET NEW.a = 1;
+  SET NEW.b = 2;
+END //
+DELIMITER ;";
+        let stmts = super::split_sql_statements(sql);
+        assert_eq!(stmts.len(), 1);
+        assert!(stmts[0].contains("SET NEW.a = 1;\n  SET NEW.b = 2;"));
+    }
+
+    #[test]
+    fn delimiter_multiple_statements() {
+        let sql = "\
+DELIMITER //
+CREATE PROCEDURE p1() BEGIN SELECT 1; END //
+CREATE PROCEDURE p2() BEGIN SELECT 2; END //
+DELIMITER ;";
+        assert_eq!(
+            super::split_sql_statements(sql),
+            vec!["CREATE PROCEDURE p1() BEGIN SELECT 1; END", "CREATE PROCEDURE p2() BEGIN SELECT 2; END",]
+        );
+    }
+
+    #[test]
+    fn delimiter_after_comment_with_chinese() {
+        let sql = "\
+-- 判断字段是否存在
+DELIMITER $$
+DROP FUNCTION IF EXISTS isFieldExisting $$
+CREATE FUNCTION isFieldExisting(s VARCHAR(100), t VARCHAR(100), f VARCHAR(100))
+    RETURNS INT
+    RETURN (SELECT COUNT(COLUMN_NAME)
+            FROM INFORMATION_SCHEMA.columns
+            WHERE TABLE_SCHEMA = s
+              AND TABLE_NAME = t
+              AND COLUMN_NAME = f)$$
+DELIMITER ;";
+        let stmts = super::split_sql_statements(sql);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].starts_with("DROP FUNCTION"));
+        assert!(stmts[1].starts_with("CREATE FUNCTION"));
+    }
+
+    #[test]
+    fn delimiter_after_ascii_comment() {
+        let sql = "\
+-- check field existence
+DELIMITER $$
+SELECT 1 $$
+DELIMITER ;";
+        assert_eq!(super::split_sql_statements(sql), vec!["SELECT 1"]);
+    }
+
+    #[test]
+    fn delimiter_after_statement() {
+        let sql = "\
+SELECT 1;
+DELIMITER $$
+SELECT 2 $$
+DELIMITER ;";
+        assert_eq!(super::split_sql_statements(sql), vec!["SELECT 1", "SELECT 2"]);
     }
 }

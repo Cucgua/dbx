@@ -24,21 +24,35 @@ export function clampRedisMemberDetailSheetWidth(width: number, viewportWidth: n
 
 export function formatRedisMemberDetail(value: unknown): RedisMemberDetail {
   if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed) {
-      try {
-        return { text: JSON.stringify(JSON.parse(trimmed), null, 2), format: "json" };
-      } catch {
-        /* fall through to plain text */
-      }
-    }
-    return { text: value, format: "text" };
+    const formatted = formatRedisJsonString(value);
+    return formatted ? { text: formatted, format: "json" } : { text: value, format: "text" };
   }
 
   try {
     return { text: JSON.stringify(value, null, 2), format: "json" };
   } catch {
     return { text: String(value), format: "text" };
+  }
+}
+
+export function formatRedisStringValue(value: unknown): string {
+  if (typeof value !== "string") return String(value ?? "");
+  return formatRedisJsonString(value) ?? value;
+}
+
+export function formatRedisCommandResult(value: unknown): string {
+  if (typeof value === "string") return formatRedisStringValue(value);
+  return JSON.stringify(value, null, 2);
+}
+
+function formatRedisJsonString(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return null;
   }
 }
 

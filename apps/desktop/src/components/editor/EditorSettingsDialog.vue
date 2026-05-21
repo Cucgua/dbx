@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -23,9 +24,7 @@ import {
 } from "@/stores/settingsStore";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { aiTestConnection } from "@/lib/api";
-import * as api from "@/lib/api";
-import type { McpHttpStatus } from "@/lib/api";
+import { aiListModels, aiTestConnection, loadMcpHttpStatus, type AiModelInfo, type McpHttpStatus } from "@/lib/api";
 import { eventToShortcut } from "@/lib/keyboardShortcuts";
 import {
   SHORTCUT_DEFINITIONS,
@@ -306,7 +305,7 @@ async function refreshMcpHttpStatus() {
   mcpStatusLoading.value = true;
   mcpStatusError.value = "";
   try {
-    mcpHttpStatus.value = await api.loadMcpHttpStatus();
+    mcpHttpStatus.value = await loadMcpHttpStatus();
   } catch (e) {
     mcpHttpStatus.value = null;
     mcpStatusError.value = e instanceof Error ? e.message : String(e);
@@ -406,6 +405,12 @@ const aiEditProxyEnabled = ref(!!settingsStore.aiConfig.proxyEnabled);
 const aiEditProxyUrl = ref(settingsStore.aiConfig.proxyUrl || "");
 const aiEditEnableThinking = ref(settingsStore.aiConfig.enableThinking ?? true);
 
+const aiModelOptions = ref<AiModelInfo[]>([]);
+const aiModelLoading = ref(false);
+const aiModelError = ref("");
+const aiModelLoadedSignature = ref("");
+let aiModelRequestToken = 0;
+
 const aiCompletionsMode = computed(() => aiEditApiStyle.value === "completions");
 
 const aiTesting = ref(false);
@@ -418,6 +423,115 @@ const aiSupportsApiStyle = computed(
     aiEditProvider.value === "openai-compatible" ||
     aiEditProvider.value === "custom",
 );
+const aiModelListSupported = computed(() => aiEditProvider.value !== "gemini");
+const aiCanListModels = computed(
+  () =>
+    aiModelListSupported.value &&
+    !!aiEditEndpoint.value.trim() &&
+    (!aiRequiresApiKey.value || !!aiEditApiKey.value.trim()),
+);
+const aiModelOptionIds = computed(() => aiModelOptions.value.map((model) => model.id));
+const aiModelEmptyText = computed(() => {
+  if (aiModelError.value) return aiModelError.value;
+  if (!aiModelListSupported.value) return t("ai.modelListUnsupported");
+  return t("ai.noModels");
+});
+
+function clearAiModelOptions() {
+  aiModelRequestToken += 1;
+  aiModelOptions.value = [];
+  aiModelError.value = "";
+  aiModelLoadedSignature.value = "";
+  aiModelLoading.value = false;
+}
+
+function aiModelConfigSignature() {
+  return JSON.stringify({
+    provider: aiEditProvider.value,
+    endpoint: aiEditEndpoint.value.trim(),
+    apiKey: aiEditApiKey.value.trim(),
+    proxyEnabled: aiEditProxyEnabled.value,
+    proxyUrl: aiEditProxyUrl.value.trim(),
+  });
+}
+
+function currentAiEditConfig() {
+  return {
+    provider: aiEditProvider.value,
+    apiKey: aiEditApiKey.value,
+    endpoint: aiEditEndpoint.value,
+    model: aiEditModel.value,
+    apiStyle: aiEditApiStyle.value,
+    proxyEnabled: aiEditProxyEnabled.value,
+    proxyUrl: aiEditProxyUrl.value,
+    enableThinking: aiEditEnableThinking.value,
+  };
+}
+
+function normalizeAiModelOptions(models: AiModelInfo[]): AiModelInfo[] {
+  const seen = new Set<string>();
+  const normalized: AiModelInfo[] = [];
+  for (const model of models) {
+    const id = model.id?.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push({ id, displayName: model.displayName?.trim() || undefined });
+  }
+  return normalized;
+}
+
+function displayAiModelName(modelId: string): string {
+  return aiModelOptions.value.find((model) => model.id === modelId)?.displayName || modelId;
+}
+
+async function aiRefreshModels() {
+  if (aiModelLoading.value) return;
+  if (!aiModelListSupported.value) {
+    aiModelError.value = t("ai.modelListUnsupported");
+    return;
+  }
+  if (!aiEditEndpoint.value.trim()) {
+    aiModelError.value = t("ai.modelListEndpointRequired");
+    return;
+  }
+  if (aiRequiresApiKey.value && !aiEditApiKey.value.trim()) {
+    aiModelError.value = t("ai.modelListApiKeyRequired");
+    return;
+  }
+
+  const token = ++aiModelRequestToken;
+  const signature = aiModelConfigSignature();
+  aiModelLoading.value = true;
+  aiModelError.value = "";
+  try {
+    const models = normalizeAiModelOptions(await aiListModels(currentAiEditConfig()));
+    if (token !== aiModelRequestToken) return;
+    aiModelOptions.value = models;
+    aiModelLoadedSignature.value = signature;
+    if (!aiEditModel.value.trim() && models[0]) aiEditModel.value = models[0].id;
+  } catch (e: any) {
+    if (token !== aiModelRequestToken) return;
+    aiModelOptions.value = [];
+    aiModelError.value = e?.message || String(e);
+  } finally {
+    if (token === aiModelRequestToken) aiModelLoading.value = false;
+  }
+}
+
+function onAiModelListOpen(open: boolean) {
+  if (
+    open &&
+    aiCanListModels.value &&
+    !aiModelLoading.value &&
+    (!aiModelOptions.value.length || aiModelLoadedSignature.value !== aiModelConfigSignature())
+  ) {
+    void aiRefreshModels();
+  }
+}
+
+function aiSelectModel(modelId: string) {
+  aiEditModel.value = modelId;
+}
 
 function syncAiEditState() {
   aiEditProvider.value = settingsStore.aiConfig.provider;
@@ -430,6 +544,7 @@ function syncAiEditState() {
   aiEditEnableThinking.value = settingsStore.aiConfig.enableThinking ?? true;
   aiTestResult.value = "";
   aiTestError.value = "";
+  clearAiModelOptions();
 }
 
 function aiSelectProvider(provider: AiProvider) {
@@ -438,6 +553,7 @@ function aiSelectProvider(provider: AiProvider) {
   aiEditModel.value = AI_PROVIDER_PRESETS[provider].model;
   aiEditApiStyle.value = AI_PROVIDER_PRESETS[provider].apiStyle;
   if (!AI_PROVIDER_PRESETS[provider].requiresApiKey) aiEditApiKey.value = "";
+  clearAiModelOptions();
 }
 
 function aiHasChanges(): boolean {
@@ -454,34 +570,21 @@ function aiHasChanges(): boolean {
 }
 
 function aiApplySettings() {
-  settingsStore.updateAiConfig({
-    provider: aiEditProvider.value,
-    apiKey: aiEditApiKey.value,
-    endpoint: aiEditEndpoint.value,
-    model: aiEditModel.value,
-    apiStyle: aiEditApiStyle.value,
-    proxyEnabled: aiEditProxyEnabled.value,
-    proxyUrl: aiEditProxyUrl.value,
-    enableThinking: aiEditEnableThinking.value,
-  });
+  settingsStore.updateAiConfig(currentAiEditConfig());
 }
 
 async function aiTestConn() {
-  if (!aiEditApiKey.value.trim() || !aiEditEndpoint.value.trim() || !aiEditModel.value.trim()) return;
+  if (
+    (aiRequiresApiKey.value && !aiEditApiKey.value.trim()) ||
+    !aiEditEndpoint.value.trim() ||
+    !aiEditModel.value.trim()
+  )
+    return;
   aiTesting.value = true;
   aiTestResult.value = "";
   aiTestError.value = "";
   try {
-    await aiTestConnection({
-      provider: aiEditProvider.value,
-      apiKey: aiEditApiKey.value,
-      endpoint: aiEditEndpoint.value,
-      model: aiEditModel.value,
-      apiStyle: aiEditApiStyle.value,
-      proxyEnabled: aiEditProxyEnabled.value,
-      proxyUrl: aiEditProxyUrl.value,
-      enableThinking: aiEditEnableThinking.value,
-    });
+    await aiTestConnection(currentAiEditConfig());
     aiTestResult.value = "success";
   } catch (e: any) {
     aiTestResult.value = "error";
@@ -911,7 +1014,6 @@ watch(
               </Button>
             </DialogFooter>
           </section>
-
           <!-- AI Settings Tab -->
           <section v-else-if="activeSettingsTab === 'ai'" class="flex min-h-full flex-col gap-5 py-2">
             <p class="text-xs text-muted-foreground">{{ t("ai.settingsHint") }}</p>
@@ -972,9 +1074,56 @@ watch(
                 />
               </div>
 
-              <div class="grid grid-cols-3 items-center gap-3">
-                <Label class="text-right text-xs">Model</Label>
-                <Input v-model="aiEditModel" autocomplete="off" class="col-span-2 h-8 text-xs" />
+              <div class="grid grid-cols-3 items-start gap-3">
+                <Label class="pt-2 text-right text-xs">{{ t("ai.model") }}</Label>
+                <div class="col-span-2 space-y-1.5">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <Input v-model="aiEditModel" autocomplete="off" class="h-8 min-w-0 flex-1 text-xs" />
+                    <SearchableSelect
+                      :model-value="aiEditModel"
+                      :options="aiModelOptionIds"
+                      :placeholder="t('ai.browseModels')"
+                      :search-placeholder="t('ai.searchModels')"
+                      :empty-text="aiModelEmptyText"
+                      :loading-text="t('ai.loadingModels')"
+                      :loading="aiModelLoading"
+                      :display-name="displayAiModelName"
+                      trigger-class="h-8 min-w-[104px] max-w-[150px] shrink-0 border border-border bg-background px-2 text-xs shadow-none hover:bg-muted/50"
+                      content-class="w-72"
+                      @update:model-value="aiSelectModel"
+                      @update:open="onAiModelListOpen"
+                    >
+                      <template #trigger-label="{ loading }">
+                        <span class="truncate">{{ loading ? t("ai.loadingModels") : t("ai.browseModels") }}</span>
+                      </template>
+                      <template #option-label="{ option, label }">
+                        <span class="flex min-w-0 flex-col">
+                          <span class="truncate">{{ label }}</span>
+                          <span v-if="label !== option" class="truncate text-[11px] text-muted-foreground">{{
+                            option
+                          }}</span>
+                        </span>
+                      </template>
+                    </SearchableSelect>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      class="shrink-0"
+                      :disabled="aiModelLoading || !aiModelListSupported"
+                      :title="t('ai.refreshModels')"
+                      :aria-label="t('ai.refreshModels')"
+                      @click="aiRefreshModels"
+                    >
+                      <Loader2 v-if="aiModelLoading" class="h-3.5 w-3.5 animate-spin" />
+                      <RefreshCw v-else class="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <p v-if="aiModelError" class="text-xs text-destructive">{{ aiModelError }}</p>
+                  <p v-else-if="!aiModelOptionIds.length" class="text-xs text-muted-foreground">
+                    {{ aiModelListSupported ? t("ai.modelListHint") : t("ai.modelListUnsupported") }}
+                  </p>
+                </div>
               </div>
 
               <div v-if="aiSupportsApiStyle" class="grid grid-cols-3 items-center gap-3">

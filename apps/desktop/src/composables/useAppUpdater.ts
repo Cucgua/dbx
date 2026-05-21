@@ -4,6 +4,10 @@ import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { useToast } from "@/composables/useToast";
 import * as api from "@/lib/api";
 
+export function shouldOpenUpdateDialog(options: { silent?: boolean }) {
+  return options.silent !== true;
+}
+
 export function useAppUpdater() {
   const { t } = useI18n();
   const { toast } = useToast();
@@ -32,10 +36,9 @@ export function useAppUpdater() {
     updateCheckMessage.value = "";
     try {
       const info = await api.checkForUpdates();
-      const wasUpdateAvailable = hasUpdateAvailable.value;
       updateInfo.value = info;
       if (info.update_available) {
-        if (!options.silent || !wasUpdateAvailable) {
+        if (shouldOpenUpdateDialog({ silent: options.silent })) {
           showUpdateDialog.value = true;
         }
       } else if (!options.silent) {

@@ -8,12 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import * as api from "@/lib/api";
-import type { RedisValue } from "@/lib/api";
+import type { RedisKeyInfo, RedisValue } from "@/lib/api";
 import { useToast } from "@/composables/useToast";
 import {
   canEditRedisMemberDetail,
   clampRedisMemberDetailSheetWidth,
   formatRedisMemberDetail,
+  formatRedisStringValue,
   getRedisMemberSelectionKey,
   highlightRedisJsonDetail,
 } from "@/lib/redisValuePresentation";
@@ -26,6 +27,7 @@ const props = defineProps<{
   db: number;
   keyDisplay: string;
   keyRaw: string;
+  metadata?: RedisKeyInfo | null;
 }>();
 
 const emit = defineEmits<{ deleted: [] }>();
@@ -95,6 +97,20 @@ const deleteDetails = computed(() => {
 
 const isBinaryStringValue = computed(() => data.value?.key_type === "string" && data.value?.value_is_binary);
 const hasMore = computed(() => scanCursor.value != null && scanCursor.value > 0);
+const metadataSizeLabel = computed(() => {
+  const metadata = props.metadata;
+  if (!metadata || metadata.size <= 0) return "";
+  if (metadata.key_type === "string") {
+    if (metadata.size >= 1024) return `${(metadata.size / 1024).toFixed(1)} KB`;
+    return `${metadata.size} B`;
+  }
+  return String(metadata.size);
+});
+
+function collectionCountLabel(kind: "items" | "fields" | "members", loaded: number, total?: number | null) {
+  if (total == null || total === loaded) return t(`redis.${kind}`, { count: loaded });
+  return t(`redis.loaded${kind[0].toUpperCase()}${kind.slice(1)}`, { loaded, total });
+}
 
 async function load(options: { selectDefaultMember?: boolean } = {}) {
   const shouldSelectDefaultMember = options.selectDefaultMember ?? true;
@@ -103,7 +119,7 @@ async function load(options: { selectDefaultMember?: boolean } = {}) {
     data.value = await api.redisGetValue(props.connectionId, props.db, props.keyRaw);
     scanCursor.value = data.value.scan_cursor ?? undefined;
     if (data.value.key_type === "string") {
-      editValue.value = String(data.value.value);
+      editValue.value = formatRedisStringValue(data.value.value);
       clearSelectedMember();
     } else if (["list", "set", "zset", "hash"].includes(data.value.key_type)) {
       collectionItems.value = Array.isArray(data.value.value) ? [...data.value.value] : [];
@@ -428,7 +444,7 @@ async function confirmDelete() {
 }
 
 function formatValue(val: any): string {
-  if (typeof val === "string") return val;
+  if (typeof val === "string") return formatRedisStringValue(val);
   return JSON.stringify(val, null, 2);
 }
 
@@ -444,42 +460,53 @@ onBeforeUnmount(stopResizeMemberSheet);
 
     <template v-else-if="data">
       <!-- Header -->
-      <div class="h-9 flex items-center gap-2 px-4 border-b bg-muted/30 shrink-0">
-        <span class="font-mono text-sm font-medium truncate">{{ data.key_display }}</span>
-        <Badge variant="secondary" class="text-xs">{{ data.key_type }}</Badge>
-        <template v-if="!editingTtl">
-          <Badge
-            v-if="data.ttl > 0"
-            variant="outline"
-            class="text-xs cursor-pointer hover:bg-accent"
-            @click="startEditTtl"
-            >TTL: {{ data.ttl }}s</Badge
-          >
-          <Badge
-            v-else-if="data.ttl === -1"
-            variant="outline"
-            class="text-xs opacity-50 cursor-pointer hover:bg-accent hover:opacity-100"
-            @click="startEditTtl"
-            >{{ t("redis.noExpiry") }}</Badge
-          >
-        </template>
-        <div v-else class="flex items-center gap-1">
-          <Input
-            v-model="ttlInput"
-            class="h-6 w-20 text-xs"
-            placeholder="seconds (-1=no expiry)"
-            autofocus
-            @keydown.enter="saveTtl"
-            @keydown.escape="cancelEditTtl"
-          />
-          <Button variant="ghost" size="icon" class="h-6 w-6" @click="saveTtl"><Save class="h-3 w-3" /></Button>
+      <div class="shrink-0 border-b bg-background">
+        <div class="flex h-9 items-center gap-2 px-4">
+          <span class="min-w-0 flex-1 truncate font-mono text-sm font-semibold">{{ data.key_display }}</span>
+          <Button variant="ghost" size="icon" class="h-7 w-7 shrink-0" @click="load"
+            ><RefreshCw class="h-3.5 w-3.5"
+          /></Button>
+          <Button variant="ghost" size="icon" class="h-7 w-7 shrink-0" @click="copyValue"
+            ><Copy class="h-3.5 w-3.5"
+          /></Button>
+          <Button variant="ghost" size="icon" class="h-7 w-7 shrink-0 text-destructive" @click="requestDeleteKey"
+            ><Trash2 class="h-3.5 w-3.5"
+          /></Button>
         </div>
-        <span class="flex-1" />
-        <Button variant="ghost" size="icon" class="h-7 w-7" @click="load"><RefreshCw class="h-3.5 w-3.5" /></Button>
-        <Button variant="ghost" size="icon" class="h-7 w-7" @click="copyValue"><Copy class="h-3.5 w-3.5" /></Button>
-        <Button variant="ghost" size="icon" class="h-7 w-7 text-destructive" @click="requestDeleteKey"
-          ><Trash2 class="h-3.5 w-3.5"
-        /></Button>
+
+        <div class="flex min-h-7 flex-wrap items-center gap-2 px-4 pb-1">
+          <Badge variant="secondary" class="font-mono text-xs uppercase">{{ data.key_type }}</Badge>
+          <Badge v-if="metadataSizeLabel" variant="outline" class="text-xs text-muted-foreground">
+            {{ t("redis.columnSize") }}: {{ metadataSizeLabel }}
+          </Badge>
+          <template v-if="!editingTtl">
+            <Badge
+              v-if="data.ttl > 0"
+              variant="outline"
+              class="text-xs cursor-pointer text-muted-foreground hover:bg-accent"
+              @click="startEditTtl"
+              >TTL: {{ data.ttl }}s</Badge
+            >
+            <Badge
+              v-else-if="data.ttl === -1"
+              variant="outline"
+              class="text-xs cursor-pointer text-muted-foreground hover:bg-accent"
+              @click="startEditTtl"
+              >{{ t("redis.noExpiry") }}</Badge
+            >
+          </template>
+          <div v-else class="flex items-center gap-1">
+            <Input
+              v-model="ttlInput"
+              class="h-6 w-20 text-xs"
+              placeholder="seconds (-1=no expiry)"
+              autofocus
+              @keydown.enter="saveTtl"
+              @keydown.escape="cancelEditTtl"
+            />
+            <Button variant="ghost" size="icon" class="h-6 w-6" @click="saveTtl"><Save class="h-3 w-3" /></Button>
+          </div>
+        </div>
       </div>
 
       <!-- String -->
@@ -499,7 +526,7 @@ onBeforeUnmount(stopResizeMemberSheet);
             size="sm"
             @click="
               isEditing = false;
-              editValue = String(data.value);
+              editValue = formatRedisStringValue(data.value);
             "
             >{{ t("grid.discard") }}</Button
           >
@@ -511,7 +538,7 @@ onBeforeUnmount(stopResizeMemberSheet);
       <div v-else-if="data.key_type === 'list'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
           <span class="text-xs text-muted-foreground">{{
-            t("redis.items", { count: collectionItems.length }) + (data.total != null ? ` / ${data.total}` : "")
+            collectionCountLabel("items", collectionItems.length, data.total)
           }}</span>
           <span class="flex-1" />
           <Input v-model="newValue" class="h-6 w-40 text-xs" placeholder="value" @keydown.enter="listPush" />
@@ -573,7 +600,7 @@ onBeforeUnmount(stopResizeMemberSheet);
       <div v-else-if="data.key_type === 'set'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
           <span class="text-xs text-muted-foreground">{{
-            t("redis.items", { count: collectionItems.length }) + (data.total != null ? ` / ${data.total}` : "")
+            collectionCountLabel("items", collectionItems.length, data.total)
           }}</span>
           <span class="flex-1" />
           <Input v-model="newValue" class="h-6 w-40 text-xs" placeholder="member" @keydown.enter="setAdd" />
@@ -633,7 +660,7 @@ onBeforeUnmount(stopResizeMemberSheet);
       <div v-else-if="data.key_type === 'hash'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
           <span class="text-xs text-muted-foreground">{{
-            t("redis.fields", { count: collectionItems.length }) + (data.total != null ? ` / ${data.total}` : "")
+            collectionCountLabel("fields", collectionItems.length, data.total)
           }}</span>
           <span class="flex-1" />
           <Input v-model="newField" class="h-6 w-24 text-xs" placeholder="field" />
@@ -696,7 +723,7 @@ onBeforeUnmount(stopResizeMemberSheet);
       <div v-else-if="data.key_type === 'zset'" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
           <span class="text-xs text-muted-foreground">{{
-            t("redis.members", { count: collectionItems.length }) + (data.total != null ? ` / ${data.total}` : "")
+            collectionCountLabel("members", collectionItems.length, data.total)
           }}</span>
           <span class="flex-1" />
           <Input v-model="newScore" class="h-6 w-20 text-xs" placeholder="score" />

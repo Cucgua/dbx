@@ -216,64 +216,78 @@ function onToolbarDblClick(e: MouseEvent) {
       <TooltipContent>AI</TooltipContent>
     </Tooltip>
 
-    <DropdownMenu>
-      <DropdownMenuTrigger as-child>
-        <Button variant="ghost" size="icon" class="h-8 w-8" :title="t('toolbar.theme')">
-          <Monitor v-if="themeMode === 'system'" class="h-4 w-4" />
-          <Moon v-else-if="isDark" class="h-4 w-4" />
-          <Sun v-else class="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          class="gap-2"
-          :class="{ 'bg-accent': themeMode === 'light' }"
-          @select="emit('set-theme-mode', 'light')"
-        >
-          <Sun class="h-4 w-4" />
-          {{ t("toolbar.themeLight") }}
-          <Check v-if="themeMode === 'light'" class="ml-auto h-4 w-4" />
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          class="gap-2"
-          :class="{ 'bg-accent': themeMode === 'dark' }"
-          @select="emit('set-theme-mode', 'dark')"
-        >
-          <Moon class="h-4 w-4" />
-          {{ t("toolbar.themeDark") }}
-          <Check v-if="themeMode === 'dark'" class="ml-auto h-4 w-4" />
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          class="gap-2"
-          :class="{ 'bg-accent': themeMode === 'system' }"
-          @select="emit('set-theme-mode', 'system')"
-        >
-          <Monitor class="h-4 w-4" />
-          {{ t("toolbar.themeSystem") }}
-          <Check v-if="themeMode === 'system'" class="ml-auto h-4 w-4" />
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Tooltip>
+      <TooltipTrigger as-child>
+        <span class="inline-flex">
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button variant="ghost" size="icon" class="h-8 w-8" :aria-label="t('toolbar.theme')">
+                <Monitor v-if="themeMode === 'system'" class="h-4 w-4" />
+                <Moon v-else-if="isDark" class="h-4 w-4" />
+                <Sun v-else class="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                class="gap-2"
+                :class="{ 'bg-accent': themeMode === 'light' }"
+                @select="emit('set-theme-mode', 'light')"
+              >
+                <Sun class="h-4 w-4" />
+                {{ t("toolbar.themeLight") }}
+                <Check v-if="themeMode === 'light'" class="ml-auto h-4 w-4" />
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="gap-2"
+                :class="{ 'bg-accent': themeMode === 'dark' }"
+                @select="emit('set-theme-mode', 'dark')"
+              >
+                <Moon class="h-4 w-4" />
+                {{ t("toolbar.themeDark") }}
+                <Check v-if="themeMode === 'dark'" class="ml-auto h-4 w-4" />
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                class="gap-2"
+                :class="{ 'bg-accent': themeMode === 'system' }"
+                @select="emit('set-theme-mode', 'system')"
+              >
+                <Monitor class="h-4 w-4" />
+                {{ t("toolbar.themeSystem") }}
+                <Check v-if="themeMode === 'system'" class="ml-auto h-4 w-4" />
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{{ t("toolbar.theme") }}</TooltipContent>
+    </Tooltip>
 
-    <DropdownMenu>
-      <DropdownMenuTrigger as-child>
-        <Button variant="ghost" size="icon" class="h-8 w-8">
-          <Globe class="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          v-for="option in localeOptions"
-          :key="option.value"
-          class="gap-2"
-          :class="{ 'bg-accent': currentLocale() === option.value }"
-          @click="setLocale(option.value)"
-        >
-          <span class="text-base leading-none">{{ option.flag }}</span>
-          <span>{{ option.label }}</span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Tooltip>
+      <TooltipTrigger as-child>
+        <span class="inline-flex">
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button variant="ghost" size="icon" class="h-8 w-8" :aria-label="t('common.language')">
+                <Globe class="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                v-for="option in localeOptions"
+                :key="option.value"
+                class="gap-2"
+                :class="{ 'bg-accent': currentLocale() === option.value }"
+                @click="setLocale(option.value)"
+              >
+                <span class="text-base leading-none">{{ option.flag }}</span>
+                <span>{{ option.label }}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{{ t("common.language") }}</TooltipContent>
+    </Tooltip>
 
     <Tooltip>
       <TooltipTrigger as-child>

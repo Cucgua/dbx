@@ -15,6 +15,8 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri::{Emitter, Manager, RunEvent};
+#[cfg(any(windows, target_os = "linux"))]
+use tauri_plugin_deep_link::DeepLinkExt;
 
 #[derive(Clone)]
 struct TauriMcpEvents {
@@ -46,6 +48,17 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+fn open_connection_deep_links(app: &tauri::AppHandle, links: Vec<String>) {
+    if links.is_empty() {
+        return;
+    }
+    if let Some(state) = app.try_state::<commands::deep_link::DeepLinkOpenState>() {
+        state.push(links.clone());
+    }
+    let _ = app.emit("dbx-open-connection-links", links);
+    show_main_window(app);
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -97,20 +110,21 @@ pub fn run() {
     let startup_begin = Instant::now();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let links = commands::deep_link::connection_deep_links_from_args(args.clone());
+            open_connection_deep_links(app, links);
+
             let paths = commands::external_sql::sql_file_paths_from_args(args, std::path::Path::new(&cwd));
             if !paths.is_empty() {
                 if let Some(state) = app.try_state::<commands::external_sql::ExternalSqlOpenState>() {
                     state.push(paths.clone());
                 }
                 let _ = app.emit("dbx-open-sql-files", paths);
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
             }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -148,6 +162,9 @@ pub fn run() {
             ));
             app.manage(state.clone());
             app.manage(commands::external_sql::ExternalSqlOpenState::default());
+            app.manage(commands::deep_link::DeepLinkOpenState::default());
+            let startup_links = commands::deep_link::connection_deep_links_from_args(std::env::args().skip(1));
+            open_connection_deep_links(app.handle(), startup_links);
 
             let app_handle = app.handle().clone();
             commands::mcp_bridge::start(app_handle.clone(), state.clone());
@@ -172,6 +189,8 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             setup_windows_tray(app)?;
             window_state_guard::enforce_main_window_bounds(app.handle());
+            #[cfg(any(windows, target_os = "linux"))]
+            let _ = app.deep_link().register_all();
 
             Ok(())
         })
@@ -188,6 +207,7 @@ pub fn run() {
             commands::ai::ai_stream,
             commands::ai::ai_cancel_stream,
             commands::ai::ai_test_connection,
+            commands::ai::ai_list_models,
             commands::ai::save_ai_config,
             commands::ai::load_ai_config,
             commands::ai::save_ai_conversation,
@@ -236,6 +256,7 @@ pub fn run() {
             commands::sql_file::cancel_sql_file_execution,
             commands::external_sql::pending_open_sql_files,
             commands::external_sql::read_external_sql_file,
+            commands::deep_link::pending_open_connection_links,
             commands::table_import::preview_table_import_file,
             commands::table_import::import_table_file,
             commands::table_import::cancel_table_import,
@@ -290,12 +311,21 @@ pub fn run() {
             commands::agents::uninstall_jre,
             commands::agents::reinstall_jre,
             commands::agents::invalidate_agent_registry_cache,
+            commands::agents::import_agents_from_zip,
+            commands::agents::import_agent_jar_cmd,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             #[cfg(target_os = "macos")]
             if let RunEvent::Opened { urls } = &event {
+                let links: Vec<String> = urls
+                    .iter()
+                    .map(|url| url.to_string())
+                    .filter_map(|url| commands::deep_link::connection_deep_link_from_arg(&url))
+                    .collect();
+                open_connection_deep_links(app_handle, links);
+
                 let paths: Vec<String> = urls
                     .iter()
                     .filter_map(|url| url.to_file_path().ok())

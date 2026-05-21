@@ -660,6 +660,7 @@ const createDatabaseName = ref("");
 const createDatabaseCharset = ref("utf8mb4");
 const createDatabaseCollation = ref("utf8mb4_unicode_ci");
 const showDropDatabaseConfirm = ref(false);
+const showFlushRedisDbConfirm = ref(false);
 const showCreateSchemaDialog = ref(false);
 const createSchemaName = ref("");
 const showDropSchemaConfirm = ref(false);
@@ -1013,6 +1014,28 @@ async function confirmCreateDatabase() {
 
 function dropDatabase() {
   showDropDatabaseConfirm.value = true;
+}
+
+function flushRedisDb() {
+  showFlushRedisDbConfirm.value = true;
+}
+
+async function confirmFlushRedisDb() {
+  const node = props.node;
+  if (node.type !== "redis-db" || !node.connectionId || !node.database) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    await api.redisFlushDb(node.connectionId, Number(node.database));
+    connectionStore.updateRedisDbKeyStats(node.connectionId, Number(node.database), { loaded: 0, total: 0 });
+    window.dispatchEvent(
+      new CustomEvent("dbx-redis-db-flushed", {
+        detail: { connectionId: node.connectionId, db: Number(node.database) },
+      }),
+    );
+    toast(t("redis.flushDbSuccess", { db: node.database }), 3000);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 async function confirmDropDatabase() {
@@ -1956,6 +1979,12 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
         <ContextMenuItem v-if="isNodeDefaultDatabase" @click="clearNodeDefaultDatabase">
           <Database class="w-4 h-4" /> {{ t("contextMenu.clearDefaultDatabase") }}
         </ContextMenuItem>
+        <template v-if="node.type === 'redis-db'">
+          <ContextMenuSeparator />
+          <ContextMenuItem class="text-destructive" @click="flushRedisDb">
+            <Eraser class="w-4 h-4" /> {{ t("redis.flushDb") }}
+          </ContextMenuItem>
+        </template>
       </template>
 
       <template v-if="node.type === 'table' || node.type === 'view'">
@@ -2339,6 +2368,15 @@ const isDragging = computed(() => dragState.active && dragState.draggedId === pr
     :sql="buildDropDatabaseSql()"
     :confirm-label="t('contextMenu.dropDatabase')"
     @confirm="confirmDropDatabase"
+  />
+
+  <DangerConfirmDialog
+    v-model:open="showFlushRedisDbConfirm"
+    :title="t('redis.flushDb')"
+    :message="t('redis.flushDbMessage')"
+    :details="t('redis.flushDbDetails', { db: node.database })"
+    :confirm-label="t('redis.flushDbConfirm')"
+    @confirm="confirmFlushRedisDb"
   />
 
   <Dialog v-model:open="showCreateSchemaDialog">

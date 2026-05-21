@@ -25,6 +25,10 @@ export function supportsDataGridTransaction(databaseType: DatabaseType | undefin
   return getDatabaseCapability(databaseType).tableData.transaction;
 }
 
+export function usesKeylessRowPredicate(databaseType: DatabaseType | undefined): boolean {
+  return !!getDatabaseCapability(databaseType).tableData.keylessRowPredicate;
+}
+
 export function canEditExistingTableRows(
   databaseType: DatabaseType | undefined,
   hiveTableTransactional?: boolean,

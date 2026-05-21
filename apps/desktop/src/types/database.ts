@@ -81,6 +81,7 @@ export interface ConnectionConfig {
   connection_string?: string;
   jdbc_driver_class?: string;
   jdbc_driver_paths?: string[];
+  one_time?: boolean;
 }
 
 export interface AttachedDatabaseConfig {
@@ -336,6 +337,7 @@ export interface QueryTab {
     | "primary-key-not-returned"
     | "aliased-columns"
     | "metadata-unavailable";
+  resultEvicted?: boolean;
   whereInput?: string;
 }
 

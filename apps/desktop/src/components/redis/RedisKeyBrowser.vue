@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from "vue";
+import { computed, nextTick, ref, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Search,
@@ -10,9 +10,9 @@ import {
   FolderClosed,
   FolderOpen,
   Trash2,
-  DatabaseZap,
-  Play,
-  Terminal,
+  Plus,
+  KeyRound,
+  TerminalSquare,
 } from "lucide-vue-next";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
@@ -21,6 +21,9 @@ import "splitpanes/dist/splitpanes.css";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import RedisValueViewer from "./RedisValueViewer.vue";
 import * as api from "@/lib/api";
@@ -35,6 +38,8 @@ import {
   type RedisKeyTreeNode,
 } from "@/lib/redisKeyTree";
 import { classifyRedisCommandSafety } from "@/lib/redisCommandSafety";
+import { isRedisClearScreenCommand, nextRedisCommandDb, redisKeyTextToRaw } from "@/lib/redisCommandSession";
+import { formatRedisCommandResult, formatRedisStringValue } from "@/lib/redisValuePresentation";
 import { isCancelSearchShortcut } from "@/lib/keyboardShortcuts";
 
 const { t } = useI18n();
@@ -42,6 +47,15 @@ const connectionStore = useConnectionStore();
 const settingsStore = useSettingsStore();
 
 type RedisSearchMode = "key" | "value";
+type RedisCreateKeyType = "string" | "hash" | "list" | "set" | "zset";
+type RedisSidePanel = "detail" | "command";
+type RedisCommandHistoryEntry = {
+  id: number;
+  prompt: string;
+  command: string;
+  output: string;
+  error: boolean;
+};
 
 const props = defineProps<{
   connectionId: string;
@@ -53,7 +67,8 @@ const treeKeys = ref<RedisKeyTreeNode[]>([]);
 const loading = ref(false);
 const loadingMore = ref(false);
 const rootRef = ref<HTMLElement>();
-const searchPattern = ref("*");
+const commandTerminalRef = ref<HTMLElement>();
+const searchPattern = ref("");
 const searchMode = ref<RedisSearchMode>("key");
 const selectedKeyRaw = ref<string | null>(null);
 const hasMore = ref(false);
@@ -61,21 +76,23 @@ const scanCursor = ref(0);
 const expandedGroupIds = ref<Set<string>>(new Set());
 const checkedKeys = ref<Set<string>>(new Set());
 const pendingDanger = ref<
-  | { kind: "delete-keys"; title: string; keyRaws: string[] }
-  | { kind: "flush-db" }
-  | { kind: "command"; command: string }
-  | null
+  { kind: "delete-keys"; title: string; keyRaws: string[] } | { kind: "command"; command: string } | null
 >(null);
 const showDangerConfirm = ref(false);
 const commandText = ref("");
-const commandResult = ref<any>(null);
-const commandError = ref("");
 const commandRunning = ref(false);
+const commandDb = ref(props.db);
+const commandHistory = ref<RedisCommandHistoryEntry[]>([]);
+const activeSidePanel = ref<RedisSidePanel>("detail");
+const showCreateKeyDialog = ref(false);
+const creatingKey = ref(false);
+const createKeyName = ref("");
+const createKeyType = ref<RedisCreateKeyType>("string");
+const createKeyValue = ref("");
+const createKeyField = ref("");
+const createKeyScore = ref("0");
+const createKeyError = ref("");
 let searchRequestId = 0;
-
-const keyGridStyle = {
-  gridTemplateColumns: "minmax(12rem, 0.35fr) 80px 1fr 60px 60px",
-};
 
 const valueQuery = computed(() => searchPattern.value.trim());
 const effectivePattern = computed(() => (searchMode.value === "key" ? searchPattern.value.trim() || "*" : "*"));
@@ -97,20 +114,27 @@ const dangerDetails = computed(() => {
       count: pendingDanger.value.keyRaws.length,
     });
   }
-  if (pendingDanger.value.kind === "flush-db") return t("redis.flushDbDetails", { db: props.db });
   return pendingDanger.value.command;
 });
-const formattedCommandResult = computed(() => {
-  if (commandResult.value == null) return "";
-  if (typeof commandResult.value === "string") return commandResult.value;
-  return JSON.stringify(commandResult.value, null, 2);
+const dangerConfirmLabel = computed(() => {
+  if (pendingDanger.value?.kind === "command") return t("dangerDialog.confirm");
+  return t("dangerDialog.deleteConfirm");
 });
+const commandPrompt = computed(() => `db${commandDb.value}>`);
+const createKeyTypeOptions = computed<{ value: RedisCreateKeyType; label: string }[]>(() => [
+  { value: "string", label: "String" },
+  { value: "hash", label: "Hash" },
+  { value: "list", label: "List" },
+  { value: "set", label: "Set" },
+  { value: "zset", label: "Sorted Set" },
+]);
 const visibleRows = computed(() =>
   flattenVisibleRedisKeyTree(treeKeys.value, expandedGroupIds.value).map((row) => ({
     ...row,
     id: row.node.id,
   })),
 );
+let commandHistoryId = 0;
 
 function countLeaves(node: RedisKeyTreeNode): number {
   if (node.kind === "leaf") return 1;
@@ -220,6 +244,7 @@ function onRowClick(node: RedisKeyTreeNode) {
   }
 
   selectedKeyRaw.value = node.keyRaw;
+  activeSidePanel.value = "detail";
 }
 
 function onKeyDeleted() {
@@ -256,11 +281,6 @@ function requestGroupDelete(node: RedisKeyTreeNode, event: Event) {
   showDangerConfirm.value = true;
 }
 
-function requestFlushDb() {
-  pendingDanger.value = { kind: "flush-db" };
-  showDangerConfirm.value = true;
-}
-
 function resetLoadedKeys() {
   flatKeys.value = [];
   treeKeys.value = [];
@@ -285,42 +305,175 @@ async function deleteKeyRaws(keys: string[]) {
   });
 }
 
+function scrollCommandTerminalToEnd() {
+  void nextTick(() => {
+    if (!commandTerminalRef.value) return;
+    commandTerminalRef.value.scrollTop = commandTerminalRef.value.scrollHeight;
+  });
+}
+
+function appendCommandHistory(entry: Omit<RedisCommandHistoryEntry, "id">) {
+  commandHistory.value = [...commandHistory.value, { id: ++commandHistoryId, ...entry }];
+  scrollCommandTerminalToEnd();
+}
+
 async function runRedisCommand(command: string) {
+  const prompt = commandPrompt.value;
   commandRunning.value = true;
-  commandError.value = "";
-  commandResult.value = null;
   try {
-    const result = await api.redisExecuteCommand(props.connectionId, props.db, command);
-    commandResult.value = result.value;
+    const result = await api.redisExecuteCommand(props.connectionId, commandDb.value, command);
+    appendCommandHistory({
+      prompt,
+      command,
+      output: formatRedisCommandResult(result.value),
+      error: false,
+    });
+    commandDb.value = nextRedisCommandDb(commandDb.value, command, result.value);
     if (result.safety === "confirm") {
       await loadKeys();
     }
   } catch (error) {
-    commandError.value = error instanceof Error ? error.message : String(error);
+    appendCommandHistory({
+      prompt,
+      command,
+      output: error instanceof Error ? error.message : String(error),
+      error: true,
+    });
   } finally {
     commandRunning.value = false;
+    scrollCommandTerminalToEnd();
+  }
+}
+
+async function openCommandPanel() {
+  activeSidePanel.value = "command";
+  await nextTick();
+  getCommandInput()?.focus();
+}
+
+function resetCreateKeyForm() {
+  createKeyName.value = "";
+  createKeyType.value = "string";
+  createKeyValue.value = "";
+  createKeyField.value = "";
+  createKeyScore.value = "0";
+  createKeyError.value = "";
+}
+
+function openCreateKeyDialog() {
+  resetCreateKeyForm();
+  showCreateKeyDialog.value = true;
+}
+
+function createdKeyPreview(value: any): string {
+  if (typeof value === "string") {
+    const text = formatRedisStringValue(value).replace(/\s+/g, " ").trim();
+    return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+  }
+  if (Array.isArray(value) && value.length > 0) return String(value.length);
+  return "";
+}
+
+function upsertCreatedKey(value: any) {
+  const keyInfo: RedisKeyInfo = {
+    key_display: value.key_display,
+    key_raw: value.key_raw,
+    key_type: value.key_type,
+    ttl: value.ttl,
+    size: typeof value.value === "string" ? value.value.length : (value.total ?? 0),
+    value_preview: createdKeyPreview(value.value),
+  };
+  const existingIndex = flatKeys.value.findIndex((key) => key.key_raw === keyInfo.key_raw);
+  if (existingIndex >= 0) {
+    flatKeys.value = flatKeys.value.map((key, index) => (index === existingIndex ? keyInfo : key));
+  } else {
+    flatKeys.value = [keyInfo, ...flatKeys.value];
+  }
+  selectedKeyRaw.value = keyInfo.key_raw;
+  rebuildTree(isSearchMode.value);
+  connectionStore.updateRedisDbKeyStats(props.connectionId, props.db, {
+    loaded: isSearchMode.value ? undefined : flatKeys.value.length,
+    totalDelta: existingIndex >= 0 ? 0 : 1,
+  });
+}
+
+async function createRedisKey() {
+  const keyName = createKeyName.value.trim();
+  if (!keyName) {
+    createKeyError.value = t("redis.createKeyNameRequired");
+    return;
+  }
+  if (createKeyType.value === "hash" && !createKeyField.value.trim()) {
+    createKeyError.value = t("redis.createFieldRequired");
+    return;
+  }
+  const score = Number.parseFloat(createKeyScore.value || "0");
+  if (createKeyType.value === "zset" && Number.isNaN(score)) {
+    createKeyError.value = t("redis.createScoreInvalid");
+    return;
+  }
+
+  creatingKey.value = true;
+  createKeyError.value = "";
+  try {
+    const keyRaw = redisKeyTextToRaw(keyName);
+    if (createKeyType.value === "string") {
+      await api.redisSetString(props.connectionId, props.db, keyRaw, createKeyValue.value);
+    } else if (createKeyType.value === "hash") {
+      await api.redisHashSet(props.connectionId, props.db, keyRaw, createKeyField.value, createKeyValue.value);
+    } else if (createKeyType.value === "list") {
+      await api.redisListPush(props.connectionId, props.db, keyRaw, createKeyValue.value);
+    } else if (createKeyType.value === "set") {
+      await api.redisSetAdd(props.connectionId, props.db, keyRaw, createKeyValue.value);
+    } else if (createKeyType.value === "zset") {
+      await api.redisZadd(props.connectionId, props.db, keyRaw, createKeyValue.value, score);
+    }
+    const created = await api.redisGetValue(props.connectionId, props.db, keyRaw);
+    upsertCreatedKey(created);
+    showCreateKeyDialog.value = false;
+  } catch (error) {
+    createKeyError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    creatingKey.value = false;
   }
 }
 
 async function executeCommand() {
   const command = commandText.value.trim();
   if (!command) {
-    commandError.value = t("redis.commandEmpty");
-    commandResult.value = null;
+    appendCommandHistory({
+      prompt: commandPrompt.value,
+      command: "",
+      output: t("redis.commandEmpty"),
+      error: true,
+    });
+    return;
+  }
+  if (isRedisClearScreenCommand(command)) {
+    commandHistory.value = [];
+    commandText.value = "";
+    scrollCommandTerminalToEnd();
     return;
   }
 
   const safety = classifyRedisCommandSafety(command);
   if (safety === "blocked") {
-    commandError.value = t("redis.commandBlocked");
-    commandResult.value = null;
+    appendCommandHistory({
+      prompt: commandPrompt.value,
+      command,
+      output: t("redis.commandBlocked"),
+      error: true,
+    });
+    commandText.value = "";
     return;
   }
   if (safety === "confirm") {
     pendingDanger.value = { kind: "command", command };
     showDangerConfirm.value = true;
+    commandText.value = "";
     return;
   }
+  commandText.value = "";
   await runRedisCommand(command);
 }
 
@@ -332,10 +485,6 @@ async function applyDangerAction() {
 
   if (pending.kind === "delete-keys") {
     await deleteKeyRaws(pending.keyRaws);
-  } else if (pending.kind === "flush-db") {
-    await api.redisFlushDb(props.connectionId, props.db);
-    resetLoadedKeys();
-    connectionStore.updateRedisDbKeyStats(props.connectionId, props.db, { loaded: 0, total: 0 });
   } else {
     await runRedisCommand(pending.command);
   }
@@ -360,20 +509,6 @@ function typeColor(type: string): string {
   }
 }
 
-function formatSize(size: number, type: string, valuePreview: string): string {
-  if (!valuePreview) return "";
-  if (type === "string") {
-    if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
-    return `${size} B`;
-  }
-  return String(size);
-}
-
-function formatTtl(ttl: number): string {
-  if (ttl === -2) return "";
-  return ttl === -1 ? "∞" : `${ttl}s`;
-}
-
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
 function onSearchInput() {
@@ -384,14 +519,15 @@ function onSearchInput() {
 function setSearchMode(mode: RedisSearchMode) {
   if (searchMode.value === mode) return;
   searchMode.value = mode;
-  if (mode === "key" && !searchPattern.value.trim()) {
-    searchPattern.value = "*";
-  }
   void loadKeys();
 }
 
 function getSearchInput(): HTMLInputElement | null {
   return rootRef.value?.querySelector<HTMLInputElement>("[data-redis-search-input]") ?? null;
+}
+
+function getCommandInput(): HTMLInputElement | null {
+  return rootRef.value?.querySelector<HTMLInputElement>("[data-redis-command-input]") ?? null;
 }
 
 function focusSearch(): boolean {
@@ -409,270 +545,382 @@ function onSearchKeydown(event: KeyboardEvent) {
   }
   if (!isCancelSearchShortcut(event)) return;
   event.preventDefault();
-  searchPattern.value = searchMode.value === "key" ? "*" : "";
+  searchPattern.value = "";
   void loadKeys();
 }
 
 onUnmounted(() => {
   searchRequestId++;
   if (searchTimer) clearTimeout(searchTimer);
+  window.removeEventListener("dbx-redis-db-flushed", onRedisDbFlushed);
 });
 
-onMounted(loadKeys);
+function onRedisDbFlushed(event: Event) {
+  const detail = (event as CustomEvent<{ connectionId: string; db: number }>).detail;
+  if (!detail || detail.connectionId !== props.connectionId || detail.db !== props.db) return;
+  resetLoadedKeys();
+}
+
+onMounted(() => {
+  window.addEventListener("dbx-redis-db-flushed", onRedisDbFlushed);
+  void loadKeys();
+});
+
+watch(
+  () => props.db,
+  (db) => {
+    commandDb.value = db;
+  },
+);
 
 defineExpose({ focusSearch });
 </script>
 
 <template>
-  <Splitpanes class="h-full" horizontal>
-    <!-- Key table (top) -->
-    <Pane :size="selectedKey ? 50 : 100" :min-size="25">
-      <div ref="rootRef" class="h-full flex flex-col overflow-hidden">
-        <!-- Toolbar -->
-        <div class="h-9 flex items-center gap-1 px-2 border-b shrink-0">
-          <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <div class="h-6 flex rounded-md border bg-muted/30 p-0.5 shrink-0" role="group">
-            <button
-              type="button"
-              class="h-5 px-2 text-xs rounded-sm transition-colors"
-              :class="
-                searchMode === 'key'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              "
-              @click="setSearchMode('key')"
-            >
-              {{ t("redis.searchByKey") }}
-            </button>
-            <button
-              type="button"
-              class="h-5 px-2 text-xs rounded-sm transition-colors"
-              :class="
-                searchMode === 'value'
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              "
-              @click="setSearchMode('value')"
-            >
-              {{ t("redis.searchByValue") }}
-            </button>
-          </div>
-          <Input
-            v-model="searchPattern"
-            data-redis-search-input
-            class="h-6 text-xs border-0 shadow-none focus-visible:ring-0"
-            :placeholder="searchPlaceholder"
-            @input="onSearchInput"
-            @keydown="onSearchKeydown"
-          />
-          <Button variant="ghost" size="icon" class="h-6 w-6 shrink-0" @click="loadKeys">
-            <Loader2 v-if="loading" class="h-3 w-3 animate-spin" />
-            <RefreshCw v-else class="h-3 w-3" />
-          </Button>
-          <span class="text-xs text-muted-foreground shrink-0 ml-1">{{
-            loading && flatKeys.length === 0 ? loadingEmptyText : t("redis.keys", { count: flatKeys.length })
-          }}</span>
-          <Button
-            v-if="checkedKeys.size > 0"
-            variant="ghost"
-            size="sm"
-            class="h-6 text-xs text-destructive shrink-0 ml-1"
-            @click="requestBatchDelete"
-          >
-            <Trash2 class="w-3 h-3 mr-1" />{{ checkedKeys.size }}
-          </Button>
-        </div>
-
-        <div class="min-h-9 flex items-center gap-1 px-2 border-b bg-muted/20 shrink-0">
-          <Terminal class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span
-            class="h-5 px-1.5 rounded border bg-background/70 text-[10px] font-medium uppercase tracking-wide text-muted-foreground shrink-0"
-          >
-            {{ t("redis.commandPrefix") }}
-          </span>
-          <span class="font-mono text-xs text-muted-foreground shrink-0">&gt;</span>
-          <Input
-            v-model="commandText"
-            data-redis-command-input
-            class="h-6 text-xs border-0 shadow-none focus-visible:ring-0 font-mono bg-transparent"
-            :placeholder="t('redis.commandHint')"
-            @keydown.enter="executeCommand"
-          />
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6 shrink-0"
-            :title="t('redis.executeCommand')"
-            :disabled="commandRunning"
-            @click="executeCommand"
-          >
-            <Loader2 v-if="commandRunning" class="h-3 w-3 animate-spin" />
-            <Play v-else class="h-3 w-3" />
-          </Button>
-          <div class="w-px h-4 bg-border shrink-0" />
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6 shrink-0 text-destructive"
-            :title="t('redis.flushDb')"
-            @click="requestFlushDb"
-          >
-            <DatabaseZap class="h-3 w-3" />
-          </Button>
-        </div>
-
-        <div v-if="commandError || formattedCommandResult" class="border-b px-2 py-1 shrink-0 text-xs">
-          <pre
-            class="max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono"
-            :class="commandError ? 'text-destructive' : 'text-muted-foreground'"
-            >{{ commandError || formattedCommandResult }}</pre
-          >
-        </div>
-
-        <!-- Table header -->
-        <div class="grid border-b bg-muted/50 shrink-0 text-xs font-medium text-muted-foreground" :style="keyGridStyle">
-          <div class="px-3 py-1 border-r">{{ t("redis.columnKey") }}</div>
-          <div class="px-2 py-1 border-r">{{ t("redis.columnType") }}</div>
-          <div class="px-3 py-1 border-r">{{ t("redis.columnValue") }}</div>
-          <div class="px-2 py-1 border-r text-right">{{ t("redis.columnSize") }}</div>
-          <div class="px-2 py-1 text-right">{{ t("redis.columnTTL") }}</div>
-        </div>
-
-        <!-- Table body -->
-        <div
-          v-if="flatKeys.length === 0 && !loading"
-          class="flex-1 flex items-center justify-center text-muted-foreground text-xs"
-        >
-          {{ t("redis.noKeys") }}
-        </div>
-        <div
-          v-else-if="loading && flatKeys.length === 0"
-          class="flex-1 flex items-center justify-center gap-2 text-muted-foreground text-xs"
-        >
-          <Loader2 class="w-3.5 h-3.5 animate-spin" />
-          <span>{{ loadingEmptyText }}</span>
-        </div>
-        <RecycleScroller
-          v-else
-          class="redis-key-scroller flex-1"
-          :items="visibleRows"
-          :item-size="28"
-          :buffer="600"
-          :skip-hover="true"
-          key-field="id"
-        >
-          <template #default="{ item: row }">
-            <div
-              class="grid border-b text-xs cursor-pointer hover:bg-accent/50 group"
-              :class="{ 'bg-accent': row.node.kind === 'leaf' && selectedKeyRaw === row.node.keyRaw }"
-              :style="{ ...keyGridStyle, height: '28px' }"
-              @click="onRowClick(row.node)"
-            >
-              <!-- Key column -->
-              <div
-                class="px-3 flex items-center gap-1 border-r overflow-hidden"
-                :style="{ paddingLeft: `${12 + row.depth * 16}px` }"
+  <div ref="rootRef" class="h-full">
+    <Splitpanes class="redis-workspace-splitpanes h-full">
+      <!-- Key tree (left) -->
+      <Pane :size="36" :min-size="24">
+        <div class="relative h-full flex flex-col overflow-hidden">
+          <!-- Toolbar -->
+          <div class="h-9 flex items-center gap-1 px-2 border-b shrink-0">
+            <Search class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <div class="h-6 flex rounded-md border bg-muted/30 p-0.5 shrink-0" role="group">
+              <button
+                type="button"
+                class="h-5 px-2 text-xs rounded-sm transition-colors"
+                :class="
+                  searchMode === 'key'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                "
+                @click="setSearchMode('key')"
               >
-                <template v-if="row.node.kind === 'group'">
-                  <component
-                    :is="expandedGroupIds.has(row.node.id) ? ChevronDown : ChevronRight"
-                    class="w-3 h-3 shrink-0 text-muted-foreground"
-                  />
-                  <component
-                    :is="expandedGroupIds.has(row.node.id) ? FolderOpen : FolderClosed"
-                    class="w-3 h-3 shrink-0 text-amber-500"
-                  />
-                  <span class="truncate font-mono">{{ row.node.label }}</span>
-                  <span class="text-muted-foreground ml-1">({{ countLeaves(row.node) }})</span>
+                {{ t("redis.searchByKey") }}
+              </button>
+              <button
+                type="button"
+                class="h-5 px-2 text-xs rounded-sm transition-colors"
+                :class="
+                  searchMode === 'value'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                "
+                @click="setSearchMode('value')"
+              >
+                {{ t("redis.searchByValue") }}
+              </button>
+            </div>
+            <Input
+              v-model="searchPattern"
+              data-redis-search-input
+              class="h-6 text-xs border-0 shadow-none focus-visible:ring-0"
+              :placeholder="searchPlaceholder"
+              @input="onSearchInput"
+              @keydown="onSearchKeydown"
+            />
+            <Button variant="ghost" size="icon" class="h-6 w-6 shrink-0" @click="loadKeys">
+              <Loader2 v-if="loading" class="h-3 w-3 animate-spin" />
+              <RefreshCw v-else class="h-3 w-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-6 w-6 shrink-0"
+              :title="t('redis.createKey')"
+              @click="openCreateKeyDialog"
+            >
+              <Plus class="h-3 w-3" />
+            </Button>
+            <span class="text-xs text-muted-foreground shrink-0 ml-1">{{
+              loading && flatKeys.length === 0 ? loadingEmptyText : t("redis.keys", { count: flatKeys.length })
+            }}</span>
+            <Button
+              v-if="checkedKeys.size > 0"
+              variant="ghost"
+              size="sm"
+              class="h-6 text-xs text-destructive shrink-0 ml-1"
+              @click="requestBatchDelete"
+            >
+              <Trash2 class="w-3 h-3 mr-1" />{{ checkedKeys.size }}
+            </Button>
+          </div>
+
+          <div
+            v-if="flatKeys.length === 0 && !loading"
+            class="flex-1 flex items-center justify-center text-muted-foreground text-xs"
+          >
+            {{ t("redis.noKeys") }}
+          </div>
+          <div
+            v-else-if="loading && flatKeys.length === 0"
+            class="flex-1 flex items-center justify-center gap-2 text-muted-foreground text-xs"
+          >
+            <Loader2 class="w-3.5 h-3.5 animate-spin" />
+            <span>{{ loadingEmptyText }}</span>
+          </div>
+          <RecycleScroller
+            v-else
+            class="redis-key-scroller flex-1"
+            :items="visibleRows"
+            :item-size="30"
+            :buffer="600"
+            :skip-hover="true"
+            key-field="id"
+          >
+            <template #default="{ item: row }">
+              <div
+                class="flex items-center gap-2 border-b px-3 text-[13px] cursor-pointer hover:bg-accent/50 group"
+                :class="{ 'bg-accent': row.node.kind === 'leaf' && selectedKeyRaw === row.node.keyRaw }"
+                :style="{ height: '30px' }"
+                @click="onRowClick(row.node)"
+              >
+                <div
+                  class="min-w-0 flex flex-1 items-center gap-1 overflow-hidden"
+                  :style="{ paddingLeft: `${12 + row.depth * 16}px` }"
+                >
+                  <template v-if="row.node.kind === 'group'">
+                    <component
+                      :is="expandedGroupIds.has(row.node.id) ? ChevronDown : ChevronRight"
+                      class="w-3 h-3 shrink-0 text-muted-foreground"
+                    />
+                    <component
+                      :is="expandedGroupIds.has(row.node.id) ? FolderOpen : FolderClosed"
+                      class="w-3 h-3 shrink-0 text-amber-500"
+                    />
+                    <span class="truncate font-mono">{{ row.node.label }}</span>
+                    <span class="text-muted-foreground ml-1">({{ countLeaves(row.node) }})</span>
+                  </template>
+                  <template v-else>
+                    <span class="relative flex h-4 w-4 shrink-0 items-center justify-center">
+                      <KeyRound
+                        class="h-3.5 w-3.5 text-muted-foreground/70 transition-opacity group-hover:opacity-0"
+                        :class="{ 'opacity-0': checkedKeys.has(row.node.keyRaw) }"
+                      />
+                      <input
+                        type="checkbox"
+                        class="absolute h-3.5 w-3.5 accent-primary cursor-pointer opacity-0 group-hover:opacity-100"
+                        :class="{ 'opacity-100': checkedKeys.has(row.node.keyRaw) }"
+                        :checked="checkedKeys.has(row.node.keyRaw)"
+                        @click="toggleCheck(row.node.keyRaw, $event)"
+                      />
+                    </span>
+                    <span class="truncate font-mono">{{ row.node.label }}</span>
+                  </template>
+                </div>
+
+                <div class="flex shrink-0 items-center justify-end gap-1">
+                  <Badge
+                    v-if="row.node.kind === 'leaf'"
+                    variant="outline"
+                    class="text-xs px-1.5 py-0"
+                    :class="typeColor(row.node.keyType)"
+                    >{{ row.node.keyType }}</Badge
+                  >
                   <Button
+                    v-if="row.node.kind === 'group'"
                     variant="ghost"
                     size="icon"
-                    class="ml-auto h-5 w-5 shrink-0 text-destructive opacity-0 group-hover:opacity-100"
+                    class="h-5 w-5 shrink-0 text-destructive opacity-0 group-hover:opacity-100"
                     :title="t('redis.deleteGroup')"
                     @click="requestGroupDelete(row.node, $event)"
                   >
                     <Trash2 class="h-3 w-3" />
                   </Button>
-                </template>
-                <template v-else>
-                  <input
-                    type="checkbox"
-                    class="w-3 h-3 shrink-0 accent-primary cursor-pointer opacity-0 group-hover:opacity-100"
-                    :class="{ 'opacity-100': checkedKeys.has(row.node.keyRaw) }"
-                    :checked="checkedKeys.has(row.node.keyRaw)"
-                    @click="toggleCheck(row.node.keyRaw, $event)"
-                  />
-                  <span class="truncate font-mono">{{ row.node.label }}</span>
-                </template>
+                </div>
               </div>
-
-              <!-- Type column -->
-              <div class="border-r flex items-center justify-center">
-                <Badge
-                  v-if="row.node.kind === 'leaf'"
-                  variant="outline"
-                  class="text-xs px-1.5 py-0"
-                  :class="typeColor(row.node.keyType)"
-                  >{{ row.node.keyType }}</Badge
-                >
-              </div>
-
-              <!-- Value preview column -->
-              <div class="px-3 flex items-center border-r truncate font-mono text-muted-foreground">
-                <span v-if="row.node.kind === 'leaf'" class="truncate">{{ row.node.valuePreview }}</span>
-              </div>
-
-              <!-- Size column -->
-              <div class="px-2 flex items-center justify-end border-r text-muted-foreground">
-                <template v-if="row.node.kind === 'leaf'">
-                  {{ formatSize(row.node.size, row.node.keyType, row.node.valuePreview) }}
-                </template>
-              </div>
-
-              <!-- TTL column -->
-              <div class="px-2 flex items-center justify-end text-muted-foreground">
-                <template v-if="row.node.kind === 'leaf'">{{ formatTtl(row.node.ttl) }}</template>
-              </div>
-            </div>
-          </template>
-        </RecycleScroller>
-        <div v-if="hasMore" class="shrink-0 border-t px-2 py-1.5 flex items-center justify-center">
-          <Button
-            variant="outline"
-            size="sm"
-            class="h-7 text-xs w-full"
-            :disabled="loadingMore || loading"
-            @click="loadMore"
-          >
-            <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
-            {{ t("redis.loadMoreKeys") }}
-          </Button>
+            </template>
+          </RecycleScroller>
+          <div v-if="hasMore" class="shrink-0 border-t px-2 py-1.5 flex items-center justify-center">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 text-xs w-full"
+              :disabled="loadingMore || loading"
+              @click="loadMore"
+            >
+              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+              {{ t("redis.loadMoreKeys") }}
+            </Button>
+          </div>
         </div>
-      </div>
-    </Pane>
+      </Pane>
 
-    <!-- Value viewer (bottom) -->
-    <Pane v-if="selectedKey" :size="50" :min-size="20">
-      <div class="h-full min-w-0">
-        <RedisValueViewer
-          :key="selectedKey.key_raw"
-          :connection-id="connectionId"
-          :db="db"
-          :key-display="selectedKey.key_display"
-          :key-raw="selectedKey.key_raw"
-          @deleted="onKeyDeleted"
-        />
-      </div>
-    </Pane>
-  </Splitpanes>
+      <!-- Workspace (right) -->
+      <Pane :size="64" :min-size="36">
+        <div class="h-full min-w-0 bg-background flex flex-col overflow-hidden">
+          <Tabs v-model="activeSidePanel" class="h-full min-h-0 gap-0">
+            <div class="h-9 shrink-0 border-b bg-background px-3 flex items-center">
+              <TabsList class="h-7 gap-1 p-0.5">
+                <TabsTrigger value="detail" class="h-6 flex-none gap-1.5 rounded-md px-2 text-xs">
+                  <KeyRound class="size-3.5" />
+                  {{ t("redis.keyDetail") }}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="command"
+                  class="h-6 flex-none gap-1.5 rounded-md px-2 text-xs"
+                  @click="openCommandPanel"
+                >
+                  <TerminalSquare class="size-3.5" />
+                  {{ t("redis.commandLine") }}
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-  <DangerConfirmDialog
-    v-model:open="showDangerConfirm"
-    :message="t('dangerDialog.deleteMessage')"
-    :details="dangerDetails"
-    :confirm-label="pendingDanger?.kind === 'command' ? t('dangerDialog.confirm') : t('dangerDialog.deleteConfirm')"
-    @confirm="applyDangerAction"
-  />
+            <TabsContent value="detail" class="m-0 min-h-0 flex-1 flex flex-col">
+              <RedisValueViewer
+                v-if="selectedKey"
+                :key="selectedKey.key_raw"
+                :connection-id="connectionId"
+                :db="db"
+                :key-display="selectedKey.key_display"
+                :key-raw="selectedKey.key_raw"
+                :metadata="selectedKey"
+                @deleted="onKeyDeleted"
+              />
+              <div v-else class="flex-1 flex items-center justify-center text-xs text-muted-foreground">
+                {{ t("redis.selectKeyForDetail") }}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="command" class="m-0 min-h-0 flex-1 flex flex-col">
+              <div
+                class="relative flex min-h-0 flex-1 flex-col bg-[#090c10] font-mono text-[13px] leading-5 text-slate-100"
+                @click="getCommandInput()?.focus()"
+              >
+                <div ref="commandTerminalRef" class="min-h-0 flex-1 overflow-auto px-4 pb-3 pt-4">
+                  <div class="mb-4 text-slate-400">
+                    <span class="text-slate-200">{{ t("redis.commandWelcome") }}</span>
+                  </div>
+
+                  <div v-for="entry in commandHistory" :key="entry.id" class="mb-2">
+                    <div class="flex min-w-0 items-start gap-2 whitespace-pre-wrap break-words">
+                      <span class="shrink-0 text-[#d7ba7d]">{{ entry.prompt }}</span>
+                      <span class="min-w-0 text-slate-100">{{ entry.command }}</span>
+                    </div>
+                    <pre
+                      v-if="entry.output"
+                      class="ml-0 whitespace-pre-wrap break-words pl-0"
+                      :class="entry.error ? 'text-[#ff6b6b]' : 'text-slate-300'"
+                      >{{ entry.output }}</pre
+                    >
+                  </div>
+                </div>
+
+                <form
+                  class="flex shrink-0 items-center gap-2 border-t border-white/10 bg-[#090c10] px-4 py-2"
+                  @submit.prevent="executeCommand"
+                >
+                  <span class="shrink-0 text-[#d7ba7d]">{{ commandPrompt }}</span>
+                  <input
+                    v-model="commandText"
+                    data-redis-command-input
+                    class="min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-[13px] text-slate-100 caret-[#d7ba7d] outline-none placeholder:text-slate-600"
+                    :disabled="commandRunning"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    @keydown.enter.prevent="executeCommand"
+                  />
+                  <Loader2 v-if="commandRunning" class="h-3.5 w-3.5 shrink-0 animate-spin text-slate-500" />
+                </form>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </Pane>
+    </Splitpanes>
+
+    <DangerConfirmDialog
+      v-model:open="showDangerConfirm"
+      :message="t('dangerDialog.deleteMessage')"
+      :details="dangerDetails"
+      :confirm-label="dangerConfirmLabel"
+      @confirm="applyDangerAction"
+    />
+
+    <Dialog v-model:open="showCreateKeyDialog">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ t("redis.createKey") }}</DialogTitle>
+        </DialogHeader>
+
+        <div class="grid gap-3">
+          <label class="grid gap-1.5 text-xs font-medium">
+            <span>{{ t("redis.createKeyName") }}</span>
+            <Input
+              v-model="createKeyName"
+              class="h-8 font-mono text-xs"
+              :placeholder="t('redis.createKeyNamePlaceholder')"
+              @keydown.enter="createRedisKey"
+            />
+          </label>
+
+          <label class="grid gap-1.5 text-xs font-medium">
+            <span>{{ t("redis.createKeyType") }}</span>
+            <Select
+              :model-value="createKeyType"
+              @update:model-value="(value: any) => (createKeyType = value as RedisCreateKeyType)"
+            >
+              <SelectTrigger class="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="option in createKeyTypeOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+
+          <label v-if="createKeyType === 'hash'" class="grid gap-1.5 text-xs font-medium">
+            <span>{{ t("redis.createField") }}</span>
+            <Input
+              v-model="createKeyField"
+              class="h-8 font-mono text-xs"
+              :placeholder="t('redis.createFieldPlaceholder')"
+              @keydown.enter="createRedisKey"
+            />
+          </label>
+
+          <label v-if="createKeyType === 'zset'" class="grid gap-1.5 text-xs font-medium">
+            <span>{{ t("redis.createScore") }}</span>
+            <Input
+              v-model="createKeyScore"
+              class="h-8 font-mono text-xs"
+              placeholder="0"
+              @keydown.enter="createRedisKey"
+            />
+          </label>
+
+          <label class="grid gap-1.5 text-xs font-medium">
+            <span>{{
+              t(createKeyType === "set" || createKeyType === "zset" ? "redis.createMember" : "redis.createValue")
+            }}</span>
+            <textarea
+              v-model="createKeyValue"
+              class="min-h-28 resize-y rounded-md border bg-background p-2 font-mono text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              spellcheck="false"
+              :placeholder="t('redis.createValuePlaceholder')"
+            />
+          </label>
+
+          <p v-if="createKeyError" class="text-xs text-destructive">{{ createKeyError }}</p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" :disabled="creatingKey" @click="showCreateKeyDialog = false">
+            {{ t("dangerDialog.cancel") }}
+          </Button>
+          <Button :disabled="creatingKey" @click="createRedisKey">
+            <Loader2 v-if="creatingKey" class="h-4 w-4 animate-spin" />
+            <Plus v-else class="h-4 w-4" />
+            {{ t("redis.createKeySubmit") }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </div>
 </template>
 
 <style scoped>
@@ -683,5 +931,15 @@ defineExpose({ focusSearch });
 
 .redis-key-scroller :deep(.vue-recycle-scroller__item-view) {
   contain: layout style paint;
+}
+
+.redis-workspace-splitpanes :deep(.splitpanes--vertical > .splitpanes__splitter) {
+  width: 1px !important;
+  border-left: 0;
+  background: var(--border);
+}
+
+.redis-workspace-splitpanes :deep(.splitpanes__splitter:hover) {
+  background: var(--primary) !important;
 }
 </style>

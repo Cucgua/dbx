@@ -53,3 +53,33 @@ test("preserves loaded table children when the table itself matches search", () 
   assert.equal(table?.children?.[0]?.label, "tree.columns");
   assert.equal(table?.children?.[0]?.children?.[0]?.label, "id");
 });
+
+test("preserves loaded schema children when the database itself matches search", () => {
+  const nodes: TreeNode[] = [
+    {
+      id: "conn:hdi",
+      label: "hdi",
+      type: "database",
+      connectionId: "conn",
+      database: "hdi",
+      isExpanded: true,
+      children: [
+        {
+          id: "conn:hdi:public",
+          label: "public",
+          type: "schema",
+          connectionId: "conn",
+          database: "hdi",
+          schema: "public",
+          isExpanded: false,
+          children: [],
+        },
+      ],
+    },
+  ];
+
+  const filtered = filterSidebarTree(nodes, "hdi", new Set());
+
+  assert.equal(filtered[0]?.label, "hdi");
+  assert.equal(filtered[0]?.children?.[0]?.label, "public");
+});

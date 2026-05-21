@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   canEditRedisMemberDetail,
   clampRedisMemberDetailSheetWidth,
+  formatRedisCommandResult,
   formatRedisMemberDetail,
+  formatRedisStringValue,
   getRedisMemberSelectionKey,
   highlightRedisJsonDetail,
 } from "../../apps/desktop/src/lib/redisValuePresentation.ts";
@@ -20,6 +22,16 @@ test("keeps plain Redis member strings unchanged", () => {
 
   assert.equal(detail.format, "text");
   assert.equal(detail.text, "plain long member value");
+});
+
+test("formats JSON string values without changing plain strings", () => {
+  assert.equal(formatRedisStringValue('{"id":1,"name":"Ada"}'), '{\n  "id": 1,\n  "name": "Ada"\n}');
+  assert.equal(formatRedisStringValue("plain redis value"), "plain redis value");
+});
+
+test("formats Redis command results with JSON strings expanded", () => {
+  assert.equal(formatRedisCommandResult('{"balance":42,"unit":"USD"}'), '{\n  "balance": 42,\n  "unit": "USD"\n}');
+  assert.equal(formatRedisCommandResult(["a", 2]), '[\n  "a",\n  2\n]');
 });
 
 test("formats non-string Redis member values as JSON", () => {

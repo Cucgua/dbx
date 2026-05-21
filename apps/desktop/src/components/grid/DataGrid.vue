@@ -66,6 +66,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import ImagePreviewDialog from "@/components/grid/ImagePreviewDialog.vue";
@@ -84,6 +85,7 @@ import {
   hiveTablePropertiesIndicateTransactional,
   isHiddenGridColumn,
   isTdengineExistingRowReadonlyColumn,
+  usesKeylessRowPredicate,
   usesSyntheticRowIdKey,
 } from "@/lib/tableEditing";
 import { formatGridSqlLiteral } from "@/lib/dataGridSql";
@@ -99,6 +101,13 @@ import { matchesRowStatusFilter, type RowStatus, type RowStatusFilter } from "@/
 import { displayCellValue, type CellValue } from "@/lib/cellValue";
 import { cellImagePreviewUrl } from "@/lib/cellImageUrl";
 import {
+  cellDetailEditorText,
+  defaultCellDetailTab,
+  valueEditorActions,
+  visibleCellDetailTabs,
+  type CellDetailTab,
+} from "@/lib/cellDetailPresentation";
+import {
   applyColumnFormatter,
   buildColumnFormatterKey,
   normalizeColumnFormatter,
@@ -111,6 +120,7 @@ import { isCancelSearchShortcut, isFocusSearchShortcut } from "@/lib/keyboardSho
 import { dataGridHeaderContentWidth, scrollbarGutterWidth } from "@/lib/dataGridScrollGutter";
 import { dataGridSaveActionMode, dataGridSaveToolbarState } from "@/lib/dataGridSaveUi";
 import { appendColumnValueFilterCondition, buildColumnValueFilterCondition } from "@/lib/dataGridColumnFilter";
+import { clampSearchSplitWidth } from "@/lib/dataGridSearchSplit";
 import {
   MAX_RESULT_PAGE_SIZE,
   MIN_RESULT_PAGE_SIZE,
@@ -119,6 +129,7 @@ import {
 } from "@/lib/paginationPageSize";
 import {
   filterColumnVisibilityOptions,
+  invertedHiddenColumnIndexes,
   nextHiddenColumnIndexes,
   visibleColumnIndexesForFilter,
 } from "@/lib/dataGridColumnVisibility";
@@ -156,6 +167,7 @@ const props = defineProps<{
   pageLimit?: number;
   countSql?: string;
   loading?: boolean;
+  cacheKey?: string;
   onExecuteSql?: (sql: string) => Promise<void>;
   customSave?: (changes: {
     dirtyRows: Map<number, Map<number, string | number | boolean | null>>;
@@ -269,6 +281,7 @@ function typeColorClass(t: string): string {
 const contextCell = ref<{ rowId: number; rowIndex: number; col: number } | null>(null);
 const detailCell = ref<{ rowIndex: number; col: number } | null>(null);
 const showCellDetail = ref(false);
+const activeCellDetailTab = ref<CellDetailTab>(defaultCellDetailTab());
 const detailWidth = ref(320);
 const isResizingDetail = ref(false);
 const imagePreviewOpen = ref(false);
@@ -310,6 +323,18 @@ const orderByInput = ref("");
 const hasOrderByInput = computed(() => orderByInput.value.trim().length > 0);
 const whereFilterInput = ref(props.initialWhereInput ?? "");
 const hasWhereFilterInput = computed(() => whereFilterInput.value.trim().length > 0);
+const searchSplitContainerRef = ref<HTMLDivElement>();
+const searchSplitWhereWidth = ref<number | null>(null);
+const isResizingSearchSplit = ref(false);
+let searchSplitStartX = 0;
+let searchSplitStartWidth = 0;
+
+const whereSearchPaneStyle = computed(() => {
+  if (searchSplitWhereWidth.value == null) return {};
+  return {
+    flex: `0 0 ${searchSplitWhereWidth.value}px`,
+  };
+});
 
 type LocalColumnFilterDraft = {
   columnIndex: number;
@@ -1053,9 +1078,10 @@ const visibleColumnIndexes = computed(() =>
   visibleColumnIndexesForFilter(displayableColumnIndexes.value, hiddenColumnIndexes.value),
 );
 const visibleColumns = computed(() => visibleColumnIndexes.value.map((index) => props.result.columns[index]));
-const visibleRows = computed(() =>
-  props.result.rows.map((row) => visibleColumnIndexes.value.map((index) => row[index])),
-);
+const visibleSourceColumns = computed(() => {
+  if (!props.sourceColumns || props.sourceColumns.length !== props.result.columns.length) return undefined;
+  return visibleColumnIndexes.value.map((index) => props.sourceColumns?.[index]);
+});
 const visibleColumnCount = computed(() => visibleColumnIndexes.value.length);
 const displayableColumnCount = computed(() => displayableColumnIndexes.value.length);
 const hiddenColumnCount = computed(() => displayableColumnCount.value - visibleColumnCount.value);
@@ -1076,6 +1102,9 @@ function toggleColumnVisibility(columnIndex: number) {
 function showAllColumns() {
   hiddenColumnIndexes.value = new Set();
 }
+function invertColumnVisibility() {
+  hiddenColumnIndexes.value = invertedHiddenColumnIndexes(displayableColumnIndexes.value, hiddenColumnIndexes.value);
+}
 const firstVisibleColumnIndex = computed(() => visibleColumnIndexes.value[0] ?? 0);
 function actualColumnIndex(visibleColumnIndex: number): number {
   return visibleColumnIndexes.value[visibleColumnIndex] ?? visibleColumnIndex;
@@ -1084,7 +1113,8 @@ function actualColumnIndex(visibleColumnIndex: number): number {
 // --- Column resize composable ---
 const { initColumnWidths, onResizeStart, autoFitColumn, columnVars, getIsResizing } = useDataGridColumnResize({
   columns: visibleColumns,
-  rows: visibleRows,
+  sourceRows: computed(() => props.result.rows),
+  columnIndexes: visibleColumnIndexes,
   gridRef,
 });
 const gridStyle = computed(() => ({
@@ -1172,6 +1202,14 @@ const canEditExistingRows = computed(
   () =>
     !!props.customSave ||
     canEditExistingTableRows(props.databaseType, hiveTableTransactional.value, props.tableMeta?.primaryKeys ?? []),
+);
+const showKeylessEditWarning = computed(
+  () =>
+    props.context === "table-data" &&
+    !!props.editable &&
+    !!props.tableMeta &&
+    props.tableMeta.primaryKeys.length === 0 &&
+    usesKeylessRowPredicate(props.databaseType),
 );
 watch(
   () => [props.databaseType, props.connectionId, props.database, props.tableMeta?.schema, props.tableMeta?.tableName],
@@ -1317,6 +1355,7 @@ const editor = useDataGridEditor({
   getRowItem,
   pageSize,
   currentPage,
+  cacheKey: computed(() => props.cacheKey),
   emit,
 });
 
@@ -1714,14 +1753,52 @@ const activeCellDetail = computed(() => {
   };
 });
 
+const activeCellDetailTabs = computed(() => {
+  const detail = activeCellDetail.value;
+  return visibleCellDetailTabs({ isEditable: !!detail?.isEditable });
+});
+
+watch(activeCellDetailTabs, (tabs) => {
+  if (!tabs.includes(activeCellDetailTab.value)) {
+    activeCellDetailTab.value = defaultCellDetailTab();
+  }
+});
+
+watch(activeCellDetailTab, (tab) => {
+  if (tab === "valueEditor") {
+    startDetailEdit();
+  } else {
+    resetDetailEdit();
+  }
+});
+
+const activeValueEditorActions = computed(() => {
+  const detail = activeCellDetail.value;
+  return valueEditorActions({ canSetNull: !!detail?.isEditable && detail.value !== null });
+});
+
 const detailEditValue = ref("");
 const isEditingDetail = ref(false);
+const detailTemporalEditorKind = computed(() => {
+  const detail = activeCellDetail.value;
+  return detail ? temporalEditorKindForColumn(detail.colIndex) : undefined;
+});
+
+function resetDetailEdit() {
+  isEditingDetail.value = false;
+  detailEditValue.value = "";
+}
+
+function closeCellDetails() {
+  resetDetailEdit();
+  showCellDetail.value = false;
+  detailCell.value = null;
+}
 
 function startDetailEdit() {
   const detail = activeCellDetail.value;
   if (!detail || !detail.isEditable) return;
-  detailEditValue.value =
-    detail.value === null ? "" : typeof detail.value === "object" ? JSON.stringify(detail.value) : String(detail.value);
+  detailEditValue.value = cellDetailEditorText(detail.value);
   isEditingDetail.value = true;
 }
 
@@ -1759,7 +1836,52 @@ function commitDetailEdit() {
 }
 
 function cancelDetailEdit() {
-  isEditingDetail.value = false;
+  resetDetailEdit();
+}
+
+function cancelValueEditorEdit() {
+  const detail = activeCellDetail.value;
+  if (!detail || !detail.isEditable) return;
+  detailEditValue.value = cellDetailEditorText(detail.value);
+  isEditingDetail.value = true;
+}
+
+function commitValueEditorEdit() {
+  commitDetailEdit();
+  if (activeCellDetailTab.value === "valueEditor") {
+    isEditingDetail.value = true;
+  }
+}
+
+function restoreDetailOriginalValue() {
+  const detail = activeCellDetail.value;
+  if (!detail || !detail.isEditable) return;
+
+  const item = getRowItem(detail.rowId);
+  if (!item || item.isDeleted) return;
+
+  let restoredValue: CellValue = null;
+
+  if (item.isNew && item.newIndex !== undefined) {
+    newRows.value[item.newIndex][detail.colIndex] = null;
+    newRows.value = [...newRows.value];
+  } else if (item.sourceIndex !== undefined) {
+    restoredValue = props.result.rows[item.sourceIndex]?.[detail.colIndex] ?? null;
+    const rowChanges = dirtyRows.value.get(item.sourceIndex);
+    rowChanges?.delete(detail.colIndex);
+    if (rowChanges?.size === 0) dirtyRows.value.delete(item.sourceIndex);
+    dirtyRows.value = new Map(dirtyRows.value);
+  }
+
+  detailEditValue.value = cellDetailEditorText(restoredValue);
+  isEditingDetail.value = activeCellDetailTab.value === "valueEditor";
+  detailCell.value = { ...detailCell.value! };
+}
+
+function setValueEditorNull() {
+  setDetailNull();
+  detailEditValue.value = cellDetailEditorText(null);
+  isEditingDetail.value = activeCellDetailTab.value === "valueEditor";
 }
 
 function setDetailNull() {
@@ -1772,7 +1894,7 @@ function setDetailNull() {
   if (item.isNew && item.newIndex !== undefined) {
     newRows.value[item.newIndex][detail.colIndex] = null;
     newRows.value = [...newRows.value];
-    isEditingDetail.value = false;
+    resetDetailEdit();
     detailCell.value = { ...detailCell.value! };
     return;
   }
@@ -1785,7 +1907,7 @@ function setDetailNull() {
   if (useTransaction.value && !transactionActive.value) {
     enterTransaction();
   }
-  isEditingDetail.value = false;
+  resetDetailEdit();
   detailCell.value = { ...detailCell.value! };
 }
 
@@ -1971,6 +2093,8 @@ const {
   copyCell,
   copyRow,
   copyRowAsInsert,
+  copyRowAsUpdate,
+  canCopyRowAsUpdate,
   copyAll,
   copySelectionTsv,
   copySelectionCsv,
@@ -1985,10 +2109,9 @@ const {
   columns: visibleColumns,
   displayItems: visibleDisplayItems,
   sql: computed(() => props.sql),
-  tableMeta: computed(() =>
-    props.tableMeta ? { schema: props.tableMeta.schema, tableName: props.tableMeta.tableName } : undefined,
-  ),
+  tableMeta: computed(() => (props.tableMeta ? { ...props.tableMeta } : undefined)),
   databaseType: computed(() => props.databaseType),
+  sourceColumns: visibleSourceColumns,
   hasCellSelection,
   selectedCells,
   selectedRange,
@@ -2002,7 +2125,9 @@ const {
 
 // --- Cell selection and detail ---
 function showCellDetails(rowIndex: number, colIndex: number) {
+  resetDetailEdit();
   detailCell.value = { rowIndex, col: colIndex };
+  activeCellDetailTab.value = defaultCellDetailTab();
   showCellDetail.value = true;
 }
 
@@ -2059,6 +2184,48 @@ function cutSelection() {
   }
 }
 
+function currentSelectedCellPosition() {
+  const range = selectedRange.value;
+  if (!range) return null;
+  return { rowIndex: range.startRow, colIndex: range.startCol };
+}
+
+function scrollCellIntoView(rowIndex: number, colIndex: number) {
+  nextTick(() => {
+    const rowEl = gridRef.value?.querySelector<HTMLElement>(`[data-row-index="${rowIndex}"]`);
+    const cellEl = rowEl?.querySelector<HTMLElement>(`[data-visible-col-index="${colIndex}"]`);
+    (cellEl ?? rowEl)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
+}
+
+function moveSelectedCell(rowDelta: number, colDelta: number): boolean {
+  const position = currentSelectedCellPosition();
+  if (!position || editingCell.value || displayItems.value.length === 0 || visibleColumnIndexes.value.length === 0)
+    return false;
+  const rowIndex = Math.max(0, Math.min(displayItems.value.length - 1, position.rowIndex + rowDelta));
+  const colIndex = Math.max(0, Math.min(visibleColumnIndexes.value.length - 1, position.colIndex + colDelta));
+  selectSingleCell(rowIndex, colIndex);
+  clearRowSelection();
+  if (showTranspose.value) transposeRowIndex.value = rowIndex;
+  scrollCellIntoView(rowIndex, colIndex);
+  return true;
+}
+
+function editSelectedCell(): boolean {
+  const position = currentSelectedCellPosition();
+  if (!position || editingCell.value) return false;
+  const item = displayItems.value[position.rowIndex];
+  const actualColIndex = actualColumnIndex(position.colIndex);
+  if (!item || !canEditCellItem(item, actualColIndex)) return false;
+  startEdit(item.id, actualColIndex);
+  return true;
+}
+
+function commitGridEdit() {
+  commitEdit();
+  nextTick(() => gridRef.value?.focus({ preventScroll: true }));
+}
+
 async function onGridKeydown(event: KeyboardEvent) {
   if (isFocusSearchShortcut(event)) {
     event.preventDefault();
@@ -2066,6 +2233,34 @@ async function onGridKeydown(event: KeyboardEvent) {
     return;
   }
   if (eventTargetAllowsNativeClipboard(event)) return;
+  if (event.key === "ArrowLeft" && moveTransposeRecordSelection(-1)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "ArrowRight" && moveTransposeRecordSelection(1)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "ArrowUp" && moveSelectedCell(-1, 0)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "ArrowDown" && moveSelectedCell(1, 0)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "ArrowLeft" && moveSelectedCell(0, -1)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "ArrowRight" && moveSelectedCell(0, 1)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.key === "Enter" && editSelectedCell()) {
+    event.preventDefault();
+    return;
+  }
   if (clipboardShortcut(event, "c")) {
     if (!hasCellSelection.value) return;
     event.preventDefault();
@@ -2092,6 +2287,12 @@ function copyDetailValue() {
   copyText(text);
 }
 
+function copyDetailFormattedJson() {
+  const detail = activeCellDetail.value;
+  if (!detail?.formattedJson) return;
+  copyText(detail.formattedJson);
+}
+
 function copyDetailColumnName() {
   if (!activeCellDetail.value) return;
   copyText(activeCellDetail.value.column);
@@ -2105,8 +2306,14 @@ function copyDetailSqlCondition() {
   copyText(condition);
 }
 
-const TRANSPOSE_RECORD_WIDTH = 168;
-const transposePinnedWidth = computed(() => transposeFieldWidth(visibleColumns.value));
+const TRANSPOSE_RECORD_DEFAULT_WIDTH = 168;
+const TRANSPOSE_RECORD_MIN_WIDTH = 96;
+const TRANSPOSE_PINNED_MIN_WIDTH = 104;
+const transposeRecordWidth = ref(TRANSPOSE_RECORD_DEFAULT_WIDTH);
+const transposePinnedWidthOverride = ref<number | null>(null);
+const transposePinnedWidth = computed(
+  () => transposePinnedWidthOverride.value ?? transposeFieldWidth(visibleColumns.value),
+);
 
 const transposeRows = computed(() => {
   return buildTransposeRows({
@@ -2123,7 +2330,7 @@ const transposeRecordWindow = computed(() =>
     scrollLeft: transposeScrollLeft.value,
     viewportWidth: transposeViewportWidth.value,
     pinnedWidth: transposePinnedWidth.value,
-    recordWidth: TRANSPOSE_RECORD_WIDTH,
+    recordWidth: transposeRecordWidth.value,
     overscan: 2,
   }),
 );
@@ -2132,7 +2339,7 @@ const visibleTransposeRecordIndexes = computed(() => {
   return Array.from({ length: window.end - window.start }, (_, offset) => window.start + offset);
 });
 const transposeTotalWidth = computed(
-  () => transposePinnedWidth.value + displayItems.value.length * TRANSPOSE_RECORD_WIDTH,
+  () => transposePinnedWidth.value + displayItems.value.length * transposeRecordWidth.value,
 );
 
 function transposeScrollElement(): HTMLElement | undefined {
@@ -2161,13 +2368,54 @@ function scrollTransposeRecordIntoView(rowIndex: number) {
       totalRecords: displayItems.value.length,
       viewportWidth: el.clientWidth,
       pinnedWidth: transposePinnedWidth.value,
-      recordWidth: TRANSPOSE_RECORD_WIDTH,
+      recordWidth: transposeRecordWidth.value,
     });
     updateTransposeViewport();
   });
 }
 
+function onTransposePinnedResizeStart(event: MouseEvent) {
+  event.preventDefault();
+  const startX = event.clientX;
+  const startWidth = transposePinnedWidth.value;
+  const onMove = (e: MouseEvent) => {
+    transposePinnedWidthOverride.value = Math.max(TRANSPOSE_PINNED_MIN_WIDTH, startWidth + e.clientX - startX);
+    updateTransposeViewport();
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+function onTransposeRecordResizeStart(event: MouseEvent) {
+  event.preventDefault();
+  const startX = event.clientX;
+  const startWidth = transposeRecordWidth.value;
+  const onMove = (e: MouseEvent) => {
+    transposeRecordWidth.value = Math.max(TRANSPOSE_RECORD_MIN_WIDTH, startWidth + e.clientX - startX);
+    updateTransposeViewport();
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+function closeTranspose() {
+  showTranspose.value = false;
+  transposeRowIndex.value = null;
+}
+
 function openContextTranspose() {
+  if (showTranspose.value) {
+    closeTranspose();
+    return;
+  }
   if (!contextCell.value) return;
   const next = nextContextTransposeState({
     showTranspose: showTranspose.value,
@@ -2180,7 +2428,7 @@ function openContextTranspose() {
   transposeRowIndex.value = next.transposeRowIndex;
   showTranspose.value = next.showTranspose;
   if (next.showTranspose) {
-    showCellDetail.value = false;
+    closeCellDetails();
     nextTick(updateTransposeViewport);
     if (next.transposeRowIndex !== null) scrollTransposeRecordIntoView(next.transposeRowIndex);
   }
@@ -2191,19 +2439,29 @@ function toggleTranspose(rowIndex: number) {
   transposeRowIndex.value = next.transposeRowIndex;
   showTranspose.value = next.showTranspose;
   if (next.showTranspose) {
-    showCellDetail.value = false;
+    closeCellDetails();
     nextTick(updateTransposeViewport);
     if (next.transposeRowIndex !== null) scrollTransposeRecordIntoView(next.transposeRowIndex);
   }
 }
 
+function selectTransposeRecord(rowIndex: number) {
+  if (rowIndex < 0 || rowIndex >= displayItems.value.length) return;
+  transposeRowIndex.value = rowIndex;
+  gridRef.value?.focus({ preventScroll: true });
+}
+
+function moveTransposeRecordSelection(delta: number): boolean {
+  if (!isTransposeMode.value || displayItems.value.length === 0) return false;
+  const current = transposeRowIndex.value ?? 0;
+  const next = Math.max(0, Math.min(displayItems.value.length - 1, current + delta));
+  transposeRowIndex.value = next;
+  scrollTransposeRecordIntoView(next);
+  return true;
+}
+
 function transposeNav(delta: number) {
-  if (transposeRowIndex.value === null) return;
-  const next = transposeRowIndex.value + delta;
-  if (next >= 0 && next < displayItems.value.length) {
-    transposeRowIndex.value = next;
-    scrollTransposeRecordIntoView(next);
-  }
+  moveTransposeRecordSelection(delta);
 }
 
 watch(isTransposeMode, (active) => {
@@ -2219,10 +2477,8 @@ watch(
     }
     clearCellSelection();
     clearRowSelection();
-    showCellDetail.value = false;
-    detailCell.value = null;
-    showTranspose.value = false;
-    transposeRowIndex.value = null;
+    closeCellDetails();
+    closeTranspose();
     exitTransaction();
   },
 );
@@ -2427,6 +2683,48 @@ function toggleDdlWrap() {
   ddlWrap.value = !ddlWrap.value;
 }
 
+function searchSplitContainerWidth(): number {
+  return searchSplitContainerRef.value?.getBoundingClientRect().width ?? 0;
+}
+
+function onSearchSplitResizeStart(event: MouseEvent) {
+  const containerWidth = searchSplitContainerWidth();
+  if (containerWidth <= 0) return;
+  event.preventDefault();
+  isResizingSearchSplit.value = true;
+  searchSplitStartX = event.clientX;
+  searchSplitStartWidth = clampSearchSplitWidth({
+    containerWidth,
+    desiredWidth: searchSplitWhereWidth.value ?? undefined,
+  });
+  searchSplitWhereWidth.value = searchSplitStartWidth;
+  document.body.classList.add("select-none", "cursor-col-resize");
+  window.addEventListener("mousemove", onSearchSplitResizeMove);
+  window.addEventListener("mouseup", onSearchSplitResizeEnd);
+}
+
+function onSearchSplitResizeMove(event: MouseEvent) {
+  if (!isResizingSearchSplit.value) return;
+  const containerWidth = searchSplitContainerWidth();
+  if (containerWidth <= 0) return;
+  searchSplitWhereWidth.value = clampSearchSplitWidth({
+    containerWidth,
+    desiredWidth: searchSplitStartWidth + event.clientX - searchSplitStartX,
+  });
+}
+
+function onSearchSplitResizeEnd() {
+  isResizingSearchSplit.value = false;
+  document.body.classList.remove("select-none", "cursor-col-resize");
+  window.removeEventListener("mousemove", onSearchSplitResizeMove);
+  window.removeEventListener("mouseup", onSearchSplitResizeEnd);
+}
+
+function resetSearchSplitWidth() {
+  const containerWidth = searchSplitContainerWidth();
+  searchSplitWhereWidth.value = containerWidth > 0 ? clampSearchSplitWidth({ containerWidth }) : null;
+}
+
 function onDdlResizeStart(event: MouseEvent) {
   isResizingDdl.value = true;
   ddlResizeStartX = event.clientX;
@@ -2491,6 +2789,7 @@ watch(
 
 onUnmounted(() => {
   cleanupFrames();
+  onSearchSplitResizeEnd();
   onDdlResizeEnd();
   onDetailResizeEnd();
   finishCellSelection();
@@ -2546,6 +2845,7 @@ defineExpose({
   isColumnVisible,
   toggleColumnVisibility,
   showAllColumns,
+  invertColumnVisibility,
 });
 </script>
 
@@ -2600,109 +2900,125 @@ defineExpose({
             </template>
 
             <template v-if="canUseWhereSearch">
-              <div class="flex-1 flex items-center gap-1 px-2 py-0.5 border-l min-w-0 relative">
-                <span class="text-blue-600 dark:text-blue-400 text-xs font-medium select-none shrink-0">WHERE</span>
-                <input
-                  ref="whereFilterInputRef"
-                  v-model="whereFilterInput"
-                  autocapitalize="off"
-                  autocorrect="off"
-                  spellcheck="false"
-                  class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60"
-                  placeholder=""
-                  @keydown="onWhereFilterKeydown"
-                  @click="updateWhereSuggestionPosition"
-                  @blur="dismissWhereSuggestions"
-                />
-                <span
-                  ref="whereMeasureRef"
-                  class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
-                  aria-hidden="true"
-                />
-                <!-- WHERE suggestion dropdown -->
+              <div ref="searchSplitContainerRef" class="flex flex-1 min-w-0">
                 <div
-                  v-if="whereSuggestions.length > 0"
-                  class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
-                  :style="{ left: whereSuggestionLeft + 24 + 'px' }"
+                  class="flex flex-1 items-center gap-1 px-2 py-0.5 border-l min-w-0 relative"
+                  :style="whereSearchPaneStyle"
                 >
+                  <span class="text-blue-600 dark:text-blue-400 text-xs font-medium select-none shrink-0">WHERE</span>
+                  <input
+                    ref="whereFilterInputRef"
+                    v-model="whereFilterInput"
+                    autocapitalize="off"
+                    autocorrect="off"
+                    spellcheck="false"
+                    class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60"
+                    placeholder=""
+                    @keydown="onWhereFilterKeydown"
+                    @click="updateWhereSuggestionPosition"
+                    @blur="dismissWhereSuggestions"
+                  />
+                  <span
+                    ref="whereMeasureRef"
+                    class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <!-- WHERE suggestion dropdown -->
                   <div
-                    v-for="(sug, idx) in whereSuggestions"
-                    :key="sug"
-                    class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
-                    :class="idx === whereSuggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
-                    @mousedown.prevent="
-                      whereSuggestionIndex = idx;
-                      acceptWhereSuggestion();
-                    "
-                    @mouseenter="whereSuggestionIndex = idx"
+                    v-if="whereSuggestions.length > 0"
+                    class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
+                    :style="{ left: whereSuggestionLeft + 24 + 'px' }"
                   >
-                    <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
-                    <span>{{ sug }}</span>
+                    <div
+                      v-for="(sug, idx) in whereSuggestions"
+                      :key="sug"
+                      class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
+                      :class="idx === whereSuggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
+                      @mousedown.prevent="
+                        whereSuggestionIndex = idx;
+                        acceptWhereSuggestion();
+                      "
+                      @mouseenter="whereSuggestionIndex = idx"
+                    >
+                      <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
+                      <span>{{ sug }}</span>
+                    </div>
                   </div>
+                  <button
+                    v-if="hasWhereFilterInput"
+                    class="text-muted-foreground hover:text-foreground shrink-0"
+                    @click="
+                      whereFilterInput = '';
+                      applyWhereFilter();
+                    "
+                  >
+                    <X class="w-3 h-3" />
+                  </button>
                 </div>
                 <button
-                  v-if="hasWhereFilterInput"
-                  class="text-muted-foreground hover:text-foreground shrink-0"
-                  @click="
-                    whereFilterInput = '';
-                    applyWhereFilter();
-                  "
+                  type="button"
+                  class="group relative flex w-2 shrink-0 cursor-col-resize items-center justify-center border-l border-r border-border/80 bg-muted/15 hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                  aria-label="Resize WHERE and ORDER BY"
+                  @mousedown="onSearchSplitResizeStart"
+                  @dblclick.stop="resetSearchSplitWidth"
                 >
-                  <X class="w-3 h-3" />
+                  <span class="h-5 w-px bg-border group-hover:bg-primary/60" />
                 </button>
-              </div>
-              <div class="flex-1 flex items-center gap-1 px-2 py-0.5 border-l border-r min-w-0 relative">
-                <span class="text-orange-600 dark:text-orange-400 text-xs font-medium select-none shrink-0"
-                  >ORDER BY</span
-                >
-                <input
-                  ref="orderByInputRef"
-                  v-model="orderByInput"
-                  autocapitalize="off"
-                  autocorrect="off"
-                  spellcheck="false"
-                  class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60"
-                  placeholder=""
-                  @keydown="onOrderByKeydown"
-                  @click="updateOrderBySuggestionPosition"
-                  @blur="dismissOrderBySuggestions"
-                />
-                <span
-                  ref="orderByMeasureRef"
-                  class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
-                  aria-hidden="true"
-                />
-                <!-- ORDER BY suggestion dropdown -->
-                <div
-                  v-if="orderBySuggestions.length > 0"
-                  class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
-                  :style="{ left: orderBySuggestionLeft + 24 + 'px' }"
-                >
-                  <div
-                    v-for="(sug, idx) in orderBySuggestions"
-                    :key="sug"
-                    class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
-                    :class="idx === orderBySuggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
-                    @mousedown.prevent="
-                      orderBySuggestionIndex = idx;
-                      acceptOrderBySuggestion();
-                    "
-                    @mouseenter="orderBySuggestionIndex = idx"
+                <div class="flex flex-1 items-center gap-1 px-2 py-0.5 border-r min-w-0 relative">
+                  <span class="text-orange-600 dark:text-orange-400 text-xs font-medium select-none shrink-0"
+                    >ORDER BY</span
                   >
-                    <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
-                    <span>{{ sug }}</span>
+                  <input
+                    ref="orderByInputRef"
+                    v-model="orderByInput"
+                    autocapitalize="off"
+                    autocorrect="off"
+                    spellcheck="false"
+                    class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60"
+                    placeholder=""
+                    @keydown="onOrderByKeydown"
+                    @click="updateOrderBySuggestionPosition"
+                    @blur="dismissOrderBySuggestions"
+                  />
+                  <span
+                    ref="orderByMeasureRef"
+                    class="invisible absolute left-0 top-0 text-xs whitespace-pre pointer-events-none"
+                    aria-hidden="true"
+                  />
+                  <!-- ORDER BY suggestion dropdown -->
+                  <div
+                    v-if="orderBySuggestions.length > 0"
+                    class="absolute top-full mt-0.5 z-50 min-w-[180px] rounded-md border bg-popover text-popover-foreground shadow-md"
+                    :style="{ left: orderBySuggestionLeft + 24 + 'px' }"
+                  >
+                    <div
+                      v-for="(sug, idx) in orderBySuggestions"
+                      :key="sug"
+                      class="flex items-center px-3 py-1.5 text-xs cursor-pointer"
+                      :class="
+                        idx === orderBySuggestionIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+                      "
+                      @mousedown.prevent="
+                        orderBySuggestionIndex = idx;
+                        acceptOrderBySuggestion();
+                      "
+                      @mouseenter="orderBySuggestionIndex = idx"
+                    >
+                      <Search class="w-3 h-3 mr-2 text-muted-foreground shrink-0" />
+                      <span>{{ sug }}</span>
+                    </div>
                   </div>
+                  <button
+                    v-if="hasOrderByInput"
+                    class="text-muted-foreground hover:text-foreground shrink-0"
+                    @click="
+                      orderByInput = '';
+                      applyOrderBySearch();
+                    "
+                  >
+                    <X class="w-3 h-3" />
+                  </button>
                 </div>
-                <button
-                  v-if="hasOrderByInput"
-                  class="text-muted-foreground hover:text-foreground shrink-0"
-                  @click="
-                    orderByInput = '';
-                    applyOrderBySearch();
-                  "
-                >
-                  <X class="w-3 h-3" />
-                </button>
               </div>
             </template>
 
@@ -2732,6 +3048,19 @@ defineExpose({
                 </TooltipTrigger>
                 <TooltipContent side="bottom" class="max-w-sm">
                   {{ queryEditabilityHint }}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip v-if="showKeylessEditWarning">
+                <TooltipTrigger as-child>
+                  <div
+                    class="flex h-5 items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 text-xs font-medium text-amber-700 dark:text-amber-300"
+                  >
+                    <TriangleAlert class="h-3 w-3" />
+                    {{ t("grid.keylessEditWarning") }}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" class="max-w-sm">
+                  {{ t("grid.keylessEditWarningHint") }}
                 </TooltipContent>
               </Tooltip>
               <Button
@@ -2885,7 +3214,7 @@ defineExpose({
                   >
                     <ChevronRight class="w-3 h-3" />
                   </Button>
-                  <Button variant="ghost" size="icon" class="h-5 w-5" @click="showTranspose = false">
+                  <Button variant="ghost" size="icon" class="h-5 w-5" @click="closeTranspose">
                     <X class="w-3 h-3" />
                   </Button>
                 </div>
@@ -2895,7 +3224,7 @@ defineExpose({
                   :style="{
                     '--transpose-total-w': `${transposeTotalWidth}px`,
                     '--transpose-field-w': `${transposePinnedWidth}px`,
-                    '--transpose-record-w': `${TRANSPOSE_RECORD_WIDTH}px`,
+                    '--transpose-record-w': `${transposeRecordWidth}px`,
                   }"
                   :items="transposeRows"
                   :item-size="30"
@@ -2909,24 +3238,33 @@ defineExpose({
                       :style="{ width: `${transposeTotalWidth}px` }"
                     >
                       <div
-                        class="sticky left-0 z-30 shrink-0 border-r border-border px-3 py-1.5 bg-[rgb(239_239_239)] truncate dark:bg-muted"
+                        class="sticky left-0 z-30 shrink-0 border-r border-border px-3 py-1.5 bg-[rgb(239_239_239)] truncate dark:bg-muted relative"
                         :style="{ width: `${transposePinnedWidth}px` }"
                       >
                         {{ t("grid.columnName") }}
+                        <div
+                          class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
+                          @mousedown.stop="onTransposePinnedResizeStart"
+                        />
                       </div>
                       <div class="shrink-0" :style="{ width: `${transposeRecordWindow.beforeWidth}px` }" />
                       <div
                         v-for="recordIndex in visibleTransposeRecordIndexes"
                         :key="`transpose-head-${recordIndex}`"
-                        class="shrink-0 border-r border-border px-2 py-1.5 text-center tabular-nums"
+                        class="shrink-0 border-r border-border px-2 py-1.5 text-center tabular-nums relative"
                         :class="
                           recordIndex === transposeRowIndex
                             ? 'bg-primary/15 text-primary font-semibold'
                             : 'bg-[rgb(239_239_239)] dark:bg-muted'
                         "
-                        :style="{ width: `${TRANSPOSE_RECORD_WIDTH}px` }"
+                        :style="{ width: `${transposeRecordWidth}px` }"
+                        @click="selectTransposeRecord(recordIndex)"
                       >
                         {{ recordIndex + 1 }}
+                        <div
+                          class="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-primary/30"
+                          @mousedown.stop="onTransposeRecordResizeStart"
+                        />
                       </div>
                       <div class="shrink-0" :style="{ width: `${transposeRecordWindow.afterWidth}px` }" />
                     </div>
@@ -2952,8 +3290,9 @@ defineExpose({
                           'text-muted-foreground italic': item.values[recordIndex]?.isNull,
                           'bg-primary/10': recordIndex === transposeRowIndex,
                         }"
-                        :style="{ width: `${TRANSPOSE_RECORD_WIDTH}px` }"
+                        :style="{ width: `${transposeRecordWidth}px` }"
                         :title="item.values[recordIndex]?.display"
+                        @click="selectTransposeRecord(recordIndex)"
                       >
                         {{ item.values[recordIndex]?.display }}
                       </div>
@@ -3397,16 +3736,27 @@ defineExpose({
                         </div>
                       </TooltipTrigger>
                       <TooltipContent
-                        v-if="columnTypeMap.get(col) || columnCommentMap.get(col)"
                         side="bottom"
-                        class="text-xs grid grid-cols-[auto_1fr] gap-x-2"
+                        class="grid min-w-56 grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs"
                       >
+                        <span class="text-background/70">{{ t("grid.columnName") }}</span>
+                        <span class="flex min-w-0 items-center gap-2">
+                          <span class="min-w-0 flex-1 truncate font-mono">{{ col }}</span>
+                          <button
+                            type="button"
+                            class="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-background/10"
+                            :title="t('grid.copyColumnName')"
+                            @click.stop="copyText(col)"
+                          >
+                            <Copy class="h-3 w-3" />
+                          </button>
+                        </span>
                         <template v-if="columnTypeMap.get(col)">
-                          <span class="text-muted-foreground">{{ t("grid.columnType") }}</span>
+                          <span class="text-background/70">{{ t("grid.columnType") }}</span>
                           <span :class="typeColorClass(columnTypeMap.get(col)!)">{{ columnTypeMap.get(col) }}</span>
                         </template>
                         <template v-if="columnCommentMap.get(col)">
-                          <span class="text-muted-foreground">{{ t("grid.columnComment") }}</span>
+                          <span class="text-background/70">{{ t("grid.columnComment") }}</span>
                           <span>{{ columnCommentMap.get(col) }}</span>
                         </template>
                       </TooltipContent>
@@ -3509,6 +3859,7 @@ defineExpose({
                         @mousedown="handleDataCellMousedown(index, visibleColIdx, item.id, $event)"
                         @mouseenter="extendCellSelection(index, visibleColIdx)"
                         @dblclick="canEditCellItem(item, actualColIdx) && startEdit(item.id, actualColIdx)"
+                        :data-visible-col-index="visibleColIdx"
                         @contextmenu="onCellContext(item.id, index, actualColIdx, visibleColIdx)"
                       >
                         <template v-if="editingCell?.rowId === item.id && editingCell?.col === actualColIdx">
@@ -3517,7 +3868,7 @@ defineExpose({
                             v-model="editValue"
                             :kind="temporalEditorKindForColumn(actualColIdx)!"
                             @cancel="cancelEdit"
-                            @commit="commitEdit"
+                            @commit="commitGridEdit"
                           />
                           <input
                             v-else
@@ -3721,133 +4072,224 @@ defineExpose({
               <div class="h-9 flex items-center gap-2 px-3 border-b shrink-0 bg-muted/20">
                 <Info class="w-3.5 h-3.5 text-muted-foreground" />
                 <span class="text-xs font-medium flex-1 min-w-0 truncate">{{ t("grid.cellDetails") }}</span>
-                <Button variant="ghost" size="icon" class="h-5 w-5" @click="showCellDetail = false">
+                <Button variant="ghost" size="icon" class="h-5 w-5" @click="closeCellDetails">
                   <X class="w-3 h-3" />
                 </Button>
               </div>
 
-              <div class="flex-1 min-h-0 overflow-auto p-3 text-xs space-y-3">
-                <div class="space-y-1">
-                  <div class="text-muted-foreground">{{ t("grid.columnName") }}</div>
-                  <div class="font-medium break-all">{{ activeCellDetail.column }}</div>
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                  <div class="space-y-1">
-                    <div class="text-muted-foreground">{{ t("grid.rowNumber") }}</div>
-                    <div>{{ activeCellDetail.rowNumber }}</div>
-                  </div>
-                  <div class="space-y-1">
-                    <div class="text-muted-foreground">{{ t("grid.columnType") }}</div>
-                    <div
-                      :class="activeCellDetail.type ? typeColorClass(activeCellDetail.type) : 'text-muted-foreground'"
+              <Tabs v-model="activeCellDetailTab" class="flex-1 min-h-0 gap-0">
+                <div class="shrink-0 border-b px-3 py-2">
+                  <TabsList
+                    class="grid h-7 w-full p-0.5"
+                    :class="activeCellDetailTabs.length > 1 ? 'grid-cols-2' : 'grid-cols-1'"
+                  >
+                    <TabsTrigger value="details" class="h-6 text-xs">{{ t("grid.cellDetails") }}</TabsTrigger>
+                    <TabsTrigger
+                      v-if="activeCellDetailTabs.includes('valueEditor')"
+                      value="valueEditor"
+                      class="h-6 text-xs"
                     >
-                      {{ activeCellDetail.type || "-" }}
-                    </div>
-                  </div>
-                  <div class="space-y-1">
-                    <div class="text-muted-foreground">{{ t("grid.nullValue") }}</div>
-                    <div>{{ activeCellDetail.value === null ? "true" : "false" }}</div>
-                  </div>
-                  <div class="space-y-1">
-                    <div class="text-muted-foreground">{{ t("grid.valueLength") }}</div>
-                    <div>{{ activeCellDetail.length }}</div>
-                  </div>
+                      {{ t("grid.valueEditor") }}
+                    </TabsTrigger>
+                  </TabsList>
                 </div>
-                <div class="space-y-1">
-                  <div class="text-muted-foreground">{{ t("grid.columnComment") }}</div>
-                  <div class="whitespace-pre-wrap break-words">
-                    {{ activeCellDetail.comment || t("grid.noComment") }}
-                  </div>
-                </div>
-                <div class="space-y-1">
-                  <div class="text-muted-foreground">{{ t("grid.cellValue") }}</div>
-                  <div v-if="activeCellDetail.imagePreviewUrl && !isEditingDetail" class="space-y-1.5">
-                    <div class="text-muted-foreground">{{ t("grid.imagePreview") }}</div>
-                    <a
-                      :href="activeCellDetail.imagePreviewUrl"
-                      role="button"
-                      class="block overflow-hidden rounded border bg-muted/20"
-                      @click.prevent="openImagePreview(activeCellDetail.imagePreviewUrl, activeCellDetail.column)"
-                    >
-                      <img
-                        :src="activeCellDetail.imagePreviewUrl"
-                        :alt="activeCellDetail.column"
-                        loading="lazy"
-                        decoding="async"
-                        referrerpolicy="no-referrer"
-                        class="max-h-72 w-full object-contain"
-                      />
-                    </a>
-                  </div>
-                  <template v-if="isEditingDetail">
-                    <textarea
-                      v-model="detailEditValue"
-                      class="w-full h-40 rounded border bg-background p-2 font-mono text-xs outline-none resize-y focus:border-primary"
-                      @keydown.escape.stop="cancelDetailEdit"
-                    />
-                    <div class="flex gap-1 mt-1">
-                      <Button size="sm" class="h-6 text-xs" @click="commitDetailEdit">
-                        {{ t("dangerDialog.confirm") }}
-                      </Button>
-                      <Button variant="outline" size="sm" class="h-6 text-xs" @click="cancelDetailEdit">
-                        {{ t("dangerDialog.cancel") }}
-                      </Button>
-                    </div>
-                  </template>
-                  <pre
-                    v-else
-                    class="max-h-56 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words cursor-pointer hover:border-primary/50"
-                    :class="{ 'cursor-text': activeCellDetail.isEditable }"
-                    @dblclick="startDetailEdit"
-                    >{{ activeCellDetail.displayValue }}</pre
-                  >
-                </div>
-                <div v-if="activeCellDetail.displayValue !== activeCellDetail.rawValue" class="space-y-1">
-                  <div class="text-muted-foreground">{{ t("grid.rawValue") }}</div>
-                  <pre
-                    class="max-h-40 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words"
-                    >{{ activeCellDetail.rawValue }}</pre
-                  >
-                </div>
-                <div v-if="activeCellDetail.formattedJson" class="space-y-1">
-                  <div class="text-muted-foreground">{{ t("grid.formattedJson") }}</div>
-                  <pre
-                    class="max-h-72 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words"
-                  >
-        {{ activeCellDetail.formattedJson }}</pre
-                  >
-                </div>
-              </div>
 
-              <div class="border-t p-2 grid grid-cols-1 gap-1">
-                <Button
-                  v-if="activeCellDetail.isEditable && !isEditingDetail"
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 justify-start text-xs"
-                  @click="startDetailEdit"
+                <TabsContent value="details" class="m-0 min-h-0 flex-1 flex flex-col">
+                  <div class="flex-1 min-h-0 overflow-auto p-3 text-xs space-y-3">
+                    <div class="space-y-1">
+                      <div class="text-muted-foreground">{{ t("grid.columnName") }}</div>
+                      <div class="font-medium break-all">{{ activeCellDetail.column }}</div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                      <div class="space-y-1">
+                        <div class="text-muted-foreground">{{ t("grid.rowNumber") }}</div>
+                        <div>{{ activeCellDetail.rowNumber }}</div>
+                      </div>
+                      <div class="space-y-1">
+                        <div class="text-muted-foreground">{{ t("grid.columnType") }}</div>
+                        <div
+                          :class="
+                            activeCellDetail.type ? typeColorClass(activeCellDetail.type) : 'text-muted-foreground'
+                          "
+                        >
+                          {{ activeCellDetail.type || "-" }}
+                        </div>
+                      </div>
+                      <div class="space-y-1">
+                        <div class="text-muted-foreground">{{ t("grid.nullValue") }}</div>
+                        <div>{{ activeCellDetail.value === null ? "true" : "false" }}</div>
+                      </div>
+                      <div class="space-y-1">
+                        <div class="text-muted-foreground">{{ t("grid.valueLength") }}</div>
+                        <div>{{ activeCellDetail.length }}</div>
+                      </div>
+                    </div>
+                    <div class="space-y-1">
+                      <div class="text-muted-foreground">{{ t("grid.columnComment") }}</div>
+                      <div class="whitespace-pre-wrap break-words">
+                        {{ activeCellDetail.comment || t("grid.noComment") }}
+                      </div>
+                    </div>
+                    <div class="space-y-1">
+                      <div class="text-muted-foreground">{{ t("grid.cellValue") }}</div>
+                      <div v-if="activeCellDetail.imagePreviewUrl && !isEditingDetail" class="space-y-1.5">
+                        <div class="text-muted-foreground">{{ t("grid.imagePreview") }}</div>
+                        <a
+                          :href="activeCellDetail.imagePreviewUrl"
+                          role="button"
+                          class="block overflow-hidden rounded border bg-muted/20"
+                          @click.prevent="openImagePreview(activeCellDetail.imagePreviewUrl, activeCellDetail.column)"
+                        >
+                          <img
+                            :src="activeCellDetail.imagePreviewUrl"
+                            :alt="activeCellDetail.column"
+                            loading="lazy"
+                            decoding="async"
+                            referrerpolicy="no-referrer"
+                            class="max-h-72 w-full object-contain"
+                          />
+                        </a>
+                      </div>
+                      <template v-if="isEditingDetail">
+                        <TemporalCellEditor
+                          v-if="detailTemporalEditorKind"
+                          v-model="detailEditValue"
+                          :kind="detailTemporalEditorKind"
+                          variant="inline"
+                          :commit-on-close="false"
+                          @cancel="cancelDetailEdit"
+                          @commit="commitDetailEdit"
+                        />
+                        <textarea
+                          v-else
+                          v-model="detailEditValue"
+                          wrap="off"
+                          class="w-full h-40 overflow-auto rounded border bg-background p-2 font-mono text-xs outline-none resize-y focus:border-primary"
+                          @keydown.escape.stop="cancelDetailEdit"
+                        />
+                        <div class="flex gap-1 mt-1">
+                          <Button size="sm" class="h-6 text-xs" @click="commitDetailEdit">
+                            {{ t("dangerDialog.confirm") }}
+                          </Button>
+                          <Button variant="outline" size="sm" class="h-6 text-xs" @click="cancelDetailEdit">
+                            {{ t("dangerDialog.cancel") }}
+                          </Button>
+                        </div>
+                      </template>
+                      <pre
+                        v-else
+                        class="max-h-56 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre cursor-pointer hover:border-primary/50"
+                        :class="{ 'cursor-text': activeCellDetail.isEditable }"
+                        @dblclick="startDetailEdit"
+                        >{{ activeCellDetail.displayValue }}</pre
+                      >
+                    </div>
+                    <div v-if="activeCellDetail.displayValue !== activeCellDetail.rawValue" class="space-y-1">
+                      <div class="text-muted-foreground">{{ t("grid.rawValue") }}</div>
+                      <pre
+                        class="max-h-40 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words"
+                        >{{ activeCellDetail.rawValue }}</pre
+                      >
+                    </div>
+                    <div v-if="activeCellDetail.formattedJson" class="mt-2 space-y-1">
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="text-muted-foreground">{{ t("grid.formattedJson") }}</div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="h-6 px-2 text-xs"
+                          :title="t('grid.copyValue')"
+                          @click="copyDetailFormattedJson"
+                        >
+                          <Copy class="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <pre
+                        class="max-h-72 overflow-auto rounded border bg-muted/20 p-2 font-mono text-xs whitespace-pre-wrap break-words"
+                        >{{ activeCellDetail.formattedJson }}</pre
+                      >
+                    </div>
+                  </div>
+
+                  <div class="border-t p-2 grid grid-cols-1 gap-1">
+                    <Button
+                      v-if="activeCellDetail.isEditable && !isEditingDetail"
+                      variant="ghost"
+                      size="sm"
+                      class="h-7 justify-start text-xs"
+                      @click="startDetailEdit"
+                    >
+                      <Pencil class="w-3 h-3 mr-2" /> {{ t("grid.editValue") }}
+                    </Button>
+                    <Button
+                      v-if="activeCellDetail.isEditable && activeCellDetail.value !== null"
+                      variant="ghost"
+                      size="sm"
+                      class="h-7 justify-start text-xs"
+                      @click="setDetailNull"
+                    >
+                      <X class="w-3 h-3 mr-2" /> {{ t("grid.setNull") }}
+                    </Button>
+                    <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailValue">
+                      <Copy class="w-3 h-3 mr-2" /> {{ t("grid.copyValue") }}
+                    </Button>
+                    <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailColumnName">
+                      <Copy class="w-3 h-3 mr-2" /> {{ t("grid.copyColumnName") }}
+                    </Button>
+                    <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailSqlCondition">
+                      <Code2 class="w-3 h-3 mr-2" /> {{ t("grid.copySqlCondition") }}
+                    </Button>
+                  </div>
+                </TabsContent>
+
+                <TabsContent
+                  v-if="activeCellDetailTabs.includes('valueEditor')"
+                  value="valueEditor"
+                  class="m-0 min-h-0 flex-1 flex flex-col p-3 text-xs"
                 >
-                  <Pencil class="w-3 h-3 mr-2" /> {{ t("grid.editValue") }}
-                </Button>
-                <Button
-                  v-if="activeCellDetail.isEditable && activeCellDetail.value !== null"
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 justify-start text-xs"
-                  @click="setDetailNull"
-                >
-                  <X class="w-3 h-3 mr-2" /> {{ t("grid.setNull") }}
-                </Button>
-                <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailValue">
-                  <Copy class="w-3 h-3 mr-2" /> {{ t("grid.copyValue") }}
-                </Button>
-                <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailColumnName">
-                  <Copy class="w-3 h-3 mr-2" /> {{ t("grid.copyColumnName") }}
-                </Button>
-                <Button variant="ghost" size="sm" class="h-7 justify-start text-xs" @click="copyDetailSqlCondition">
-                  <Code2 class="w-3 h-3 mr-2" /> {{ t("grid.copySqlCondition") }}
-                </Button>
-              </div>
+                  <div class="flex min-h-0 flex-1 flex-col">
+                    <TemporalCellEditor
+                      v-if="detailTemporalEditorKind"
+                      v-model="detailEditValue"
+                      :kind="detailTemporalEditorKind"
+                      variant="inline"
+                      :commit-on-close="false"
+                      @cancel="cancelValueEditorEdit"
+                      @commit="commitValueEditorEdit"
+                    />
+                    <textarea
+                      v-else
+                      v-model="detailEditValue"
+                      wrap="off"
+                      class="min-h-0 flex-1 w-full overflow-auto rounded border bg-background p-2 font-mono text-xs outline-none resize-none focus:border-primary"
+                      @blur="commitValueEditorEdit"
+                      @keydown.escape.stop="restoreDetailOriginalValue"
+                    />
+                  </div>
+                  <div class="flex gap-1 mt-2 shrink-0">
+                    <Button
+                      v-if="activeValueEditorActions.includes('setNull')"
+                      variant="outline"
+                      size="sm"
+                      class="h-6 text-xs"
+                      @mousedown.prevent
+                      @click="setValueEditorNull"
+                    >
+                      {{ t("grid.setNull") }}
+                    </Button>
+                    <Button
+                      v-if="activeValueEditorActions.includes('restoreOriginal')"
+                      variant="outline"
+                      size="sm"
+                      class="h-6 text-xs"
+                      @mousedown.prevent
+                      @click="restoreDetailOriginalValue"
+                    >
+                      {{ t("grid.restoreOriginalValue") }}
+                    </Button>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </div>
           </div>
         </div>
@@ -3897,6 +4339,9 @@ defineExpose({
             </ContextMenuItem>
             <ContextMenuItem @click="copyRowAsInsert">
               {{ isMultiRow ? t("grid.copyRowsInsert", { count: multiRowCount }) : t("grid.copyRowInsert") }}
+            </ContextMenuItem>
+            <ContextMenuItem v-if="canCopyRowAsUpdate" @click="copyRowAsUpdate">
+              {{ isMultiRow ? t("grid.copyRowsUpdate", { count: multiRowCount }) : t("grid.copyRowUpdate") }}
             </ContextMenuItem>
             <ContextMenuItem @click="copyAll">{{ t("grid.copyAll") }}</ContextMenuItem>
           </ContextMenuSubContent>

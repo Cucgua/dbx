@@ -75,14 +75,25 @@ test("describes table editing capabilities for special database engines", () => 
     insert: true,
     updateRequiresPrimaryKey: false,
     deleteRequiresPrimaryKey: false,
+    keylessRowPredicate: true,
     requiresTransactionalTableForExistingRows: true,
     transaction: false,
+  });
+
+  assert.deepEqual(getDatabaseCapability("dameng").tableData, {
+    insert: true,
+    updateRequiresPrimaryKey: false,
+    deleteRequiresPrimaryKey: false,
+    keylessRowPredicate: true,
+    requiresTransactionalTableForExistingRows: false,
+    transaction: true,
   });
 
   assert.deepEqual(getDatabaseCapability("trino").tableData, {
     insert: true,
     updateRequiresPrimaryKey: true,
     deleteRequiresPrimaryKey: true,
+    keylessRowPredicate: false,
     requiresTransactionalTableForExistingRows: false,
     transaction: false,
   });
@@ -91,34 +102,57 @@ test("describes table editing capabilities for special database engines", () => 
     insert: false,
     updateRequiresPrimaryKey: true,
     deleteRequiresPrimaryKey: true,
+    keylessRowPredicate: false,
     requiresTransactionalTableForExistingRows: false,
     transaction: false,
   });
 
   assert.deepEqual(getDatabaseCapability("yashandb").tableData, {
-    insert: false,
-    updateRequiresPrimaryKey: true,
-    deleteRequiresPrimaryKey: true,
+    insert: true,
+    updateRequiresPrimaryKey: false,
+    deleteRequiresPrimaryKey: false,
+    keylessRowPredicate: true,
     requiresTransactionalTableForExistingRows: false,
-    transaction: false,
+    transaction: true,
   });
 
   assert.equal(getDatabaseCapability("oracle").syntheticKey, "oracle-rowid");
   assert.equal(getDatabaseCapability("neo4j").syntheticKey, "neo4j-element-id");
 });
 
-test("uses conservative table editing defaults for unknown or keyless relational engines", () => {
+test("uses Navicat-style table editing defaults for updateable SQL table engines", () => {
   assert.deepEqual(getDatabaseCapability("postgres").tableData, {
-    insert: false,
-    updateRequiresPrimaryKey: true,
-    deleteRequiresPrimaryKey: true,
+    insert: true,
+    updateRequiresPrimaryKey: false,
+    deleteRequiresPrimaryKey: false,
+    keylessRowPredicate: true,
     requiresTransactionalTableForExistingRows: false,
     transaction: true,
   });
+  assert.deepEqual(getDatabaseCapability("mysql").tableData, {
+    insert: true,
+    updateRequiresPrimaryKey: false,
+    deleteRequiresPrimaryKey: false,
+    keylessRowPredicate: true,
+    requiresTransactionalTableForExistingRows: false,
+    transaction: true,
+  });
+  assert.deepEqual(getDatabaseCapability("sqlite").tableData, {
+    insert: true,
+    updateRequiresPrimaryKey: false,
+    deleteRequiresPrimaryKey: false,
+    keylessRowPredicate: true,
+    requiresTransactionalTableForExistingRows: false,
+    transaction: true,
+  });
+});
+
+test("keeps conservative table editing defaults for unknown database types", () => {
   assert.deepEqual(getDatabaseCapability(undefined).tableData, {
     insert: false,
     updateRequiresPrimaryKey: true,
     deleteRequiresPrimaryKey: true,
+    keylessRowPredicate: false,
     requiresTransactionalTableForExistingRows: false,
     transaction: true,
   });

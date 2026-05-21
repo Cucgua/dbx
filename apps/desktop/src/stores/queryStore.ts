@@ -47,7 +47,7 @@ export const useQueryStore = defineStore("query", () => {
   const restored = loadSavedTabs();
   const tabs = ref<QueryTab[]>(restored.tabs);
   const activeTabId = ref<string | null>(restored.activeTabId);
-  const MAX_CACHED_RESULTS = 10;
+  const MAX_CACHED_RESULTS = 5;
 
   async function closeResultSession(tab: QueryTab | undefined, preserveSessionId?: string) {
     const sessionId = tab?.resultSessionId ?? tab?.result?.session_id;
@@ -713,11 +713,24 @@ export const useQueryStore = defineStore("query", () => {
       const toEvict = inactive.slice(0, inactive.length - MAX_CACHED_RESULTS);
       toEvict.forEach((t) => {
         t.result = undefined;
+        t.resultEvicted = true;
         t.queryAnalysis = undefined;
         t.querySourceColumns = undefined;
         t.queryEditabilityReason = undefined;
       });
     }
+  }
+
+  async function reloadEvictedTab(id: string) {
+    const tab = tabs.value.find((t) => t.id === id);
+    if (!tab || !tab.resultEvicted) return;
+    tab.resultEvicted = false;
+    const sql = tab.lastExecutedSql ?? tab.sql;
+    if (!sql?.trim()) return;
+    await executeTabSql(tab.id, sql, {
+      resultBaseSql: tab.resultBaseSql ?? sql,
+      resultSortedSql: tab.resultSortedSql,
+    });
   }
 
   return {
@@ -746,5 +759,6 @@ export const useQueryStore = defineStore("query", () => {
     explainTabSql,
     cancelTabExecution,
     cancelTabExplain,
+    reloadEvictedTab,
   };
 });

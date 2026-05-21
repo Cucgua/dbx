@@ -24,6 +24,7 @@ import type {
   AiCompletionRequest,
   AiStreamChunk,
   AiConversation,
+  AiModelInfo,
   DriverInstallProgress,
   JavaRuntimeConfig,
   UpdateInfo,
@@ -206,6 +207,14 @@ export async function setAgentJavaRuntimeConfig(config: JavaRuntimeConfig): Prom
 
 export async function invalidateAgentRegistryCache(): Promise<void> {
   await post("/api/agents/invalidate-registry-cache", {});
+}
+
+export async function importAgentsFromZip(_path: string): Promise<number> {
+  throw new Error("Offline ZIP import is only available in the desktop app");
+}
+
+export async function importAgentJar(_dbType: string, _path: string): Promise<void> {
+  throw new Error("Local JAR import is only available in the desktop app");
 }
 
 export async function reinstallJre(jreKey?: string): Promise<void> {
@@ -463,6 +472,10 @@ export async function aiTestConnection(config: AiConfig): Promise<string> {
   return post("/api/ai/test-connection", { config });
 }
 
+export async function aiListModels(config: AiConfig): Promise<AiModelInfo[]> {
+  return post("/api/ai/models", { config });
+}
+
 export async function saveAiConfig(config: AiConfig): Promise<void> {
   return post("/api/ai/config", { config });
 }
@@ -518,6 +531,10 @@ export async function listenSqlFileProgress(_handler: (progress: SqlFileProgress
 }
 
 export async function pendingOpenSqlFiles(): Promise<string[]> {
+  return [];
+}
+
+export async function pendingOpenConnectionLinks(): Promise<string[]> {
   return [];
 }
 

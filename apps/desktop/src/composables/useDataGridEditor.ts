@@ -1,4 +1,4 @@
-import { ref, computed, nextTick, watch, type ComputedRef, type Ref } from "vue";
+import { ref, computed, nextTick, watch, onBeforeUnmount, type ComputedRef, type Ref } from "vue";
 import * as api from "@/lib/api";
 import {
   buildDataGridRollbackStatements,
@@ -73,6 +73,7 @@ export interface UseDataGridEditorOptions {
   getRowItem: (rowId: number) => RowItem | undefined;
   pageSize: Ref<number>;
   currentPage: Ref<number>;
+  cacheKey?: ComputedRef<string | undefined>;
   emit: {
     (
       event: "reload",
@@ -85,6 +86,15 @@ export interface UseDataGridEditorOptions {
     ): void;
   };
 }
+
+interface PendingChangesSnapshot {
+  newRows: CellValue[][];
+  dirtyRows: Map<number, Map<number, CellValue>>;
+  deletedRows: Set<number>;
+  columnCount: number;
+}
+
+const pendingChangesCache = new Map<string, PendingChangesSnapshot>();
 
 export function useDataGridEditor(options: UseDataGridEditorOptions) {
   const connectionStore = useConnectionStore();
@@ -110,6 +120,7 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
     getRowItem,
     pageSize,
     currentPage,
+    cacheKey,
   } = options;
 
   const editingCell = ref<{ rowId: number; col: number } | null>(null);
@@ -118,6 +129,20 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
   const dirtyRows = ref<Map<number, Map<number, CellValue>>>(new Map());
   const newRows = ref<CellValue[][]>([]);
   const deletedRows = ref<Set<number>>(new Set());
+
+  // Restore cached pending changes from a previous instance (e.g. after result eviction + reload)
+  const key = cacheKey?.value;
+  if (key) {
+    const cached = pendingChangesCache.get(key);
+    if (cached && cached.columnCount === result.value.columns.length) {
+      newRows.value = cached.newRows;
+      dirtyRows.value = cached.dirtyRows;
+      deletedRows.value = cached.deletedRows;
+      pendingChangesCache.delete(key);
+    } else {
+      pendingChangesCache.delete(key);
+    }
+  }
 
   const dirtyRowCount = computed(() => dirtyRows.value.size);
   const newRowCount = computed(() => newRows.value.length);
@@ -136,6 +161,10 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
       supportsDataGridTransaction(databaseType.value) &&
       (!!customSave?.value || (!!connectionId.value && !!database.value && !!tableMeta.value)),
   );
+
+  if (hasPendingChanges.value && useTransaction.value) {
+    transactionActive.value = true;
+  }
 
   function enterTransaction() {
     transactionActive.value = true;
@@ -366,6 +395,7 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
     if (e.key === "Enter") {
       e.preventDefault();
       commitEdit();
+      nextTick(focusScrollerWithoutScrolling);
     } else if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -712,6 +742,21 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
       discardChanges();
     },
   );
+
+  // Save pending changes before the component is destroyed so they can be
+  // restored if a new DataGrid instance is created for the same tab
+  // (e.g. after result eviction + reload).
+  onBeforeUnmount(() => {
+    const k = cacheKey?.value;
+    if (k && hasPendingChanges.value) {
+      pendingChangesCache.set(k, {
+        newRows: [...newRows.value.map((r) => [...r])],
+        dirtyRows: new Map([...dirtyRows.value].map(([i, m]) => [i, new Map(m)])),
+        deletedRows: new Set(deletedRows.value),
+        columnCount: result.value.columns.length,
+      });
+    }
+  });
 
   return {
     editingCell,

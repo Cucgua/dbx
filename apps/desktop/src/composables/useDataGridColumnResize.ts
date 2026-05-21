@@ -12,28 +12,35 @@ const ROW_NUM_WIDTH = 48;
 
 export interface UseDataGridColumnResizeOptions {
   columns: ComputedRef<string[]>;
-  rows: ComputedRef<CellValue[][]>;
+  sourceRows: ComputedRef<CellValue[][]>;
+  columnIndexes: ComputedRef<number[]>;
   gridRef: Ref<HTMLDivElement | undefined>;
 }
 
 export function useDataGridColumnResize(options: UseDataGridColumnResizeOptions) {
-  const { columns, rows, gridRef } = options;
+  const { columns, sourceRows, columnIndexes, gridRef } = options;
 
   const columnWidths = ref<number[]>([]);
   const { width: gridWidth } = useElementSize(gridRef);
   let isResizing = false;
 
-  function sampleColumnValues(rowData: CellValue[][], colIdx: number): CellValue[] {
-    return rowData.slice(0, DATA_GRID_SAMPLE_ROWS).map((row) => row[colIdx] ?? null);
+  function sampleColumnValues(visibleColIdx: number): CellValue[] {
+    const actualColIdx = columnIndexes.value[visibleColIdx];
+    const rows = sourceRows.value;
+    const end = Math.min(rows.length, DATA_GRID_SAMPLE_ROWS);
+    const values: CellValue[] = [];
+    for (let i = 0; i < end; i++) {
+      values.push(rows[i][actualColIdx] ?? null);
+    }
+    return values;
   }
 
   function initColumnWidths() {
     if (columnWidths.value.length !== columns.value.length) {
-      const rowData = rows.value;
       columnWidths.value = columns.value.map((colName, colIdx) => {
         return calculateDataGridColumnWidth({
           columnName: colName,
-          sampleValues: sampleColumnValues(rowData, colIdx),
+          sampleValues: sampleColumnValues(colIdx),
         });
       });
     }
@@ -61,10 +68,9 @@ export function useDataGridColumnResize(options: UseDataGridColumnResizeOptions)
   function autoFitColumn(colIdx: number) {
     const colName = columns.value[colIdx];
     if (!colName) return;
-    const rowData = rows.value;
     columnWidths.value[colIdx] = calculateDataGridColumnWidth({
       columnName: colName,
-      sampleValues: sampleColumnValues(rowData, colIdx),
+      sampleValues: sampleColumnValues(colIdx),
     });
   }
 

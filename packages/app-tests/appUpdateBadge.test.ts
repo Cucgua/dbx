@@ -1,6 +1,16 @@
 import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import test from "node:test";
+import { shouldOpenUpdateDialog } from "../../apps/desktop/src/composables/useAppUpdater.ts";
+
+test("silent update checks do not auto-open the dialog when an update is available", () => {
+  assert.equal(
+    shouldOpenUpdateDialog({
+      silent: true,
+    }),
+    false,
+  );
+});
 
 test("toolbar update button can show a red update badge", () => {
   const source = readFileSync("apps/desktop/src/components/layout/AppToolbar.vue", "utf8");

@@ -52,6 +52,8 @@ export const uninstallAgent = forward("uninstallAgent");
 export const getAgentJavaRuntimeConfig = forward("getAgentJavaRuntimeConfig");
 export const setAgentJavaRuntimeConfig = forward("setAgentJavaRuntimeConfig");
 export const invalidateAgentRegistryCache = forward("invalidateAgentRegistryCache");
+export const importAgentsFromZip = forward("importAgentsFromZip");
+export const importAgentJar = forward("importAgentJar");
 export const reinstallJre = forward("reinstallJre");
 export const uninstallJre = forward("uninstallJre");
 export const listenAgentInstallProgress = forward("listenAgentInstallProgress");
@@ -90,6 +92,7 @@ export const aiComplete = forward("aiComplete");
 export const aiStream = forward("aiStream");
 export const aiCancelStream = forward("aiCancelStream");
 export const aiTestConnection = forward("aiTestConnection");
+export const aiListModels = forward("aiListModels");
 export const saveAiConfig = forward("saveAiConfig");
 export const loadAiConfig = forward("loadAiConfig");
 export const saveAiConversation = forward("saveAiConversation");
@@ -107,6 +110,7 @@ export const executeSqlFile = forward("executeSqlFile");
 export const cancelSqlFileExecution = forward("cancelSqlFileExecution");
 export const listenSqlFileProgress = forward("listenSqlFileProgress");
 export const pendingOpenSqlFiles = forward("pendingOpenSqlFiles");
+export const pendingOpenConnectionLinks = forward("pendingOpenConnectionLinks");
 export const readExternalSqlFile = forward("readExternalSqlFile");
 
 // Data Transfer
@@ -174,6 +178,7 @@ export type {
   AiMessage,
   AiCompletionRequest,
   AiStreamChunk,
+  AiModelInfo,
   AiChatMessage,
   AiConversation,
   AgentDriverInfo,

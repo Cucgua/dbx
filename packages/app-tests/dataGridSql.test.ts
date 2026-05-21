@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import {
+  buildDataGridCopyUpdateStatements,
   buildDataGridRollbackStatements,
   buildDataGridSaveStatements,
   dataGridSaveExecutionSchema,
@@ -38,6 +39,35 @@ test("builds SQL Server grid save statements with schema and bracket quoting", (
     "DELETE FROM [game].[player states] WHERE [role id] = 42;",
     "INSERT INTO [game].[player states] ([role id], [state], [updated at]) VALUES (43, N'new', N'2026-05-05');",
   ]);
+});
+
+test("builds copy-as-update statements using primary keys and non-primary-key columns", () => {
+  const statements = buildDataGridCopyUpdateStatements({
+    databaseType: "postgres",
+    tableMeta: {
+      schema: "public",
+      tableName: "users",
+      primaryKeys: ["id"],
+    },
+    columns: ["id", "name", "status"],
+    rows: [[1, "Ada", "active"]],
+  });
+
+  assert.deepEqual(statements, [`UPDATE "public"."users" SET "name" = 'Ada', "status" = 'active' WHERE "id" = 1;`]);
+});
+
+test("skips copy-as-update statements when primary keys are unavailable", () => {
+  const statements = buildDataGridCopyUpdateStatements({
+    databaseType: "postgres",
+    tableMeta: {
+      tableName: "users",
+      primaryKeys: [],
+    },
+    columns: ["id", "name"],
+    rows: [[1, "Ada"]],
+  });
+
+  assert.deepEqual(statements, []);
 });
 
 test("builds Access grid save statements with backtick identifiers", () => {
@@ -172,6 +202,50 @@ test("builds Hive grid save statements without primary keys using row predicates
   assert.deepEqual(statements, [
     "UPDATE `departments` SET `name` = 'Marketing' WHERE `id` = 10 AND `name` = 'Sales' AND `location` IS NULL;",
     "DELETE FROM `departments` WHERE `id` = 10 AND `name` = 'Sales' AND `location` IS NULL;",
+  ]);
+});
+
+test("builds PostgreSQL grid save statements without primary keys using row predicates", () => {
+  const statements = buildDataGridSaveStatements({
+    databaseType: "postgres",
+    tableMeta: {
+      schema: "public",
+      tableName: "visits",
+      primaryKeys: [],
+    },
+    columns: ["id", "title", "published_at"],
+    rows: [[63, "old title", null]],
+    dirtyRows: [[0, [[1, "new title"]]]],
+    deletedRows: [0],
+    newRows: [[64, "fresh", "2026-05-20 12:00:00"]],
+  });
+
+  assert.deepEqual(statements, [
+    `UPDATE "public"."visits" SET "title" = 'new title' WHERE "id" = 63 AND "title" = 'old title' AND "published_at" IS NULL;`,
+    `DELETE FROM "public"."visits" WHERE "id" = 63 AND "title" = 'old title' AND "published_at" IS NULL;`,
+    `INSERT INTO "public"."visits" ("id", "title", "published_at") VALUES (64, 'fresh', '2026-05-20 12:00:00');`,
+  ]);
+});
+
+test("builds Dameng grid save statements without primary keys using row predicates", () => {
+  const statements = buildDataGridSaveStatements({
+    databaseType: "dameng",
+    tableMeta: {
+      schema: "APP",
+      tableName: "VISITS",
+      primaryKeys: [],
+    },
+    columns: ["ID", "TITLE", "PUBLISHED_AT"],
+    rows: [[63, "old title", null]],
+    dirtyRows: [[0, [[1, "new title"]]]],
+    deletedRows: [0],
+    newRows: [[64, "fresh", "2026-05-20 12:00:00"]],
+  });
+
+  assert.deepEqual(statements, [
+    `UPDATE "APP"."VISITS" SET "TITLE" = 'new title' WHERE "ID" = 63 AND "TITLE" = 'old title' AND "PUBLISHED_AT" IS NULL;`,
+    `DELETE FROM "APP"."VISITS" WHERE "ID" = 63 AND "TITLE" = 'old title' AND "PUBLISHED_AT" IS NULL;`,
+    `INSERT INTO "APP"."VISITS" ("ID", "TITLE", "PUBLISHED_AT") VALUES (64, 'fresh', '2026-05-20 12:00:00');`,
   ]);
 });
 

@@ -45,39 +45,45 @@ test("uses tbname and timestamp as TDengine editable keys", () => {
   ]);
 });
 
-test("allows Hive table data editing even without declared primary keys", () => {
+test("allows updateable SQL table data editing even without declared primary keys", () => {
   assert.equal(isTableDataEditable("access", []), true);
   assert.equal(isTableDataEditable("sqlite", []), true);
   assert.equal(isTableDataEditable("duckdb", []), true);
+  assert.equal(isTableDataEditable("dameng", []), true);
   assert.equal(isTableDataEditable("hive", []), true);
   assert.equal(isTableDataEditable("trino", []), true);
   assert.equal(isTableDataEditable("informix", []), true);
   assert.equal(isTableDataEditable("tdengine", []), true);
-  assert.equal(isTableDataEditable("mysql", []), false);
+  assert.equal(isTableDataEditable("mysql", []), true);
+  assert.equal(isTableDataEditable("postgres", []), true);
   assert.equal(isTableDataEditable("postgres", ["id"]), true);
 });
 
-test("does not use transactional grid saves for Hive", () => {
+test("does not use transactional grid saves for non-transactional engines", () => {
   assert.equal(supportsDataGridTransaction("hive"), false);
   assert.equal(supportsDataGridTransaction("trino"), false);
   assert.equal(supportsDataGridTransaction("jdbc"), false);
-  assert.equal(supportsDataGridTransaction("yashandb"), false);
+  assert.equal(supportsDataGridTransaction("yashandb"), true);
   assert.equal(supportsDataGridTransaction("postgres"), true);
 });
 
 test("allows existing row edits according to database-specific key requirements", () => {
   assert.equal(canEditExistingTableRows("access", undefined, []), true);
   assert.equal(canEditExistingTableRows("access", undefined, ["ID"]), true);
+  assert.equal(canEditExistingTableRows("dameng", undefined, []), true);
+  assert.equal(canEditExistingTableRows("dameng", undefined, ["ID"]), true);
   assert.equal(canEditExistingTableRows("hive", true), true);
   assert.equal(canEditExistingTableRows("hive", false), false);
   assert.equal(canEditExistingTableRows("hive", undefined), false);
   assert.equal(canEditExistingTableRows("trino", undefined, []), false);
   assert.equal(canEditExistingTableRows("trino", undefined, ["id"]), true);
-  assert.equal(canEditExistingTableRows("sqlite", undefined, []), false);
+  assert.equal(canEditExistingTableRows("mysql", undefined, []), true);
+  assert.equal(canEditExistingTableRows("postgres", undefined, []), true);
+  assert.equal(canEditExistingTableRows("sqlite", undefined, []), true);
   assert.equal(canEditExistingTableRows("sqlite", undefined, ["id"]), true);
-  assert.equal(canEditExistingTableRows("duckdb", undefined, []), false);
+  assert.equal(canEditExistingTableRows("duckdb", undefined, []), true);
   assert.equal(canEditExistingTableRows("duckdb", undefined, ["id"]), true);
-  assert.equal(canEditExistingTableRows("informix", undefined, []), false);
+  assert.equal(canEditExistingTableRows("informix", undefined, []), true);
   assert.equal(canEditExistingTableRows("informix", undefined, ["id"]), true);
   assert.equal(canEditExistingTableRows("tdengine", undefined, ["ts"]), false);
   assert.equal(canEditExistingTableRows("tdengine", undefined, [DBX_TDENGINE_TBNAME_COLUMN, "ts"]), true);

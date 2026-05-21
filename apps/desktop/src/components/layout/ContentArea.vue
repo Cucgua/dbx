@@ -43,6 +43,7 @@ type DataGridHandle = {
   isColumnVisible: (columnIndex: number) => boolean;
   toggleColumnVisibility: (columnIndex: number) => void;
   showAllColumns: () => void;
+  invertColumnVisibility: () => void;
   showDdl: boolean;
   toggleDdl: () => void;
 };
@@ -90,6 +91,7 @@ const columnInfoColumns = ref<ColumnInfo[]>([]);
 const columnInfoLoading = ref(false);
 const columnInfoError = ref<string | undefined>(undefined);
 const dataGridRef = ref<DataGridHandle>();
+const queryEditorRef = ref<InstanceType<typeof QueryEditor>>();
 const columnVisibilitySearch = ref("");
 const columnVisibilityOptions = computed(
   () => dataGridRef.value?.filteredColumnVisibilityOptions(columnVisibilitySearch.value) ?? [],
@@ -208,7 +210,7 @@ function onHandleCloseColumnPanel() {
 function focusSearch(): boolean {
   if (props.activeTab.mode === "redis") return redisKeyBrowserRef.value?.focusSearch() ?? false;
   if (props.activeTab.mode === "objects") return objectBrowserRef.value?.focusSearch() ?? false;
-  if (props.activeTab.mode === "query" && props.activeOutputView !== "result") return false;
+  if (props.activeTab.mode === "query") return queryEditorRef.value?.openSearch() ?? false;
   return dataGridRef.value?.focusSearch() ?? false;
 }
 
@@ -229,6 +231,7 @@ defineExpose({ focusSearch, refreshData });
         <Pane :size="40" :min-size="15">
           <div class="h-full flex flex-col relative">
             <QueryEditor
+              ref="queryEditorRef"
               class="flex-1"
               :model-value="activeTab.sql"
               :connection-id="activeTab.connectionId"
@@ -334,6 +337,7 @@ defineExpose({ focusSearch, refreshData });
               <DataGrid
                 v-if="activeTab.result"
                 :key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`"
+                :cache-key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`"
                 class="flex-1 min-h-0"
                 :result="activeTab.result"
                 :sql="activeTab.lastExecutedSql || activeTab.sql"
@@ -497,15 +501,26 @@ defineExpose({ focusSearch, refreshData });
               </div>
               <div class="flex items-center justify-between gap-2 border-t bg-muted/30 px-3 py-2">
                 <span class="text-[11px] text-muted-foreground">{{ t("grid.columnVisibilityHint") }}</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 px-2 text-xs"
-                  :disabled="(dataGridRef?.hiddenColumnCount ?? 0) === 0"
-                  @click="dataGridRef?.showAllColumns()"
-                >
-                  {{ t("grid.showAllColumns") }}
-                </Button>
+                <div class="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 px-2 text-xs"
+                    :disabled="(dataGridRef?.displayableColumnCount ?? 0) <= 1"
+                    @click="dataGridRef?.invertColumnVisibility()"
+                  >
+                    {{ t("grid.invertColumnVisibility") }}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 px-2 text-xs"
+                    :disabled="(dataGridRef?.hiddenColumnCount ?? 0) === 0"
+                    @click="dataGridRef?.showAllColumns()"
+                  >
+                    {{ t("grid.showAllColumns") }}
+                  </Button>
+                </div>
               </div>
             </PopoverContent>
           </Popover>
@@ -525,6 +540,7 @@ defineExpose({ focusSearch, refreshData });
           ref="dataGridRef"
           class="flex-1 min-h-0"
           :key="activeTab.id"
+          :cache-key="activeTab.id"
           :result="activeTab.result"
           :sql="activeTab.sql"
           :loading="activeTab.isExecuting"

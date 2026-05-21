@@ -1,7 +1,7 @@
 import type { TreeNode } from "@/types/database";
 import { matchSidebarLabel } from "@/lib/sidebarSearch";
 
-const preserveMatchedSubtreeTypes = new Set(["table", "view"]);
+const preserveMatchedSubtreeTypes = new Set(["database", "schema", "table", "view"]);
 
 const normalizedLabelCache = new WeakMap<TreeNode, { label: string; normalized: string }>();
 

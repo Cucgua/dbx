@@ -12,12 +12,25 @@ test("Redis browser exposes key/value search modes", () => {
   assert.match(source, /redis\.searchByValue/);
 });
 
+test("Redis key search input starts blank while scanning all keys internally", () => {
+  const source = readFileSync("apps/desktop/src/components/redis/RedisKeyBrowser.vue", "utf8");
+
+  assert.match(source, /searchPattern\s*=\s*ref\(""\)/);
+  assert.match(source, /searchPattern\.value\.trim\(\) \|\| "\*"/);
+  assert.doesNotMatch(source, /searchPattern\.value = "\*"/);
+});
+
 test("Redis command input is visually distinct from search", () => {
   const source = readFileSync("apps/desktop/src/components/redis/RedisKeyBrowser.vue", "utf8");
 
   assert.match(source, /data-redis-command-input/);
-  assert.match(source, /redis\.commandPrefix/);
-  assert.match(source, /redis\.commandHint/);
+  assert.match(source, /t\("redis\.commandWelcome"\)/);
+  assert.match(source, /{{ commandPrompt }}/);
+  assert.match(source, /ref="commandTerminalRef"/);
+  assert.match(source, /@submit\.prevent="executeCommand"/);
+  assert.match(source, /@keydown\.enter\.prevent="executeCommand"/);
+  assert.match(source, /caret-\[#d7ba7d\]/);
+  assert.doesNotMatch(source, /redis\.commandPrefix/);
 });
 
 test("Redis value search streams incremental scan pages from the browser", () => {
