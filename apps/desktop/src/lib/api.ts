@@ -87,6 +87,7 @@ export const executeInTransaction = forward("executeInTransaction");
 export const cancelQuery = forward("cancelQuery");
 export const closeQuerySession = forward("closeQuerySession");
 export const analyzeSqlReferences = forward("analyzeSqlReferences");
+export const analyzeEditableQueryEditability = forward("analyzeEditableQueryEditability");
 
 // AI
 export const aiComplete = forward("aiComplete");

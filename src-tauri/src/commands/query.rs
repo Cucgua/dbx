@@ -154,3 +154,8 @@ pub async fn analyze_sql_references(
 ) -> Result<dbx_core::sql_analysis::SqlReferenceAnalysis, String> {
     dbx_core::sql_analysis::analyze_sql_references(&sql, dialect.as_deref())
 }
+
+#[tauri::command]
+pub fn analyze_editable_query_editability(sql: String) -> Result<dbx_core::sql_editability::QueryEditability, String> {
+    Ok(dbx_core::sql_editability::analyze_editable_query_editability(&sql))
+}

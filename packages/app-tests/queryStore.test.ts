@@ -75,6 +75,12 @@ test("evicting cached tab results releases multi-result payloads and sessions", 
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (url === "/api/query/analyze-editability") {
+      return new Response(JSON.stringify({ editable: false, reason: "complex-source" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     return new Response("unexpected request", { status: 500 });
   }) as typeof fetch;
 

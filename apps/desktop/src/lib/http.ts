@@ -49,6 +49,7 @@ import type {
   ExportProgress,
   XlsxCellValue,
 } from "./tauri";
+import type { QueryEditability } from "@/lib/sqlAnalysis";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -402,6 +403,10 @@ export async function cancelQuery(executionId: string): Promise<boolean> {
 
 export async function analyzeSqlReferences(sql: string, dialect?: string): Promise<SqlReferenceAnalysis> {
   return post("/api/query/analyze-sql-references", { sql, dialect });
+}
+
+export async function analyzeEditableQueryEditability(sql: string): Promise<QueryEditability> {
+  return post("/api/query/analyze-editability", { sql });
 }
 
 // ---------------------------------------------------------------------------

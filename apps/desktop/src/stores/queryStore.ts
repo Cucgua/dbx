@@ -6,12 +6,7 @@ import { orderPinnedFirst } from "@/lib/pinnedItems";
 import { canCancelQueryExecution } from "@/lib/queryExecutionState";
 import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
-import {
-  allEditableColumnsWriteable,
-  allPrimaryKeysPresent,
-  analyzeEditableQueryEditability,
-  sourceColumnsForResult,
-} from "@/lib/sqlAnalysis";
+import { allEditableColumnsWriteable, allPrimaryKeysPresent, sourceColumnsForResult } from "@/lib/sqlAnalysis";
 import { restoreOpenTabsState, serializeOpenTabs } from "@/lib/openTabsPersistence";
 import {
   mongoCountToQueryResult,
@@ -373,7 +368,7 @@ export const useQueryStore = defineStore("query", () => {
       return;
     }
 
-    const editability = analyzeEditableQueryEditability(sql);
+    const editability = await api.analyzeEditableQueryEditability(sql);
     if (!editability.editable) {
       tab.queryAnalysis = undefined;
       tab.querySourceColumns = undefined;

@@ -19,6 +19,7 @@ pub mod saved_sql;
 pub mod schema;
 pub mod sql;
 pub mod sql_analysis;
+pub mod sql_editability;
 pub mod storage;
 pub mod table_import;
 pub mod transfer;

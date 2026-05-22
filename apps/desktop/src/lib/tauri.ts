@@ -21,6 +21,7 @@ import type {
   SavedSqlLibrary,
 } from "@/types/database";
 import type { AiConfig } from "@/stores/settingsStore";
+import type { QueryEditability } from "@/lib/sqlAnalysis";
 
 export interface AgentDriverInfo {
   db_type: string;
@@ -310,6 +311,10 @@ export async function executeInTransaction(
 
 export async function analyzeSqlReferences(sql: string, dialect?: string): Promise<SqlReferenceAnalysis> {
   return invoke("analyze_sql_references", { sql, dialect });
+}
+
+export async function analyzeEditableQueryEditability(sql: string): Promise<QueryEditability> {
+  return invoke("analyze_editable_query_editability", { sql });
 }
 
 export async function listIndexes(

@@ -51,6 +51,12 @@ pub struct AnalyzeSqlReferencesRequest {
     pub dialect: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeEditableQueryRequest {
+    pub sql: String,
+}
+
 pub async fn execute_query(
     State(state): State<Arc<WebState>>,
     Json(req): Json<ExecuteQueryRequest>,
@@ -186,4 +192,10 @@ pub async fn analyze_sql_references(
     Json(req): Json<AnalyzeSqlReferencesRequest>,
 ) -> Result<Json<dbx_core::sql_analysis::SqlReferenceAnalysis>, AppError> {
     dbx_core::sql_analysis::analyze_sql_references(&req.sql, req.dialect.as_deref()).map(Json).map_err(AppError)
+}
+
+pub async fn analyze_editable_query_editability(
+    Json(req): Json<AnalyzeEditableQueryRequest>,
+) -> Json<dbx_core::sql_editability::QueryEditability> {
+    Json(dbx_core::sql_editability::analyze_editable_query_editability(&req.sql))
 }
