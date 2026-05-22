@@ -252,6 +252,32 @@ pub fn truncate_result_with_max_rows(mut result: db::QueryResult, max_rows: Opti
     result
 }
 
+fn normalize_query_result_for_js(mut result: db::QueryResult) -> db::QueryResult {
+    result.rows = result.rows.into_iter().map(|row| row.into_iter().map(json_value_for_js).collect()).collect();
+    result
+}
+
+fn json_value_for_js(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Number(number) => {
+            if let Some(value) = number.as_i64() {
+                db::safe_i64_to_json(value)
+            } else if let Some(value) = number.as_u64() {
+                db::safe_u64_to_json(value)
+            } else {
+                serde_json::Value::Number(number)
+            }
+        }
+        serde_json::Value::Array(values) => {
+            serde_json::Value::Array(values.into_iter().map(json_value_for_js).collect())
+        }
+        serde_json::Value::Object(entries) => {
+            serde_json::Value::Object(entries.into_iter().map(|(key, value)| (key, json_value_for_js(value))).collect())
+        }
+        value => value,
+    }
+}
+
 pub fn agent_execute_query_params(
     sql: &str,
     schema: Option<&str>,
@@ -485,7 +511,7 @@ pub async fn do_execute(
                 }
             })
             .await
-            .map(|result| truncate_result_with_max_rows(result, max_rows))
+            .map(|result| normalize_query_result_for_js(truncate_result_with_max_rows(result, max_rows)))
         }
         PoolKind::ExternalTabular(ext_pool) => {
             if !starts_with_executable_sql_keyword(sql, &["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN", "PRAGMA"]) {
@@ -517,7 +543,7 @@ pub async fn do_execute(
                 session.invoke::<db::QueryResult>("executeQuery", params).await
             })
             .await
-            .map(|result| truncate_result_with_max_rows(result, max_rows))
+            .map(|result| normalize_query_result_for_js(truncate_result_with_max_rows(result, max_rows)))
         }
     }
 }
@@ -1339,5 +1365,26 @@ mod tests {
         let params = agent_close_query_session_params("session-1");
 
         assert_eq!(params["sessionId"], "session-1");
+    }
+
+    #[test]
+    fn query_results_convert_unsafe_json_integers_to_strings_for_js() {
+        let result = db::QueryResult {
+            columns: vec!["id".to_string(), "nested".to_string()],
+            rows: vec![vec![
+                serde_json::json!(2_041_797_190_226_354_178_i64),
+                serde_json::json!([1, 2_041_797_190_226_354_178_i64]),
+            ]],
+            affected_rows: 0,
+            execution_time_ms: 0,
+            truncated: false,
+            session_id: None,
+            has_more: false,
+        };
+
+        let normalized = normalize_query_result_for_js(result);
+
+        assert_eq!(normalized.rows[0][0], serde_json::json!("2041797190226354178"));
+        assert_eq!(normalized.rows[0][1], serde_json::json!([1, "2041797190226354178"]));
     }
 }
