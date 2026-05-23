@@ -50,3 +50,10 @@ test("AI settings can browse provider model names while keeping manual input", (
   assert.match(source, /v-model="aiEditModel"/);
   assert.match(source, /aiRefreshModels/);
 });
+
+test("settings switches bind through the Switch modelValue contract", () => {
+  assert.doesNotMatch(source, /v-model:checked="editWordWrap"/);
+  assert.doesNotMatch(source, /v-model:checked="editMcpHttpEnabled"/);
+  assert.match(source, /<Switch id="editor-word-wrap" v-model="editWordWrap"/);
+  assert.match(source, /<Switch id="mcp-http-enabled" v-model="editMcpHttpEnabled"/);
+});

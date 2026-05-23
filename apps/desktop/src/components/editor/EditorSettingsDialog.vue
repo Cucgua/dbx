@@ -808,7 +808,7 @@ watch(
                   <Label for="editor-word-wrap">{{ t("settings.wordWrap") }}</Label>
                   <p class="text-xs text-muted-foreground">{{ t("settings.wordWrapDescription") }}</p>
                 </div>
-                <Switch id="editor-word-wrap" v-model:checked="editWordWrap" class="mt-0.5" />
+                <Switch id="editor-word-wrap" v-model="editWordWrap" class="mt-0.5" />
               </div>
             </div>
 
@@ -1277,7 +1277,7 @@ watch(
                   <Label class="text-base">{{ t("settings.mcpTitle") }}</Label>
                   <p class="text-sm text-muted-foreground">{{ t("settings.mcpDescription") }}</p>
                 </div>
-                <Switch id="mcp-http-enabled" v-model:checked="editMcpHttpEnabled" class="mt-0.5" />
+                <Switch id="mcp-http-enabled" v-model="editMcpHttpEnabled" class="mt-0.5" />
               </div>
 
               <div class="grid gap-4 md:grid-cols-2">

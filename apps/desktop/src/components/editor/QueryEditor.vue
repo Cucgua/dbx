@@ -95,6 +95,7 @@ let wordWrapComp: import("@codemirror/state").Compartment | null = null;
 let readOnlyComp: import("@codemirror/state").Compartment | null = null;
 let runKeymapComp: import("@codemirror/state").Compartment | null = null;
 let diagnosticComp: import("@codemirror/state").Compartment | null = null;
+let editorPrec: typeof import("@codemirror/state").Prec | null = null;
 let buildSqlDiagnosticExtension: (() => import("@codemirror/state").Extension) | null = null;
 let buildSqlSignatureExtension: (() => import("@codemirror/state").Extension) | null = null;
 let codeMirrorSnippetCompletion: typeof import("@codemirror/autocomplete").snippetCompletion;
@@ -208,6 +209,10 @@ function runKeymapExtension(codeMirrorKeymap: (typeof import("@codemirror/view")
         emit("save");
         return true;
       },
+    },
+    {
+      key: shortcutToCodeMirrorKey(shortcuts.focusSearch),
+      run: () => openSearch(),
     },
   ]);
 }
@@ -601,6 +606,7 @@ onMounted(async () => {
     import("@codemirror/language"),
   ]);
   editorViewModule = { EditorView, keymap, rectangularSelection } as typeof import("@codemirror/view");
+  editorPrec = Prec;
   codeMirrorSnippetCompletion = snippetCompletion;
   fontThemeComp = new Compartment();
   codeMirrorTheme = new Compartment();
@@ -689,7 +695,7 @@ onMounted(async () => {
       buildSqlSignatureExtension(),
       diagnosticComp.of(buildSqlDiagnosticExtension()),
       Prec.highest(keymap.of([...closeBracketsKeymap, indentWithTab])),
-      runKeymapComp.of(runKeymapExtension(keymap)),
+      runKeymapComp.of(Prec.highest(runKeymapExtension(keymap))),
       wordWrapComp.of(props.forceWordWrap || ss.wordWrap ? EditorView.lineWrapping : []),
       readOnlyComp.of([EditorState.readOnly.of(!!props.readOnly), EditorView.editable.of(!props.readOnly)]),
       rectangularSelection({ eventFilter: (e: MouseEvent) => e.altKey || e.button === 1 }),
@@ -930,7 +936,15 @@ watch(
 watch(
   () => settingsStore.editorSettings,
   async (ss) => {
-    if (!view.value || !codeMirrorTheme || !fontThemeComp || !wordWrapComp || !runKeymapComp || !editorViewModule) {
+    if (
+      !view.value ||
+      !codeMirrorTheme ||
+      !fontThemeComp ||
+      !wordWrapComp ||
+      !runKeymapComp ||
+      !editorViewModule ||
+      !editorPrec
+    ) {
       return;
     }
     if (!isGestureZooming.value && !zoomCommitScheduler.hasPendingCommit() && liveFontSize.value !== ss.fontSize) {
@@ -942,7 +956,7 @@ watch(
       effects: [
         codeMirrorTheme.reconfigure(themeExt),
         wordWrapComp.reconfigure(props.forceWordWrap || ss.wordWrap ? editorViewModule.EditorView.lineWrapping : []),
-        runKeymapComp.reconfigure(runKeymapExtension(editorViewModule.keymap)),
+        runKeymapComp.reconfigure(editorPrec.highest(runKeymapExtension(editorViewModule.keymap))),
       ],
     });
   },
