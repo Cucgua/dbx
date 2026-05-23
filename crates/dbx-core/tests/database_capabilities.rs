@@ -92,6 +92,7 @@ fn classifies_agent_database_types() {
 fn identifies_single_connection_pool_types() {
     assert!(is_single_connection_pool(&DatabaseType::Sqlite));
     assert!(is_single_connection_pool(&DatabaseType::DuckDb));
+    assert!(is_single_connection_pool(&DatabaseType::MongoDb));
     assert!(is_single_connection_pool(&DatabaseType::Oracle));
     assert!(is_single_connection_pool(&DatabaseType::Dameng));
     assert!(is_single_connection_pool(&DatabaseType::Access));

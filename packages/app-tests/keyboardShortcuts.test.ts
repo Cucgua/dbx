@@ -6,9 +6,13 @@ import {
   isCloseTabShortcut,
   isExecuteSqlShortcut,
   isFocusSearchShortcut,
+  isNewQueryShortcut,
   isObjectSourceSaveShortcutTarget,
   isRefreshDataShortcut,
   isSaveShortcut,
+  isCopyCurrentRowShortcut,
+  isDeleteCurrentRowShortcut,
+  isToggleTransposeShortcut,
 } from "../../apps/desktop/src/lib/keyboardShortcuts.ts";
 import { shortcutToCodeMirrorKey } from "../../apps/desktop/src/lib/shortcutRegistry.ts";
 
@@ -44,6 +48,18 @@ test("matches Ctrl+Enter for SQL execution", () => {
   assert.equal(isExecuteSqlShortcut({ key: "Enter", ctrlKey: true }), true);
 });
 
+test("matches Cmd+T for opening a new query", () => {
+  assert.equal(isNewQueryShortcut({ key: "t", metaKey: true }), true);
+});
+
+test("matches custom shortcut settings for opening a new query", () => {
+  assert.equal(isNewQueryShortcut({ key: "t", metaKey: true }, { newQuery: "Shift+Mod+N" } as any), false);
+  assert.equal(
+    isNewQueryShortcut({ key: "n", ctrlKey: true, shiftKey: true } as any, { newQuery: "Shift+Mod+N" } as any),
+    true,
+  );
+});
+
 test("ignores Enter without modifier", () => {
   assert.equal(isExecuteSqlShortcut({ key: "Enter" }), false);
 });
@@ -72,6 +88,12 @@ test("matches F5 for refreshing data", () => {
   assert.equal(isRefreshDataShortcut({ key: "F5" }), true);
 });
 
+test("matches configurable shortcut for toggling transpose view", () => {
+  assert.equal(isToggleTransposeShortcut({ key: "Tab" }), true);
+  assert.equal(isToggleTransposeShortcut({ key: "Tab" }, { toggleTranspose: "Alt+T" } as any), false);
+  assert.equal(isToggleTransposeShortcut({ key: "t", altKey: true }, { toggleTranspose: "Alt+T" } as any), true);
+});
+
 test("matches custom shortcut settings for refreshing data", () => {
   assert.equal(isRefreshDataShortcut({ key: "F5" }, { refreshData: "Shift+Mod+R" } as any), false);
   assert.equal(
@@ -90,6 +112,14 @@ test("ignores Alt+F for focusing search", () => {
 
 test("matches Cmd+S for saving", () => {
   assert.equal(isSaveShortcut({ key: "s", metaKey: true }), true);
+});
+
+test("matches Mod+D for copying current row", () => {
+  assert.equal(isCopyCurrentRowShortcut({ key: "d", metaKey: true }), true);
+});
+
+test("matches Delete for deleting current row", () => {
+  assert.equal(isDeleteCurrentRowShortcut({ key: "Delete" }), true);
 });
 
 test("matches Ctrl+S for saving", () => {

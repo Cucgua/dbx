@@ -15,14 +15,8 @@ function getDbType(path: string): "sqlite" | "duckdb" | null {
   return null;
 }
 
-function getDataFileQuery(path: string): string | null {
-  const lower = path.toLowerCase();
-  const escaped = path.replace(/'/g, "''");
-  if (lower.endsWith(".parquet")) return `SELECT * FROM read_parquet('${escaped}') LIMIT 1000`;
-  if (lower.endsWith(".csv")) return `SELECT * FROM read_csv('${escaped}') LIMIT 1000`;
-  if (lower.endsWith(".tsv")) return `SELECT * FROM read_csv('${escaped}', delim='\\t') LIMIT 1000`;
-  if (lower.endsWith(".json")) return `SELECT * FROM read_json('${escaped}') LIMIT 1000`;
-  return null;
+function getDataFileQuery(path: string): Promise<string | undefined> {
+  return api.buildDroppedFilePreviewSql({ path });
 }
 
 export function useFileDrop() {
@@ -39,7 +33,7 @@ export function useFileDrop() {
       for (const path of event.payload.paths) {
         const name = path.split("/").pop()?.split("\\").pop() || path;
 
-        const dataQuery = getDataFileQuery(path);
+        const dataQuery = await getDataFileQuery(path);
         if (dataQuery) {
           const config: ConnectionConfig = {
             id: uuid(),

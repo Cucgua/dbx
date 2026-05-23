@@ -33,7 +33,7 @@ async function openTableTarget(target: NavigationTarget) {
     if (config.db_type === "neo4j") {
       const columns = await api.getColumns(target.connectionId, target.database, querySchema, target.tableName);
       const primaryKeys = editablePrimaryKeys(config.db_type, columns);
-      const sql = buildTableSelectSql({
+      const sql = await buildTableSelectSql({
         databaseType: config.db_type,
         schema: target.schema,
         tableName: target.tableName,
@@ -52,7 +52,7 @@ async function openTableTarget(target: NavigationTarget) {
       await queryStore.executeTabSql(tabId, sql);
       return;
     }
-    const sql = buildTableSelectSql({
+    const sql = await buildTableSelectSql({
       databaseType: config.db_type,
       schema: target.schema,
       tableName: target.tableName,
@@ -80,7 +80,7 @@ async function openTableTarget(target: NavigationTarget) {
         primaryKeys,
       });
       if (useRowId || config.db_type === "tdengine") {
-        const newSql = buildTableSelectSql({
+        const newSql = await buildTableSelectSql({
           databaseType: config.db_type,
           schema: target.schema,
           tableName: target.tableName,

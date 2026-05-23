@@ -1,26 +1,31 @@
 <script setup lang="ts">
 import { computed, ref, onBeforeUnmount, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { Copy, Eye, Trash2, Save, RefreshCw, Plus, Loader2, Pencil } from "lucide-vue-next";
+import { DynamicScroller, DynamicScrollerItem, RecycleScroller } from "vue-virtual-scroller";
+import { Braces, Copy, Eye, FileText, Trash2, Save, RefreshCw, Plus, Loader2, Pencil, WrapText } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
+import RedisJsonTree from "./RedisJsonTree.vue";
 import * as api from "@/lib/api";
 import type { RedisKeyInfo, RedisValue } from "@/lib/api";
 import { useToast } from "@/composables/useToast";
+import { useTheme } from "@/composables/useTheme";
+import { createRedisShikiJsonHighlighter, type RedisJsonHighlighter } from "@/lib/redisJsonHighlighter";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   canEditRedisMemberDetail,
   clampRedisMemberDetailSheetWidth,
   formatRedisMemberDetail,
-  formatRedisStringValue,
   getRedisMemberSelectionKey,
-  highlightRedisJsonDetail,
 } from "@/lib/redisValuePresentation";
 
 const { t } = useI18n();
 const { toast } = useToast();
+const { isDark } = useTheme();
 
 const props = defineProps<{
   connectionId: string;
@@ -55,13 +60,33 @@ const savingMember = ref(false);
 const memberEditValue = ref("");
 const memberDetailSheetWidth = ref(420);
 const isResizingMemberSheet = ref(false);
+const hashTableRef = ref<HTMLElement | null>(null);
+const hashFieldWidth = ref(280);
+const isResizingHashColumns = ref(false);
+type RedisValueView = "json" | "raw";
+const REDIS_JSON_WRAP_STORAGE_KEY = "dbx-redis-json-word-wrap";
+const stringValueView = ref<RedisValueView>("raw");
+const memberValueView = ref<RedisValueView>("raw");
+const redisJsonWordWrap = ref(readRedisJsonWordWrap());
+const redisJsonHighlighter = ref<RedisJsonHighlighter>();
 const selectedMemberDetail = computed(() => formatRedisMemberDetail(selectedMemberRaw.value));
-const selectedMemberJsonHtml = computed(() =>
-  selectedMemberDetail.value.format === "json" ? highlightRedisJsonDetail(selectedMemberDetail.value.text) : "",
+const selectedMemberJsonDetail = computed(() => selectedMemberDetail.value.json ?? null);
+const stringValueDetail = computed(() =>
+  data.value?.key_type === "string" ? formatRedisMemberDetail(data.value.value) : null,
 );
+const stringJsonDetail = computed(() => stringValueDetail.value?.json ?? null);
+const redisJsonAppearance = computed(() => (isDark.value ? "dark" : "light"));
+const memberRawJsonHtml = computed(() =>
+  selectedMemberJsonDetail.value ? highlightRedisJson(selectedMemberJsonDetail.value.rawText) : "",
+);
+const hashGridStyle = computed(() => ({
+  gridTemplateColumns: `${hashFieldWidth.value}px minmax(12rem, 1fr) 84px`,
+}));
 const selectedMemberCanEdit = computed(
   () => selectedMemberContext.value != null && canEditRedisMemberDetail(selectedMemberContext.value.kind),
 );
+const REDIS_COLLECTION_ROW_HEIGHT = 32;
+const REDIS_STREAM_MIN_ROW_HEIGHT = 96;
 
 type PendingDelete =
   | { kind: "key" }
@@ -74,6 +99,8 @@ const pendingDelete = ref<PendingDelete | null>(null);
 
 let memberSheetResizeStartX = 0;
 let memberSheetResizeStartWidth = 0;
+let hashResizeStartX = 0;
+let hashResizeStartWidth = 0;
 
 type RedisMemberContext =
   | { kind: "list"; index: number }
@@ -81,6 +108,76 @@ type RedisMemberContext =
   | { kind: "hash"; field: string }
   | { kind: "zset"; member: string; score: number }
   | { kind: "stream"; field: string };
+
+type RedisCollectionRow = {
+  id: string;
+  index: number;
+  value: any;
+};
+
+type RedisStreamRow = {
+  id: string;
+  index: number;
+  entry: {
+    id?: string | number;
+    fields?: Record<string, unknown>;
+  };
+};
+
+const collectionRows = computed<RedisCollectionRow[]>(() =>
+  collectionItems.value.map((value, index) => ({
+    id: `${index}`,
+    index,
+    value,
+  })),
+);
+
+const streamRows = computed<RedisStreamRow[]>(() => {
+  if (!data.value || data.value.key_type !== "stream" || !Array.isArray(data.value.value)) return [];
+  return data.value.value.map((entry, index) => ({
+    id: `${index}:${String(entry?.id ?? "")}`,
+    index,
+    entry,
+  }));
+});
+
+function streamFields(entry: RedisStreamRow["entry"]): [string, unknown][] {
+  return Object.entries(entry.fields ?? {});
+}
+
+function streamFieldCount(row: RedisStreamRow): number {
+  return streamFields(row.entry).length;
+}
+
+function readRedisJsonWordWrap(): boolean {
+  try {
+    return localStorage.getItem(REDIS_JSON_WRAP_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function setRedisJsonWordWrap(value: boolean) {
+  redisJsonWordWrap.value = value;
+  try {
+    localStorage.setItem(REDIS_JSON_WRAP_STORAGE_KEY, value ? "true" : "false");
+  } catch {
+    // Ignore storage failures; the toggle still works for the current session.
+  }
+}
+
+function rawRedisValueText(value: unknown): string {
+  if (typeof value === "string") return value;
+  return String(value ?? "");
+}
+
+function highlightRedisJson(json: string): string {
+  return redisJsonHighlighter.value?.(json, redisJsonAppearance.value) ?? escapeHtml(json);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 const deleteDetails = computed(() => {
   const pending = pendingDelete.value;
@@ -119,7 +216,9 @@ async function load(options: { selectDefaultMember?: boolean } = {}) {
     data.value = await api.redisGetValue(props.connectionId, props.db, props.keyRaw);
     scanCursor.value = data.value.scan_cursor ?? undefined;
     if (data.value.key_type === "string") {
-      editValue.value = formatRedisStringValue(data.value.value);
+      const detail = formatRedisMemberDetail(data.value.value);
+      editValue.value = detail.rawText;
+      stringValueView.value = detail.format === "json" ? "json" : "raw";
       clearSelectedMember();
     } else if (["list", "set", "zset", "hash"].includes(data.value.key_type)) {
       collectionItems.value = Array.isArray(data.value.value) ? [...data.value.value] : [];
@@ -177,29 +276,39 @@ function requestDeleteKey() {
   showDeleteConfirm.value = true;
 }
 
-function copyValue() {
+async function copyValue() {
   if (!data.value) return;
   const text = typeof data.value.value === "string" ? data.value.value : JSON.stringify(data.value.value, null, 2);
-  navigator.clipboard.writeText(text);
-  toast(t("redis.copied"), 2000);
+  try {
+    await copyToClipboard(text);
+    toast(t("redis.copied"), 2000);
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
-function copyText(text: string) {
-  navigator.clipboard.writeText(text);
-  toast(t("redis.copied"), 2000);
+async function copyText(text: string) {
+  try {
+    await copyToClipboard(text);
+    toast(t("redis.copied"), 2000);
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 function copyMember(value: unknown) {
-  copyText(formatRedisMemberDetail(value).text);
+  void copyText(formatRedisMemberDetail(value).text);
 }
 
 function selectMember(title: string, value: unknown, context: RedisMemberContext) {
+  const detail = formatRedisMemberDetail(value);
   selectedMemberTitle.value = title;
   selectedMemberRaw.value = value;
   selectedMemberKey.value = getRedisMemberSelectionKey(title, value);
   selectedMemberContext.value = context;
   isEditingMember.value = false;
-  memberEditValue.value = formatRedisMemberDetail(value).text;
+  memberEditValue.value = detail.rawText;
+  memberValueView.value = detail.format === "json" ? "json" : "raw";
 }
 
 function clearSelectedMember() {
@@ -250,6 +359,33 @@ function startResizeMemberSheet(event: PointerEvent) {
   memberSheetResizeStartWidth = memberDetailSheetWidth.value;
   window.addEventListener("pointermove", resizeMemberSheet);
   window.addEventListener("pointerup", stopResizeMemberSheet);
+}
+
+function clampHashFieldWidth(width: number) {
+  const containerWidth = hashTableRef.value?.clientWidth ?? 900;
+  const min = 120;
+  const max = Math.max(min, containerWidth - 220);
+  return Math.min(max, Math.max(min, width));
+}
+
+function stopResizeHashColumns() {
+  isResizingHashColumns.value = false;
+  window.removeEventListener("pointermove", resizeHashColumns);
+  window.removeEventListener("pointerup", stopResizeHashColumns);
+}
+
+function resizeHashColumns(event: PointerEvent) {
+  if (!isResizingHashColumns.value) return;
+  const delta = event.clientX - hashResizeStartX;
+  hashFieldWidth.value = clampHashFieldWidth(hashResizeStartWidth + delta);
+}
+
+function startResizeHashColumns(event: PointerEvent) {
+  isResizingHashColumns.value = true;
+  hashResizeStartX = event.clientX;
+  hashResizeStartWidth = hashFieldWidth.value;
+  window.addEventListener("pointermove", resizeHashColumns);
+  window.addEventListener("pointerup", stopResizeHashColumns);
 }
 
 function startEditMember() {
@@ -444,12 +580,26 @@ async function confirmDelete() {
 }
 
 function formatValue(val: any): string {
-  if (typeof val === "string") return formatRedisStringValue(val);
+  if (typeof val === "string") return formatRedisMemberDetail(val).text;
   return JSON.stringify(val, null, 2);
 }
 
-onMounted(load);
-onBeforeUnmount(stopResizeMemberSheet);
+onMounted(() => {
+  void load();
+  void createRedisShikiJsonHighlighter({
+    appearance: () => redisJsonAppearance.value,
+  })
+    .then((highlight) => {
+      redisJsonHighlighter.value = highlight;
+    })
+    .catch(() => {
+      redisJsonHighlighter.value = undefined;
+    });
+});
+onBeforeUnmount(() => {
+  stopResizeMemberSheet();
+  stopResizeHashColumns();
+});
 </script>
 
 <template>
@@ -511,9 +661,55 @@ onBeforeUnmount(stopResizeMemberSheet);
 
       <!-- String -->
       <div v-if="data.key_type === 'string'" class="flex-1 flex flex-col overflow-hidden">
+        <div v-if="stringJsonDetail" class="flex h-9 items-center gap-2 border-b px-4 text-xs shrink-0">
+          <div class="flex overflow-hidden rounded-md border bg-muted/20 p-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-6 rounded-[5px] px-2 text-xs"
+              :class="{ 'bg-background shadow-sm': stringValueView === 'json' }"
+              @click="stringValueView = 'json'"
+            >
+              <Braces class="h-3.5 w-3.5" />
+              {{ t("redis.jsonView") }}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-6 rounded-[5px] px-2 text-xs"
+              :class="{ 'bg-background shadow-sm': stringValueView === 'raw' }"
+              @click="stringValueView = 'raw'"
+            >
+              <FileText class="h-3.5 w-3.5" />
+              {{ t("redis.rawContent") }}
+            </Button>
+          </div>
+          <span class="flex-1" />
+          <label class="flex items-center gap-1.5 text-muted-foreground">
+            <WrapText class="h-3.5 w-3.5" />
+            {{ t("redis.wordWrap") }}
+            <Switch
+              size="sm"
+              :model-value="redisJsonWordWrap"
+              @update:model-value="setRedisJsonWordWrap(Boolean($event))"
+            />
+          </label>
+        </div>
+        <div
+          v-if="stringJsonDetail && stringValueView === 'json'"
+          class="min-h-0 flex-1 overflow-auto bg-background p-4 font-mono text-sm leading-6"
+        >
+          <RedisJsonTree
+            :value="stringJsonDetail.value"
+            :word-wrap="redisJsonWordWrap"
+            :highlight-json="highlightRedisJson"
+          />
+        </div>
         <textarea
+          v-else
           v-model="editValue"
           class="flex-1 p-4 font-mono text-sm bg-background resize-none outline-none"
+          :class="{ 'whitespace-pre': stringJsonDetail && !redisJsonWordWrap }"
           :readonly="isBinaryStringValue"
           @input="handleStringInput"
         />
@@ -526,7 +722,7 @@ onBeforeUnmount(stopResizeMemberSheet);
             size="sm"
             @click="
               isEditing = false;
-              editValue = formatRedisStringValue(data.value);
+              editValue = rawRedisValueText(data.value);
             "
             >{{ t("grid.discard") }}</Button
           >
@@ -551,49 +747,60 @@ onBeforeUnmount(stopResizeMemberSheet);
           <div class="px-3 py-1 text-xs font-medium text-muted-foreground">Value</div>
           <div />
         </div>
-        <div class="flex-1 overflow-y-auto">
-          <div
-            v-for="(item, idx) in collectionItems"
-            :key="idx"
-            class="grid grid-cols-[60px_1fr_84px] border-b text-sm font-mono hover:bg-accent/50 group cursor-pointer"
-            :class="{ 'bg-accent/60': isSelectedMember(`#${idx}`, item) }"
-            @click="viewMember(`#${idx}`, item, { kind: 'list', index: Number(idx) })"
-          >
-            <div class="px-3 py-1.5 text-xs text-muted-foreground border-r">{{ idx }}</div>
-            <div class="px-3 py-1.5 truncate">{{ item }}</div>
-            <div class="flex items-center justify-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.viewMember')"
-                @click.stop="viewMember(`#${idx}`, item, { kind: 'list', index: Number(idx) })"
-                ><Eye class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.copyMember')"
-                @click.stop="copyMember(item)"
-                ><Copy class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
-                @click.stop="requestListRemove(Number(idx))"
-                ><Trash2 class="w-3 h-3"
-              /></Button>
+        <RecycleScroller
+          class="flex-1 overflow-y-auto"
+          :items="collectionRows"
+          :item-size="REDIS_COLLECTION_ROW_HEIGHT"
+          :buffer="600"
+          :skip-hover="true"
+          key-field="id"
+        >
+          <template #default="{ item: row }">
+            <div
+              data-redis-value-row
+              class="grid grid-cols-[60px_1fr_84px] border-b text-sm font-mono hover:bg-accent/50 group cursor-pointer"
+              :class="{ 'bg-accent/60': isSelectedMember(`#${row.index}`, row.value) }"
+              :style="{ height: `${REDIS_COLLECTION_ROW_HEIGHT}px` }"
+              @click="viewMember(`#${row.index}`, row.value, { kind: 'list', index: row.index })"
+            >
+              <div class="px-3 py-1.5 text-xs text-muted-foreground border-r">{{ row.index }}</div>
+              <div class="px-3 py-1.5 truncate">{{ row.value }}</div>
+              <div class="flex items-center justify-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                  :title="t('redis.viewMember')"
+                  @click.stop="viewMember(`#${row.index}`, row.value, { kind: 'list', index: row.index })"
+                  ><Eye class="w-3 h-3"
+                /></Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                  :title="t('redis.copyMember')"
+                  @click.stop="copyMember(row.value)"
+                  ><Copy class="w-3 h-3"
+                /></Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+                  @click.stop="requestListRemove(row.index)"
+                  ><Trash2 class="w-3 h-3"
+                /></Button>
+              </div>
             </div>
-          </div>
-          <div v-if="hasMore" class="p-2">
-            <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
-              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
-              {{ t("redis.loadMoreKeys") }}
-            </Button>
-          </div>
-        </div>
+          </template>
+          <template #after>
+            <div v-if="hasMore" class="p-2">
+              <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
+                <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+                {{ t("redis.loadMoreKeys") }}
+              </Button>
+            </div>
+          </template>
+        </RecycleScroller>
       </div>
 
       <!-- Set -->
@@ -612,52 +819,63 @@ onBeforeUnmount(stopResizeMemberSheet);
           <div class="px-3 py-1 text-xs font-medium text-muted-foreground">Member</div>
           <div />
         </div>
-        <div class="flex-1 overflow-y-auto">
-          <div
-            v-for="(item, idx) in collectionItems"
-            :key="idx"
-            class="grid grid-cols-[1fr_84px] border-b text-sm font-mono hover:bg-accent/50 group cursor-pointer"
-            :class="{ 'bg-accent/60': isSelectedMember(t('redis.member'), item) }"
-            @click="viewMember(t('redis.member'), item, { kind: 'set', member: String(item) })"
-          >
-            <div class="px-3 py-1.5 truncate">{{ item }}</div>
-            <div class="flex items-center justify-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.viewMember')"
-                @click.stop="viewMember(t('redis.member'), item, { kind: 'set', member: String(item) })"
-                ><Eye class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.copyMember')"
-                @click.stop="copyMember(item)"
-                ><Copy class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
-                @click.stop="requestSetRemove(String(item))"
-                ><Trash2 class="w-3 h-3"
-              /></Button>
+        <RecycleScroller
+          class="flex-1 overflow-y-auto"
+          :items="collectionRows"
+          :item-size="REDIS_COLLECTION_ROW_HEIGHT"
+          :buffer="600"
+          :skip-hover="true"
+          key-field="id"
+        >
+          <template #default="{ item: row }">
+            <div
+              data-redis-value-row
+              class="grid grid-cols-[1fr_84px] border-b text-sm font-mono hover:bg-accent/50 group cursor-pointer"
+              :class="{ 'bg-accent/60': isSelectedMember(t('redis.member'), row.value) }"
+              :style="{ height: `${REDIS_COLLECTION_ROW_HEIGHT}px` }"
+              @click="viewMember(t('redis.member'), row.value, { kind: 'set', member: String(row.value) })"
+            >
+              <div class="px-3 py-1.5 truncate">{{ row.value }}</div>
+              <div class="flex items-center justify-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                  :title="t('redis.viewMember')"
+                  @click.stop="viewMember(t('redis.member'), row.value, { kind: 'set', member: String(row.value) })"
+                  ><Eye class="w-3 h-3"
+                /></Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                  :title="t('redis.copyMember')"
+                  @click.stop="copyMember(row.value)"
+                  ><Copy class="w-3 h-3"
+                /></Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+                  @click.stop="requestSetRemove(String(row.value))"
+                  ><Trash2 class="w-3 h-3"
+                /></Button>
+              </div>
             </div>
-          </div>
-          <div v-if="hasMore" class="p-2">
-            <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
-              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
-              {{ t("redis.loadMoreKeys") }}
-            </Button>
-          </div>
-        </div>
+          </template>
+          <template #after>
+            <div v-if="hasMore" class="p-2">
+              <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
+                <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+                {{ t("redis.loadMoreKeys") }}
+              </Button>
+            </div>
+          </template>
+        </RecycleScroller>
       </div>
 
       <!-- Hash -->
-      <div v-else-if="data.key_type === 'hash'" class="flex-1 flex flex-col overflow-hidden">
+      <div v-else-if="data.key_type === 'hash'" ref="hashTableRef" class="flex-1 flex flex-col overflow-hidden">
         <div class="flex items-center gap-2 px-4 py-1.5 border-b shrink-0">
           <span class="text-xs text-muted-foreground">{{
             collectionCountLabel("fields", collectionItems.length, data.total)
@@ -669,54 +887,78 @@ onBeforeUnmount(stopResizeMemberSheet);
             ><Plus class="w-3 h-3 mr-1" />Set</Button
           >
         </div>
-        <div class="grid grid-cols-[minmax(8rem,0.3fr)_1fr_84px] border-b bg-muted/50 shrink-0">
-          <div class="px-3 py-1 text-xs font-medium text-muted-foreground border-r">Field</div>
+        <div class="grid border-b bg-muted/50 shrink-0" :style="hashGridStyle">
+          <div class="relative px-3 py-1 text-xs font-medium text-muted-foreground border-r select-none">
+            Field
+            <div
+              class="absolute -right-1 top-0 h-full w-2 cursor-col-resize touch-none"
+              @pointerdown.prevent="startResizeHashColumns"
+            />
+          </div>
           <div class="px-3 py-1 text-xs font-medium text-muted-foreground">Value</div>
           <div />
         </div>
-        <div class="flex-1 overflow-y-auto">
-          <div
-            v-for="(item, idx) in collectionItems"
-            :key="idx"
-            class="grid grid-cols-[minmax(8rem,0.3fr)_1fr_84px] border-b text-sm font-mono hover:bg-accent/50 group cursor-pointer"
-            :class="{ 'bg-accent/60': isSelectedMember(String(item.field), item.value) }"
-            @click="viewMember(String(item.field), item.value, { kind: 'hash', field: String(item.field) })"
-          >
-            <div class="px-3 py-1.5 text-blue-500 truncate border-r">{{ item.field }}</div>
-            <div class="px-3 py-1.5 truncate text-muted-foreground">{{ item.value }}</div>
-            <div class="flex items-center justify-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.viewMember')"
-                @click.stop="viewMember(String(item.field), item.value, { kind: 'hash', field: String(item.field) })"
-                ><Eye class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.copyMember')"
-                @click.stop="copyMember(item.value)"
-                ><Copy class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
-                @click.stop="requestHashDel(String(item.field))"
-                ><Trash2 class="w-3 h-3"
-              /></Button>
+        <RecycleScroller
+          class="flex-1 overflow-y-auto"
+          :items="collectionRows"
+          :item-size="REDIS_COLLECTION_ROW_HEIGHT"
+          :buffer="600"
+          :skip-hover="true"
+          key-field="id"
+        >
+          <template #default="{ item: row }">
+            <div
+              data-redis-value-row
+              class="grid border-b text-sm font-mono hover:bg-accent/50 group cursor-pointer"
+              :style="{ ...hashGridStyle, height: `${REDIS_COLLECTION_ROW_HEIGHT}px` }"
+              :class="{ 'bg-accent/60': isSelectedMember(String(row.value.field), row.value.value) }"
+              @click="
+                viewMember(String(row.value.field), row.value.value, { kind: 'hash', field: String(row.value.field) })
+              "
+            >
+              <div class="px-3 py-1.5 text-blue-500 truncate border-r">{{ row.value.field }}</div>
+              <div class="px-3 py-1.5 truncate text-muted-foreground">{{ row.value.value }}</div>
+              <div class="flex items-center justify-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                  :title="t('redis.viewMember')"
+                  @click.stop="
+                    viewMember(String(row.value.field), row.value.value, {
+                      kind: 'hash',
+                      field: String(row.value.field),
+                    })
+                  "
+                  ><Eye class="w-3 h-3"
+                /></Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                  :title="t('redis.copyMember')"
+                  @click.stop="copyMember(row.value.value)"
+                  ><Copy class="w-3 h-3"
+                /></Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+                  @click.stop="requestHashDel(String(row.value.field))"
+                  ><Trash2 class="w-3 h-3"
+                /></Button>
+              </div>
             </div>
-          </div>
-          <div v-if="hasMore" class="p-2">
-            <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
-              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
-              {{ t("redis.loadMoreKeys") }}
-            </Button>
-          </div>
-        </div>
+          </template>
+          <template #after>
+            <div v-if="hasMore" class="p-2">
+              <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
+                <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+                {{ t("redis.loadMoreKeys") }}
+              </Button>
+            </div>
+          </template>
+        </RecycleScroller>
       </div>
 
       <!-- Sorted Set -->
@@ -737,103 +979,127 @@ onBeforeUnmount(stopResizeMemberSheet);
           <div class="px-3 py-1 text-xs font-medium text-muted-foreground">Member</div>
           <div />
         </div>
-        <div class="flex-1 overflow-y-auto">
-          <div
-            v-for="(item, idx) in collectionItems"
-            :key="idx"
-            class="grid grid-cols-[100px_1fr_84px] border-b text-sm font-mono hover:bg-accent/50 group cursor-pointer"
-            :class="{ 'bg-accent/60': isSelectedMember(String(item.score), item.member) }"
-            @click="
-              viewMember(String(item.score), item.member, {
-                kind: 'zset',
-                member: String(item.member),
-                score: Number(item.score),
-              })
-            "
-          >
-            <div class="px-3 py-1.5 text-muted-foreground text-xs border-r">{{ item.score }}</div>
-            <div class="px-3 py-1.5 truncate">{{ item.member }}</div>
-            <div class="flex items-center justify-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.viewMember')"
-                @click.stop="
-                  viewMember(String(item.score), item.member, {
-                    kind: 'zset',
-                    member: String(item.member),
-                    score: Number(item.score),
-                  })
-                "
-                ><Eye class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.copyMember')"
-                @click.stop="copyMember(item.member)"
-                ><Copy class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
-                @click.stop="requestZsetRemove(String(item.member))"
-                ><Trash2 class="w-3 h-3"
-              /></Button>
+        <RecycleScroller
+          class="flex-1 overflow-y-auto"
+          :items="collectionRows"
+          :item-size="REDIS_COLLECTION_ROW_HEIGHT"
+          :buffer="600"
+          :skip-hover="true"
+          key-field="id"
+        >
+          <template #default="{ item: row }">
+            <div
+              data-redis-value-row
+              class="grid grid-cols-[100px_1fr_84px] border-b text-sm font-mono hover:bg-accent/50 group cursor-pointer"
+              :class="{ 'bg-accent/60': isSelectedMember(String(row.value.score), row.value.member) }"
+              :style="{ height: `${REDIS_COLLECTION_ROW_HEIGHT}px` }"
+              @click="
+                viewMember(String(row.value.score), row.value.member, {
+                  kind: 'zset',
+                  member: String(row.value.member),
+                  score: Number(row.value.score),
+                })
+              "
+            >
+              <div class="px-3 py-1.5 text-muted-foreground text-xs border-r">{{ row.value.score }}</div>
+              <div class="px-3 py-1.5 truncate">{{ row.value.member }}</div>
+              <div class="flex items-center justify-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                  :title="t('redis.viewMember')"
+                  @click.stop="
+                    viewMember(String(row.value.score), row.value.member, {
+                      kind: 'zset',
+                      member: String(row.value.member),
+                      score: Number(row.value.score),
+                    })
+                  "
+                  ><Eye class="w-3 h-3"
+                /></Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                  :title="t('redis.copyMember')"
+                  @click.stop="copyMember(row.value.member)"
+                  ><Copy class="w-3 h-3"
+                /></Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive"
+                  @click.stop="requestZsetRemove(String(row.value.member))"
+                  ><Trash2 class="w-3 h-3"
+                /></Button>
+              </div>
             </div>
-          </div>
-          <div v-if="hasMore" class="p-2">
-            <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
-              <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
-              {{ t("redis.loadMoreKeys") }}
-            </Button>
-          </div>
-        </div>
+          </template>
+          <template #after>
+            <div v-if="hasMore" class="p-2">
+              <Button variant="outline" size="sm" class="w-full h-7 text-xs" :disabled="loadingMore" @click="loadMore">
+                <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
+                {{ t("redis.loadMoreKeys") }}
+              </Button>
+            </div>
+          </template>
+        </RecycleScroller>
       </div>
 
       <!-- Stream (readonly) -->
-      <div v-else-if="data.key_type === 'stream'" class="flex-1 overflow-auto">
-        <div class="px-4 py-1 text-xs text-muted-foreground border-b">
-          {{ t("redis.entries", { count: Array.isArray(data.value) ? data.value.length : 0 }) }}
+      <div v-else-if="data.key_type === 'stream'" class="flex-1 flex flex-col overflow-hidden">
+        <div class="px-4 py-1 text-xs text-muted-foreground border-b shrink-0">
+          {{ t("redis.entries", { count: streamRows.length }) }}
         </div>
-        <div
-          v-for="entry in data.value"
-          :key="entry.id"
-          class="px-4 py-2 border-b text-sm font-mono hover:bg-accent/50"
+        <DynamicScroller
+          class="flex-1 overflow-y-auto"
+          :items="streamRows"
+          :min-item-size="REDIS_STREAM_MIN_ROW_HEIGHT"
+          :buffer="600"
+          key-field="id"
         >
-          <div class="mb-1 text-xs text-muted-foreground">{{ entry.id }}</div>
-          <div
-            v-for="(val, field) in entry.fields"
-            :key="String(field)"
-            class="grid grid-cols-[minmax(6rem,0.35fr)_1fr_56px] gap-3 py-0.5 group cursor-pointer"
-            :class="{ 'bg-accent/60': isSelectedMember(String(field), val) }"
-            @click="viewMember(String(field), val, { kind: 'stream', field: String(field) })"
-          >
-            <span class="truncate text-blue-500">{{ field }}</span>
-            <span class="truncate text-muted-foreground">{{ val }}</span>
-            <span class="flex justify-end gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.viewMember')"
-                @click.stop="viewMember(String(field), val, { kind: 'stream', field: String(field) })"
-                ><Eye class="w-3 h-3"
-              /></Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-5 w-5 opacity-0 group-hover:opacity-100"
-                :title="t('redis.copyMember')"
-                @click.stop="copyMember(val)"
-                ><Copy class="w-3 h-3"
-              /></Button>
-            </span>
-          </div>
-        </div>
+          <template #default="{ item: row, active }">
+            <DynamicScrollerItem
+              :item="row"
+              :active="active"
+              :size-dependencies="[streamFieldCount(row)]"
+              :data-index="row.index"
+            >
+              <div data-redis-stream-entry class="px-4 py-2 border-b text-sm font-mono hover:bg-accent/50">
+                <div class="mb-1 text-xs text-muted-foreground">{{ row.entry.id }}</div>
+                <div
+                  v-for="[field, val] in streamFields(row.entry)"
+                  :key="field"
+                  class="grid grid-cols-[minmax(6rem,0.35fr)_1fr_56px] gap-3 py-0.5 group cursor-pointer"
+                  :class="{ 'bg-accent/60': isSelectedMember(String(field), val) }"
+                  @click="viewMember(String(field), val, { kind: 'stream', field: String(field) })"
+                >
+                  <span class="truncate text-blue-500">{{ field }}</span>
+                  <span class="truncate text-muted-foreground">{{ val }}</span>
+                  <span class="flex justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                      :title="t('redis.viewMember')"
+                      @click.stop="viewMember(String(field), val, { kind: 'stream', field: String(field) })"
+                      ><Eye class="w-3 h-3"
+                    /></Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="h-5 w-5 opacity-0 group-hover:opacity-100"
+                      :title="t('redis.copyMember')"
+                      @click.stop="copyMember(val)"
+                      ><Copy class="w-3 h-3"
+                    /></Button>
+                  </span>
+                </div>
+              </div>
+            </DynamicScrollerItem>
+          </template>
+        </DynamicScroller>
       </div>
 
       <!-- Unknown -->
@@ -876,11 +1142,58 @@ onBeforeUnmount(stopResizeMemberSheet);
           class="min-h-0 flex-1 resize-none bg-background p-5 font-mono text-[13px] leading-6 outline-none"
           spellcheck="false"
         />
-        <pre
-          v-else-if="selectedMemberDetail.format === 'json'"
-          class="json-viewer min-h-0 flex-1 overflow-auto bg-background p-5 font-mono text-[13px] leading-6"
-          v-html="selectedMemberJsonHtml"
-        />
+        <template v-else-if="selectedMemberJsonDetail">
+          <div class="flex h-9 items-center gap-2 border-b px-5 text-xs">
+            <div class="flex overflow-hidden rounded-md border bg-muted/20 p-0.5">
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-6 rounded-[5px] px-2 text-xs"
+                :class="{ 'bg-background shadow-sm': memberValueView === 'json' }"
+                @click="memberValueView = 'json'"
+              >
+                <Braces class="h-3.5 w-3.5" />
+                {{ t("redis.jsonView") }}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-6 rounded-[5px] px-2 text-xs"
+                :class="{ 'bg-background shadow-sm': memberValueView === 'raw' }"
+                @click="memberValueView = 'raw'"
+              >
+                <FileText class="h-3.5 w-3.5" />
+                {{ t("redis.rawContent") }}
+              </Button>
+            </div>
+            <span class="flex-1" />
+            <label class="flex items-center gap-1.5 text-muted-foreground">
+              <WrapText class="h-3.5 w-3.5" />
+              {{ t("redis.wordWrap") }}
+              <Switch
+                size="sm"
+                :model-value="redisJsonWordWrap"
+                @update:model-value="setRedisJsonWordWrap(Boolean($event))"
+              />
+            </label>
+          </div>
+          <div
+            v-if="memberValueView === 'json'"
+            class="min-h-0 flex-1 overflow-auto bg-background p-5 font-mono text-[13px] leading-6"
+          >
+            <RedisJsonTree
+              :value="selectedMemberJsonDetail.value"
+              :word-wrap="redisJsonWordWrap"
+              :highlight-json="highlightRedisJson"
+            />
+          </div>
+          <pre
+            v-else
+            class="min-h-0 flex-1 overflow-auto bg-background p-5 font-mono text-[13px] leading-6"
+            :class="redisJsonWordWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'"
+            v-html="memberRawJsonHtml"
+          ></pre>
+        </template>
         <pre
           v-else
           class="min-h-0 flex-1 overflow-auto bg-background p-5 font-mono text-[13px] leading-6 whitespace-pre-wrap break-words"
@@ -910,54 +1223,3 @@ onBeforeUnmount(stopResizeMemberSheet);
     </Sheet>
   </div>
 </template>
-
-<style scoped>
-.json-viewer {
-  tab-size: 2;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-:deep(.json-key) {
-  color: #7c3aed;
-  font-weight: 600;
-}
-
-:deep(.json-string) {
-  color: #15803d;
-}
-
-:deep(.json-number) {
-  color: #b45309;
-}
-
-:deep(.json-boolean) {
-  color: #2563eb;
-  font-weight: 600;
-}
-
-:deep(.json-null) {
-  color: #64748b;
-  font-style: italic;
-}
-
-:global(.dark) :deep(.json-key) {
-  color: #c4b5fd;
-}
-
-:global(.dark) :deep(.json-string) {
-  color: #86efac;
-}
-
-:global(.dark) :deep(.json-number) {
-  color: #fbbf24;
-}
-
-:global(.dark) :deep(.json-boolean) {
-  color: #93c5fd;
-}
-
-:global(.dark) :deep(.json-null) {
-  color: #94a3b8;
-}
-</style>

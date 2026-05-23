@@ -51,7 +51,7 @@ pub enum PoolKind {
     Elasticsearch(db::elasticsearch_driver::EsClient),
     Agent(Arc<tokio::sync::Mutex<db::agent_driver::AgentDriverClient>>),
     ExternalTabular(Arc<external::ExternalPool>),
-    ExternalDriver { driver_id: String, config: ConnectionConfig, session: Arc<PluginDriverSession> },
+    ExternalDriver { driver_id: String, config: Arc<ConnectionConfig>, session: Arc<PluginDriverSession> },
 }
 
 pub struct OraclePool {
@@ -99,7 +99,10 @@ pub fn metadata_connection_config(config: &ConnectionConfig) -> ConnectionConfig
 pub fn database_connection_config(config: &ConnectionConfig, database: Option<&str>) -> ConnectionConfig {
     let mut db_config = if database.is_some() { config.clone() } else { metadata_connection_config(config) };
     if let Some(db) = database {
-        if !matches!(db_config.db_type, DatabaseType::Oracle | DatabaseType::Dameng | DatabaseType::OceanbaseOracle) {
+        if !matches!(
+            db_config.db_type,
+            DatabaseType::Oracle | DatabaseType::Dameng | DatabaseType::MongoDb | DatabaseType::OceanbaseOracle
+        ) {
             db_config.database = Some(db.to_string());
         }
     }
@@ -153,7 +156,7 @@ impl AppState {
         let session = self.plugins.start_driver_session(driver_id).await?;
         let params = serde_json::json!({ "connection": config });
         session.invoke::<serde_json::Value>("connect", params).await?;
-        Ok(PoolKind::ExternalDriver { driver_id: driver_id.to_string(), config: config.clone(), session })
+        Ok(PoolKind::ExternalDriver { driver_id: driver_id.to_string(), config: Arc::new(config.clone()), session })
     }
 
     pub async fn get_or_create_pool(&self, connection_id: &str, database: Option<&str>) -> Result<String, String> {
@@ -311,14 +314,53 @@ impl AppState {
             | DatabaseType::Tdengine
             | DatabaseType::Access
             | DatabaseType::Gaussdb => {
+                let connect_params =
+                    agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or(""));
                 let mut client =
                     self.agent_manager.spawn(&db_config.db_type, db_config.driver_profile.as_deref()).await?;
-                client
-                    .call_method::<serde_json::Value>(
-                        AgentMethod::Connect,
-                        agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or("")),
-                    )
-                    .await?;
+                let connect_result =
+                    client.call_method::<serde_json::Value>(AgentMethod::Connect, connect_params.clone()).await;
+                if let Err(err) = connect_result {
+                    if let Some(alternate_config) = oracle_alternate_connect_config(&db_config, &err) {
+                        log::warn!(
+                            "Oracle connect failed with {:?} descriptor: {}. Retrying with {:?} descriptor.",
+                            db_config.oracle_connection_type,
+                            err,
+                            alternate_config.oracle_connection_type
+                        );
+                        client
+                            .call_method::<serde_json::Value>(
+                                AgentMethod::Connect,
+                                agent_connect_params(
+                                    &alternate_config,
+                                    &host,
+                                    port,
+                                    alternate_config.effective_database().unwrap_or(""),
+                                ),
+                            )
+                            .await
+                            .map_err(|alternate_err| {
+                                format!("{err}\n\nFallback with alternate Oracle descriptor failed: {alternate_err}")
+                            })?;
+                    } else if should_retry_oracle_with_10g_driver(&db_config, &err) {
+                        log::warn!(
+                            "Oracle connect failed with profile {:?}: {}. Retrying with oracle-10g profile.",
+                            db_config.driver_profile,
+                            err
+                        );
+                        let mut fallback_client =
+                            self.agent_manager.spawn(&db_config.db_type, Some("oracle-10g")).await?;
+                        fallback_client
+                            .call_method::<serde_json::Value>(AgentMethod::Connect, connect_params)
+                            .await
+                            .map_err(|fallback_err| {
+                                format!("{err}\n\nFallback with oracle-10g driver failed: {fallback_err}")
+                            })?;
+                        client = fallback_client;
+                    } else {
+                        return Err(err);
+                    }
+                }
                 PoolKind::Agent(Arc::new(tokio::sync::Mutex::new(client)))
             }
             DatabaseType::Jdbc => {
@@ -627,6 +669,28 @@ fn oracle_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u1
     }
 }
 
+pub fn should_retry_oracle_with_10g_driver(config: &ConnectionConfig, err: &str) -> bool {
+    if config.db_type != DatabaseType::Oracle {
+        return false;
+    }
+    if config.driver_profile.as_deref() == Some("oracle-10g") {
+        return false;
+    }
+    let normalized = err.to_lowercase();
+    normalized.contains("ora-12541") || normalized.contains("no listener") || err.contains("没有监听程序")
+}
+
+pub fn oracle_alternate_connect_config(config: &ConnectionConfig, err: &str) -> Option<ConnectionConfig> {
+    if !should_retry_oracle_with_10g_driver(config, err) {
+        return None;
+    }
+
+    let mut retry = config.clone();
+    retry.oracle_connection_type =
+        Some(if config.oracle_connection_type.as_deref() == Some("sid") { "service_name" } else { "sid" }.to_string());
+    Some(retry)
+}
+
 fn sap_hana_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> String {
     let database = database.trim();
     let params = config.url_params.as_deref().unwrap_or("").trim().trim_start_matches('?');
@@ -826,6 +890,7 @@ mod tests {
         config.port = 1521;
         config.username = "system".to_string();
         config.password = "oracle".to_string();
+        config.oracle_connection_type = Some("service_name".to_string());
 
         let params = agent_connect_params(&config, "oracle.example.com", 1521, "ORCLPDB1");
 
@@ -842,6 +907,74 @@ mod tests {
         let params = agent_connect_params(&config, "127.0.0.1", 11521, "ORCL");
 
         assert_eq!(params["connection_string"], "jdbc:oracle:thin:@127.0.0.1:11521:ORCL");
+    }
+
+    #[test]
+    fn agent_connect_params_preserve_legacy_oracle_configs_as_service_name() {
+        let mut config = mysql_config(Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+        config.oracle_connection_type = None;
+
+        let params = agent_connect_params(&config, "127.0.0.1", 11521, "ORCL");
+
+        assert_eq!(params["connection_string"], "jdbc:oracle:thin:@//127.0.0.1:11521/ORCL");
+    }
+
+    #[test]
+    fn oracle_retry_guard_only_triggers_for_non_10g_listener_errors() {
+        let mut config = mysql_config(Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+        config.driver_profile = Some("oracle".to_string());
+
+        assert!(super::should_retry_oracle_with_10g_driver(
+            &config,
+            "Agent RPC error (-1): ORA-12541: TNS:no listener"
+        ));
+        assert!(super::should_retry_oracle_with_10g_driver(&config, "host xxx port 1521 中没有监听程序"));
+
+        config.driver_profile = Some("oracle-10g".to_string());
+        assert!(!super::should_retry_oracle_with_10g_driver(
+            &config,
+            "Agent RPC error (-1): ORA-12541: TNS:no listener"
+        ));
+
+        config.driver_profile = Some("oracle".to_string());
+        assert!(!super::should_retry_oracle_with_10g_driver(
+            &config,
+            "Agent RPC error (-1): ORA-01017: invalid username/password"
+        ));
+    }
+
+    #[test]
+    fn oracle_listener_errors_can_retry_with_alternate_connect_descriptor() {
+        let mut config = mysql_config(Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+        config.driver_profile = Some("oracle".to_string());
+        config.oracle_connection_type = Some("service_name".to_string());
+
+        let retry = super::oracle_alternate_connect_config(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener")
+            .expect("listener errors should allow alternate descriptor retry");
+        assert_eq!(retry.driver_profile.as_deref(), Some("oracle"));
+        assert_eq!(retry.oracle_connection_type.as_deref(), Some("sid"));
+
+        let service_retry = super::oracle_alternate_connect_config(
+            &retry,
+            "Agent RPC error (-1): ORA-12541: host xxx port 1521 中没有监听程序",
+        )
+        .expect("SID listener errors should allow service-name retry");
+        assert_eq!(service_retry.oracle_connection_type.as_deref(), Some("service_name"));
+    }
+
+    #[test]
+    fn oracle_alternate_descriptor_retry_skips_non_listener_errors_and_10g_profiles() {
+        let mut config = mysql_config(Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+        config.driver_profile = Some("oracle".to_string());
+
+        assert!(super::oracle_alternate_connect_config(&config, "ORA-01017: invalid username/password").is_none());
+
+        config.driver_profile = Some("oracle-10g".to_string());
+        assert!(super::oracle_alternate_connect_config(&config, "ORA-12541: TNS:no listener").is_none());
     }
 
     #[test]
@@ -894,6 +1027,16 @@ mod tests {
         let scoped = database_connection_config(&config, Some("analytics"));
 
         assert_eq!(scoped.database.as_deref(), Some("analytics"));
+    }
+
+    #[test]
+    fn mongodb_database_connection_keeps_saved_database_for_auth() {
+        let mut config = mysql_config(Some("admin"));
+        config.db_type = DatabaseType::MongoDb;
+
+        let scoped = database_connection_config(&config, Some("shop"));
+
+        assert_eq!(scoped.database.as_deref(), Some("admin"));
     }
 
     #[test]

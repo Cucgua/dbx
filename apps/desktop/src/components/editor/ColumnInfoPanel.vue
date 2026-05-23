@@ -3,6 +3,8 @@ import { X, Copy } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/composables/useToast";
+import { copyToClipboard } from "@/lib/clipboard";
 
 export interface ColumnInfo {
   name: string;
@@ -26,9 +28,15 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { toast } = useToast();
 
-function copyText(text: string) {
-  navigator.clipboard.writeText(text);
+async function copyText(text: string) {
+  try {
+    await copyToClipboard(text);
+    toast(t("grid.copied"));
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 </script>
 

@@ -76,12 +76,20 @@ export function isCloseTabShortcut(event: ShortcutLikeEvent, shortcuts?: Partial
   return matchesShortcut(event, actionShortcut("closeTab", shortcuts));
 }
 
+export function isNewQueryShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  return matchesShortcut(event, actionShortcut("newQuery", shortcuts));
+}
+
 export function isFocusSearchShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
   return matchesShortcut(event, actionShortcut("focusSearch", shortcuts));
 }
 
 export function isRefreshDataShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
   return matchesShortcut(event, actionShortcut("refreshData", shortcuts));
+}
+
+export function isToggleTransposeShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  return matchesShortcut(event, actionShortcut("toggleTranspose", shortcuts));
 }
 
 export function isSaveShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
@@ -92,6 +100,14 @@ export function isObjectSourceSaveShortcutTarget(
   target: { closest(selector: string): unknown } | null | undefined,
 ): boolean {
   return !!target?.closest("[data-object-source-editor], [data-object-source-preview]");
+}
+
+export function isCopyCurrentRowShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  return matchesShortcut(event, actionShortcut("copyCurrentRow", shortcuts));
+}
+
+export function isDeleteCurrentRowShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  return matchesShortcut(event, actionShortcut("deleteCurrentRow", shortcuts));
 }
 
 export function isCancelSearchShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {

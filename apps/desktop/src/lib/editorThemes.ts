@@ -1,14 +1,72 @@
 import type { Extension } from "@codemirror/state";
 import type { EditorTheme } from "@/stores/settingsStore";
+import type { AppThemeAppearance } from "@/lib/appTheme";
 
 type CodeMirrorStyleSpec = Parameters<typeof import("@codemirror/view").EditorView.theme>[0];
+type LucideIconNode = Array<[string, Record<string, string>]>;
 
 export const EDITOR_FONT_SIZE_CSS_VAR = "--dbx-editor-font-size";
 export const EDITOR_FONT_FAMILY_CSS_VAR = "--dbx-editor-font-family";
 
+const TABLE_ICON: LucideIconNode = [
+  ["path", { d: "M12 3v18" }],
+  ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
+  ["path", { d: "M3 9h18" }],
+  ["path", { d: "M3 15h18" }],
+];
+
+const COLUMNS_ICON: LucideIconNode = [
+  ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2" }],
+  ["path", { d: "M12 3v18" }],
+];
+
+const KEYWORD_ICON: LucideIconNode = [
+  ["path", { d: "m16 18 6-6-6-6" }],
+  ["path", { d: "m8 6-6 6 6 6" }],
+];
+
+const SNIPPET_ICON: LucideIconNode = [
+  ["path", { d: "m15 10 5 5-5 5" }],
+  ["path", { d: "M4 4v7a4 4 0 0 0 4 4h12" }],
+];
+
+const SCHEMA_ICON: LucideIconNode = [
+  ["path", { d: "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11z" }],
+];
+
+function encodeSvgIcon(iconNode: LucideIconNode): string {
+  const body = iconNode
+    .map(
+      ([tag, attrs]) =>
+        `<${tag} ${Object.entries(attrs)
+          .map(([key, value]) => `${key}="${value}"`)
+          .join(" ")} />`,
+    )
+    .join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+function lucideCompletionIconMask(iconNode: LucideIconNode) {
+  const mask = encodeSvgIcon(iconNode);
+  return {
+    "--dbx-completion-icon-mask": mask,
+  };
+}
+
 /** Load a CodeMirror theme extension by theme name. */
-export async function loadEditorTheme(theme: EditorTheme): Promise<Extension> {
-  switch (theme) {
+export function resolveEditorTheme(theme: EditorTheme, appAppearance: AppThemeAppearance): Exclude<EditorTheme, "app"> {
+  if (theme === "app") return appAppearance === "dark" ? "one-dark" : "vscode-light";
+  return theme;
+}
+
+/** Load a CodeMirror theme extension by theme name. */
+export async function loadEditorTheme(
+  theme: EditorTheme,
+  appAppearance: AppThemeAppearance = "dark",
+): Promise<Extension> {
+  const resolvedTheme = resolveEditorTheme(theme, appAppearance);
+  switch (resolvedTheme) {
     case "one-dark":
       return (await import("@codemirror/theme-one-dark")).oneDark;
     case "vscode-dark":
@@ -80,66 +138,112 @@ export function editorFontTheme(
 export function buildSqlCompletionThemeRules(): CodeMirrorStyleSpec {
   return {
     ".cm-tooltip.cm-tooltip-autocomplete": {
-      background: "#24272c",
-      border: "1px solid rgba(10, 12, 16, 0.95)",
-      borderRadius: "10px",
-      boxShadow:
-        "0 18px 42px rgba(0, 0, 0, 0.46), 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 1px 0 rgba(255, 255, 255, 0.06) inset",
-      color: "rgba(202, 207, 217, 0.95)",
-      fontFamily: "var(--font-mono, 'JetBrains Mono', 'SF Mono', monospace)",
-      minWidth: "420px",
+      background: "var(--popover)",
+      border: "1px solid color-mix(in oklch, var(--border) 82%, var(--foreground) 18%)",
+      borderRadius: "8px",
+      boxShadow: "0 8px 18px rgb(0 0 0 / 0.14)",
+      color: "var(--popover-foreground)",
+      fontFamily: `var(${EDITOR_FONT_FAMILY_CSS_VAR}, var(--font-mono, monospace))`,
+      maxWidth: "min(520px, calc(100vw - 24px))",
+      minWidth: "min(280px, calc(100vw - 24px))",
       overflow: "hidden",
-      padding: "6px 0",
+      padding: "4px 0",
     },
     ".cm-tooltip.cm-tooltip-autocomplete > ul": {
-      maxHeight: "340px",
-      minWidth: "420px",
-      padding: "0 7px 0 !important",
-      scrollbarColor: "rgba(148, 153, 162, 0.42) transparent",
+      maxHeight: "min(280px, calc(100vh - 32px))",
+      minWidth: "min(280px, calc(100vw - 24px))",
+      padding: "0 4px 0 !important",
+      scrollbarColor: "color-mix(in oklch, var(--muted-foreground) 44%, transparent) transparent",
       scrollbarWidth: "thin",
     },
     ".cm-tooltip.cm-tooltip-autocomplete > ul > li": {
       alignItems: "center",
       borderRadius: "6px",
-      color: "rgba(199, 204, 214, 0.92)",
+      color: "var(--popover-foreground)",
       display: "flex",
-      fontSize: "16px",
-      fontWeight: "760",
-      height: "34px",
+      fontSize: `clamp(12px, var(${EDITOR_FONT_SIZE_CSS_VAR}, 13px), 14px)`,
+      fontWeight: "520",
+      height: "28px",
       letterSpacing: "0",
-      lineHeight: "34px",
-      padding: "0 18px !important",
+      lineHeight: "28px",
+      padding: "0 10px !important",
       transition: "background-color 90ms ease, color 90ms ease",
     },
     ".cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]": {
-      background: "rgba(70, 75, 84, 0.86) !important",
-      color: "rgba(231, 235, 243, 0.98) !important",
+      background: "color-mix(in oklch, var(--primary) 14%, var(--popover)) !important",
+      color: "var(--popover-foreground) !important",
+      outline: "1px solid color-mix(in oklch, var(--primary) 22%, transparent)",
     },
     ".cm-completionIcon": {
-      display: "none !important",
-      height: "0",
-      margin: "0",
-      paddingRight: "0 !important",
-      width: "0",
+      alignItems: "center",
+      display: "inline-flex",
+      flex: "0 0 15px",
+      height: "15px",
+      justifyContent: "center",
+      marginRight: "0.65em",
+      opacity: "1",
+      position: "relative",
+      overflow: "hidden",
+      width: "15px",
+    },
+    ".cm-completionIcon:before": {
+      backgroundColor: "currentColor",
+      content: "''",
+      display: "block",
+      height: "14px",
+      position: "absolute",
+      WebkitMaskImage: "var(--dbx-completion-icon-mask)",
+      WebkitMaskPosition: "center",
+      WebkitMaskRepeat: "no-repeat",
+      WebkitMaskSize: "14px 14px",
+      maskImage: "var(--dbx-completion-icon-mask)",
+      maskPosition: "center",
+      maskRepeat: "no-repeat",
+      maskSize: "14px 14px",
+      width: "14px",
+    },
+    ".cm-completionIcon:after": {
+      content: "'none'",
+      display: "none",
+    },
+    ".cm-completionIcon-table": {
+      color: "color-mix(in oklch, var(--primary) 92%, var(--popover-foreground))",
+      ...lucideCompletionIconMask(TABLE_ICON),
+    },
+    ".cm-completionIcon-column": {
+      color: "color-mix(in oklch, var(--blue-500, #3b82f6) 92%, var(--popover-foreground))",
+      ...lucideCompletionIconMask(COLUMNS_ICON),
+    },
+    ".cm-completionIcon-keyword": {
+      color: "color-mix(in oklch, var(--orange-500, #f97316) 92%, var(--popover-foreground))",
+      ...lucideCompletionIconMask(KEYWORD_ICON),
+    },
+    ".cm-completionIcon-snippet": {
+      color: "color-mix(in oklch, var(--emerald-500, #10b981) 92%, var(--popover-foreground))",
+      ...lucideCompletionIconMask(SNIPPET_ICON),
+    },
+    ".cm-completionIcon-schema": {
+      color: "color-mix(in oklch, var(--amber-500, #f59e0b) 92%, var(--popover-foreground))",
+      ...lucideCompletionIconMask(SCHEMA_ICON),
     },
     ".cm-completionLabel": {
       color: "inherit",
-      fontFamily: "var(--font-mono, 'JetBrains Mono', 'SF Mono', monospace)",
-      fontSize: "16px",
-      fontWeight: "760",
+      fontFamily: `var(${EDITOR_FONT_FAMILY_CSS_VAR}, var(--font-mono, monospace))`,
+      fontSize: `clamp(12px, var(${EDITOR_FONT_SIZE_CSS_VAR}, 13px), 14px)`,
+      fontWeight: "520",
       letterSpacing: "0",
     },
     ".cm-completionMatchedText": {
-      color: "#5794f9",
-      fontWeight: "860",
+      color: "oklch(0.62 0.19 255)",
+      fontWeight: "700",
       textDecoration: "none",
     },
     ".cm-completionDetail": {
-      color: "rgba(184, 188, 198, 0.92)",
-      fontSize: "16px",
-      fontWeight: "760",
+      color: "color-mix(in oklch, var(--popover-foreground) 68%, var(--popover))",
+      fontSize: `clamp(11px, calc(var(${EDITOR_FONT_SIZE_CSS_VAR}, 13px) - 1px), 13px)`,
+      fontWeight: "500",
       fontStyle: "normal",
-      marginLeft: "12px",
+      marginLeft: "10px",
       opacity: "1",
     },
   };

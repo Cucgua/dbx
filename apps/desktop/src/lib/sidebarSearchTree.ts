@@ -1,4 +1,4 @@
-import type { TreeNode } from "@/types/database";
+import type { TreeNode, TreeNodeType } from "@/types/database";
 import { matchSidebarLabel } from "@/lib/sidebarSearch";
 
 const preserveMatchedSubtreeTypes = new Set(["database", "schema", "table", "view"]);
@@ -14,7 +14,12 @@ function normalizedLabel(node: TreeNode): string {
   return normalized;
 }
 
-export function filterSidebarTree(nodes: TreeNode[], query: string, collapsedIds: ReadonlySet<string>): TreeNode[] {
+export function filterSidebarTree(
+  nodes: TreeNode[],
+  query: string,
+  collapsedIds: ReadonlySet<string>,
+  searchableNodeTypes?: ReadonlySet<TreeNodeType>,
+): TreeNode[] {
   const filteredNodes: { node: TreeNode; score: number }[] = [];
 
   for (const node of nodes) {
@@ -27,12 +32,13 @@ export function filterSidebarTree(nodes: TreeNode[], query: string, collapsedIds
     }
 
     const label = normalizedLabel(node);
-    const selfMatch = matchSidebarLabel(label, query);
+    const canSelfMatch = !searchableNodeTypes || searchableNodeTypes.has(node.type);
+    const selfMatch = canSelfMatch ? matchSidebarLabel(label, query) : null;
     const preservesSubtree = !!selfMatch && preserveMatchedSubtreeTypes.has(node.type);
     const filteredChildren = preservesSubtree
       ? node.children
       : node.children
-        ? filterSidebarTree(node.children, query, collapsedIds)
+        ? filterSidebarTree(node.children, query, collapsedIds, searchableNodeTypes)
         : undefined;
 
     if (selfMatch || (filteredChildren && filteredChildren.length > 0)) {

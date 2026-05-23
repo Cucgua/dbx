@@ -11,10 +11,17 @@ defineOptions({
 });
 
 const props = withDefaults(
-  defineProps<SelectContentProps & { class?: HTMLAttributes["class"]; disablePortal?: boolean }>(),
+  defineProps<
+    SelectContentProps & {
+      class?: HTMLAttributes["class"];
+      disablePortal?: boolean;
+      disableOutsidePointerEvents?: boolean;
+    }
+  >(),
   {
     position: "popper",
     disablePortal: false,
+    disableOutsidePointerEvents: true,
   },
 );
 const emits = defineEmits<SelectContentEmits>();

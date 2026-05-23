@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Multipart, Path, State};
 use axum::response::sse::{Event, Sse};
 use axum::Json;
 use dbx_core::agent_manager::{
-    AgentDriverInfo, AgentManager, AgentRegistry, AgentState, InstalledDriver, JavaRuntimeConfig, JavaRuntimeMode,
-    DEFAULT_JRE_KEY,
+    AgentDriverInfo, AgentManager, AgentRegistry, AgentState, DriverStoreUsage, InstalledDriver, JavaRuntimeConfig,
+    JavaRuntimeMode, DEFAULT_JRE_KEY,
 };
 use dbx_core::agent_service::{
     build_agent_list, download_temp_path, fetch_registry, find_local_agent_jar, github_url_to_r2_path,
-    install_local_agent, invalidate_registry_cache, replace_download,
+    import_offline_zip, install_local_agent, invalidate_registry_cache, jre_needs_install, replace_download,
+    OfflineImportProgress,
 };
 use futures::Stream;
 use serde::Deserialize;
@@ -45,6 +46,10 @@ pub async fn list_installed_agents_local(
 pub async fn list_installed_agents(State(state): State<Arc<WebState>>) -> Result<Json<Vec<AgentDriverInfo>>, AppError> {
     let registry = fetch_registry().await.ok();
     Ok(Json(build_agent_list(&state.app.agent_manager, registry.as_ref())))
+}
+
+pub async fn get_driver_store_usage(State(state): State<Arc<WebState>>) -> Result<Json<DriverStoreUsage>, AppError> {
+    Ok(Json(state.app.agent_manager.collect_driver_store_usage(state.app.plugins.root_dir())))
 }
 
 pub async fn install_agent(
@@ -125,6 +130,48 @@ pub async fn set_agent_java_runtime_config(
 pub async fn invalidate_agent_registry_cache() -> Result<Json<serde_json::Value>, AppError> {
     invalidate_registry_cache().await;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn import_agents_from_zip(
+    State(state): State<Arc<WebState>>,
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let tmp_dir = state.data_dir.join("tmp");
+    std::fs::create_dir_all(&tmp_dir).map_err(|err| AppError(err.to_string()))?;
+
+    if let Some(field) = multipart.next_field().await.map_err(|err| AppError(err.to_string()))? {
+        let file_name = field.file_name().unwrap_or("offline-drivers.zip").to_string();
+        if !file_name.to_ascii_lowercase().ends_with(".zip") {
+            return Err(AppError("Offline driver package must be a .zip file".to_string()));
+        }
+
+        let data = field.bytes().await.map_err(|err| AppError(err.to_string()))?;
+        let zip_path = tmp_dir.join(format!("agent-offline-{}.zip", uuid::Uuid::new_v4()));
+        std::fs::write(&zip_path, &data).map_err(|err| AppError(err.to_string()))?;
+
+        let tx = progress_sender(&state, "global").await;
+        let result = import_offline_zip(&state.app.agent_manager, &zip_path, |p: OfflineImportProgress| {
+            send_progress(
+                &tx,
+                serde_json::json!({
+                    "step": p.step,
+                    "downloaded": p.current as u64,
+                    "total": p.total as u64,
+                    "db_type": p.label,
+                    "current": p.current,
+                    "total_drivers": p.total,
+                }),
+            );
+        })
+        .map_err(AppError);
+        let _ = std::fs::remove_file(&zip_path);
+
+        let result = result?;
+        send_progress(&tx, serde_json::json!({ "step": "done" }));
+        return Ok(Json(serde_json::json!({ "count": result.drivers_installed.len() as u32 })));
+    }
+
+    Err(AppError("No file uploaded".to_string()))
 }
 
 pub async fn reinstall_jre(
@@ -216,7 +263,7 @@ async fn install_agent_from_registry(
         return Err(format!("Unknown driver type: {db_type}"));
     };
     let jre_key = &driver.jre;
-    let needs_jre = am.load_state().java_runtime.mode == JavaRuntimeMode::Managed && !am.is_jre_installed(jre_key);
+    let needs_jre = jre_needs_install(am, registry, jre_key);
     if needs_jre {
         let jre_info =
             registry.resolve_jre(jre_key).ok_or_else(|| format!("No JRE definition for version: {jre_key}"))?;
@@ -240,7 +287,11 @@ async fn install_agent_from_registry(
         )
         .await?;
         send_install_progress(tx, "jre-extract", 0, 0, Some(db_type), current, total_drivers);
-        extract_archive(&jre_archive, &am.jre_dir(jre_key))?;
+        let jre_dir = am.jre_dir(jre_key);
+        if jre_dir.exists() {
+            std::fs::remove_dir_all(&jre_dir).map_err(|err| format!("Failed to remove old JRE: {err}"))?;
+        }
+        extract_archive(&jre_archive, &jre_dir)?;
         std::fs::remove_file(&jre_archive).ok();
     }
 

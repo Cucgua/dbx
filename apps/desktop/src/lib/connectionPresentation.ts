@@ -70,6 +70,9 @@ export function connectionUrlPlaceholder(dbType: DatabaseType): string {
     case "tdengine":
       return "tdengine://user:password@host:6041/database";
 
+    case "bigquery":
+      return "bigquery://https://www.googleapis.com/bigquery/v2:443/project-id";
+
     case "jdbc":
       return "jdbc:mysql://host:3306/database";
 

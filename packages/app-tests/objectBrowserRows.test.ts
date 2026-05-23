@@ -1,6 +1,11 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { buildObjectBrowserRows, filterObjectBrowserRows } from "../../apps/desktop/src/lib/objectBrowserRows.ts";
+import {
+  buildObjectBrowserRows,
+  filterObjectBrowserRows,
+  formatObjectBrowserTimestamp,
+  sortObjectBrowserRows,
+} from "../../apps/desktop/src/lib/objectBrowserRows.ts";
 
 test("builds unique row ids for overloaded routines with the same visible name", () => {
   const rows = buildObjectBrowserRows({
@@ -36,4 +41,40 @@ test("object browser search matches names, types, and comments but not schema na
     filterObjectBrowserRows(rows, "exam").map((row) => row.name),
     ["orders", "refresh_exam_stats"],
   );
+});
+
+test("object browser rows preserve table timestamps and sort recent updates first", () => {
+  const rows = buildObjectBrowserRows({
+    objects: [
+      {
+        name: "users",
+        object_type: "TABLE",
+        schema: "public",
+        created_at: "2026-05-20 09:30:00",
+        updated_at: "2026-05-21 10:15:00",
+      },
+      {
+        name: "orders",
+        object_type: "TABLE",
+        schema: "public",
+        created_at: "2026-05-22 08:00:00",
+        updated_at: "2026-05-22 08:20:00",
+      },
+      { name: "active_users", object_type: "VIEW", schema: "public" },
+    ],
+    database: "app",
+    fallbackSchema: "public",
+    needsSchema: true,
+  });
+
+  assert.deepEqual(
+    sortObjectBrowserRows(rows, "updated_at", "desc").map((row) => row.name),
+    ["orders", "users", "active_users"],
+  );
+  assert.equal(formatObjectBrowserTimestamp(rows[0].created_at), "2026-05-20 09:30:00");
+});
+
+test("object browser timestamp display strips timezone suffixes", () => {
+  assert.equal(formatObjectBrowserTimestamp("2026-05-22 10:18:24+08"), "2026-05-22 10:18:24");
+  assert.equal(formatObjectBrowserTimestamp("2026-05-22 10:18:24.123456+08:00"), "2026-05-22 10:18:24");
 });

@@ -216,7 +216,7 @@ async function searchTable(task: SearchTableTask, databaseType: DatabaseType, cu
   try {
     const schema = task.schema || props.prefillDatabase;
     const columns = await api.getColumns(props.prefillConnectionId, props.prefillDatabase, schema, task.table.name);
-    const query = buildDatabaseSearchSql({
+    const query = await buildDatabaseSearchSql({
       databaseType,
       schema: task.schema,
       tableName: task.table.name,
@@ -228,13 +228,19 @@ async function searchTable(task: SearchTableTask, databaseType: DatabaseType, cu
 
     const executionId = makeExecutionId();
     currentExecutionId.value = executionId;
-    const result = await api.executeQuery(props.prefillConnectionId, props.prefillDatabase, query.sql, executionId);
+    const result = await api.executeQuery(
+      props.prefillConnectionId,
+      props.prefillDatabase,
+      query.sql,
+      undefined,
+      executionId,
+    );
     if (currentExecutionId.value === executionId) currentExecutionId.value = "";
     if (currentRun !== runId || cancelled.value) return;
 
-    result.rows.forEach((row, rowIndex) => {
+    for (const [rowIndex, row] of result.rows.entries()) {
       const matchedColumns = findMatchedSearchColumns(result.columns, row, columns, keyword.value);
-      const whereInput = buildSearchResultWhere({
+      const whereInput = await buildSearchResultWhere({
         databaseType,
         columns,
         resultColumns: result.columns,
@@ -249,7 +255,7 @@ async function searchTable(task: SearchTableTask, databaseType: DatabaseType, cu
         preview: rowPreview(result.columns, row, matchedColumns),
         whereInput,
       });
-    });
+    }
   } catch (error: any) {
     if (!cancelled.value) {
       tableErrors.value.push({ tableName: tableLabel, message: error?.message || String(error) });

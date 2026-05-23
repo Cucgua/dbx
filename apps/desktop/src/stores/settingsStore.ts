@@ -9,6 +9,7 @@ import {
 } from "@/lib/columnFormatter";
 import { normalizeShortcutSettings, type ShortcutSettings } from "@/lib/shortcutRegistry";
 import { normalizeResultPageSize } from "@/lib/paginationPageSize";
+import { normalizeSidebarHiddenTablePrefixes } from "@/lib/sidebarTableNameDisplay";
 import type { SidebarActivation } from "@/lib/treeNodeClick";
 
 export type AiProvider =
@@ -32,6 +33,14 @@ export interface AiConfig {
   proxyUrl?: string;
   enableThinking?: boolean;
 }
+
+export interface DesktopSettings {
+  show_tray_icon: boolean;
+}
+
+export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
+  show_tray_icon: true,
+};
 
 export interface AiProviderPreset extends Omit<AiConfig, "apiKey"> {
   label: string;
@@ -147,6 +156,7 @@ function inferAiProviderFromConfig(config: Partial<AiConfig> | null | undefined)
 }
 
 export type EditorTheme =
+  | "app"
   | "one-dark"
   | "vscode-dark"
   | "vscode-light"
@@ -163,11 +173,15 @@ export interface EditorSettings {
   theme: EditorTheme;
   executeMode: "all" | "current";
   wordWrap: boolean;
+  compactTabTitle: boolean;
   appLayout: "separated" | "classic";
   pageSize: number;
   redisScanPageSize: number;
+  mongoViewMode: "document" | "table";
   shortcuts: ShortcutSettings;
   sidebarActivation: SidebarActivation;
+  autoSelectActiveSidebarNode: boolean;
+  sidebarHiddenTablePrefixes: string[];
   columnFormatters: Record<string, ColumnFormatterConfig>;
   customColumnFormatters: Record<string, CustomColumnFormatterConfig>;
 }
@@ -181,6 +195,7 @@ export interface AppSettings {
 }
 
 export const EDITOR_THEMES: { value: EditorTheme; label: string; dark: boolean }[] = [
+  { value: "app", label: "Follow app theme", dark: false },
   { value: "one-dark", label: "One Dark", dark: true },
   { value: "vscode-dark", label: "VS Dark+", dark: true },
   { value: "vscode-light", label: "VS Light+", dark: false },
@@ -191,6 +206,8 @@ export const EDITOR_THEMES: { value: EditorTheme; label: string; dark: boolean }
   { value: "duotone-dark", label: "Duotone Dark", dark: true },
   { value: "xcode", label: "Xcode", dark: false },
 ];
+
+const EDITOR_THEME_VALUES = new Set<EditorTheme>(EDITOR_THEMES.map((theme) => theme.value));
 
 export const FONT_FAMILIES: { value: string; label: string }[] = [
   { value: "'JetBrains Mono', 'Fira Code', monospace", label: "JetBrains Mono" },
@@ -205,14 +222,18 @@ export const FONT_FAMILIES: { value: string; label: string }[] = [
 export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
   fontSize: 13,
-  theme: "one-dark",
+  theme: "app",
   executeMode: "all",
   wordWrap: false,
+  compactTabTitle: false,
   appLayout: "classic",
   pageSize: 100,
   redisScanPageSize: 1000,
+  mongoViewMode: "document",
   shortcuts: normalizeShortcutSettings(),
   sidebarActivation: "single",
+  autoSelectActiveSidebarNode: false,
+  sidebarHiddenTablePrefixes: [],
   columnFormatters: {},
   customColumnFormatters: {},
 };
@@ -252,17 +273,22 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>): Edit
   return {
     fontFamily: settings.fontFamily ?? DEFAULT_EDITOR_SETTINGS.fontFamily,
     fontSize: settings.fontSize ?? DEFAULT_EDITOR_SETTINGS.fontSize,
-    theme: settings.theme ?? DEFAULT_EDITOR_SETTINGS.theme,
+    theme: settings.theme && EDITOR_THEME_VALUES.has(settings.theme) ? settings.theme : DEFAULT_EDITOR_SETTINGS.theme,
     executeMode: settings.executeMode ?? DEFAULT_EDITOR_SETTINGS.executeMode,
     wordWrap: settings.wordWrap ?? DEFAULT_EDITOR_SETTINGS.wordWrap,
+    compactTabTitle: settings.compactTabTitle ?? DEFAULT_EDITOR_SETTINGS.compactTabTitle,
     appLayout: settings.appLayout ?? DEFAULT_EDITOR_SETTINGS.appLayout,
     pageSize: normalizeResultPageSize(settings.pageSize),
     redisScanPageSize: settings.redisScanPageSize ?? DEFAULT_EDITOR_SETTINGS.redisScanPageSize,
+    mongoViewMode: settings.mongoViewMode === "table" ? "table" : DEFAULT_EDITOR_SETTINGS.mongoViewMode,
     shortcuts: normalizeShortcutSettings(settings.shortcuts),
     sidebarActivation:
       settings.sidebarActivation === "single" || settings.sidebarActivation === "double"
         ? settings.sidebarActivation
         : DEFAULT_EDITOR_SETTINGS.sidebarActivation,
+    autoSelectActiveSidebarNode:
+      settings.autoSelectActiveSidebarNode ?? DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode,
+    sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(settings.sidebarHiddenTablePrefixes),
     columnFormatters: normalizeColumnFormatters(settings.columnFormatters),
     customColumnFormatters: normalizeCustomColumnFormatters(settings.customColumnFormatters),
   };
@@ -310,9 +336,32 @@ export const useSettingsStore = defineStore("settings", () => {
   const aiConfig = ref<AiConfig>(normalizeAiConfig({ provider: "claude" }));
   const isAiConfigLoaded = ref(false);
   const isAppSettingsLoaded = ref(false);
+  const desktopSettings = ref<DesktopSettings>({ ...DEFAULT_DESKTOP_SETTINGS });
+  const isDesktopSettingsLoaded = ref(false);
 
   const editorSettings = ref<EditorSettings>(loadEditorSettings());
   const appSettings = ref<AppSettings>({ ...DEFAULT_APP_SETTINGS });
+
+  async function initDesktopSettings() {
+    if (isDesktopSettingsLoaded.value) return;
+    desktopSettings.value = await api.loadDesktopSettings().catch(() => ({ ...DEFAULT_DESKTOP_SETTINGS }));
+    isDesktopSettingsLoaded.value = true;
+  }
+
+  async function updateDesktopSettings(partial: Partial<DesktopSettings>) {
+    const previous = desktopSettings.value;
+    const next = {
+      ...desktopSettings.value,
+      ...partial,
+    };
+    desktopSettings.value = next;
+    try {
+      await api.saveDesktopSettings(next);
+    } catch (error) {
+      desktopSettings.value = previous;
+      throw error;
+    }
+  }
 
   async function initAiConfig() {
     if (isAiConfigLoaded.value) return;
@@ -364,6 +413,9 @@ export const useSettingsStore = defineStore("settings", () => {
     const normalizedPartial = {
       ...partial,
       ...(partial.pageSize !== undefined ? { pageSize: normalizeResultPageSize(partial.pageSize) } : {}),
+      ...(partial.sidebarHiddenTablePrefixes !== undefined
+        ? { sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(partial.sidebarHiddenTablePrefixes) }
+        : {}),
     };
     Object.assign(editorSettings.value, normalizedPartial);
     saveEditorSettings(editorSettings.value);
@@ -416,7 +468,10 @@ export const useSettingsStore = defineStore("settings", () => {
     isConfigured,
     editorSettings,
     appSettings,
+    desktopSettings,
     updateEditorSettings,
+    initDesktopSettings,
+    updateDesktopSettings,
     updateColumnFormatter,
     upsertCustomColumnFormatter,
     deleteCustomColumnFormatter,

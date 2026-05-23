@@ -3,6 +3,7 @@ import { ref, watch, shallowRef, computed } from "vue";
 import type { EditorView as EditorViewType } from "@codemirror/view";
 import { useI18n } from "vue-i18n";
 import { CircleHelp, Copy, ExternalLink, FolderOpen, Loader2, RefreshCw, Settings } from "lucide-vue-next";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -19,12 +20,22 @@ import {
   FONT_FAMILIES,
   DEFAULT_EDITOR_SETTINGS,
   DEFAULT_APP_SETTINGS,
+  DEFAULT_DESKTOP_SETTINGS,
   type AiProvider,
   type AiApiStyle,
+  type EditorTheme,
 } from "@/stores/settingsStore";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { aiListModels, aiTestConnection, loadMcpHttpStatus, type AiModelInfo, type McpHttpStatus } from "@/lib/api";
+import { useTheme } from "@/composables/useTheme";
+import {
+  aiListModels,
+  aiTestConnection,
+  listSystemFonts,
+  loadMcpHttpStatus,
+  type AiModelInfo,
+  type McpHttpStatus,
+} from "@/lib/api";
 import { eventToShortcut } from "@/lib/keyboardShortcuts";
 import {
   SHORTCUT_DEFINITIONS,
@@ -33,10 +44,13 @@ import {
   normalizeShortcutSettings,
   type ShortcutActionId,
 } from "@/lib/shortcutRegistry";
+import { normalizeSidebarHiddenTablePrefixes } from "@/lib/sidebarTableNameDisplay";
 import AiProviderLogo from "@/components/icons/AiProviderLogo.vue";
+import type { AppThemeAppearance } from "@/lib/appTheme";
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
+const { isDark } = useTheme();
 
 const props = defineProps<{
   open: boolean;
@@ -55,6 +69,7 @@ const editTheme = ref(settingsStore.editorSettings.theme);
 const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
 const editWordWrap = ref(settingsStore.editorSettings.wordWrap);
 const editAppLayout = ref(settingsStore.editorSettings.appLayout);
+const editShowTrayIcon = ref(settingsStore.desktopSettings.show_tray_icon);
 const editRedisScanPageSize = ref(settingsStore.editorSettings.redisScanPageSize);
 const editShortcuts = ref(normalizeShortcutSettings(settingsStore.editorSettings.shortcuts));
 const editSidebarActivation = ref(settingsStore.editorSettings.sidebarActivation);
@@ -66,7 +81,6 @@ const editMcpHttpPort = ref(String(settingsStore.appSettings.mcpHttpPort));
 const mcpHttpStatus = ref<McpHttpStatus | null>(null);
 const mcpStatusLoading = ref(false);
 const mcpStatusError = ref("");
-const redisScanPageSizeOptions = [200, 1000, 5000, 10000];
 const normalizedMcpHttpHost = computed(() => editMcpHttpHost.value.trim());
 const normalizedMcpHttpPort = computed(() => Number(editMcpHttpPort.value));
 const isMcpHttpHostValid = computed(() => normalizedMcpHttpHost.value.length > 0);
@@ -84,6 +98,54 @@ const mcpStatusStartedAt = computed(() => {
   if (!mcpHttpStatus.value?.started_at) return "";
   return new Date(mcpHttpStatus.value.started_at).toLocaleString();
 });
+const editAutoSelectActiveSidebarNode = ref(settingsStore.editorSettings.autoSelectActiveSidebarNode);
+const editSidebarHiddenTablePrefixes = ref(settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n"));
+const redisScanPageSizeOptions = [200, 1000, 5000, 10000];
+const systemFonts = ref<string[]>([]);
+const systemFontsLoading = ref(false);
+const systemFontsLoaded = ref(false);
+
+const presetFontLabels = new Map(FONT_FAMILIES.map((font) => [font.value, font.label]));
+
+function cssFontFamilyForName(name: string): string {
+  return `'${name.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}', monospace`;
+}
+
+function readableFontFamily(value: string): string {
+  const first = value.split(",")[0]?.trim() ?? value;
+  return first.replace(/^['"]|['"]$/g, "").replace(/\\'/g, "'");
+}
+
+function normalizeCustomFontFamilyInput(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (trimmed.includes(",") || trimmed.includes("'") || trimmed.includes('"')) return trimmed;
+  return cssFontFamilyForName(trimmed);
+}
+
+const systemFontOptions = computed(() => {
+  const options = new Set(FONT_FAMILIES.map((font) => font.value));
+  for (const font of systemFonts.value) options.add(cssFontFamilyForName(font));
+  if (editFontFamily.value) options.add(editFontFamily.value);
+  return [...options];
+});
+
+function displayFontFamily(value: string): string {
+  return presetFontLabels.get(value) ?? readableFontFamily(value);
+}
+
+async function loadSystemFontOptions() {
+  if (systemFontsLoaded.value || systemFontsLoading.value) return;
+  systemFontsLoading.value = true;
+  try {
+    systemFonts.value = await listSystemFonts();
+    systemFontsLoaded.value = true;
+  } catch {
+    systemFonts.value = [];
+  } finally {
+    systemFontsLoading.value = false;
+  }
+}
 
 // Sync from store when dialog opens
 watch(
@@ -91,6 +153,7 @@ watch(
   async (open) => {
     if (open) {
       await settingsStore.initAppSettings();
+      await settingsStore.initDesktopSettings();
       if (!props.open) return;
       editFontFamily.value = settingsStore.editorSettings.fontFamily;
       editFontSize.value = settingsStore.editorSettings.fontSize;
@@ -98,6 +161,7 @@ watch(
       editExecuteMode.value = settingsStore.editorSettings.executeMode;
       editWordWrap.value = settingsStore.editorSettings.wordWrap;
       editAppLayout.value = settingsStore.editorSettings.appLayout;
+      editShowTrayIcon.value = settingsStore.desktopSettings.show_tray_icon;
       editRedisScanPageSize.value = settingsStore.editorSettings.redisScanPageSize;
       editShortcuts.value = normalizeShortcutSettings(settingsStore.editorSettings.shortcuts);
       editSidebarActivation.value = settingsStore.editorSettings.sidebarActivation;
@@ -107,6 +171,9 @@ watch(
       editMcpHttpHost.value = settingsStore.appSettings.mcpHttpHost;
       editMcpHttpPort.value = String(settingsStore.appSettings.mcpHttpPort);
       void refreshMcpHttpStatus();
+      editAutoSelectActiveSidebarNode.value = settingsStore.editorSettings.autoSelectActiveSidebarNode;
+      editSidebarHiddenTablePrefixes.value = settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n");
+      void loadSystemFontOptions();
     }
   },
 );
@@ -118,6 +185,10 @@ const shortcutConflicts = computed(() =>
   }),
 );
 const hasShortcutConflicts = computed(() => shortcutConflicts.value.length > 0);
+const shortcutsChanged = computed(
+  () => JSON.stringify(editShortcuts.value) !== JSON.stringify(settingsStore.editorSettings.shortcuts),
+);
+const hasBlockingShortcutConflicts = computed(() => shortcutsChanged.value && hasShortcutConflicts.value);
 
 function hasChanges(): boolean {
   return (
@@ -127,14 +198,18 @@ function hasChanges(): boolean {
     editExecuteMode.value !== settingsStore.editorSettings.executeMode ||
     editWordWrap.value !== settingsStore.editorSettings.wordWrap ||
     editAppLayout.value !== settingsStore.editorSettings.appLayout ||
+    editShowTrayIcon.value !== settingsStore.desktopSettings.show_tray_icon ||
     editRedisScanPageSize.value !== settingsStore.editorSettings.redisScanPageSize ||
     JSON.stringify(editShortcuts.value) !== JSON.stringify(settingsStore.editorSettings.shortcuts) ||
-    editSidebarActivation.value !== settingsStore.editorSettings.sidebarActivation
+    editSidebarActivation.value !== settingsStore.editorSettings.sidebarActivation ||
+    editAutoSelectActiveSidebarNode.value !== settingsStore.editorSettings.autoSelectActiveSidebarNode ||
+    JSON.stringify(normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value)) !==
+      JSON.stringify(settingsStore.editorSettings.sidebarHiddenTablePrefixes)
   );
 }
 
-function applySettings() {
-  if (hasShortcutConflicts.value) return;
+async function applySettings() {
+  if (hasBlockingShortcutConflicts.value) return;
   settingsStore.updateEditorSettings({
     fontFamily: editFontFamily.value,
     fontSize: editFontSize.value,
@@ -145,6 +220,11 @@ function applySettings() {
     redisScanPageSize: editRedisScanPageSize.value,
     shortcuts: editShortcuts.value,
     sidebarActivation: editSidebarActivation.value,
+    autoSelectActiveSidebarNode: editAutoSelectActiveSidebarNode.value,
+    sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value),
+  });
+  await settingsStore.updateDesktopSettings({
+    show_tray_icon: editShowTrayIcon.value,
   });
   emit("update:open", false);
 }
@@ -156,9 +236,12 @@ function resetDefaults() {
   editExecuteMode.value = DEFAULT_EDITOR_SETTINGS.executeMode;
   editWordWrap.value = DEFAULT_EDITOR_SETTINGS.wordWrap;
   editAppLayout.value = DEFAULT_EDITOR_SETTINGS.appLayout;
+  editShowTrayIcon.value = DEFAULT_DESKTOP_SETTINGS.show_tray_icon;
   editRedisScanPageSize.value = DEFAULT_EDITOR_SETTINGS.redisScanPageSize;
   editShortcuts.value = normalizeShortcutSettings(DEFAULT_EDITOR_SETTINGS.shortcuts);
   editSidebarActivation.value = DEFAULT_EDITOR_SETTINGS.sidebarActivation;
+  editAutoSelectActiveSidebarNode.value = DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode;
+  editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
 }
 
 function hasSystemChanges(): boolean {
@@ -282,6 +365,17 @@ const settingsCategoryNav = computed<{ value: SettingsCategory; label: string }[
   ...(isWeb ? [{ value: "security" as const, label: t("settings.securityTab") }] : []),
   { value: "about", label: t("settings.aboutTab") },
 ]);
+const settingsTabsWithApplyFooter = new Set<SettingsCategory>([
+  "editor",
+  "appearance",
+  "navigation",
+  "redis",
+  "shortcuts",
+]);
+
+function hasSettingsApplyFooter(value: SettingsCategory): boolean {
+  return settingsTabsWithApplyFooter.has(value);
+}
 
 function settingsCategoryButton(value: SettingsCategory): string {
   return [
@@ -346,6 +440,8 @@ watch(
       newPassword.value = "";
       confirmNewPassword.value = "";
       await settingsStore.initAiConfig();
+      await settingsStore.initDesktopSettings();
+      editShowTrayIcon.value = settingsStore.desktopSettings.show_tray_icon;
       syncAiEditState();
     }
   },
@@ -598,10 +694,16 @@ async function aiTestConn() {
 const previewRef = ref<HTMLDivElement>();
 const previewView = shallowRef<EditorViewType | null>(null);
 
-const previewSettings = computed(() => ({
+const previewSettings = computed<{
+  fontFamily: string;
+  fontSize: number;
+  theme: EditorTheme;
+  appAppearance: AppThemeAppearance;
+}>(() => ({
   fontFamily: editFontFamily.value,
   fontSize: editFontSize.value,
   theme: editTheme.value,
+  appAppearance: isDark.value ? "dark" : "light",
 }));
 
 const previewSql = `SELECT u.id, u.name
@@ -617,7 +719,7 @@ watch(
   async (ss) => {
     if (!previewView.value || !fontThemeComp || !themeComp || !editorViewModule) return;
 
-    const themeExt = await loadEditorTheme(ss.theme);
+    const themeExt = await loadEditorTheme(ss.theme, ss.appAppearance);
     previewView.value.dispatch({
       effects: [
         themeComp.reconfigure(themeExt),
@@ -658,7 +760,7 @@ watch(previewRef, async (el) => {
   themeComp = new Compartment();
 
   const ss = previewSettings.value;
-  const themeExt = await loadEditorTheme(ss.theme);
+  const themeExt = await loadEditorTheme(ss.theme, ss.appAppearance);
 
   const state = EditorState.create({
     doc: previewSql,
@@ -690,7 +792,7 @@ watch(
 
 <template>
   <Dialog :open="open" @update:open="(v: boolean) => emit('update:open', v)">
-    <DialogContent class="sm:max-w-[860px] max-h-[calc(100vh-80px)] overflow-hidden">
+    <DialogContent class="sm:max-w-[860px] h-[min(660px,calc(100vh-80px))] flex flex-col overflow-hidden">
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <Settings class="h-4 w-4" />
@@ -698,7 +800,7 @@ watch(
         </DialogTitle>
       </DialogHeader>
 
-      <div class="flex min-h-[520px] flex-col gap-3 overflow-hidden sm:flex-row">
+      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden sm:min-h-[520px] sm:flex-row">
         <nav
           class="settingsCategoryNav flex shrink-0 gap-1 overflow-x-auto border-b pb-3 sm:w-40 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:pb-0 sm:pr-3"
         >
@@ -713,516 +815,478 @@ watch(
           </button>
         </nav>
 
-        <div class="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-1">
-          <section v-if="activeSettingsTab === 'editor'" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
-              <!-- Font Family -->
-              <div class="space-y-2">
-                <Label>{{ t("settings.fontFamily") }}</Label>
-                <Select :model-value="editFontFamily" @update:model-value="onFontFamilyChange">
-                  <SelectTrigger>
-                    <SelectValue :placeholder="t('settings.selectFont')" />
-                  </SelectTrigger>
-                  <SelectContent position="popper" class="min-w-[210px]">
-                    <SelectItem
-                      v-for="font in FONT_FAMILIES"
-                      :key="font.value"
-                      :value="font.value"
-                      :style="{ fontFamily: font.value }"
-                      class="whitespace-nowrap"
-                    >
-                      {{ font.label }}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+        <div class="min-w-0 flex-1 overflow-hidden px-1 flex flex-col">
+          <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 pr-2">
+            <section v-if="activeSettingsTab === 'editor'" class="flex flex-col gap-5 py-2">
+              <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+                <!-- Font Family -->
+                <div class="space-y-2">
+                  <Label>{{ t("settings.fontFamily") }}</Label>
+                  <SearchableSelect
+                    :model-value="editFontFamily"
+                    :options="systemFontOptions"
+                    :placeholder="t('settings.selectFont')"
+                    :search-placeholder="t('settings.searchFont')"
+                    :empty-text="t('settings.noFontsFound')"
+                    :loading-text="t('settings.loadingFonts')"
+                    :loading="systemFontsLoading"
+                    allow-custom
+                    :display-name="displayFontFamily"
+                    :normalize-custom="normalizeCustomFontFamilyInput"
+                    trigger-class="h-9 w-full max-w-none justify-between border bg-background px-3 text-sm shadow-xs hover:bg-accent"
+                    content-class="w-[var(--reka-popover-trigger-width)] min-w-[260px]"
+                    @update:model-value="onFontFamilyChange"
+                    @update:open="(open: boolean) => open && loadSystemFontOptions()"
 
-              <!-- Theme -->
-              <div class="space-y-2">
-                <Label>{{ t("settings.theme") }}</Label>
-                <Select :model-value="editTheme" @update:model-value="onThemeChange">
-                  <SelectTrigger>
-                    <SelectValue :placeholder="t('settings.selectTheme')" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="theme in EDITOR_THEMES" :key="theme.value" :value="theme.value">
-                      <div class="flex items-center gap-2">
-                        <span
-                          class="h-3 w-3 rounded-full border"
-                          :class="
-                            theme.dark
-                              ? 'bg-foreground border-foreground/20'
-                              : 'bg-muted-foreground/30 border-muted-foreground/40'
-                          "
-                        />
-                        {{ theme.label }}
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <!-- Font Size -->
-            <div class="space-y-2">
-              <div class="flex items-center justify-between">
-                <Label>{{ t("settings.fontSize") }}</Label>
-                <span class="text-xs text-muted-foreground tabular-nums">{{ editFontSize }}px</span>
-              </div>
-              <input
-                type="range"
-                min="10"
-                max="24"
-                step="1"
-                :value="editFontSize"
-                @input="editFontSize = Number(($event.target as HTMLInputElement).value)"
-                class="w-full accent-primary"
-              />
-              <div class="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>10px</span>
-                <span class="flex-1 border-b border-dashed border-muted-foreground/30" />
-                <span>24px</span>
-              </div>
-            </div>
-
-            <Separator />
-
-            <div class="grid gap-4 md:grid-cols-2">
-              <div class="space-y-2">
-                <Label>{{ t("settings.executeMode") }}</Label>
-                <Select :model-value="editExecuteMode" @update:model-value="onExecuteModeChange">
-                  <SelectTrigger>
-                    <SelectValue :placeholder="t('settings.executeMode')" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">{{ t("settings.executeModeAll") }}</SelectItem>
-                    <SelectItem value="current">{{ t("settings.executeModeCurrent") }}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div class="grid gap-4 md:grid-cols-2">
-              <div class="flex items-start justify-between gap-4">
-                <div class="space-y-1">
-                  <Label for="editor-word-wrap">{{ t("settings.wordWrap") }}</Label>
-                  <p class="text-xs text-muted-foreground">{{ t("settings.wordWrapDescription") }}</p>
-                </div>
-                <Switch id="editor-word-wrap" v-model="editWordWrap" class="mt-0.5" />
-              </div>
-            </div>
-
-            <Separator />
-
-            <!-- Live Preview -->
-            <div class="space-y-2">
-              <Label>{{ t("settings.preview") }}</Label>
-              <div
-                class="rounded-md border overflow-auto max-w-full"
-                :class="
-                  editTheme === 'vscode-light' || editTheme === 'duotone-light' || editTheme === 'xcode'
-                    ? 'border-border'
-                    : 'border-border/50'
-                "
-              >
-                <div ref="previewRef" style="min-width: 100%" />
-              </div>
-            </div>
-
-            <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
-              <Button variant="outline" @click="resetDefaults">
-                {{ t("settings.resetDefaults") }}
-              </Button>
-              <div class="flex-1" />
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
-              </Button>
-              <Button :disabled="!hasChanges() || hasShortcutConflicts" @click="applySettings">
-                {{ t("settings.apply") }}
-              </Button>
-            </DialogFooter>
-          </section>
-
-          <section v-else-if="activeSettingsTab === 'appearance'" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="space-y-2">
-              <Label>{{ t("settings.appLayout") }}</Label>
-              <div class="grid grid-cols-2 gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  class="h-auto justify-start border p-3"
-                  :class="editAppLayout === 'separated' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
-                  @click="setAppLayout('separated')"
-                >
-                  <div class="text-left">
-                    <div class="text-sm font-medium">{{ t("settings.appLayoutSeparated") }}</div>
-                    <div class="text-xs text-muted-foreground">{{ t("settings.appLayoutSeparatedDescription") }}</div>
-                  </div>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  class="h-auto justify-start border p-3"
-                  :class="editAppLayout === 'classic' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
-                  @click="setAppLayout('classic')"
-                >
-                  <div class="text-left">
-                    <div class="text-sm font-medium">{{ t("settings.appLayoutClassic") }}</div>
-                    <div class="text-xs text-muted-foreground">{{ t("settings.appLayoutClassicDescription") }}</div>
-                  </div>
-                </Button>
-              </div>
-            </div>
-
-            <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
-              <Button variant="outline" @click="resetDefaults">
-                {{ t("settings.resetDefaults") }}
-              </Button>
-              <div class="flex-1" />
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
-              </Button>
-              <Button :disabled="!hasChanges() || hasShortcutConflicts" @click="applySettings">
-                {{ t("settings.apply") }}
-              </Button>
-            </DialogFooter>
-          </section>
-
-          <section v-else-if="activeSettingsTab === 'navigation'" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="space-y-2">
-              <Label>{{ t("settings.sidebarActivation") }}</Label>
-              <div class="grid grid-cols-2 gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  class="h-auto justify-start border p-3"
-                  :class="editSidebarActivation === 'single' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
-                  @click="setSidebarActivation('single')"
-                >
-                  <div class="text-left">
-                    <div class="text-sm font-medium">{{ t("settings.sidebarActivationSingle") }}</div>
-                    <div class="text-xs text-muted-foreground">
-                      {{ t("settings.sidebarActivationSingleDescription") }}
-                    </div>
-                  </div>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  class="h-auto justify-start border p-3"
-                  :class="editSidebarActivation === 'double' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
-                  @click="setSidebarActivation('double')"
-                >
-                  <div class="text-left">
-                    <div class="text-sm font-medium">{{ t("settings.sidebarActivationDouble") }}</div>
-                    <div class="text-xs text-muted-foreground">
-                      {{ t("settings.sidebarActivationDoubleDescription") }}
-                    </div>
-                  </div>
-                </Button>
-              </div>
-            </div>
-
-            <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
-              <Button variant="outline" @click="resetDefaults">
-                {{ t("settings.resetDefaults") }}
-              </Button>
-              <div class="flex-1" />
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
-              </Button>
-              <Button :disabled="!hasChanges() || hasShortcutConflicts" @click="applySettings">
-                {{ t("settings.apply") }}
-              </Button>
-            </DialogFooter>
-          </section>
-
-          <section v-else-if="activeSettingsTab === 'redis'" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="space-y-2">
-              <Label>{{ t("settings.redisScanPageSize") }}</Label>
-              <Select :model-value="String(editRedisScanPageSize)" @update:model-value="onRedisScanPageSizeChange">
-                <SelectTrigger>
-                  <SelectValue :placeholder="t('settings.redisScanPageSize')" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="size in redisScanPageSizeOptions" :key="size" :value="String(size)">
-                    {{ t("settings.redisScanPageSizeOption", { count: size }) }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p class="text-xs text-muted-foreground">{{ t("settings.redisScanPageSizeDescription") }}</p>
-            </div>
-
-            <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
-              <Button variant="outline" @click="resetDefaults">
-                {{ t("settings.resetDefaults") }}
-              </Button>
-              <div class="flex-1" />
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
-              </Button>
-              <Button :disabled="!hasChanges() || hasShortcutConflicts" @click="applySettings">
-                {{ t("settings.apply") }}
-              </Button>
-            </DialogFooter>
-          </section>
-
-          <section v-else-if="activeSettingsTab === 'shortcuts'" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="space-y-3">
-              <div
-                v-for="definition in SHORTCUT_DEFINITIONS"
-                :key="definition.id"
-                class="grid gap-2 rounded-md border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center"
-              >
-                <div class="min-w-0 space-y-1">
-                  <Label>{{ t(definition.labelKey) }}</Label>
-                  <p class="text-xs text-muted-foreground">
-                    {{ t(`settings.shortcutScope${definition.scope[0].toUpperCase()}${definition.scope.slice(1)}`) }}
-                  </p>
-                </div>
-                <div class="space-y-1.5">
-                  <div class="flex gap-2">
-                    <Input
-                      :model-value="formatShortcut(editShortcuts[definition.id])"
-                      readonly
-                      :aria-invalid="shortcutConflicts.includes(definition.id)"
-                      :placeholder="t('settings.shortcutPressShortcut')"
-                      class="font-mono"
-                      @keydown="(event: KeyboardEvent) => onShortcutKeydown(definition.id, event)"
-                    />
-                    <Button type="button" variant="outline" class="shrink-0" @click="resetShortcut(definition.id)">
-                      {{ t("settings.reset") }}
-                    </Button>
-                  </div>
-                  <p v-if="shortcutConflicts.includes(definition.id)" class="text-xs text-destructive">
-                    {{ t("settings.shortcutConflict") }}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
-              <Button variant="outline" @click="resetDefaults">
-                {{ t("settings.resetDefaults") }}
-              </Button>
-              <div class="flex-1" />
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
-              </Button>
-              <Button :disabled="!hasChanges() || hasShortcutConflicts" @click="applySettings">
-                {{ t("settings.apply") }}
-              </Button>
-            </DialogFooter>
-          </section>
-          <!-- AI Settings Tab -->
-          <section v-else-if="activeSettingsTab === 'ai'" class="flex min-h-full flex-col gap-5 py-2">
-            <p class="text-xs text-muted-foreground">{{ t("ai.settingsHint") }}</p>
-
-            <div class="space-y-3">
-              <div class="grid grid-cols-3 items-center gap-3">
-                <Label class="text-right text-xs">{{ t("ai.provider") }}</Label>
-                <Select :model-value="aiEditProvider" @update:model-value="(v: any) => aiSelectProvider(v)">
-                  <SelectTrigger class="col-span-2 h-8 text-xs">
-                    <SelectValue>
-                      <span class="flex items-center gap-2">
-                        <AiProviderLogo
-                          :provider="selectedAiProviderPreset.provider"
-                          :label="selectedAiProviderPreset.label"
-                          :icon-slug="selectedAiProviderPreset.iconSlug"
-                        />
-                        <span>{{ selectedAiProviderPreset.label }}</span>
-                      </span>
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem
-                      v-for="provider in aiProviderOptions"
-                      :key="provider.provider"
-                      :value="provider.provider"
-                    >
-                      <span class="flex items-center gap-2">
-                        <AiProviderLogo
-                          :provider="provider.provider"
-                          :label="provider.label"
-                          :icon-slug="provider.iconSlug"
-                        />
-                        <span>{{ provider.label }}</span>
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div class="grid grid-cols-3 items-center gap-3">
-                <Label class="text-right text-xs">API Key</Label>
-                <Input
-                  v-model="aiEditApiKey"
-                  type="password"
-                  autocomplete="off"
-                  class="col-span-2 h-8 text-xs"
-                  :placeholder="aiRequiresApiKey ? '' : 'Optional'"
-                />
-              </div>
-
-              <div class="grid grid-cols-3 items-center gap-3">
-                <Label class="text-right text-xs">Endpoint</Label>
-                <Input
-                  v-model="aiEditEndpoint"
-                  placeholder="https://api.openai.com/v1"
-                  autocomplete="off"
-                  class="col-span-2 h-8 text-xs"
-                />
-              </div>
-
-              <div class="grid grid-cols-3 items-start gap-3">
-                <Label class="pt-2 text-right text-xs">{{ t("ai.model") }}</Label>
-                <div class="col-span-2 space-y-1.5">
-                  <div class="flex min-w-0 items-center gap-2">
-                    <Input v-model="aiEditModel" autocomplete="off" class="h-8 min-w-0 flex-1 text-xs" />
-                    <SearchableSelect
-                      :model-value="aiEditModel"
-                      :options="aiModelOptionIds"
-                      :placeholder="t('ai.browseModels')"
-                      :search-placeholder="t('ai.searchModels')"
-                      :empty-text="aiModelEmptyText"
-                      :loading-text="t('ai.loadingModels')"
-                      :loading="aiModelLoading"
-                      :display-name="displayAiModelName"
-                      trigger-class="h-8 min-w-[104px] max-w-[150px] shrink-0 border border-border bg-background px-2 text-xs shadow-none hover:bg-muted/50"
-                      content-class="w-72"
-                      @update:model-value="aiSelectModel"
-                      @update:open="onAiModelListOpen"
-                    >
-                      <template #trigger-label="{ loading }">
-                        <span class="truncate">{{ loading ? t("ai.loadingModels") : t("ai.browseModels") }}</span>
-                      </template>
-                      <template #option-label="{ option, label }">
-                        <span class="flex min-w-0 flex-col">
-                          <span class="truncate">{{ label }}</span>
-                          <span v-if="label !== option" class="truncate text-[11px] text-muted-foreground">{{
-                            option
-                          }}</span>
-                        </span>
-                      </template>
-                    </SearchableSelect>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="outline"
-                      class="shrink-0"
-                      :disabled="aiModelLoading || !aiModelListSupported"
-                      :title="t('ai.refreshModels')"
-                      :aria-label="t('ai.refreshModels')"
-                      @click="aiRefreshModels"
-                    >
-                      <Loader2 v-if="aiModelLoading" class="h-3.5 w-3.5 animate-spin" />
-                      <RefreshCw v-else class="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                  <p v-if="aiModelError" class="text-xs text-destructive">{{ aiModelError }}</p>
-                  <p v-else-if="!aiModelOptionIds.length" class="text-xs text-muted-foreground">
-                    {{ aiModelListSupported ? t("ai.modelListHint") : t("ai.modelListUnsupported") }}
-                  </p>
-                </div>
-              </div>
-
-              <div v-if="aiSupportsApiStyle" class="grid grid-cols-3 items-center gap-3">
-                <Label class="text-right text-xs">API</Label>
-                <div class="col-span-2 flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    class="h-8 flex-1 text-xs"
-                    :class="{ 'border-blue-300 border-2 ring-2 ring-blue-300/50': aiEditApiStyle === 'completions' }"
-                    @click="aiEditApiStyle = 'completions'"
-                    >/chat/completions</Button
                   >
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    class="h-8 flex-1 text-xs"
-                    :class="{ 'border-blue-300 border-2 ring-2 ring-blue-300/50': aiEditApiStyle === 'responses' }"
-                    @click="aiEditApiStyle = 'responses'"
-                    >/responses</Button
-                  >
+                    <template #trigger-label="{ label, loading }">
+                      <span class="truncate" :style="{ fontFamily: editFontFamily }">
+                        {{ loading ? t("settings.loadingFonts") : label }}
+                      </span>
+                    </template>
+                    <template #option-label="{ option, label }">
+                      <span class="truncate" :style="{ fontFamily: option }">{{ label }}</span>
+                    </template>
+                    <template #custom-option-label="{ value }">
+                      <span class="truncate" :style="{ fontFamily: value }">
+                        {{ t("settings.useCustomFont", { font: readableFontFamily(value) }) }}
+                      </span>
+                    </template>
+                  </SearchableSelect>
+                </div>
+
+                <!-- Theme -->
+                <div class="space-y-2">
+                  <Label>{{ t("settings.theme") }}</Label>
+                  <Select :model-value="editTheme" @update:model-value="onThemeChange">
+                    <SelectTrigger>
+                      <SelectValue :placeholder="t('settings.selectTheme')" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="theme in EDITOR_THEMES" :key="theme.value" :value="theme.value">
+                        <div class="flex items-center gap-2">
+                          <span
+                            class="h-3 w-3 rounded-full border"
+                            :class="
+                              theme.dark
+                                ? 'bg-foreground border-foreground/20'
+                                : 'bg-muted-foreground/30 border-muted-foreground/40'
+                            "
+                          />
+                          {{ theme.label }}
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
-              <div class="grid grid-cols-3 items-center gap-3">
-                <Label class="text-right text-xs">{{ t("ai.enableThinking") }}</Label>
-                <div class="col-span-2 flex items-center gap-2">
-                  <label class="flex items-center gap-2 text-xs text-muted-foreground">
-                    <input
-                      v-model="aiEditEnableThinking"
-                      type="checkbox"
-                      class="h-4 w-4 shrink-0 accent-primary"
-                      :disabled="!aiCompletionsMode || aiEditProvider === 'gemini'"
-                    />
-                    {{ aiEditEnableThinking ? t("ai.enableThinkingOn") : t("ai.enableThinkingOff") }}
-                  </label>
-                  <Popover>
-                    <PopoverTrigger as-child>
-                      <CircleHelp class="h-3.5 w-3.5 cursor-help text-muted-foreground hover:text-foreground" />
-                    </PopoverTrigger>
-                    <PopoverContent class="max-w-[320px] text-xs leading-relaxed" side="top" align="start">
-                      {{ t("ai.enableThinkingHint") }}
-                    </PopoverContent>
-                  </Popover>
+              <!-- Font Size -->
+              <div class="space-y-2">
+                <div class="flex items-center justify-between">
+                  <Label>{{ t("settings.fontSize") }}</Label>
+                  <span class="text-xs text-muted-foreground tabular-nums">{{ editFontSize }}px</span>
                 </div>
-              </div>
-
-              <div class="grid grid-cols-3 items-center gap-3">
-                <Label class="text-right text-xs">{{ t("ai.proxy") }}</Label>
-                <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
-                  <input v-model="aiEditProxyEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
-                  {{ t("ai.proxyEnable") }}
-                </label>
-              </div>
-
-              <div class="grid grid-cols-3 items-center gap-3">
-                <Label class="text-right text-xs">{{ t("ai.proxyUrl") }}</Label>
-                <Input
-                  v-model="aiEditProxyUrl"
-                  autocomplete="off"
-                  class="col-span-2 h-8 text-xs"
-                  placeholder="socks5://127.0.0.1:7890"
-                  :disabled="!aiEditProxyEnabled"
+                <input
+                  type="range"
+                  min="10"
+                  max="24"
+                  step="1"
+                  :value="editFontSize"
+                  @input="editFontSize = Number(($event.target as HTMLInputElement).value)"
+                  class="w-full accent-primary"
                 />
-              </div>
-            </div>
+                <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>10px</span>
+                  <span class="flex-1 border-b border-dashed border-muted-foreground/30" />
+                  <span>24px</span>
 
-            <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
-              <div class="flex flex-1 items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  :disabled="
-                    aiTesting ||
-                    (aiRequiresApiKey && !aiEditApiKey?.trim()) ||
-                    !aiEditEndpoint?.trim() ||
-                    !aiEditModel?.trim()
+                </div>
+              </div>
+
+              <Separator />
+
+              <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div class="space-y-2">
+                  <Label>{{ t("settings.executeMode") }}</Label>
+                  <Select :model-value="editExecuteMode" @update:model-value="onExecuteModeChange">
+                    <SelectTrigger>
+                      <SelectValue :placeholder="t('settings.executeMode')" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{{ t("settings.executeModeAll") }}</SelectItem>
+                      <SelectItem value="current">{{ t("settings.executeModeCurrent") }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div class="flex items-center justify-between gap-4 self-end rounded-md border bg-muted/20 px-3 py-2">
+                  <div class="space-y-1">
+                    <Label for="editor-word-wrap">{{ t("settings.wordWrap") }}</Label>
+                    <p class="text-xs text-muted-foreground">{{ t("settings.wordWrapDescription") }}</p>
+                  </div>
+                  <Switch id="editor-word-wrap" v-model="editWordWrap" class="mt-0.5" />
+                </div>
+              </div>
+
+              <Separator />
+
+              <!-- Live Preview -->
+              <div class="space-y-2">
+                <Label>{{ t("settings.preview") }}</Label>
+                <div
+                  class="rounded-md border overflow-auto max-w-full"
+                  :class="
+                    editTheme === 'vscode-light' || editTheme === 'duotone-light' || editTheme === 'xcode'
+                      ? 'border-border'
+                      : 'border-border/50'
                   "
-                  @click="aiTestConn"
                 >
-                  <Loader2 v-if="aiTesting" class="h-3 w-3 animate-spin mr-1" />
-                  {{ t("connection.test") }}
-                </Button>
-                <span v-if="aiTestResult === 'success'" class="text-xs text-green-500">{{
-                  t("connection.testSuccess")
-                }}</span>
-                <span
-                  v-else-if="aiTestResult === 'error'"
-                  class="text-xs text-destructive truncate max-w-[200px]"
-                  :title="aiTestError"
-                  >{{ aiTestError }}</span
-                >
+                  <div ref="previewRef" style="min-width: 100%" />
+                </div>
               </div>
-              <Button variant="outline" @click="emit('update:open', false)">{{ t("common.close") }}</Button>
-              <Button :disabled="!aiHasChanges()" @click="aiApplySettings">{{ t("settings.apply") }}</Button>
-            </DialogFooter>
-          </section>
+            </section>
 
-          <section v-else-if="activeSettingsTab === 'system' && isDesktop" class="flex min-h-full flex-col gap-5 py-2">
+            <section v-else-if="activeSettingsTab === 'appearance'" class="flex flex-col gap-5 py-2">
+              <div class="space-y-2">
+                <Label>{{ t("settings.appLayout") }}</Label>
+                <div class="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    class="h-auto justify-start border p-3"
+                    :class="editAppLayout === 'separated' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
+                    @click="setAppLayout('separated')"
+                  >
+                    <div class="text-left">
+                      <div class="text-sm font-medium">{{ t("settings.appLayoutSeparated") }}</div>
+                      <div class="text-xs text-muted-foreground">{{ t("settings.appLayoutSeparatedDescription") }}</div>
+                    </div>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    class="h-auto justify-start border p-3"
+                    :class="editAppLayout === 'classic' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
+                    @click="setAppLayout('classic')"
+                  >
+                    <div class="text-left">
+                      <div class="text-sm font-medium">{{ t("settings.appLayoutClassic") }}</div>
+                      <div class="text-xs text-muted-foreground">{{ t("settings.appLayoutClassicDescription") }}</div>
+                    </div>
+                  </Button>
+                </div>
+              </div>
+              <div
+                v-if="!isWeb"
+                class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2"
+              >
+                <div class="space-y-1">
+                  <Label for="show-tray-icon">{{ t("settings.showTrayIcon") }}</Label>
+                  <p class="text-xs text-muted-foreground">{{ t("settings.showTrayIconDescription") }}</p>
+                </div>
+                <Switch id="show-tray-icon" v-model="editShowTrayIcon" />
+              </div>
+            </section>
+
+
+            <section v-else-if="activeSettingsTab === 'navigation'" class="flex flex-col gap-5 py-2">
+              <div class="space-y-2">
+                <Label>{{ t("settings.sidebarActivation") }}</Label>
+                <div class="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    class="h-auto justify-start border p-3"
+                    :class="editSidebarActivation === 'single' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
+                    @click="setSidebarActivation('single')"
+                  >
+                    <div class="text-left">
+                      <div class="text-sm font-medium">{{ t("settings.sidebarActivationSingle") }}</div>
+                      <div class="text-xs text-muted-foreground">
+                        {{ t("settings.sidebarActivationSingleDescription") }}
+                      </div>
+                    </div>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    class="h-auto justify-start border p-3"
+                    :class="editSidebarActivation === 'double' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
+                    @click="setSidebarActivation('double')"
+                  >
+                    <div class="text-left">
+                      <div class="text-sm font-medium">{{ t("settings.sidebarActivationDouble") }}</div>
+                      <div class="text-xs text-muted-foreground">
+                        {{ t("settings.sidebarActivationDoubleDescription") }}
+                      </div>
+                    </div>
+                  </Button>
+                </div>
+              </div>
+              <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                <div class="space-y-1">
+                  <Label for="auto-select-active-sidebar-node">{{ t("settings.autoSelectActiveSidebarNode") }}</Label>
+                  <p class="text-xs text-muted-foreground">
+                    {{ t("settings.autoSelectActiveSidebarNodeDescription") }}
+                  </p>
+                </div>
+                <Switch id="auto-select-active-sidebar-node" v-model="editAutoSelectActiveSidebarNode" />
+              </div>
+              <div class="space-y-2">
+                <Label for="sidebar-hidden-table-prefixes">{{ t("settings.sidebarHiddenTablePrefixes") }}</Label>
+                <textarea
+                  id="sidebar-hidden-table-prefixes"
+                  v-model="editSidebarHiddenTablePrefixes"
+                  class="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  :placeholder="t('settings.sidebarHiddenTablePrefixesPlaceholder')"
+                />
+                <p class="text-xs text-muted-foreground">
+                  {{ t("settings.sidebarHiddenTablePrefixesDescription") }}
+                </p>
+              </div>
+            </section>
+
+            <section v-else-if="activeSettingsTab === 'redis'" class="flex flex-col gap-5 py-2">
+              <div class="space-y-2">
+                <Label>{{ t("settings.redisScanPageSize") }}</Label>
+                <Select :model-value="String(editRedisScanPageSize)" @update:model-value="onRedisScanPageSizeChange">
+                  <SelectTrigger>
+                    <SelectValue :placeholder="t('settings.redisScanPageSize')" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="size in redisScanPageSizeOptions" :key="size" :value="String(size)">
+                      {{ t("settings.redisScanPageSizeOption", { count: size }) }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-xs text-muted-foreground">{{ t("settings.redisScanPageSizeDescription") }}</p>
+              </div>
+            </section>
+
+            <section v-else-if="activeSettingsTab === 'shortcuts'" class="flex flex-col gap-2 py-2">
+              <div class="overflow-hidden rounded-md border bg-background">
+                <div
+                  v-for="definition in SHORTCUT_DEFINITIONS"
+                  :key="definition.id"
+                  class="-mt-px grid gap-2 border-t border-border px-3 py-2 sm:first:mt-0 sm:first:border-t-0 sm:grid-cols-[minmax(0,1fr)_208px] sm:items-center"
+                >
+                  <div class="min-w-0">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <Label class="min-w-0 truncate leading-none">{{ t(definition.labelKey) }}</Label>
+                      <Badge variant="outline" class="h-5 shrink-0 rounded-md px-1.5 text-[11px] text-muted-foreground">
+                        {{
+                          t(`settings.shortcutScope${definition.scope[0].toUpperCase()}${definition.scope.slice(1)}`)
+                        }}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="flex gap-2">
+                      <Input
+                        :model-value="formatShortcut(editShortcuts[definition.id])"
+                        readonly
+                        :aria-invalid="shortcutConflicts.includes(definition.id)"
+                        :placeholder="t('settings.shortcutPressShortcut')"
+                        class="h-9 font-mono"
+                        @keydown="(event: KeyboardEvent) => onShortcutKeydown(definition.id, event)"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        class="h-9 shrink-0 px-3"
+                        @click="resetShortcut(definition.id)"
+                      >
+                        {{ t("settings.reset") }}
+                      </Button>
+                    </div>
+                    <p v-if="shortcutConflicts.includes(definition.id)" class="text-xs text-destructive">
+                      {{ t("settings.shortcutConflict") }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+            <!-- AI Settings Tab -->
+            <section v-else-if="activeSettingsTab === 'ai'" class="flex flex-col gap-5 py-2">
+              <p class="text-xs text-muted-foreground">{{ t("ai.settingsHint") }}</p>
+
+              <div class="space-y-3">
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.provider") }}</Label>
+                  <Select :model-value="aiEditProvider" @update:model-value="(v: any) => aiSelectProvider(v)">
+                    <SelectTrigger class="col-span-2 h-8 text-xs">
+                      <SelectValue>
+                        <span class="flex items-center gap-2">
+                          <AiProviderLogo
+                            :provider="selectedAiProviderPreset.provider"
+                            :label="selectedAiProviderPreset.label"
+                            :icon-slug="selectedAiProviderPreset.iconSlug"
+                          />
+                          <span>{{ selectedAiProviderPreset.label }}</span>
+                        </span>
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem
+                        v-for="provider in aiProviderOptions"
+                        :key="provider.provider"
+                        :value="provider.provider"
+                      >
+                        <span class="flex items-center gap-2">
+                          <AiProviderLogo
+                            :provider="provider.provider"
+                            :label="provider.label"
+                            :icon-slug="provider.iconSlug"
+                          />
+                          <span>{{ provider.label }}</span>
+                        </span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">API Key</Label>
+                  <Input
+                    v-model="aiEditApiKey"
+                    type="password"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    :placeholder="aiRequiresApiKey ? '' : 'Optional'"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">Endpoint</Label>
+                  <Input
+                    v-model="aiEditEndpoint"
+                    placeholder="https://api.openai.com/v1"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-start gap-3">
+                  <Label class="pt-2 text-right text-xs">{{ t("ai.model") }}</Label>
+                  <div class="col-span-2 space-y-1.5">
+                    <div class="flex min-w-0 items-center gap-2">
+                      <Input v-model="aiEditModel" autocomplete="off" class="h-8 min-w-0 flex-1 text-xs" />
+                      <SearchableSelect
+                        :model-value="aiEditModel"
+                        :options="aiModelOptionIds"
+                        :placeholder="t('ai.browseModels')"
+                        :search-placeholder="t('ai.searchModels')"
+                        :empty-text="aiModelEmptyText"
+                        :loading-text="t('ai.loadingModels')"
+                        :loading="aiModelLoading"
+                        :display-name="displayAiModelName"
+                        trigger-class="h-8 min-w-[104px] max-w-[150px] shrink-0 border border-border bg-background px-2 text-xs shadow-none hover:bg-muted/50"
+                        content-class="w-72"
+                        @update:model-value="aiSelectModel"
+                        @update:open="onAiModelListOpen"
+                      >
+                        <template #trigger-label="{ loading }">
+                          <span class="truncate">{{ loading ? t("ai.loadingModels") : t("ai.browseModels") }}</span>
+                        </template>
+                        <template #option-label="{ option, label }">
+                          <span class="flex min-w-0 flex-col">
+                            <span class="truncate">{{ label }}</span>
+                            <span v-if="label !== option" class="truncate text-[11px] text-muted-foreground">{{
+                              option
+                            }}</span>
+                          </span>
+                        </template>
+                      </SearchableSelect>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="outline"
+                        class="shrink-0"
+                        :disabled="aiModelLoading || !aiModelListSupported"
+                        :title="t('ai.refreshModels')"
+                        :aria-label="t('ai.refreshModels')"
+                        @click="aiRefreshModels"
+                      >
+                        <Loader2 v-if="aiModelLoading" class="h-3.5 w-3.5 animate-spin" />
+                        <RefreshCw v-else class="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <p v-if="aiModelError" class="text-xs text-destructive">{{ aiModelError }}</p>
+                    <p v-else-if="!aiModelOptionIds.length" class="text-xs text-muted-foreground">
+                      {{ aiModelListSupported ? t("ai.modelListHint") : t("ai.modelListUnsupported") }}
+                    </p>
+                  </div>
+                </div>
+
+                <div v-if="aiSupportsApiStyle" class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">API</Label>
+                  <div class="col-span-2 flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      class="h-8 flex-1 text-xs"
+                      :class="{ 'border-blue-300 border-2 ring-2 ring-blue-300/50': aiEditApiStyle === 'completions' }"
+                      @click="aiEditApiStyle = 'completions'"
+                      >/chat/completions</Button
+                    >
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      class="h-8 flex-1 text-xs"
+                      :class="{ 'border-blue-300 border-2 ring-2 ring-blue-300/50': aiEditApiStyle === 'responses' }"
+                      @click="aiEditApiStyle = 'responses'"
+                      >/responses</Button
+                    >
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.enableThinking") }}</Label>
+                  <div class="col-span-2 flex items-center gap-2">
+                    <label class="flex items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        v-model="aiEditEnableThinking"
+                        type="checkbox"
+                        class="h-4 w-4 shrink-0 accent-primary"
+                        :disabled="!aiCompletionsMode || aiEditProvider === 'gemini'"
+                      />
+                      {{ aiEditEnableThinking ? t("ai.enableThinkingOn") : t("ai.enableThinkingOff") }}
+                    </label>
+                    <Popover>
+                      <PopoverTrigger as-child>
+                        <CircleHelp class="h-3.5 w-3.5 cursor-help text-muted-foreground hover:text-foreground" />
+                      </PopoverTrigger>
+                      <PopoverContent class="max-w-[320px] text-xs leading-relaxed" side="top" align="start">
+                        {{ t("ai.enableThinkingHint") }}
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.proxy") }}</Label>
+                  <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <input v-model="aiEditProxyEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
+                    {{ t("ai.proxyEnable") }}
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.proxyUrl") }}</Label>
+                  <Input
+                    v-model="aiEditProxyUrl"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    placeholder="socks5://127.0.0.1:7890"
+                    :disabled="!aiEditProxyEnabled"
+                  />
+                </div>
+              </div>
+            </section>
+
+            <section v-else-if="activeSettingsTab === 'system' && isDesktop" class="flex min-h-full flex-col gap-5 py-2">
             <div class="space-y-4">
               <div class="space-y-1">
                 <Label class="text-base">{{ t("settings.oracleOciTitle") }}</Label>
@@ -1400,145 +1464,207 @@ watch(
             </DialogFooter>
           </section>
 
-          <section v-else-if="activeSettingsTab === 'security' && isWeb" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="space-y-3">
-              <Label class="text-base">{{ t("auth.changePassword") }}</Label>
-              <p class="text-sm text-muted-foreground">{{ t("auth.changePasswordDescription") }}</p>
-              <Input
-                v-model="oldPassword"
-                type="password"
-                :placeholder="t('auth.oldPassword')"
-                class="h-9"
-                autocomplete="off"
-              />
-              <Input
-                v-model="newPassword"
-                type="password"
-                :placeholder="t('auth.newPassword')"
-                class="h-9"
-                autocomplete="off"
-              />
-              <Input
-                v-model="confirmNewPassword"
-                type="password"
-                :placeholder="t('auth.confirmPassword')"
-                class="h-9"
-                autocomplete="off"
-              />
-              <p v-if="passwordMessage" class="text-xs" :class="passwordError ? 'text-destructive' : 'text-green-500'">
-                {{ passwordMessage }}
-              </p>
-            </div>
-            <DialogFooter class="mt-auto border-t-0 bg-transparent">
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
-              </Button>
-              <Button
-                :disabled="changingPassword || !oldPassword || !newPassword || !confirmNewPassword"
-                @click="changePassword"
-              >
-                {{ t("auth.changePassword") }}
-              </Button>
-            </DialogFooter>
-          </section>
-
-          <section v-else-if="activeSettingsTab === 'about'" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="rounded-lg border bg-muted/20 p-4">
-              <div class="flex items-start justify-between gap-4">
-                <div class="min-w-0 space-y-1">
-                  <div class="text-lg font-semibold">DBX</div>
-                  <p class="text-sm text-muted-foreground">{{ t("settings.aboutDescription") }}</p>
-                </div>
-                <div
-                  v-if="displayedAppVersion"
-                  class="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground"
+          <section v-else-if="activeSettingsTab === 'security' && isWeb" class="flex flex-col gap-5 py-2">
+              <div class="space-y-3">
+                <Label class="text-base">{{ t("auth.changePassword") }}</Label>
+                <p class="text-sm text-muted-foreground">{{ t("auth.changePasswordDescription") }}</p>
+                <Input
+                  v-model="oldPassword"
+                  type="password"
+                  :placeholder="t('auth.oldPassword')"
+                  class="h-9"
+                  autocomplete="off"
+                />
+                <Input
+                  v-model="newPassword"
+                  type="password"
+                  :placeholder="t('auth.newPassword')"
+                  class="h-9"
+                  autocomplete="off"
+                />
+                <Input
+                  v-model="confirmNewPassword"
+                  type="password"
+                  :placeholder="t('auth.confirmPassword')"
+                  class="h-9"
+                  autocomplete="off"
+                />
+                <p
+                  v-if="passwordMessage"
+                  class="text-xs"
+                  :class="passwordError ? 'text-destructive' : 'text-green-500'"
                 >
-                  {{ displayedAppVersion }}
+                  {{ passwordMessage }}
+                </p>
+              </div>
+            </section>
+
+            <section v-else-if="activeSettingsTab === 'about'" class="flex flex-col gap-5 py-2">
+              <div class="rounded-lg border bg-muted/20 p-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0 space-y-1">
+                    <div class="text-lg font-semibold">DBX</div>
+                    <p class="text-sm text-muted-foreground">{{ t("settings.aboutDescription") }}</p>
+                  </div>
+                  <div
+                    v-if="displayedAppVersion"
+                    class="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground"
+                  >
+                    {{ displayedAppVersion }}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div class="grid gap-3 sm:grid-cols-2">
-              <button
-                type="button"
-                class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                @click="openExternalUrl('https://qm.qq.com/cgi-bin/qm/qr?k=&group_code=1087880322')"
-              >
-                <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {{ t("settings.community") }}
-                </div>
-                <div class="mt-3 flex items-center gap-2 text-sm font-medium">
-                  <img
-                    src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGhlaWdodD0iODYiIHdpZHRoPSI4NiIgdmlld0JveD0iMCAwIDEyMCAxNDUiPjxwYXRoIGZpbGw9IiNmYWFiMDciIGQ9Ik02MC41MDMgMTQyLjIzN2MtMTIuNTMzIDAtMjQuMDM4LTQuMTk1LTMxLjQ0NS0xMC40Ni0zLjc2MiAxLjEyNC04LjU3NCAyLjkzMi0xMS42MSA1LjE3NS0yLjYgMS45MTgtMi4yNzUgMy44NzQtMS44MDcgNC42NjMgMi4wNTYgMy40NyAzNS4yNzMgMi4yMTYgNDQuODYyIDEuMTM2em0wIDBjMTIuNTM1IDAgMjQuMDM5LTQuMTk1IDMxLjQ0Ny0xMC40NiAzLjc2IDEuMTI0IDguNTczIDIuOTMyIDExLjYxIDUuMTc1IDIuNTk4IDEuOTE4IDIuMjc0IDMuODc0IDEuODA1IDQuNjYzLTIuMDU2IDMuNDctMzUuMjcyIDIuMjE2LTQ0Ljg2MiAxLjEzNnptMCAwIi8+PHBhdGggZD0iTTYwLjU3NiA2Ny4xMTljMjAuNjk4LS4xNCAzNy4yODYtNC4xNDcgNDIuOTA3LTUuNjgzIDEuMzQtLjM2NyAyLjA1Ni0xLjAyNCAyLjA1Ni0xLjAyNC4wMDUtLjE4OS4wODUtMy4zNy4wODUtNS4wMUMxMDUuNjI0IDI3Ljc2OCA5Mi41OC4wMDEgNjAuNSAwIDI4LjQyLjAwMSAxNS4zNzUgMjcuNzY5IDE1LjM3NSA1NS40MDFjMCAxLjY0Mi4wOCA0LjgyMi4wODYgNS4wMSAwIDAgLjU4My42MTUgMS42NS45MTMgNS4xOSAxLjQ0NCAyMi4wOSA1LjY1IDQzLjMxMiA1Ljc5NXptNTYuMjQ1IDIzLjAyYy0xLjI4My00LjEyOS0zLjAzNC04Ljk0NC00LjgwOC0xMy41NjggMCAwLTEuMDItLjEyNi0xLjUzNy4wMjMtMTUuOTEzIDQuNjIzLTM1LjIwMiA3LjU3LTQ5LjkgNy4zOTJoLS4xNTNjLTE0LjYxNi4xNzUtMzMuNzc0LTIuNzM3LTQ5LjYzNC03LjMxNS0uNjA2LS4xNzUtMS44MDItLjEtMS44MDItLjEtMS43NzQgNC42MjQtMy41MjUgOS40NC00LjgwOCAxMy41NjgtNi4xMTkgMTkuNjktNC4xMzYgMjcuODM4LTIuNjI3IDI4LjAyIDMuMjM5LjM5MiAxMi42MDYtMTQuODIxIDEyLjYwNi0xNC44MjEgMCAxNS40NTkgMTMuOTU3IDM5LjE5NSA0NS45MTggMzkuNDEzaC44NDhjMzEuOTYtLjIxOCA0NS45MTctMjMuOTU0IDQ1LjkxNy0zOS40MTMgMCAwIDkuMzY4IDE1LjIxMyAxMi42MDcgMTQuODIyIDEuNTA4LS4xODMgMy40OTEtOC4zMzItMi42MjctMjguMDIxIi8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTQ5LjA4NSA0MC44MjRjLTQuMzUyLjE5Ny04LjA3LTQuNzYtOC4zMDQtMTEuMDYzLS4yMzYtNi4zMDUgMy4wOTgtMTEuNTc2IDcuNDUtMTEuNzczIDQuMzQ3LS4xOTUgOC4wNjQgNC43NiA4LjMgMTEuMDY1LjIzOCA2LjMwNi0zLjA5NyAxMS41NzctNy40NDYgMTEuNzcxbTMxLjEzMy0xMS4wNjNjLS4yMzMgNi4zMDItMy45NTEgMTEuMjYtOC4zMDMgMTEuMDYzLTQuMzUtLjE5NS03LjY4NC01LjQ2NS03LjQ0Ni0xMS43Ny4yMzYtNi4zMDUgMy45NTItMTEuMjYgOC4zLTExLjA2NiA0LjM1Mi4xOTcgNy42ODYgNS40NjggNy40NDkgMTEuNzczIi8+PHBhdGggZmlsbD0iI2ZhYWIwNyIgZD0iTTg3Ljk1MiA0OS43MjVDODYuNzkgNDcuMTUgNzUuMDc3IDQ0LjI4IDYwLjU3OCA0NC4yOGgtLjE1NmMtMTQuNSAwLTI2LjIxMiAyLjg3LTI3LjM3NSA1LjQ0NmEuODYzLjg2MyAwIDAwLS4wODUuMzY3Ljg4Ljg4IDAgMDAuMTYuNDk2Yy45OCAxLjQyNyAxMy45ODUgOC40ODcgMjcuMyA4LjQ4N2guMTU2YzEzLjMxNCAwIDI2LjMxOS03LjA1OCAyNy4yOTktOC40ODdhLjg3My44NzMgMCAwMC4xNi0uNDk4Ljg1Ni44NTYgMCAwMC0uMDg1LS4zNjUiLz48cGF0aCBkPSJNNTQuNDM0IDI5Ljg1NGMuMTk5IDIuNDktMS4xNjcgNC43MDItMy4wNDYgNC45NDMtMS44ODMuMjQyLTMuNTY4LTEuNTgtMy43NjgtNC4wNy0uMTk3LTIuNDkyIDEuMTY3LTQuNzA0IDMuMDQzLTQuOTQ0IDEuODg2LS4yNDQgMy41NzQgMS41OCAzLjc3MSA0LjA3bTExLjk1Ni44MzNjLjM4NS0uNjg5IDMuMDA0LTQuMzEyIDguNDI3LTIuOTkzIDEuNDI1LjM0NyAyLjA4NC44NTcgMi4yMjMgMS4wNTcuMjA1LjI5Ni4yNjIuNzE4LjA1MyAxLjI4Ni0uNDEyIDEuMTI2LTEuMjYzIDEuMDk1LTEuNzM0Ljg3NS0uMzA1LS4xNDItNC4wODItMi42Ni03LjU2MiAxLjA5Ny0uMjQuMjU3LS42NjguMzQ2LTEuMDczLjA0LS40MDctLjMwOC0uNTc0LS45My0uMzM0LTEuMzYyIi8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTYwLjU3NiA4My4wOGgtLjE1M2MtOS45OTYuMTItMjIuMTE2LTEuMjA0LTMzLjg1NC0zLjUxOC0xLjAwNCA1LjgxOC0xLjYxIDEzLjEzMi0xLjA5IDIxLjg1MyAxLjMxNiAyMi4wNDMgMTQuNDA3IDM1LjkgMzQuNjE0IDM2LjFoLjgyYzIwLjIwOC0uMiAzMy4yOTgtMTQuMDU3IDM0LjYxNi0zNi4xLjUyLTguNzIzLS4wODctMTYuMDM1LTEuMDkyLTIxLjg1NC0xMS43MzkgMi4zMTUtMjMuODYyIDMuNjQtMzMuODYgMy41MTgiLz48cGF0aCBmaWxsPSIjZWIxOTIzIiBkPSJNMzIuMTAyIDgxLjIzNXYyMS42OTNzOS45MzcgMi4wMDQgMTkuODkzLjYxNlY4My41MzVjLTYuMzA3LS4zNTctMTMuMTA5LTEuMTUyLTE5Ljg5My0yLjMiLz48cGF0aCBmaWxsPSIjZWIxOTIzIiBkPSJNMTA1LjUzOSA2MC40MTJzLTE5LjMzIDYuMTAyLTQ0Ljk2MyA2LjI3NWgtLjE1M2MtMjUuNTkxLS4xNzItNDQuODk2LTYuMjU1LTQ0Ljk2Mi02LjI3NUw4Ljk4NyA3Ni41N2MxNi4xOTMgNC44ODIgMzYuMjYxIDguMDI4IDUxLjQzNiA3Ljg0NWguMTUzYzE1LjE3NS4xODMgMzUuMjQyLTIuOTYzIDUxLjQzNy03Ljg0NXptMCAwIi8+PC9zdmc+"
-                    alt="QQ"
-                    class="h-7 w-7 rounded-md bg-white p-1"
-                  />
-                  {{ t("settings.qqGroup") }}
-                  <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-                <div class="mt-1 font-mono text-base">1087880322</div>
-              </button>
-              <button
-                type="button"
-                class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                @click="openExternalUrl('https://discord.gg/W7NyVDRt6a')"
-              >
-                <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {{ t("settings.community") }}
-                </div>
-                <div class="mt-3 flex items-center gap-2 text-sm font-medium">
-                  <img
-                    src="https://cdn.simpleicons.org/discord/5865F2"
-                    alt="Discord"
-                    class="h-7 w-7 rounded-md bg-white p-1"
-                  />
-                  Discord
-                  <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-                <div class="mt-1 text-sm text-primary">discord.gg/W7NyVDRt6a</div>
-              </button>
-              <button
-                type="button"
-                class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                @click="openExternalUrl('https://github.com/Cucgua/dbx')"
-              >
-                <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {{ t("settings.project") }}
-                </div>
-                <div class="mt-3 flex items-center gap-2 text-sm font-medium">
-                  <img
-                    src="https://cdn.simpleicons.org/github/181717"
-                    alt="GitHub"
-                    class="h-7 w-7 rounded-md bg-white p-1"
-                  />
-                  {{ t("settings.openSource") }}
-                  <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-                <div class="mt-1 text-sm text-primary">github.com/Cucgua/dbx</div>
-              </button>
-              <button
-                type="button"
-                class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                @click="openExternalUrl('https://dbxio.com')"
-              >
-                <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  {{ t("settings.project") }}
-                </div>
-                <div class="mt-3 flex items-center gap-2 text-sm font-medium">
-                  <img src="/logo.png" alt="DBX" class="h-7 w-7 rounded-md" />
-                  {{ t("settings.officialDocs") }}
-                  <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-                <div class="mt-1 text-sm text-primary">dbxio.com</div>
-              </button>
-            </div>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  @click="openExternalUrl('https://qm.qq.com/cgi-bin/qm/qr?k=&group_code=1087880322')"
+                >
+                  <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    {{ t("settings.community") }}
+                  </div>
+                  <div class="mt-3 flex items-center gap-2 text-sm font-medium">
+                    <img
+                      src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGhlaWdodD0iODYiIHdpZHRoPSI4NiIgdmlld0JveD0iMCAwIDEyMCAxNDUiPjxwYXRoIGZpbGw9IiNmYWFiMDciIGQ9Ik02MC41MDMgMTQyLjIzN2MtMTIuNTMzIDAtMjQuMDM4LTQuMTk1LTMxLjQ0NS0xMC40Ni0zLjc2MiAxLjEyNC04LjU3NCAyLjkzMi0xMS42MSA1LjE3NS0yLjYgMS45MTgtMi4yNzUgMy44NzQtMS44MDcgNC42NjMgMi4wNTYgMy40NyAzNS4yNzMgMi4yMTYgNDQuODYyIDEuMTM2em0wIDBjMTIuNTM1IDAgMjQuMDM5LTQuMTk1IDMxLjQ0Ny0xMC40NiAzLjc2IDEuMTI0IDguNTczIDIuOTMyIDExLjYxIDUuMTc1IDIuNTk4IDEuOTE4IDIuMjc0IDMuODc0IDEuODA1IDQuNjYzLTIuMDU2IDMuNDctMzUuMjcyIDIuMjE2LTQ0Ljg2MiAxLjEzNnptMCAwIi8+PHBhdGggZD0iTTYwLjU3NiA2Ny4xMTljMjAuNjk4LS4xNCAzNy4yODYtNC4xNDcgNDIuOTA3LTUuNjgzIDEuMzQtLjM2NyAyLjA1Ni0xLjAyNCAyLjA1Ni0xLjAyNC4wMDUtLjE4OS4wODUtMy4zNy4wODUtNS4wMUMxMDUuNjI0IDI3Ljc2OCA5Mi41OC4wMDEgNjAuNSAwIDI4LjQyLjAwMSAxNS4zNzUgMjcuNzY5IDE1LjM3NSA1NS40MDFjMCAxLjY0Mi4wOCA0LjgyMi4wODYgNS4wMSAwIDAgLjU4My42MTUgMS42NS45MTMgNS4xOSAxLjQ0NCAyMi4wOSA1LjY1IDQzLjMxMiA1Ljc5NXptNTYuMjQ1IDIzLjAyYy0xLjI4My00LjEyOS0zLjAzNC04Ljk0NC00LjgwOC0xMy41NjggMCAwLTEuMDItLjEyNi0xLjUzNy4wMjMtMTUuOTEzIDQuNjIzLTM1LjIwMiA3LjU3LTQ5LjkgNy4zOTJoLS4xNTNjLTE0LjYxNi4xNzUtMzMuNzc0LTIuNzM3LTQ5LjYzNC03LjMxNS0uNjA2LS4xNzUtMS44MDItLjEtMS44MDItLjEtMS43NzQgNC42MjQtMy41MjUgOS40NC00LjgwOCAxMy41NjgtNi4xMTkgMTkuNjktNC4xMzYgMjcuODM4LTIuNjI3IDI4LjAyIDMuMjM5LjM5MiAxMi42MDYtMTQuODIxIDEyLjYwNi0xNC44MjEgMCAxNS40NTkgMTMuOTU3IDM5LjE5NSA0NS45MTggMzkuNDEzaC44NDhjMzEuOTYtLjIxOCA0NS45MTctMjMuOTU0IDQ1LjkxNy0zOS40MTMgMCAwIDkuMzY4IDE1LjIxMyAxMi42MDcgMTQuODIyIDEuNTA4LS4xODMgMy40OTEtOC4zMzItMi42MjctMjguMDIxIi8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTQ5LjA4NSA0MC44MjRjLTQuMzUyLjE5Ny04LjA3LTQuNzYtOC4zMDQtMTEuMDYzLS4yMzYtNi4zMDUgMy4wOTgtMTEuNTc2IDcuNDUtMTEuNzczIDQuMzQ3LS4xOTUgOC4wNjQgNC43NiA4LjMgMTEuMDY1LjIzOCA2LjMwNi0zLjA5NyAxMS41NzctNy40NDYgMTEuNzcxbTMxLjEzMy0xMS4wNjNjLS4yMzMgNi4zMDItMy45NTEgMTEuMjYtOC4zMDMgMTEuMDYzLTQuMzUtLjE5NS03LjY4NC01LjQ2NS03LjQ0Ni0xMS43Ny4yMzYtNi4zMDUgMy45NTItMTEuMjYgOC4zLTExLjA2NiA0LjM1Mi4xOTcgNy42ODYgNS40NjggNy40NDkgMTEuNzczIi8+PHBhdGggZmlsbD0iI2ZhYWIwNyIgZD0iTTg3Ljk1MiA0OS43MjVDODYuNzkgNDcuMTUgNzUuMDc3IDQ0LjI4IDYwLjU3OCA0NC4yOGgtLjE1NmMtMTQuNSAwLTI2LjIxMiAyLjg3LTI3LjM3NSA1LjQ0NmEuODYzLjg2MyAwIDAwLS4wODUuMzY3Ljg4Ljg4IDAgMDAuMTYuNDk2Yy45OCAxLjQyNyAxMy45ODUgOC40ODcgMjcuMyA4LjQ4N2guMTU2YzEzLjMxNCAwIDI2LjMxOS03LjA1OCAyNy4yOTktOC40ODdhLjg3My44NzMgMCAwMC4xNi0uNDk4Ljg1Ni44NTYgMCAwMC0uMDg1LS4zNjUiLz48cGF0aCBkPSJNNTQuNDM0IDI5Ljg1NGMuMTk5IDIuNDktMS4xNjcgNC43MDItMy4wNDYgNC45NDMtMS44ODMuMjQyLTMuNTY4LTEuNTgtMy43NjgtNC4wNy0uMTk3LTIuNDkyIDEuMTY3LTQuNzA0IDMuMDQzLTQuOTQ0IDEuODg2LS4yNDQgMy41NzQgMS41OCAzLjc3MSA0LjA3bTExLjk1Ni44MzNjLjM4NS0uNjg5IDMuMDA0LTQuMzEyIDguNDI3LTIuOTkzIDEuNDI1LjM0NyAyLjA4NC44NTcgMi4yMjMgMS4wNTcuMjA1LjI5Ni4yNjIuNzE4LjA1MyAxLjI4Ni0uNDEyIDEuMTI2LTEuMjYzIDEuMDk1LTEuNzM0Ljg3NS0uMzA1LS4xNDItNC4wODItMi42Ni03LjU2MiAxLjA5Ny0uMjQuMjU3LS42NjguMzQ2LTEuMDczLjA0LS40MDctLjMwOC0uNTc0LS45My0uMzM0LTEuMzYyIi8+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTYwLjU3NiA4My4wOGgtLjE1M2MtOS45OTYuMTItMjIuMTE2LTEuMjA0LTMzLjg1NC0zLjUxOC0xLjAwNCA1LjgxOC0xLjYxIDEzLjEzMi0xLjA5IDIxLjg1MyAxLjMxNiAyMi4wNDMgMTQuNDA3IDM1LjkgMzQuNjE0IDM2LjFoLjgyYzIwLjIwOC0uMiAzMy4yOTgtMTQuMDU3IDM0LjYxNi0zNi4xLjUyLTguNzIzLS4wODctMTYuMDM1LTEuMDkyLTIxLjg1NC0xMS43MzkgMi4zMTUtMjMuODYyIDMuNjQtMzMuODYgMy41MTgiLz48cGF0aCBmaWxsPSIjZWIxOTIzIiBkPSJNMzIuMTAyIDgxLjIzNXYyMS42OTNzOS45MzcgMi4wMDQgMTkuODkzLjYxNlY4My41MzVjLTYuMzA3LS4zNTctMTMuMTA5LTEuMTUyLTE5Ljg5My0yLjMiLz48cGF0aCBmaWxsPSIjZWIxOTIzIiBkPSJNMTA1LjUzOSA2MC40MTJzLTE5LjMzIDYuMTAyLTQ0Ljk2MyA2LjI3NWgtLjE1M2MtMjUuNTkxLS4xNzItNDQuODk2LTYuMjU1LTQ0Ljk2Mi02LjI3NUw4Ljk4NyA3Ni41N2MxNi4xOTMgNC44ODIgMzYuMjYxIDguMDI4IDUxLjQzNiA3Ljg0NWguMTUzYzE1LjE3NS4xODMgMzUuMjQyLTIuOTYzIDUxLjQzNy03Ljg0NXptMCAwIi8+PC9zdmc+"
+                      alt="QQ"
+                      class="h-7 w-7 rounded-md bg-white p-1"
+                    />
+                    {{ t("settings.qqGroup") }}
+                    <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
+                  <div class="mt-1 font-mono text-base">1087880322</div>
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  @click="openExternalUrl('https://discord.gg/W7NyVDRt6a')"
+                >
+                  <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    {{ t("settings.community") }}
+                  </div>
+                  <div class="mt-3 flex items-center gap-2 text-sm font-medium">
+                    <img
+                      src="https://cdn.simpleicons.org/discord/5865F2"
+                      alt="Discord"
+                      class="h-7 w-7 rounded-md bg-white p-1"
+                    />
+                    Discord
+                    <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
+                  <div class="mt-1 text-sm text-primary">discord.gg/W7NyVDRt6a</div>
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  @click="openExternalUrl('https://github.com/t8y2/dbx')"
+                >
+                  <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    {{ t("settings.project") }}
+                  </div>
+                  <div class="mt-3 flex items-center gap-2 text-sm font-medium">
+                    <img
+                      src="https://cdn.simpleicons.org/github/181717"
+                      alt="GitHub"
+                      class="h-7 w-7 rounded-md bg-white p-1"
+                    />
+                    {{ t("settings.openSource") }}
+                    <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
+                  <div class="mt-1 text-sm text-primary">github.com/t8y2/dbx</div>
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  @click="openExternalUrl('https://dbxio.com')"
+                >
+                  <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    {{ t("settings.project") }}
+                  </div>
+                  <div class="mt-3 flex items-center gap-2 text-sm font-medium">
+                    <img src="/logo.png" alt="DBX" class="h-7 w-7 rounded-md" />
+                    {{ t("settings.officialDocs") }}
+                    <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+                  </div>
+                  <div class="mt-1 text-sm text-primary">dbxio.com</div>
+                </button>
+              </div>
+            </section>
+          </div>
 
-            <DialogFooter class="mt-auto border-t-0 bg-transparent">
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
+          <DialogFooter
+            v-if="hasSettingsApplyFooter(activeSettingsTab as SettingsCategory)"
+            class="mx-0 mb-0 shrink-0 rounded-none border-t border-border/60 bg-transparent px-0 pb-0 pt-3 gap-3 sm:gap-3"
+          >
+            <Button variant="outline" @click="resetDefaults">
+              {{ t("settings.resetDefaults") }}
+            </Button>
+            <div class="flex-1" />
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+            <Button :disabled="!hasChanges() || hasBlockingShortcutConflicts" @click="applySettings">
+              {{ t("settings.apply") }}
+            </Button>
+          </DialogFooter>
+
+          <DialogFooter
+            v-else-if="activeSettingsTab === 'ai'"
+            class="mx-0 mb-0 shrink-0 rounded-none border-t border-border/60 bg-transparent px-0 pb-0 pt-3 gap-3 sm:gap-3"
+          >
+            <div class="flex flex-1 items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                :disabled="
+                  aiTesting ||
+                  (aiRequiresApiKey && !aiEditApiKey?.trim()) ||
+                  !aiEditEndpoint?.trim() ||
+                  !aiEditModel?.trim()
+                "
+                @click="aiTestConn"
+              >
+                <Loader2 v-if="aiTesting" class="h-3 w-3 animate-spin mr-1" />
+                {{ t("connection.test") }}
               </Button>
-            </DialogFooter>
-          </section>
+              <span v-if="aiTestResult === 'success'" class="text-xs text-green-500">
+                {{ t("connection.testSuccess") }}
+              </span>
+              <span
+                v-else-if="aiTestResult === 'error'"
+                class="text-xs text-destructive truncate max-w-[200px]"
+                :title="aiTestError"
+              >
+                {{ aiTestError }}
+              </span>
+            </div>
+            <Button variant="outline" @click="emit('update:open', false)">{{ t("common.close") }}</Button>
+            <Button :disabled="!aiHasChanges()" @click="aiApplySettings">{{ t("settings.apply") }}</Button>
+          </DialogFooter>
+
+          <DialogFooter
+            v-else-if="activeSettingsTab === 'security' && isWeb"
+            class="mx-0 mb-0 shrink-0 rounded-none border-t border-border/60 bg-transparent px-0 pb-0 pt-3"
+          >
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+            <Button
+              :disabled="changingPassword || !oldPassword || !newPassword || !confirmNewPassword"
+              @click="changePassword"
+            >
+              {{ t("auth.changePassword") }}
+            </Button>
+          </DialogFooter>
+
+          <DialogFooter
+            v-else-if="activeSettingsTab === 'about'"
+            class="mx-0 mb-0 shrink-0 rounded-none border-t border-border/60 bg-transparent px-0 pb-0 pt-3"
+          >
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+          </DialogFooter>
         </div>
       </div>
     </DialogContent>

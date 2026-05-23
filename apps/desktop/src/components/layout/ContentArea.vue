@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, defineAsyncComponent } from "vue";
+import { computed, ref, defineAsyncComponent, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Check,
@@ -12,6 +12,8 @@ import {
   GitBranch,
   BarChart3,
   TableProperties,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-vue-next";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
@@ -133,6 +135,37 @@ const activeQueryError = computed(() => {
   if (!result?.columns.includes("Error")) return "";
   return String(result.rows[0]?.[0] ?? "");
 });
+const hasQueryOutput = computed(
+  () =>
+    !!props.activeTab.result ||
+    !!props.activeTab.explainPlan ||
+    !!props.activeTab.explainError ||
+    props.activeTab.isExecuting === true ||
+    props.activeTab.isExplaining === true,
+);
+const resultsPaneOpen = ref(false);
+
+watch(
+  hasQueryOutput,
+  (hasOutput) => {
+    resultsPaneOpen.value = hasOutput ? true : false;
+  },
+  { immediate: true },
+);
+
+watch(
+  () => props.activeTab.id,
+  () => {
+    resultsPaneOpen.value = hasQueryOutput.value;
+  },
+);
+
+watch(
+  () => [props.activeTab.isExecuting, props.activeTab.isExplaining],
+  ([isExecuting, isExplaining]) => {
+    if (isExecuting || isExplaining) resultsPaneOpen.value = true;
+  },
+);
 
 // Column info panel handlers
 async function onHandleClickColumn(
@@ -228,7 +261,7 @@ defineExpose({ focusSearch, refreshData });
     <!-- Query mode: editor + results -->
     <template v-if="activeTab.mode === 'query'">
       <Splitpanes horizontal class="flex-1">
-        <Pane :size="40" :min-size="15">
+        <Pane :size="resultsPaneOpen ? 40 : 100" :min-size="resultsPaneOpen ? 15 : 100">
           <div class="h-full flex flex-col relative">
             <QueryEditor
               ref="queryEditorRef"
@@ -258,18 +291,22 @@ defineExpose({ focusSearch, refreshData });
               :error="columnInfoError"
               @close="closeColumnInfo"
             />
+            <Button
+              v-if="hasQueryOutput && !resultsPaneOpen"
+              variant="secondary"
+              size="sm"
+              class="absolute bottom-3 right-3 z-20 h-7 gap-1.5 rounded-full border bg-background/95 px-3 text-xs shadow-lg backdrop-blur hover:bg-accent"
+              @click="resultsPaneOpen = true"
+            >
+              <ChevronUp class="h-3.5 w-3.5" />
+              {{ t("editor.showResultsPane") }}
+            </Button>
           </div>
         </Pane>
-        <Pane :size="60" :min-size="20">
+        <Pane v-if="resultsPaneOpen" :size="60" :min-size="20">
           <div class="h-full flex flex-col">
             <div
-              v-if="
-                activeTab.result ||
-                activeTab.explainPlan ||
-                activeTab.explainError ||
-                activeTab.isExecuting ||
-                activeTab.isExplaining
-              "
+              v-if="hasQueryOutput"
               class="h-8 shrink-0 border-b bg-muted/20 px-2 flex items-center gap-1 overflow-x-auto"
               style="scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch"
             >
@@ -314,6 +351,15 @@ defineExpose({ focusSearch, refreshData });
               >
                 <BarChart3 class="h-3.5 w-3.5" />
                 {{ t("chart.title") }}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="ml-auto h-6 shrink-0 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                @click="resultsPaneOpen = false"
+              >
+                <ChevronDown class="h-3.5 w-3.5" />
+                {{ t("editor.hideResultsPane") }}
               </Button>
             </div>
 
@@ -449,57 +495,57 @@ defineExpose({ focusSearch, refreshData });
             </PopoverTrigger>
             <PopoverContent
               align="end"
-              class="w-72 max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-xl border bg-popover p-0 text-popover-foreground shadow-xl"
+              class="w-64 max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-xl border bg-popover p-0 text-popover-foreground shadow-xl"
               @click.stop
               @keydown.stop
             >
-              <div class="border-b bg-muted/40 px-3 py-2">
+              <div class="border-b bg-muted/40 px-2 py-1.5">
                 <div class="flex items-center justify-between gap-2">
-                  <div class="text-sm font-semibold">{{ t("grid.columnVisibility") }}</div>
-                  <div class="text-[11px] text-muted-foreground tabular-nums">
+                  <div class="text-xs font-semibold">{{ t("grid.columnVisibility") }}</div>
+                  <div class="text-[10px] text-muted-foreground tabular-nums">
                     {{ dataGridRef?.visibleColumnCount ?? 0 }}/{{ dataGridRef?.displayableColumnCount ?? 0 }}
                   </div>
                 </div>
               </div>
-              <div class="flex items-center gap-2 border-b px-3 py-2">
-                <Search class="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div class="flex items-center gap-1.5 border-b px-2 py-1.5">
+                <Search class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <input
                   v-model="columnVisibilitySearch"
                   autocapitalize="off"
                   autocorrect="off"
                   spellcheck="false"
-                  class="h-7 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                  class="h-6 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
                   :placeholder="t('grid.searchColumns')"
                 />
               </div>
-              <div class="max-h-72 overflow-auto py-1">
+              <div class="max-h-72 overflow-auto py-0.5">
                 <button
                   v-for="option in columnVisibilityOptions"
                   :key="`${option.index}:${option.column}`"
                   type="button"
-                  class="grid w-full grid-cols-[1.75rem_minmax(0,1fr)] items-center px-3 py-1.5 text-left text-sm hover:bg-accent"
+                  class="grid w-full grid-cols-[1.5rem_minmax(0,1fr)] items-center px-2 py-1 text-left text-xs hover:bg-accent"
                   @click="dataGridRef?.toggleColumnVisibility(option.index)"
                 >
                   <span
-                    class="flex h-5 w-5 items-center justify-center rounded border"
+                    class="flex h-4 w-4 items-center justify-center rounded border"
                     :class="
                       dataGridRef?.isColumnVisible(option.index)
                         ? 'border-primary bg-primary text-primary-foreground'
                         : 'border-border bg-background text-transparent'
                     "
                   >
-                    <Check class="h-3.5 w-3.5 stroke-[3]" />
+                    <Check class="h-3 w-3 stroke-[3]" />
                   </span>
                   <span class="truncate font-mono text-xs" :title="option.column">{{ option.column }}</span>
                 </button>
                 <div
                   v-if="columnVisibilityOptions.length === 0"
-                  class="px-3 py-8 text-center text-sm text-muted-foreground"
+                  class="px-2 py-6 text-center text-xs text-muted-foreground"
                 >
                   {{ t("grid.noSearchResults") }}
                 </div>
               </div>
-              <div class="flex items-center justify-between gap-2 border-t bg-muted/30 px-3 py-2">
+              <div class="flex items-center justify-between gap-2 border-t bg-muted/30 px-2 py-1.5">
                 <span class="text-[11px] text-muted-foreground">{{ t("grid.columnVisibilityHint") }}</span>
                 <div class="flex items-center gap-1">
                   <Button

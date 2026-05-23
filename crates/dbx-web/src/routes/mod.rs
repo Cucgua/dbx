@@ -1,6 +1,8 @@
 pub mod agents;
 pub mod ai;
+pub mod app_settings;
 pub mod connection;
+pub mod data_compare;
 pub mod database_export;
 pub mod history;
 pub mod layout;
@@ -11,7 +13,9 @@ pub mod redis;
 pub mod saved_sql;
 pub mod schema;
 pub mod schema_cache;
+pub mod schema_diff;
 pub mod sql_file;
 pub mod table_import;
+pub mod text_export;
 pub mod transfer;
 pub mod update;

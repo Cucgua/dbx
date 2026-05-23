@@ -24,6 +24,7 @@ import {
   Play,
   Square,
   Trash2,
+  Terminal,
   Wand2,
   Wrench,
   X,
@@ -40,6 +41,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useTheme } from "@/composables/useTheme";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { connectionIconType } from "@/lib/connectionPresentation";
@@ -49,6 +51,7 @@ import { useToast } from "@/composables/useToast";
 import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
 import { buildAiAgentPlan } from "@/lib/aiAgentPlan";
 import { buildAiAgentStepItems, type AiAgentStepItem, type AiAgentStepTone } from "@/lib/aiAgentStepPresentation";
+import { createAiShikiCodeHighlighter, type AiCodeHighlighter } from "@/lib/aiCodeHighlighter";
 import { createAiMessageRenderer } from "@/lib/aiMessageRender";
 import { Marked } from "marked";
 import {
@@ -65,6 +68,7 @@ import type { ConnectionConfig, QueryTab, TableInfo } from "@/types/database";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
+import { copyToClipboard } from "@/lib/clipboard";
 import { formatAiTableMention, parseAiTableMentions, type AiTableMention } from "@/lib/aiTableMentions";
 import { isAiPromptImeCompositionEvent, shouldSubmitAiPromptOnKeydown } from "@/lib/aiPromptKeyboard";
 
@@ -73,6 +77,7 @@ const settings = useSettingsStore();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const { toast } = useToast();
+const { isDark } = useTheme();
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -106,6 +111,7 @@ const conversations = ref<AiConversation[]>([]);
 const showConversationList = ref(false);
 const promptTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const promptCompositionActive = ref(false);
+const shikiCodeHighlighter = ref<AiCodeHighlighter>();
 
 interface AiMentionCandidate {
   schema?: string;
@@ -160,6 +166,7 @@ const activePlaceholder = computed(
   () => `${t(`ai.placeholders.${activeAction.value}`)} ${t("ai.tableMentionPlaceholderHint")}`,
 );
 const activeModeHint = computed(() => t(`ai.modeHints.${assistantMode.value}`));
+const aiCodeAppearance = computed(() => (isDark.value ? "dark" : "light"));
 
 const { databaseOptions: allDbOptions, loadDatabaseOptions } = useDatabaseOptions();
 
@@ -555,11 +562,15 @@ function executeSql(code: string) {
 const copiedIndex = ref("");
 
 async function copyCode(code: string, key: string) {
-  await navigator.clipboard.writeText(code);
-  copiedIndex.value = key;
-  setTimeout(() => {
-    if (copiedIndex.value === key) copiedIndex.value = "";
-  }, 2000);
+  try {
+    await copyToClipboard(code);
+    copiedIndex.value = key;
+    setTimeout(() => {
+      if (copiedIndex.value === key) copiedIndex.value = "";
+    }, 2000);
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 function clearMessages() {
@@ -615,6 +626,9 @@ function startNewChat() {
 
 onMounted(async () => {
   conversations.value = await loadAiConversations().catch(() => []);
+  shikiCodeHighlighter.value = await createAiShikiCodeHighlighter({
+    appearance: () => aiCodeAppearance.value,
+  }).catch(() => undefined);
 });
 
 onUnmounted(() => {
@@ -643,7 +657,14 @@ function formatInlineText(text: string): string {
   return markedInstance.parse(text) as string;
 }
 
-const messageRenderer = createAiMessageRenderer({ markdown: formatInlineText });
+const messageRenderer = computed(() => {
+  const appearance = aiCodeAppearance.value;
+  const highlightCode = shikiCodeHighlighter.value;
+  return createAiMessageRenderer({
+    markdown: formatInlineText,
+    highlightCode: highlightCode ? (content, lang) => highlightCode(content, lang, appearance) : undefined,
+  });
+});
 </script>
 
 <template>
@@ -765,31 +786,38 @@ const messageRenderer = createAiMessageRenderer({ markdown: formatInlineText });
                 <div v-if="seg.type === 'text'" class="ai-markdown whitespace-normal">
                   <div v-html="seg.html" />
                 </div>
-                <div v-else class="my-2 rounded-md overflow-hidden bg-zinc-900 dark:bg-zinc-900">
+                <div
+                  v-else
+                  class="my-2 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-700/50 dark:bg-zinc-900"
+                >
                   <div
-                    class="flex items-center px-3 py-1.5 text-[10px] text-zinc-400 font-medium border-b border-zinc-700/50"
+                    class="flex items-center border-b border-zinc-200 px-3 py-1.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700/50 dark:text-zinc-400"
                   >
-                    <Database class="h-3 w-3 mr-1.5" />
+                    <component :is="seg.isSql ? Database : Terminal" class="h-3 w-3 mr-1.5" />
                     <span>{{ seg.lang }}</span>
                     <span class="flex-1" />
                     <div class="flex items-center gap-1.5">
                       <button
-                        class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+                        v-if="seg.isSql"
+                        class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
                         :title="t('ai.executeSql')"
                         @click="executeSql(seg.content)"
                       >
                         <Play class="h-3.5 w-3.5" />
                       </button>
                       <button
-                        class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+                        v-if="seg.isSql"
+                        class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
                         :title="t('ai.apply')"
                         @click="applySql(seg.content)"
                       >
                         <Replace class="h-3.5 w-3.5" />
                       </button>
                       <button
-                        class="rounded p-0.5 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-                        :title="copiedIndex === `${i}-${j}` ? t('ai.copied') : t('ai.copySql')"
+                        class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                        :title="
+                          copiedIndex === `${i}-${j}` ? t('ai.copied') : t(seg.isSql ? 'ai.copySql' : 'ai.copyCode')
+                        "
                         @click="copyCode(seg.content, `${i}-${j}`)"
                       >
                         <Check v-if="copiedIndex === `${i}-${j}`" class="h-3.5 w-3.5 text-green-400" />
@@ -798,8 +826,8 @@ const messageRenderer = createAiMessageRenderer({ markdown: formatInlineText });
                     </div>
                   </div>
                   <pre
-                    class="whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-100"
-                  ><code>{{ seg.content }}</code></pre>
+                    class="ai-code-block whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-900 dark:text-zinc-100"
+                  ><code v-html="seg.html"></code></pre>
                 </div>
               </template>
             </div>
@@ -931,7 +959,7 @@ const messageRenderer = createAiMessageRenderer({ markdown: formatInlineText });
                 class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
                 :title="activeModeHint"
               >
-                <Bot class="h-3 w-3" />
+                <component :is="assistantMode === 'agent' ? Bot : MessageSquarePlus" class="h-3 w-3" />
                 <span>{{ t(`ai.modes.${assistantMode}`) }}</span>
                 <svg
                   class="h-3 w-3 opacity-50"
@@ -949,7 +977,8 @@ const messageRenderer = createAiMessageRenderer({ markdown: formatInlineText });
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" class="w-40">
               <DropdownMenuItem class="text-xs gap-1.5" :title="t('ai.modeHints.ask')" @click="assistantMode = 'ask'">
-                <Check class="h-3 w-3" :class="{ 'opacity-0': assistantMode !== 'ask' }" />
+                <Check class="h-3 w-3 shrink-0" :class="{ 'opacity-0': assistantMode !== 'ask' }" />
+                <MessageSquarePlus class="h-3 w-3 shrink-0 text-muted-foreground" />
                 <span>{{ t("ai.modes.ask") }}</span>
               </DropdownMenuItem>
               <DropdownMenuItem
@@ -957,7 +986,8 @@ const messageRenderer = createAiMessageRenderer({ markdown: formatInlineText });
                 :title="t('ai.modeHints.agent')"
                 @click="assistantMode = 'agent'"
               >
-                <Check class="h-3 w-3" :class="{ 'opacity-0': assistantMode !== 'agent' }" />
+                <Check class="h-3 w-3 shrink-0" :class="{ 'opacity-0': assistantMode !== 'agent' }" />
+                <Bot class="h-3 w-3 shrink-0 text-muted-foreground" />
                 <span>{{ t("ai.modes.agent") }}</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -1096,5 +1126,8 @@ const messageRenderer = createAiMessageRenderer({ markdown: formatInlineText });
 .ai-markdown :deep(th) {
   font-weight: 600;
   background: hsl(var(--muted));
+}
+.ai-code-block :deep(.line) {
+  min-height: 1lh;
 }
 </style>

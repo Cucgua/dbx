@@ -202,21 +202,8 @@ pub async fn list_databases(pool: &PgPool) -> Result<Vec<DatabaseInfo>, String> 
 }
 
 pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, String> {
-    let rows: Vec<PgRow> = sqlx::query(
-        "SELECT c.relname AS table_name, \
-         CASE c.relkind WHEN 'r' THEN 'BASE TABLE' WHEN 'v' THEN 'VIEW' \
-           WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN TABLE' \
-           WHEN 'p' THEN 'BASE TABLE' END AS table_type, \
-         obj_description(c.oid) AS table_comment \
-         FROM pg_catalog.pg_class c \
-         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-         WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
-         ORDER BY c.relname",
-    )
-    .bind(schema)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let rows: Vec<PgRow> =
+        sqlx::query(postgres_tables_sql()).bind(schema).fetch_all(pool).await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
@@ -228,7 +215,58 @@ pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, 
         .collect())
 }
 
-fn list_objects_sql() -> &'static str {
+fn postgres_tables_sql() -> &'static str {
+    "SELECT c.relname AS table_name, \
+         CASE c.relkind WHEN 'r' THEN 'BASE TABLE' WHEN 'v' THEN 'VIEW' \
+           WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN TABLE' \
+           WHEN 'p' THEN 'BASE TABLE' END AS table_type, \
+         obj_description(c.oid) AS table_comment \
+         FROM pg_catalog.pg_class c \
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
+         ORDER BY c.relname"
+}
+
+fn get_opt_text(row: &PgRow, name: &str) -> Option<String> {
+    row.try_get::<Option<String>, _>(name).ok().flatten().filter(|s| !s.is_empty())
+}
+
+fn list_objects_sql(include_timestamps: bool) -> &'static str {
+    if include_timestamps {
+        return "SELECT c.relname AS object_name, \
+       CASE c.relkind \
+         WHEN 'v' THEN 'VIEW' \
+         WHEN 'm' THEN 'VIEW' \
+         ELSE 'TABLE' \
+       END AS object_type, \
+       obj_description(c.oid) AS object_comment, \
+       stat.creation::text AS created_at, \
+       COALESCE( \
+         CASE WHEN current_setting('track_commit_timestamp', true) = 'on' \
+           THEN pg_xact_commit_timestamp(c.xmin)::text END, \
+         stat.modification::text \
+       ) AS updated_at, \
+       CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
+     FROM pg_catalog.pg_class c \
+     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+     LEFT JOIN LATERAL pg_stat_file( \
+       CASE WHEN c.relkind IN ('r','m','f','p') THEN pg_relation_filepath(c.oid) END, true \
+     ) stat ON true \
+     WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
+     UNION ALL \
+     SELECT p.proname AS object_name, \
+       CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS object_type, \
+       obj_description(p.oid) AS object_comment, \
+       NULL::text AS created_at, \
+       CASE WHEN current_setting('track_commit_timestamp', true) = 'on' \
+         THEN pg_xact_commit_timestamp(p.xmin)::text END AS updated_at, \
+       CASE p.prokind WHEN 'p' THEN 2 ELSE 3 END AS sort_order \
+     FROM pg_catalog.pg_proc p \
+     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
+     WHERE n.nspname = $1 AND p.prokind IN ('p','f') \
+     ORDER BY sort_order, object_name";
+    }
+
     "SELECT c.relname AS object_name, \
        CASE c.relkind \
          WHEN 'v' THEN 'VIEW' \
@@ -236,6 +274,8 @@ fn list_objects_sql() -> &'static str {
          ELSE 'TABLE' \
        END AS object_type, \
        obj_description(c.oid) AS object_comment, \
+       NULL::text AS created_at, \
+       NULL::text AS updated_at, \
        CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
      FROM pg_catalog.pg_class c \
      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
@@ -244,6 +284,8 @@ fn list_objects_sql() -> &'static str {
      SELECT p.proname AS object_name, \
        CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS object_type, \
        obj_description(p.oid) AS object_comment, \
+       NULL::text AS created_at, \
+       NULL::text AS updated_at, \
        CASE p.prokind WHEN 'p' THEN 2 ELSE 3 END AS sort_order \
      FROM pg_catalog.pg_proc p \
      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
@@ -252,8 +294,10 @@ fn list_objects_sql() -> &'static str {
 }
 
 pub async fn list_objects(pool: &PgPool, schema: &str) -> Result<Vec<ObjectInfo>, String> {
-    let rows: Vec<PgRow> =
-        sqlx::query(list_objects_sql()).bind(schema).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let rows: Vec<PgRow> = match sqlx::query(list_objects_sql(true)).bind(schema).fetch_all(pool).await {
+        Ok(rows) => rows,
+        Err(_) => sqlx::query(list_objects_sql(false)).bind(schema).fetch_all(pool).await.map_err(|e| e.to_string())?,
+    };
 
     Ok(rows
         .iter()
@@ -262,6 +306,8 @@ pub async fn list_objects(pool: &PgPool, schema: &str) -> Result<Vec<ObjectInfo>
             object_type: row.get::<String, _>("object_type"),
             schema: Some(schema.to_string()),
             comment: row.get::<Option<String>, _>("object_comment").filter(|s| !s.is_empty()),
+            created_at: get_opt_text(row, "created_at"),
+            updated_at: get_opt_text(row, "updated_at"),
         })
         .collect())
 }
@@ -590,10 +636,12 @@ mod tests {
 
     #[test]
     fn postgres_list_objects_sql_includes_routines() {
-        let sql = list_objects_sql();
+        let sql = list_objects_sql(true);
 
         assert!(sql.contains("pg_catalog.pg_class"));
         assert!(sql.contains("pg_catalog.pg_proc"));
+        assert!(sql.contains("pg_stat_file"));
+        assert!(sql.contains("pg_xact_commit_timestamp"));
         assert!(sql.contains("'PROCEDURE'"));
         assert!(sql.contains("'FUNCTION'"));
     }

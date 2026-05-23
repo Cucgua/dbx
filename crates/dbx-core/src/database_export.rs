@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashSet;
 use std::io::Write;
 use tokio::sync::RwLock;
 
 use crate::models::connection::DatabaseType;
+use crate::sql_dialect::{qualified_table_name, quote_table_identifier};
 
 static EXPORT_CANCELLED: std::sync::LazyLock<RwLock<HashSet<String>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashSet::new()));
@@ -45,6 +47,183 @@ pub enum ExportStatus {
     Done,
     Error,
     Cancelled,
+}
+
+pub const DATABASE_EXPORT_ROW_LIMIT: usize = 10_000;
+pub const DATABASE_EXPORT_PAGE_SIZE: usize = 500;
+pub const DATABASE_EXPORT_INSERT_BATCH_SIZE: usize = 100;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedTableSql {
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_type: Option<DatabaseType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualified_table_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ddl: Option<String>,
+    #[serde(default)]
+    pub columns: Vec<String>,
+    #[serde(default)]
+    pub rows: Vec<Vec<Value>>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildExportInsertStatementsOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_type: Option<DatabaseType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualified_table_name: Option<String>,
+    #[serde(default)]
+    pub columns: Vec<String>,
+    #[serde(default)]
+    pub rows: Vec<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch_size: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildExportSqlInsertOptions {
+    #[serde(flatten)]
+    pub insert: BuildExportInsertStatementsOptions,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildDatabaseSqlExportOptions {
+    pub database_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exported_at: Option<String>,
+    #[serde(default)]
+    pub tables: Vec<ExportedTableSql>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_limit_per_table: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub insert_batch_size: Option<usize>,
+}
+
+pub fn format_export_sql_literal(value: &Value) -> String {
+    if value.is_null() {
+        return "NULL".to_string();
+    }
+    if let Some(number) = value.as_number() {
+        return number.to_string();
+    }
+    if let Some(value) = value.as_bool() {
+        return if value { "TRUE" } else { "FALSE" }.to_string();
+    }
+    let text = value.as_str().map_or_else(|| value.to_string(), ToString::to_string);
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+pub fn build_export_insert_statements(options: BuildExportInsertStatementsOptions) -> Result<Vec<String>, String> {
+    if options.columns.is_empty() || options.rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let table = export_qualified_table_name(
+        options.database_type,
+        options.schema.as_deref(),
+        options.table_name.as_deref(),
+        options.qualified_table_name.as_deref(),
+    )?;
+    let batch_size = options.batch_size.unwrap_or(DATABASE_EXPORT_INSERT_BATCH_SIZE).max(1);
+    let columns = options
+        .columns
+        .iter()
+        .map(|column| quote_table_identifier(options.database_type, column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut statements = Vec::new();
+
+    for rows in options.rows.chunks(batch_size) {
+        let values = rows
+            .iter()
+            .map(|row| format!("({})", row.iter().map(format_export_sql_literal).collect::<Vec<_>>().join(", ")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        statements.push(format!("INSERT INTO {table} ({columns}) VALUES {values};"));
+    }
+
+    Ok(statements)
+}
+
+pub fn build_export_sql_insert(options: BuildExportSqlInsertOptions) -> Result<String, String> {
+    build_export_insert_statements(options.insert).map(|statements| statements.join("\n"))
+}
+
+pub fn build_database_sql_export(options: BuildDatabaseSqlExportOptions) -> Result<String, String> {
+    let exported_at = options.exported_at.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let row_limit = options.row_limit_per_table.unwrap_or(DATABASE_EXPORT_ROW_LIMIT);
+    let insert_batch_size = options.insert_batch_size.unwrap_or(DATABASE_EXPORT_INSERT_BATCH_SIZE);
+    let mut lines = vec![
+        "-- DBX database export".to_string(),
+        format!("-- Database: {}", options.database_name),
+        format!("-- Exported at: {exported_at}"),
+        format!("-- Row limit per table: {row_limit}"),
+        String::new(),
+    ];
+
+    for table in options.tables {
+        if let Some(ddl) = table.ddl.as_ref().map(|ddl| ddl.trim()).filter(|ddl| !ddl.is_empty()) {
+            lines.push(format!("-- Structure for {}", table.display_name));
+            lines.push(format!("{};", ddl.trim_end_matches(';')));
+            lines.push(String::new());
+        }
+
+        lines.push(format!("-- Data for {}", table.display_name));
+        if table.truncated {
+            lines.push(format!("-- Exported rows: {} (truncated at {row_limit})", table.rows.len()));
+        } else {
+            lines.push(format!("-- Exported rows: {}", table.rows.len()));
+        }
+
+        let inserts = build_export_insert_statements(BuildExportInsertStatementsOptions {
+            database_type: table.database_type,
+            schema: table.schema,
+            table_name: table.table_name,
+            qualified_table_name: table.qualified_table_name,
+            columns: table.columns,
+            rows: table.rows,
+            batch_size: Some(insert_batch_size),
+        })?;
+        if inserts.is_empty() {
+            lines.push("-- No rows".to_string());
+        } else {
+            lines.extend(inserts);
+        }
+        lines.push(String::new());
+    }
+
+    Ok(lines.join("\n"))
+}
+
+fn export_qualified_table_name(
+    database_type: Option<DatabaseType>,
+    schema: Option<&str>,
+    table_name: Option<&str>,
+    qualified_name: Option<&str>,
+) -> Result<String, String> {
+    if let Some(name) = qualified_name.filter(|name| !name.trim().is_empty()) {
+        return Ok(name.to_string());
+    }
+    let table_name = table_name
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| "tableName is required when qualifiedTableName is not provided".to_string())?;
+    Ok(qualified_table_name(database_type, schema, table_name))
 }
 
 pub async fn is_export_cancelled(export_id: &str) -> bool {
@@ -187,7 +366,7 @@ pub async fn export_database_sql_core(
         // Export data
         if request.include_data {
             // Get columns
-            let col_names: Vec<String> = match crate::schema::get_columns_core(
+            let columns = match crate::schema::get_columns_core(
                 state,
                 &request.connection_id,
                 &request.database,
@@ -196,7 +375,7 @@ pub async fn export_database_sql_core(
             )
             .await
             {
-                Ok(cols) => cols.iter().map(|c| c.name.clone()).collect(),
+                Ok(cols) => cols,
                 Err(e) => {
                     writeln!(file, "-- ERROR exporting table {table_name}: {e}")
                         .map_err(|e| format!("Failed to write file: {e}"))?;
@@ -204,6 +383,8 @@ pub async fn export_database_sql_core(
                     continue;
                 }
             };
+            let col_names = columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
+            let col_types = columns.iter().map(|c| Some(c.data_type.clone())).collect::<Vec<_>>();
 
             if !col_names.is_empty() {
                 // Get row count
@@ -260,8 +441,9 @@ pub async fn export_database_sql_core(
                         break;
                     }
 
-                    let insert_sql = crate::transfer::generate_insert(
+                    let insert_sql = crate::transfer::generate_insert_typed(
                         &col_names,
+                        &col_types,
                         &result.rows,
                         table_name,
                         &request.schema,
@@ -460,9 +642,15 @@ fn drop_table_if_exists_sql(table_name: &str, schema: &str, db_type: &DatabaseTy
 
 #[cfg(test)]
 mod tests {
-    use super::{drop_table_if_exists_sql, filter_selected_table_infos};
+    use super::{
+        build_database_sql_export, build_export_insert_statements, drop_table_if_exists_sql,
+        filter_selected_table_infos, format_export_sql_literal, BuildDatabaseSqlExportOptions,
+        BuildExportInsertStatementsOptions, ExportedTableSql, DATABASE_EXPORT_INSERT_BATCH_SIZE,
+        DATABASE_EXPORT_ROW_LIMIT,
+    };
     use crate::models::connection::DatabaseType;
     use crate::types::TableInfo;
+    use serde_json::{json, Value};
 
     fn table(name: &str, table_type: &str) -> TableInfo {
         TableInfo { name: name.to_string(), table_type: table_type.to_string(), comment: None }
@@ -498,5 +686,76 @@ mod tests {
         let sql = drop_table_if_exists_sql("users", "", &DatabaseType::Postgres);
 
         assert_eq!(sql, "DROP TABLE IF EXISTS \"users\";");
+    }
+
+    #[test]
+    fn formats_sql_literals_for_export_inserts() {
+        assert_eq!(format_export_sql_literal(&Value::Null), "NULL");
+        assert_eq!(format_export_sql_literal(&json!(42)), "42");
+        assert_eq!(format_export_sql_literal(&json!(true)), "TRUE");
+        assert_eq!(format_export_sql_literal(&json!("O'Hara")), "'O''Hara'");
+    }
+
+    #[test]
+    fn builds_batched_insert_statements_for_export() {
+        let statements = build_export_insert_statements(BuildExportInsertStatementsOptions {
+            database_type: Some(DatabaseType::Mysql),
+            schema: None,
+            table_name: Some("users".to_string()),
+            qualified_table_name: None,
+            columns: vec!["id".to_string(), "name".to_string()],
+            rows: vec![vec![json!(1), json!("Ada")], vec![json!(2), json!("O'Hara")], vec![json!(3), json!("Linus")]],
+            batch_size: Some(2),
+        })
+        .unwrap();
+
+        assert_eq!(
+            statements,
+            vec![
+                "INSERT INTO `users` (`id`, `name`) VALUES (1, 'Ada'), (2, 'O''Hara');",
+                "INSERT INTO `users` (`id`, `name`) VALUES (3, 'Linus');",
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_database_sql_export_with_ddl_before_data() {
+        let sql = build_database_sql_export(BuildDatabaseSqlExportOptions {
+            database_name: "app".to_string(),
+            exported_at: Some("2026-05-02T00:00:00.000Z".to_string()),
+            tables: vec![ExportedTableSql {
+                display_name: "users".to_string(),
+                database_type: Some(DatabaseType::Mysql),
+                schema: None,
+                table_name: Some("users".to_string()),
+                qualified_table_name: None,
+                ddl: Some("CREATE TABLE `users` (`id` int);".to_string()),
+                columns: vec!["id".to_string()],
+                rows: vec![vec![json!(1)]],
+                truncated: true,
+            }],
+            row_limit_per_table: Some(DATABASE_EXPORT_ROW_LIMIT),
+            insert_batch_size: Some(DATABASE_EXPORT_INSERT_BATCH_SIZE),
+        })
+        .unwrap();
+
+        assert_eq!(
+            sql,
+            vec![
+                "-- DBX database export".to_string(),
+                "-- Database: app".to_string(),
+                "-- Exported at: 2026-05-02T00:00:00.000Z".to_string(),
+                format!("-- Row limit per table: {DATABASE_EXPORT_ROW_LIMIT}"),
+                String::new(),
+                "-- Structure for users".to_string(),
+                "CREATE TABLE `users` (`id` int);".to_string(),
+                String::new(),
+                "-- Data for users".to_string(),
+                format!("-- Exported rows: 1 (truncated at {DATABASE_EXPORT_ROW_LIMIT})"),
+                "INSERT INTO `users` (`id`) VALUES (1);".to_string(),
+                String::new(),
+            ]
+            .join("\n")
+        );
     }
 }

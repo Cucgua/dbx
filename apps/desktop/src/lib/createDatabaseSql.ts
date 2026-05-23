@@ -1,5 +1,5 @@
 import type { DatabaseType } from "@/types/database";
-import { quoteTableIdentifier } from "./tableSelectSql";
+import * as api from "@/lib/api";
 
 const MYSQL_COMPATIBLE_PROFILES = new Set([
   "mysql",
@@ -27,19 +27,12 @@ export function supportsCreateDatabaseCharset(databaseType?: DatabaseType, drive
   );
 }
 
-export function buildCreateDatabaseSql(options: CreateDatabaseSqlOptions): string {
-  const name = quoteTableIdentifier(options.databaseType, options.name);
-  const charset = cleanSqlOption(options.charset);
-  const collation = cleanSqlOption(options.collation);
-  if (!supportsCreateDatabaseCharset(options.databaseType, options.driverProfile) || !charset) {
-    return `CREATE DATABASE ${name};`;
-  }
-  const collateClause = collation ? ` COLLATE ${collation}` : "";
-  return `CREATE DATABASE ${name} CHARACTER SET ${charset}${collateClause};`;
+export function buildCreateDatabaseSql(options: CreateDatabaseSqlOptions): Promise<string> {
+  return api.buildCreateDatabaseSql(options);
 }
 
-export function buildDuckDbAttachDatabaseSql(path: string, name: string): string {
-  return `ATTACH ${quoteSqlString(path)} AS ${quoteTableIdentifier("duckdb", name)};`;
+export function buildDuckDbAttachDatabaseSql(path: string, name: string): Promise<string> {
+  return api.buildDuckDbAttachDatabaseSql(path, name);
 }
 
 export function duckDbAttachedDatabaseNameFromPath(path: string): string {
@@ -60,12 +53,4 @@ export function uniqueDuckDbAttachedDatabaseName(baseName: string, existingNames
     if (!existing.has(candidate.toLowerCase())) return candidate;
   }
   return `${baseName}_${Date.now()}`;
-}
-
-function cleanSqlOption(value: string | undefined): string {
-  return value?.trim().replace(/[;\s]+/g, "") ?? "";
-}
-
-function quoteSqlString(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
 }

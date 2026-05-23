@@ -8,12 +8,14 @@ import {
   formatRedisStringValue,
   getRedisMemberSelectionKey,
   highlightRedisJsonDetail,
+  parseRedisJsonDetail,
 } from "../../apps/desktop/src/lib/redisValuePresentation.ts";
 
 test("formats JSON object strings for Redis member details", () => {
   const detail = formatRedisMemberDetail('{"id":1,"name":"Ada","tags":["dbx","redis"]}');
 
   assert.equal(detail.format, "json");
+  assert.equal(detail.rawText, '{"id":1,"name":"Ada","tags":["dbx","redis"]}');
   assert.equal(detail.text, '{\n  "id": 1,\n  "name": "Ada",\n  "tags": [\n    "dbx",\n    "redis"\n  ]\n}');
 });
 
@@ -27,6 +29,18 @@ test("keeps plain Redis member strings unchanged", () => {
 test("formats JSON string values without changing plain strings", () => {
   assert.equal(formatRedisStringValue('{"id":1,"name":"Ada"}'), '{\n  "id": 1,\n  "name": "Ada"\n}');
   assert.equal(formatRedisStringValue("plain redis value"), "plain redis value");
+});
+
+test("parses Redis JSON details only for object and array containers", () => {
+  const objectDetail = parseRedisJsonDetail('{"id":1,"name":"Ada"}');
+  assert.equal(objectDetail?.rawText, '{"id":1,"name":"Ada"}');
+  assert.equal(objectDetail?.formattedText, '{\n  "id": 1,\n  "name": "Ada"\n}');
+  assert.deepEqual(objectDetail?.value, { id: 1, name: "Ada" });
+
+  assert.equal(parseRedisJsonDetail("[1,2]")?.formattedText, "[\n  1,\n  2\n]");
+  assert.equal(parseRedisJsonDetail('"plain json string"'), null);
+  assert.equal(parseRedisJsonDetail("123"), null);
+  assert.equal(parseRedisJsonDetail("plain redis value"), null);
 });
 
 test("formats Redis command results with JSON strings expanded", () => {

@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use crate::ai::{AiChatMessage, AiConfig, AiConversation};
@@ -11,6 +12,17 @@ use crate::saved_sql::{SavedSqlFile, SavedSqlFolder, SavedSqlLibrary};
 
 pub struct Storage {
     db: SqlitePool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DesktopSettings {
+    pub show_tray_icon: bool,
+}
+
+impl Default for DesktopSettings {
+    fn default() -> Self {
+        Self { show_tray_icon: true }
+    }
 }
 
 const SCHEMA_STATEMENTS: &[&str] = &[
@@ -275,19 +287,25 @@ impl Storage {
 // ---------------------------------------------------------------------------
 
 impl Storage {
-    async fn load_app_settings_value(&self) -> Result<serde_json::Value, String> {
+    async fn load_app_settings_json(&self) -> Result<serde_json::Map<String, serde_json::Value>, String> {
         let row: Option<(String,)> = sqlx::query_as("SELECT settings_json FROM app_settings WHERE id = 1")
             .fetch_optional(&self.db)
             .await
             .map_err(|e| e.to_string())?;
-        match row {
-            Some((json,)) => serde_json::from_str(&json).map_err(|e| e.to_string()),
-            None => Ok(serde_json::json!({})),
+        let Some((json,)) = row else {
+            return Ok(serde_json::Map::new());
+        };
+        match serde_json::from_str::<serde_json::Value>(&json).map_err(|e| e.to_string())? {
+            serde_json::Value::Object(map) => Ok(map),
+            _ => Ok(serde_json::Map::new()),
         }
     }
 
-    async fn save_app_settings_value(&self, value: &serde_json::Value) -> Result<(), String> {
-        let json = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    async fn save_app_settings_json(
+        &self,
+        settings: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), String> {
+        let json = serde_json::Value::Object(settings.clone()).to_string();
         sqlx::query("INSERT OR REPLACE INTO app_settings (id, settings_json) VALUES (1, ?)")
             .bind(&json)
             .execute(&self.db)
@@ -297,42 +315,64 @@ impl Storage {
     }
 
     pub async fn save_app_settings(&self, settings: &AppSettings) -> Result<(), String> {
-        let mut value = self.load_app_settings_value().await?;
-        if !value.is_object() {
-            value = serde_json::json!({});
-        }
-        let Some(map) = value.as_object_mut() else {
-            return Err("Invalid app settings format".to_string());
-        };
-
-        set_optional_string(map, "oracleClientLibDir", settings.oracle_client_lib_dir());
-        set_optional_string(map, "oracleClientConfigDir", settings.oracle_client_config_dir());
-        set_optional_bool(map, "mcpHttpEnabled", settings.mcp_http_enabled);
-        set_optional_string(map, "mcpHttpHost", settings.mcp_http_host());
-        set_optional_u16(map, "mcpHttpPort", settings.mcp_http_port);
-        self.save_app_settings_value(&value).await
+        let mut app_settings = self.load_app_settings_json().await?;
+        set_optional_string(&mut app_settings, "oracleClientLibDir", settings.oracle_client_lib_dir());
+        set_optional_string(&mut app_settings, "oracleClientConfigDir", settings.oracle_client_config_dir());
+        set_optional_bool(&mut app_settings, "mcpHttpEnabled", settings.mcp_http_enabled);
+        set_optional_string(&mut app_settings, "mcpHttpHost", settings.mcp_http_host());
+        set_optional_u16(&mut app_settings, "mcpHttpPort", settings.mcp_http_port);
+        self.save_app_settings_json(&app_settings).await
     }
 
     pub async fn load_app_settings(&self) -> Result<AppSettings, String> {
-        let value = self.load_app_settings_value().await?;
-        serde_json::from_value(value).map_err(|e| e.to_string())
+        let app_settings = self.load_app_settings_json().await?;
+        serde_json::from_value(serde_json::Value::Object(app_settings)).map_err(|e| e.to_string())
     }
 
     pub async fn save_password_hash(&self, hash: &str) -> Result<(), String> {
-        let mut value = self.load_app_settings_value().await?;
-        if !value.is_object() {
-            value = serde_json::json!({});
-        }
-        let Some(map) = value.as_object_mut() else {
-            return Err("Invalid app settings format".to_string());
-        };
-        map.insert("password_hash".to_string(), serde_json::Value::String(hash.to_string()));
-        self.save_app_settings_value(&value).await
+        let mut settings = self.load_app_settings_json().await?;
+        settings.insert("password_hash".to_string(), serde_json::Value::String(hash.to_string()));
+        self.save_app_settings_json(&settings).await
     }
 
     pub async fn load_password_hash(&self) -> Result<Option<String>, String> {
-        let value = self.load_app_settings_value().await?;
-        Ok(value.get("password_hash").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        let settings = self.load_app_settings_json().await?;
+        Ok(settings.get("password_hash").and_then(|v| v.as_str()).map(|s| s.to_string()))
+    }
+
+    pub async fn save_desktop_settings(&self, desktop_settings: &DesktopSettings) -> Result<(), String> {
+        let mut settings = self.load_app_settings_json().await?;
+        settings.remove("run_in_background");
+        settings.insert("show_tray_icon".to_string(), serde_json::Value::Bool(desktop_settings.show_tray_icon));
+        self.save_app_settings_json(&settings).await
+    }
+
+    pub async fn load_desktop_settings(&self) -> Result<DesktopSettings, String> {
+        let settings = self.load_app_settings_json().await?;
+        Ok(DesktopSettings {
+            show_tray_icon: settings
+                .get("show_tray_icon")
+                .and_then(|value| value.as_bool())
+                .unwrap_or_else(|| DesktopSettings::default().show_tray_icon),
+        })
+    }
+
+    pub async fn save_pinned_tree_node_ids(&self, ids: &[String]) -> Result<(), String> {
+        let mut settings = self.load_app_settings_json().await?;
+        let values = ids.iter().map(|id| serde_json::Value::String(id.clone())).collect::<Vec<serde_json::Value>>();
+        settings.insert("pinned_tree_node_ids".to_string(), serde_json::Value::Array(values));
+        self.save_app_settings_json(&settings).await
+    }
+
+    pub async fn load_pinned_tree_node_ids(&self) -> Result<Vec<String>, String> {
+        let settings = self.load_app_settings_json().await?;
+        let Some(value) = settings.get("pinned_tree_node_ids") else {
+            return Ok(Vec::new());
+        };
+        let Some(array) = value.as_array() else {
+            return Ok(Vec::new());
+        };
+        Ok(array.iter().filter_map(|item| item.as_str().map(|value| value.to_string())).collect())
     }
 }
 
@@ -814,10 +854,10 @@ impl Storage {
 
     async fn migrate_connections_json(&self, data_dir: &Path) -> Result<(), String> {
         let path = data_dir.join("connections.json");
-        if !path.exists() {
+        if tokio::fs::metadata(&path).await.is_err() {
             return Ok(());
         }
-        let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let json = tokio::fs::read_to_string(&path).await.map_err(|e| e.to_string())?;
         let configs: Vec<ConnectionConfig> = serde_json::from_str(&json).unwrap_or_default();
         for config in &configs {
             let config_json = serde_json::to_string(config).map_err(|e| e.to_string())?;
@@ -828,16 +868,16 @@ impl Storage {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        std::fs::rename(&path, data_dir.join("connections.json.bak")).ok();
+        let _ = tokio::fs::rename(&path, data_dir.join("connections.json.bak")).await;
         Ok(())
     }
 
     async fn migrate_secrets_json(&self, data_dir: &Path) -> Result<(), String> {
         let path = data_dir.join("secrets.json");
-        if !path.exists() {
+        if tokio::fs::metadata(&path).await.is_err() {
             return Ok(());
         }
-        let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let json = tokio::fs::read_to_string(&path).await.map_err(|e| e.to_string())?;
         let secrets: std::collections::HashMap<String, String> = serde_json::from_str(&json).unwrap_or_default();
         for (key, secret) in &secrets {
             // key format: "connection:{id}:{field}"
@@ -855,16 +895,16 @@ impl Storage {
                 .map_err(|e| e.to_string())?;
             }
         }
-        std::fs::rename(&path, data_dir.join("secrets.json.bak")).ok();
+        let _ = tokio::fs::rename(&path, data_dir.join("secrets.json.bak")).await;
         Ok(())
     }
 
     async fn migrate_history_json(&self, data_dir: &Path) -> Result<(), String> {
         let path = data_dir.join("query_history.json");
-        if !path.exists() {
+        if tokio::fs::metadata(&path).await.is_err() {
             return Ok(());
         }
-        let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let json = tokio::fs::read_to_string(&path).await.map_err(|e| e.to_string())?;
         let entries: Vec<HistoryEntry> = serde_json::from_str(&json).unwrap_or_default();
         for entry in &entries {
             sqlx::query(
@@ -893,16 +933,16 @@ impl Storage {
             .await
             .map_err(|e| e.to_string())?;
         }
-        std::fs::rename(&path, data_dir.join("query_history.json.bak")).ok();
+        let _ = tokio::fs::rename(&path, data_dir.join("query_history.json.bak")).await;
         Ok(())
     }
 
     async fn migrate_ai_config_json(&self, data_dir: &Path) -> Result<(), String> {
         let path = data_dir.join("ai_config.json");
-        if !path.exists() {
+        if tokio::fs::metadata(&path).await.is_err() {
             return Ok(());
         }
-        let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let json = tokio::fs::read_to_string(&path).await.map_err(|e| e.to_string())?;
         // Only migrate if the table is empty
         let count: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM ai_config").fetch_one(&self.db).await.map_err(|e| e.to_string())?;
@@ -913,16 +953,16 @@ impl Storage {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        std::fs::rename(&path, data_dir.join("ai_config.json.bak")).ok();
+        let _ = tokio::fs::rename(&path, data_dir.join("ai_config.json.bak")).await;
         Ok(())
     }
 
     async fn migrate_ai_conversations_json(&self, data_dir: &Path) -> Result<(), String> {
         let path = data_dir.join("ai_conversations.json");
-        if !path.exists() {
+        if tokio::fs::metadata(&path).await.is_err() {
             return Ok(());
         }
-        let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let json = tokio::fs::read_to_string(&path).await.map_err(|e| e.to_string())?;
         let conversations: Vec<AiConversation> = serde_json::from_str(&json).unwrap_or_default();
         for conv in &conversations {
             let messages_json = serde_json::to_string(&conv.messages).map_err(|e| e.to_string())?;
@@ -943,16 +983,16 @@ impl Storage {
             .await
             .map_err(|e| e.to_string())?;
         }
-        std::fs::rename(&path, data_dir.join("ai_conversations.json.bak")).ok();
+        let _ = tokio::fs::rename(&path, data_dir.join("ai_conversations.json.bak")).await;
         Ok(())
     }
 
     async fn migrate_sidebar_layout_json(&self, data_dir: &Path) -> Result<(), String> {
         let path = data_dir.join("sidebar_layout.json");
-        if !path.exists() {
+        if tokio::fs::metadata(&path).await.is_err() {
             return Ok(());
         }
-        let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let json = tokio::fs::read_to_string(&path).await.map_err(|e| e.to_string())?;
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sidebar_layout")
             .fetch_one(&self.db)
             .await
@@ -964,7 +1004,7 @@ impl Storage {
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        std::fs::rename(&path, data_dir.join("sidebar_layout.json.bak")).ok();
+        let _ = tokio::fs::rename(&path, data_dir.join("sidebar_layout.json.bak")).await;
         Ok(())
     }
 }
@@ -999,4 +1039,96 @@ async fn persist_secret_in_tx(
         .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DesktopSettings, Storage};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_db_path(name: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("dbx-storage-{name}-{}-{stamp}.db", std::process::id()))
+    }
+
+    #[tokio::test]
+    async fn desktop_settings_default_to_background_enabled() {
+        let path = temp_db_path("desktop-settings-default");
+        let storage = Storage::open(&path).await.unwrap();
+
+        assert_eq!(storage.load_desktop_settings().await.unwrap(), DesktopSettings { show_tray_icon: true });
+    }
+
+    #[tokio::test]
+    async fn desktop_settings_ignore_legacy_background_preference() {
+        let path = temp_db_path("desktop-settings-legacy-background");
+        let storage = Storage::open(&path).await.unwrap();
+        let mut settings = serde_json::Map::new();
+        settings.insert("run_in_background".to_string(), serde_json::Value::Bool(false));
+        storage.save_app_settings_json(&settings).await.unwrap();
+
+        assert_eq!(storage.load_desktop_settings().await.unwrap(), DesktopSettings { show_tray_icon: true });
+    }
+
+    #[tokio::test]
+    async fn desktop_settings_preserve_existing_password_hash() {
+        let path = temp_db_path("desktop-settings-preserve-password");
+        let storage = Storage::open(&path).await.unwrap();
+
+        storage.save_password_hash("hash-1").await.unwrap();
+        storage.save_desktop_settings(&DesktopSettings { show_tray_icon: false }).await.unwrap();
+
+        assert_eq!(storage.load_password_hash().await.unwrap(), Some("hash-1".to_string()));
+        assert_eq!(storage.load_desktop_settings().await.unwrap(), DesktopSettings { show_tray_icon: false });
+    }
+
+    #[tokio::test]
+    async fn desktop_settings_save_removes_legacy_background_preference() {
+        let path = temp_db_path("desktop-settings-remove-legacy-background");
+        let storage = Storage::open(&path).await.unwrap();
+        let mut settings = serde_json::Map::new();
+        settings.insert("run_in_background".to_string(), serde_json::Value::Bool(false));
+        storage.save_app_settings_json(&settings).await.unwrap();
+
+        storage.save_desktop_settings(&DesktopSettings { show_tray_icon: true }).await.unwrap();
+
+        let settings = storage.load_app_settings_json().await.unwrap();
+        assert_eq!(settings.get("run_in_background"), None);
+        assert_eq!(settings.get("show_tray_icon").and_then(|value| value.as_bool()), Some(true));
+    }
+
+    #[tokio::test]
+    async fn password_hash_preserves_existing_desktop_settings() {
+        let path = temp_db_path("password-preserve-desktop-settings");
+        let storage = Storage::open(&path).await.unwrap();
+
+        storage.save_desktop_settings(&DesktopSettings { show_tray_icon: false }).await.unwrap();
+        storage.save_password_hash("hash-2").await.unwrap();
+
+        assert_eq!(storage.load_password_hash().await.unwrap(), Some("hash-2".to_string()));
+        assert_eq!(storage.load_desktop_settings().await.unwrap(), DesktopSettings { show_tray_icon: false });
+    }
+
+    #[tokio::test]
+    async fn pinned_tree_node_ids_default_to_empty() {
+        let path = temp_db_path("pinned-tree-default");
+        let storage = Storage::open(&path).await.unwrap();
+
+        assert_eq!(storage.load_pinned_tree_node_ids().await.unwrap(), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn pinned_tree_node_ids_roundtrip_and_preserve_password_hash() {
+        let path = temp_db_path("pinned-tree-roundtrip");
+        let storage = Storage::open(&path).await.unwrap();
+
+        storage.save_password_hash("hash-3").await.unwrap();
+        storage.save_pinned_tree_node_ids(&["conn-1".to_string(), "conn-1:db:main".to_string()]).await.unwrap();
+
+        assert_eq!(
+            storage.load_pinned_tree_node_ids().await.unwrap(),
+            vec!["conn-1".to_string(), "conn-1:db:main".to_string()]
+        );
+        assert_eq!(storage.load_password_hash().await.unwrap(), Some("hash-3".to_string()));
+    }
 }

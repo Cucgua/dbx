@@ -29,9 +29,13 @@ fn get_str_by_name(row: &MySqlRow, name: &str) -> String {
 }
 
 fn get_opt_str(row: &MySqlRow, name: &str) -> Option<String> {
-    row.try_get::<Option<String>, _>(name).ok().flatten().or_else(|| {
-        row.try_get::<Option<Vec<u8>>, _>(name).ok().flatten().map(|b| String::from_utf8_lossy(&b).to_string())
-    })
+    row.try_get::<Option<String>, _>(name)
+        .ok()
+        .flatten()
+        .or_else(|| row.try_get::<Option<NaiveDateTime>, _>(name).ok().flatten().map(|d| d.to_string()))
+        .or_else(|| {
+            row.try_get::<Option<Vec<u8>>, _>(name).ok().flatten().map(|b| String::from_utf8_lossy(&b).to_string())
+        })
 }
 
 fn numeric_metadata_u64_to_i32(value: Option<u64>) -> Option<i32> {
@@ -71,7 +75,7 @@ fn mysql_temporal_to_json_value(row: &MySqlRow, idx: usize) -> Option<serde_json
         return Some(serde_json::Value::String(v.to_string()));
     }
     if let Ok(v) = row.try_get::<DateTime<Utc>, _>(idx) {
-        return Some(serde_json::Value::String(v.to_rfc3339()));
+        return Some(serde_json::Value::String(mysql_datetime_to_string(v)));
     }
     if let Ok(v) = row.try_get::<NaiveDate, _>(idx) {
         return Some(serde_json::Value::String(v.to_string()));
@@ -80,6 +84,32 @@ fn mysql_temporal_to_json_value(row: &MySqlRow, idx: usize) -> Option<serde_json
         return Some(serde_json::Value::String(v.to_string()));
     }
     None
+}
+
+fn mysql_datetime_to_string(value: DateTime<Utc>) -> String {
+    value.naive_utc().to_string()
+}
+
+fn is_mysql_lossless_integer_type(type_name: &str) -> bool {
+    let upper_type = type_name.to_uppercase();
+    upper_type.contains("BIGINT") || upper_type.contains("LARGEINT")
+}
+
+fn mysql_lossless_integer_to_json(row: &MySqlRow, idx: usize) -> serde_json::Value {
+    row.try_get::<String, _>(idx)
+        .map(serde_json::Value::String)
+        .or_else(|_| row.try_get::<Decimal, _>(idx).map(|v: Decimal| serde_json::Value::String(v.to_string())))
+        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| serde_json::Value::String(v.to_string())))
+        .or_else(|_| row.try_get::<u64, _>(idx).map(|v| serde_json::Value::String(v.to_string())))
+        .or_else(|_| {
+            row.try_get::<Vec<u8>, _>(idx).map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
+        })
+        .or_else(|_| row.try_get_unchecked::<String, _>(idx).map(serde_json::Value::String))
+        .or_else(|_| {
+            row.try_get_unchecked::<Vec<u8>, _>(idx)
+                .map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
+        })
+        .unwrap_or(serde_json::Value::Null)
 }
 
 fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_json::Value {
@@ -108,12 +138,8 @@ fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_jso
             .unwrap_or(serde_json::Value::Null);
     }
 
-    if upper_type.contains("BIGINT") {
-        return row
-            .try_get::<i64, _>(idx)
-            .map(|v| serde_json::Value::String(v.to_string()))
-            .or_else(|_| row.try_get::<u64, _>(idx).map(|v| serde_json::Value::String(v.to_string())))
-            .unwrap_or(serde_json::Value::Null);
+    if is_mysql_lossless_integer_type(&upper_type) {
+        return mysql_lossless_integer_to_json(row, idx);
     }
 
     if upper_type == "DECIMAL" {
@@ -201,6 +227,13 @@ fn mysql_error_should_retry_without_ssl(error: &str) -> bool {
         || error.contains("server closed session")
 }
 
+fn mysql_error_should_retry_with_text_protocol(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    (lower.contains("1105") && lower.contains("hy000"))
+        || lower.contains("prepared statement protocol")
+        || lower.contains("this command is not supported in the prepared statement protocol yet")
+}
+
 fn ssl_fallback_url(url: &str) -> Option<String> {
     if url.contains("ssl-mode=preferred") {
         Some(url.replace("ssl-mode=preferred", "ssl-mode=disabled"))
@@ -284,11 +317,14 @@ fn list_objects_sql(database: &str) -> String {
         "SELECT TABLE_NAME AS object_name, \
            CASE WHEN TABLE_TYPE = 'VIEW' THEN 'VIEW' ELSE 'TABLE' END AS object_type, \
            TABLE_COMMENT AS object_comment, \
+           CREATE_TIME AS created_at, \
+           UPDATE_TIME AS updated_at, \
            CASE WHEN TABLE_TYPE = 'VIEW' THEN 1 ELSE 0 END AS sort_order \
          FROM information_schema.TABLES \
          WHERE TABLE_SCHEMA = {db} \
          UNION ALL \
          SELECT ROUTINE_NAME AS object_name, ROUTINE_TYPE AS object_type, NULL AS object_comment, \
+           NULL AS created_at, NULL AS updated_at, \
            CASE WHEN ROUTINE_TYPE = 'PROCEDURE' THEN 2 ELSE 3 END AS sort_order \
          FROM information_schema.ROUTINES \
          WHERE ROUTINE_SCHEMA = {db} AND ROUTINE_TYPE IN ('PROCEDURE', 'FUNCTION') \
@@ -308,6 +344,8 @@ pub async fn list_objects(pool: &MySqlPool, database: &str) -> Result<Vec<Object
             object_type: get_str_by_name(row, "object_type"),
             schema: Some(database.to_string()),
             comment: get_opt_str(row, "object_comment").filter(|s| !s.is_empty()),
+            created_at: get_opt_str(row, "created_at"),
+            updated_at: get_opt_str(row, "updated_at"),
         })
         .collect())
 }
@@ -315,7 +353,7 @@ pub async fn list_objects(pool: &MySqlPool, database: &str) -> Result<Vec<Object
 fn columns_sql(database: &str, table: &str) -> String {
     format!(
         "SELECT c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE, c.COLUMN_DEFAULT, c.EXTRA, c.COLUMN_COMMENT, \
-         c.NUMERIC_PRECISION, c.NUMERIC_SCALE, c.CHARACTER_MAXIMUM_LENGTH \
+         c.COLUMN_KEY, c.NUMERIC_PRECISION, c.NUMERIC_SCALE, c.CHARACTER_MAXIMUM_LENGTH \
          FROM information_schema.COLUMNS c \
          WHERE c.TABLE_SCHEMA = {} AND c.TABLE_NAME = {} \
          ORDER BY c.ORDINAL_POSITION",
@@ -335,6 +373,10 @@ fn primary_key_columns_sql(database: &str, table: &str) -> String {
     )
 }
 
+fn is_primary_key_column(primary_key_columns: &HashSet<String>, name: &str, column_key: &str) -> bool {
+    primary_key_columns.contains(name) || column_key.eq_ignore_ascii_case("PRI")
+}
+
 pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let pk_sql = primary_key_columns_sql(database, table);
     let pk_rows: Vec<MySqlRow> = sqlx::raw_sql(&pk_sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
@@ -347,8 +389,9 @@ pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Resul
         .iter()
         .map(|row| {
             let name = get_str_by_name(row, "COLUMN_NAME");
+            let column_key = get_str_by_name(row, "COLUMN_KEY");
             ColumnInfo {
-                is_primary_key: primary_key_columns.contains(&name),
+                is_primary_key: is_primary_key_column(&primary_key_columns, &name, &column_key),
                 name,
                 data_type: get_str_by_name(row, "COLUMN_TYPE"),
                 is_nullable: get_str_by_name(row, "IS_NULLABLE") == "YES",
@@ -367,6 +410,90 @@ fn query_result_row_limit(max_rows: Option<usize>) -> usize {
     max_rows.unwrap_or(crate::query::MAX_ROWS).max(1)
 }
 
+async fn execute_result_set_with_text_protocol(
+    pool: &MySqlPool,
+    sql: &str,
+    row_limit: usize,
+    start: Instant,
+) -> Result<QueryResult, String> {
+    let mut stream = sqlx::raw_sql(sql).fetch(&*pool);
+    let mut columns: Vec<String> = vec![];
+    let mut column_types: Vec<String> = vec![];
+    let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+
+    while let Some(row) = stream.next().await {
+        let row: MySqlRow = row.map_err(|e| e.to_string())?;
+        if columns.is_empty() {
+            columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+            column_types = row.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+        }
+        result_rows.push(
+            (0..row.len())
+                .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                .collect(),
+        );
+        if result_rows.len() > row_limit {
+            break;
+        }
+    }
+
+    let truncated = result_rows.len() > row_limit;
+    if truncated {
+        result_rows.truncate(row_limit);
+    }
+
+    Ok(QueryResult {
+        columns,
+        rows: result_rows,
+        affected_rows: 0,
+        execution_time_ms: start.elapsed().as_millis(),
+        truncated,
+        session_id: None,
+        has_more: false,
+    })
+}
+
+async fn execute_result_set_with_prepared_protocol(
+    pool: &MySqlPool,
+    sql: &str,
+    row_limit: usize,
+    start: Instant,
+) -> Result<QueryResult, String> {
+    let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
+    let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
+    let column_types: Vec<String> = desc.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+
+    let mut stream = sqlx::query(sql).fetch(&*pool);
+    let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+
+    while let Some(row) = stream.next().await {
+        let row = row.map_err(|e| e.to_string())?;
+        result_rows.push(
+            (0..row.len())
+                .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                .collect(),
+        );
+        if result_rows.len() > row_limit {
+            break;
+        }
+    }
+
+    let truncated = result_rows.len() > row_limit;
+    if truncated {
+        result_rows.truncate(row_limit);
+    }
+
+    Ok(QueryResult {
+        columns,
+        rows: result_rows,
+        affected_rows: 0,
+        execution_time_ms: start.elapsed().as_millis(),
+        truncated,
+        session_id: None,
+        has_more: false,
+    })
+}
+
 pub async fn execute_query(pool: &MySqlPool, sql: &str, bare: bool) -> Result<QueryResult, String> {
     execute_query_with_max_rows(pool, sql, bare, None).await
 }
@@ -382,75 +509,15 @@ pub async fn execute_query_with_max_rows(
 
     if is_result_set_query(sql) {
         if bare || requires_text_protocol_query(sql) {
-            let mut stream = sqlx::raw_sql(sql).fetch(&*pool);
-            let mut columns: Vec<String> = vec![];
-            let mut column_types: Vec<String> = vec![];
-            let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
-
-            while let Some(row) = stream.next().await {
-                let row: MySqlRow = row.map_err(|e| e.to_string())?;
-                if columns.is_empty() {
-                    columns = row.columns().iter().map(|c| c.name().to_string()).collect();
-                    column_types = row.columns().iter().map(|c| c.type_info().name().to_string()).collect();
-                }
-                result_rows.push(
-                    (0..row.len())
-                        .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                        .collect(),
-                );
-                if result_rows.len() > row_limit {
-                    break;
-                }
-            }
-
-            let truncated = result_rows.len() > row_limit;
-            if truncated {
-                result_rows.truncate(row_limit);
-            }
-
-            Ok(QueryResult {
-                columns,
-                rows: result_rows,
-                affected_rows: 0,
-                execution_time_ms: start.elapsed().as_millis(),
-                truncated,
-                session_id: None,
-                has_more: false,
-            })
+            execute_result_set_with_text_protocol(pool, sql, row_limit, start).await
         } else {
-            let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
-            let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
-            let column_types: Vec<String> = desc.columns().iter().map(|c| c.type_info().name().to_string()).collect();
-
-            let mut stream = sqlx::query(sql).fetch(&*pool);
-            let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
-
-            while let Some(row) = stream.next().await {
-                let row = row.map_err(|e| e.to_string())?;
-                result_rows.push(
-                    (0..row.len())
-                        .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                        .collect(),
-                );
-                if result_rows.len() > row_limit {
-                    break;
+            match execute_result_set_with_prepared_protocol(pool, sql, row_limit, start).await {
+                Ok(result) => Ok(result),
+                Err(err) if mysql_error_should_retry_with_text_protocol(&err) => {
+                    execute_result_set_with_text_protocol(pool, sql, row_limit, start).await
                 }
+                Err(err) => Err(err),
             }
-
-            let truncated = result_rows.len() > row_limit;
-            if truncated {
-                result_rows.truncate(row_limit);
-            }
-
-            Ok(QueryResult {
-                columns,
-                rows: result_rows,
-                affected_rows: 0,
-                execution_time_ms: start.elapsed().as_millis(),
-                truncated,
-                session_id: None,
-                has_more: false,
-            })
         }
     } else {
         let result = sqlx::raw_sql(sql).execute(pool).await.map_err(|e| e.to_string())?;
@@ -478,6 +545,9 @@ fn requires_text_protocol_query(sql: &str) -> bool {
 
     let tokens =
         sql.trim().trim_end_matches(';').split_whitespace().map(|token| token.to_ascii_lowercase()).collect::<Vec<_>>();
+    if tokens.len() >= 2 && tokens[0] == "show" && tokens[1] == "grants" {
+        return true;
+    }
 
     matches!(
         tokens.iter().map(String::as_str).collect::<Vec<_>>().as_slice(),
@@ -593,8 +663,12 @@ mod tests {
 
         assert!(sql.contains("information_schema.TABLES"));
         assert!(sql.contains("information_schema.ROUTINES"));
+        assert!(sql.contains("CREATE_TIME"));
+        assert!(sql.contains("UPDATE_TIME"));
         assert!(sql.contains("'PROCEDURE'"));
         assert!(sql.contains("'FUNCTION'"));
+        assert!(!sql.contains("LAST_ALTERED"));
+        assert!(!sql.contains("CREATED AS created_at"));
     }
 
     #[test]
@@ -616,11 +690,32 @@ mod tests {
     }
 
     #[test]
+    fn mysql_columns_sql_selects_column_key_for_starrocks_primary_fallback() {
+        let sql = columns_sql("app", "users");
+
+        assert!(sql.contains("c.COLUMN_KEY"));
+    }
+
+    #[test]
+    fn mysql_largeint_uses_lossless_integer_decoding() {
+        assert!(is_mysql_lossless_integer_type("LARGEINT"));
+    }
+
+    #[test]
+    fn mysql_column_key_marks_primary_when_key_column_usage_is_unavailable() {
+        let primary_key_columns = HashSet::new();
+
+        assert!(is_primary_key_column(&primary_key_columns, "id", "PRI"));
+    }
+
+    #[test]
     fn mysql_management_show_queries_use_text_protocol() {
         assert!(requires_text_protocol_query("SHOW PROCESSLIST"));
         assert!(requires_text_protocol_query("show full processlist"));
         assert!(requires_text_protocol_query("SHOW SLAVE STATUS"));
         assert!(requires_text_protocol_query("show replica status"));
+        assert!(requires_text_protocol_query("SHOW GRANTS"));
+        assert!(requires_text_protocol_query("SHOW GRANTS FOR 'repl'@'%'"));
         assert!(!requires_text_protocol_query("SHOW TABLES"));
         assert!(!requires_text_protocol_query("SELECT * FROM users"));
     }
@@ -632,6 +727,13 @@ mod tests {
             server closed session with no notification";
 
         assert!(mysql_error_should_retry_without_ssl(error));
+    }
+
+    #[test]
+    fn mysql_unknown_error_can_retry_with_text_protocol() {
+        let error = "error returned from database: 1105 (HY000): Unknown error";
+
+        assert!(mysql_error_should_retry_with_text_protocol(error));
     }
 
     #[test]
@@ -658,5 +760,12 @@ mod tests {
         assert!(mysql_url_has_timezone_param("mysql://root@localhost/app?timezone=%2B08:00"));
         assert!(mysql_url_has_timezone_param("mysql://root@localhost/app?charset=utf8mb4&time-zone=%2B08:00"));
         assert!(!mysql_url_has_timezone_param("mysql://root@localhost/app?charset=utf8mb4"));
+    }
+
+    #[test]
+    fn mysql_datetime_utc_values_display_without_rfc3339_offset() {
+        let value = DateTime::from_timestamp(1_778_544_000, 0).expect("valid timestamp");
+
+        assert_eq!(mysql_datetime_to_string(value), "2026-05-12 00:00:00");
     }
 }

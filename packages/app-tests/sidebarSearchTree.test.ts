@@ -83,3 +83,38 @@ test("preserves loaded schema children when the database itself matches search",
   assert.equal(filtered[0]?.label, "hdi");
   assert.equal(filtered[0]?.children?.[0]?.label, "public");
 });
+
+test("search scope excludes non-selected node self matches", () => {
+  const nodes: TreeNode[] = [
+    {
+      id: "conn:1",
+      label: "orders-conn",
+      type: "connection",
+      connectionId: "conn",
+      isExpanded: true,
+      children: [
+        {
+          id: "conn:1:db",
+          label: "orders_db",
+          type: "database",
+          connectionId: "conn",
+          database: "orders_db",
+          isExpanded: true,
+          children: [
+            {
+              id: "conn:1:db:table",
+              label: "customers",
+              type: "table",
+              connectionId: "conn",
+              database: "orders_db",
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const filtered = filterSidebarTree(nodes, "orders", new Set(), new Set(["table"]));
+
+  assert.equal(filtered.length, 0);
+});

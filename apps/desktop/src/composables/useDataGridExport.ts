@@ -1,7 +1,7 @@
-import { computed, type ComputedRef, type Ref } from "vue";
+import { computed, ref, type ComputedRef, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { formatCsv, formatJson } from "@/lib/exportFormats";
+import * as api from "@/lib/api";
 import {
   formatSelectionAsCsv,
   formatSelectionAsJson,
@@ -14,7 +14,7 @@ import { useToast } from "@/composables/useToast";
 import { displayCellValue, type CellValue } from "@/lib/cellValue";
 import { tryStartExclusiveActivation, type ActionActivationGuard } from "@/lib/actionActivation";
 import { copyToClipboard } from "@/lib/clipboard";
-import { buildDataGridCopyUpdateStatements } from "@/lib/dataGridSql";
+import { buildDataGridCopyInsertStatement, buildDataGridCopyUpdateStatements } from "@/lib/dataGridSql";
 import type { DatabaseType } from "@/types/database";
 
 interface RowItem {
@@ -42,16 +42,39 @@ export interface UseDataGridExportOptions {
     | Ref<{ rowId: number; rowIndex: number; col: number } | null>
     | ComputedRef<{ rowId: number; rowIndex: number; col: number } | null>;
   getRowItem: (rowId: number) => RowItem | undefined;
-  quoteIdent: (name: string) => string;
-  escapeVal: (value: CellValue) => string;
   selectedRowIds: Ref<Set<number>> | ComputedRef<Set<number>>;
   hasRowSelection: ComputedRef<boolean>;
+}
+
+interface CopyStatementCache {
+  key: string;
+  text: string;
+  loading: boolean;
+  ready: boolean;
 }
 
 export function useDataGridExport(options: UseDataGridExportOptions) {
   const { t } = useI18n();
   const { toast } = useToast();
   const exportGuard: ActionActivationGuard = {};
+  const copyRowInsertCache = ref<CopyStatementCache>({
+    key: "",
+    text: "",
+    loading: false,
+    ready: false,
+  });
+  const copyRowInsertWithoutPrimaryKeysCache = ref<CopyStatementCache>({
+    key: "",
+    text: "",
+    loading: false,
+    ready: false,
+  });
+  const copyRowUpdateCache = ref<CopyStatementCache>({
+    key: "",
+    text: "",
+    loading: false,
+    ready: false,
+  });
 
   const {
     columns,
@@ -65,8 +88,6 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     selectedRange,
     contextCell,
     getRowItem,
-    quoteIdent,
-    escapeVal,
     selectedRowIds,
     hasRowSelection,
   } = options;
@@ -101,6 +122,181 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
 
   function updateEligibleRows(): RowItem[] {
     return targetedRows().filter((item) => !item.isNew && !item.isDeleted);
+  }
+
+  function updateCopyKey(): string {
+    const rows = updateEligibleRows().map((item) => item.id);
+    return JSON.stringify({
+      databaseType: databaseType.value ?? null,
+      schema: tableMeta.value?.schema ?? null,
+      tableName: tableMeta.value?.tableName ?? null,
+      primaryKeys: tableMeta.value?.primaryKeys ?? [],
+      columns: columns.value,
+      sourceColumns: sourceColumns.value ?? null,
+      rows,
+    });
+  }
+
+  function insertCopyKey(excludePrimaryKeys: boolean): string {
+    const rows = insertEligibleRows().map((item) => item.id);
+    return JSON.stringify({
+      databaseType: databaseType.value ?? null,
+      schema: tableMeta.value?.schema ?? null,
+      tableName: tableMeta.value?.tableName ?? null,
+      columns: columns.value,
+      sourceColumns: sourceColumns.value ?? null,
+      excludePrimaryKeys,
+      rows,
+    });
+  }
+
+  function insertCopyCache(excludePrimaryKeys: boolean): CopyStatementCache {
+    return excludePrimaryKeys ? copyRowInsertWithoutPrimaryKeysCache.value : copyRowInsertCache.value;
+  }
+
+  function setInsertCopyCache(excludePrimaryKeys: boolean, cache: CopyStatementCache) {
+    if (excludePrimaryKeys) {
+      copyRowInsertWithoutPrimaryKeysCache.value = cache;
+    } else {
+      copyRowInsertCache.value = cache;
+    }
+  }
+
+  function setUpdateCopyCache(cache: CopyStatementCache) {
+    copyRowUpdateCache.value = cache;
+  }
+
+  async function prefetchRowAsInsertStatement(excludePrimaryKeys: boolean) {
+    const rows = insertEligibleRows();
+    if (!rows.length) {
+      setInsertCopyCache(excludePrimaryKeys, {
+        key: "",
+        text: "",
+        loading: false,
+        ready: false,
+      });
+      return;
+    }
+    const key = insertCopyKey(excludePrimaryKeys);
+    const current = insertCopyCache(excludePrimaryKeys);
+    if ((current.loading || current.ready) && current.key === key) return;
+
+    setInsertCopyCache(excludePrimaryKeys, {
+      key,
+      text: "",
+      loading: true,
+      ready: false,
+    });
+
+    try {
+      const statement = await buildDataGridCopyInsertStatement({
+        databaseType: databaseType.value,
+        tableMeta: tableMeta.value,
+        columns: columns.value,
+        sourceColumns: sourceColumns.value,
+        rows: rows.map((item) => item.data),
+        excludePrimaryKeys,
+      });
+      const latest = insertCopyCache(excludePrimaryKeys);
+      if (latest.key !== key) return;
+      setInsertCopyCache(excludePrimaryKeys, {
+        key,
+        text: statement ?? "",
+        loading: false,
+        ready: !!statement,
+      });
+    } catch {
+      const latest = insertCopyCache(excludePrimaryKeys);
+      if (latest.key !== key) return;
+      setInsertCopyCache(excludePrimaryKeys, {
+        key,
+        text: "",
+        loading: false,
+        ready: false,
+      });
+    }
+  }
+
+  function canCopyPreparedInsert(excludePrimaryKeys: boolean): boolean {
+    const cache = insertCopyCache(excludePrimaryKeys);
+    return cache.ready && cache.key === insertCopyKey(excludePrimaryKeys);
+  }
+
+  function copyPreparedRowAsInsert(excludePrimaryKeys: boolean): boolean {
+    if (!canCopyPreparedInsert(excludePrimaryKeys)) return false;
+    void copyText(insertCopyCache(excludePrimaryKeys).text);
+    return true;
+  }
+
+  async function prefetchRowAsUpdateStatement() {
+    if (!tableMeta.value?.primaryKeys.length) {
+      setUpdateCopyCache({
+        key: "",
+        text: "",
+        loading: false,
+        ready: false,
+      });
+      return;
+    }
+    const rows = updateEligibleRows();
+    if (!rows.length) {
+      setUpdateCopyCache({
+        key: "",
+        text: "",
+        loading: false,
+        ready: false,
+      });
+      return;
+    }
+    const key = updateCopyKey();
+    const current = copyRowUpdateCache.value;
+    if ((current.loading || current.ready) && current.key === key) return;
+
+    setUpdateCopyCache({
+      key,
+      text: "",
+      loading: true,
+      ready: false,
+    });
+
+    try {
+      const statements = await buildDataGridCopyUpdateStatements({
+        databaseType: databaseType.value,
+        tableMeta: tableMeta.value,
+        columns: columns.value,
+        sourceColumns: sourceColumns.value,
+        rows: rows.map((item) => item.data),
+      });
+      const latest = copyRowUpdateCache.value;
+      if (latest.key !== key) return;
+      const text = statements.join("\n");
+      setUpdateCopyCache({
+        key,
+        text,
+        loading: false,
+        ready: statements.length > 0,
+      });
+    } catch {
+      const latest = copyRowUpdateCache.value;
+      if (latest.key !== key) return;
+      setUpdateCopyCache({
+        key,
+        text: "",
+        loading: false,
+        ready: false,
+      });
+    }
+  }
+
+  function canCopyPreparedUpdate(): boolean {
+    const cache = copyRowUpdateCache.value;
+    return cache.ready && cache.key === updateCopyKey();
+  }
+
+  function copyPreparedRowAsUpdate(): boolean {
+    if (!canCopyPreparedUpdate()) return false;
+    void copyText(copyRowUpdateCache.value.text);
+    return true;
   }
 
   // --- Selection copy functions ---
@@ -168,125 +364,51 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     await copyText(JSON.stringify(obj, null, 2));
   }
 
+  function insertEligibleRows(): RowItem[] {
+    return targetedRows();
+  }
+
   async function copyRowAsInsert() {
-    const table = tableMeta.value
-      ? (tableMeta.value.schema ? `${quoteIdent(tableMeta.value.schema)}.` : "") + quoteIdent(tableMeta.value.tableName)
-      : "table_name";
-    const cols = columns.value.map((c) => quoteIdent(c)).join(", ");
+    copyPreparedRowAsInsert(false);
+  }
 
-    if (hasRowSelection.value && selectedRowIds.value.size > 0) {
-      const items = displayItems.value.filter((item) => selectedRowIds.value.has(item.id));
-      const valueRows = items.map((item) => `(${item.data.map((v) => escapeVal(v)).join(", ")})`);
-      await copyText(`INSERT INTO ${table} (${cols}) VALUES\n${valueRows.join(",\n")};`);
-      return;
-    }
-
-    const range = selectedRange.value;
-    if (range && range.startRow !== range.endRow) {
-      const items = displayItems.value.slice(range.startRow, range.endRow + 1);
-      const valueRows = items.map((item) => `(${item.data.map((v) => escapeVal(v)).join(", ")})`);
-      await copyText(`INSERT INTO ${table} (${cols}) VALUES\n${valueRows.join(",\n")};`);
-      return;
-    }
-
-    if (!contextCell.value) return;
-    const item = getRowItem(contextCell.value.rowId);
-    if (!item) return;
-    const vals = item.data.map((v) => escapeVal(v)).join(", ");
-    await copyText(`INSERT INTO ${table} (${cols}) VALUES (${vals});`);
+  async function copyRowAsInsertWithoutPrimaryKeys() {
+    copyPreparedRowAsInsert(true);
   }
 
   async function copyRowAsUpdate() {
-    if (!tableMeta.value?.primaryKeys.length) return;
-    const statements = buildDataGridCopyUpdateStatements({
-      databaseType: databaseType.value,
-      tableMeta: tableMeta.value,
-      columns: columns.value,
-      sourceColumns: sourceColumns.value,
-      rows: updateEligibleRows().map((item) => item.data),
-    });
-    if (!statements.length) return;
-    await copyText(statements.join("\n"));
+    copyPreparedRowAsUpdate();
   }
 
   const canCopyRowAsUpdate = computed(() => {
     if (!tableMeta.value?.primaryKeys.length) return false;
     const rows = updateEligibleRows();
     if (!rows.length) return false;
-    return (
-      buildDataGridCopyUpdateStatements({
-        databaseType: databaseType.value,
-        tableMeta: tableMeta.value,
-        columns: columns.value,
-        sourceColumns: sourceColumns.value,
-        rows: [rows[0].data],
-      }).length > 0
-    );
+    if (databaseType.value === "neo4j" || databaseType.value === "tdengine") return false;
+    const saveColumns = effectiveColumns(sourceColumns.value, columns.value);
+    const primaryKeys = tableMeta.value.primaryKeys;
+    if (primaryKeys.some((primaryKey) => findColumnIndex(saveColumns, primaryKey) === -1)) return false;
+    const primaryKeySet = new Set(primaryKeys.map(normalizeColumnName));
+    return saveColumns.some((column) => column && !primaryKeySet.has(normalizeColumnName(column)));
+  });
+
+  const canCopyRowAsInsertWithoutPrimaryKeys = computed(() => {
+    if (!tableMeta.value?.primaryKeys.length) return false;
+    const rows = insertEligibleRows();
+    if (!rows.length) return false;
+    const saveColumns = effectiveColumns(sourceColumns.value, columns.value);
+    const primaryKeySet = new Set(tableMeta.value.primaryKeys.map(normalizeColumnName));
+    const insertableCount = saveColumns.filter(Boolean).length;
+    const insertColumnsCount = saveColumns.filter(
+      (column) => column && !primaryKeySet.has(normalizeColumnName(column)),
+    ).length;
+    return insertColumnsCount > 0 && insertColumnsCount < insertableCount;
   });
 
   async function copyAll() {
     const header = columns.value.join("\t");
     const body = displayItems.value.map((item) => item.data.map((c) => displayCellValue(c)).join("\t")).join("\n");
     await copyText(`${header}\n${body}`);
-  }
-
-  // --- File save helpers ---
-  async function saveFileContent(
-    content: string,
-    defaultFileName: string,
-    filterName: string,
-    filterExt: string,
-  ): Promise<boolean> {
-    if (isTauriRuntime()) {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await save({
-        defaultPath: defaultFileName,
-        filters: [{ name: filterName, extensions: [filterExt] }],
-      });
-      if (!path) return false;
-      await writeTextFile(path, "﻿" + content);
-      return true;
-    } else {
-      const blob = new Blob(["﻿", content], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = defaultFileName;
-      a.click();
-      URL.revokeObjectURL(url);
-      return true;
-    }
-  }
-
-  async function saveBinaryFileContent(
-    content: Uint8Array,
-    defaultFileName: string,
-    filterName: string,
-    filterExt: string,
-  ): Promise<boolean> {
-    if (isTauriRuntime()) {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const { writeFile } = await import("@tauri-apps/plugin-fs");
-      const path = await save({
-        defaultPath: defaultFileName,
-        filters: [{ name: filterName, extensions: [filterExt] }],
-      });
-      if (!path) return false;
-      await writeFile(path, content);
-      return true;
-    } else {
-      const blob = new Blob([content], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = defaultFileName;
-      a.click();
-      URL.revokeObjectURL(url);
-      return true;
-    }
   }
 
   // --- Export functions ---
@@ -304,9 +426,18 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     await runExclusiveExport(async () => {
       try {
         const rows = rowsToExport(rowIds).map((item) => item.data.map((c) => displayCellValue(c)));
-        if (await saveFileContent(formatCsv(columns.value, rows), "export.csv", "CSV", "csv")) {
-          toast(t("grid.exported"));
+        let outputPath = "export.csv";
+        if (isTauriRuntime()) {
+          const { save } = await import("@tauri-apps/plugin-dialog");
+          const path = await save({
+            defaultPath: outputPath,
+            filters: [{ name: "CSV", extensions: ["csv"] }],
+          });
+          if (!path) return;
+          outputPath = path as string;
         }
+        await api.exportQueryResultCsv(outputPath, columns.value, rows);
+        toast(t("grid.exported"));
       } catch (e: any) {
         toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
       }
@@ -316,10 +447,22 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
   async function exportJson(rowIds?: number[]) {
     await runExclusiveExport(async () => {
       try {
-        const rows = rowsToExport(rowIds).map((item) => item.data);
-        if (await saveFileContent(formatJson(columns.value, rows), "export.json", "JSON", "json")) {
-          toast(t("grid.exported"));
+        let outputPath = "export.json";
+        if (isTauriRuntime()) {
+          const { save } = await import("@tauri-apps/plugin-dialog");
+          const path = await save({
+            defaultPath: outputPath,
+            filters: [{ name: "JSON", extensions: ["json"] }],
+          });
+          if (!path) return;
+          outputPath = path as string;
         }
+        await api.exportQueryResultJson(
+          outputPath,
+          columns.value,
+          rowsToExport(rowIds).map((item) => item.data),
+        );
+        toast(t("grid.exported"));
       } catch (e: any) {
         toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
       }
@@ -329,13 +472,22 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
   async function exportMarkdown(rowIds?: number[]) {
     await runExclusiveExport(async () => {
       try {
-        const cols = columns.value;
-        const visibleRows = rowsToExport(rowIds).map((item) => item.data);
-        const { formatMarkdownTable } = await import("@/lib/markdownTable");
-        const md = formatMarkdownTable({ columns: cols, rows: visibleRows });
-        if (await saveFileContent(md, "export.md", "Markdown", "md")) {
-          toast(t("grid.exported"));
+        let outputPath = "export.md";
+        if (isTauriRuntime()) {
+          const { save } = await import("@tauri-apps/plugin-dialog");
+          const path = await save({
+            defaultPath: outputPath,
+            filters: [{ name: "Markdown", extensions: ["md"] }],
+          });
+          if (!path) return;
+          outputPath = path as string;
         }
+        await api.exportQueryResultMarkdown(
+          outputPath,
+          columns.value,
+          rowsToExport(rowIds).map((item) => item.data),
+        );
+        toast(t("grid.exported"));
       } catch (e: any) {
         toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
       }
@@ -345,15 +497,23 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
   async function exportXlsx(rowIds?: number[]) {
     await runExclusiveExport(async () => {
       try {
-        const { buildXlsxWorkbook } = await import("@/lib/xlsxExport");
-        const workbook = buildXlsxWorkbook({
-          sheetName: tableMeta.value?.tableName || "Export",
-          columns: columns.value,
-          rows: rowsToExport(rowIds).map((item) => item.data),
-        });
-        if (await saveBinaryFileContent(workbook, "export.xlsx", "Excel", "xlsx")) {
-          toast(t("grid.exported"));
+        let outputPath = "export.xlsx";
+        if (isTauriRuntime()) {
+          const { save } = await import("@tauri-apps/plugin-dialog");
+          const path = await save({
+            defaultPath: outputPath,
+            filters: [{ name: "Excel", extensions: ["xlsx"] }],
+          });
+          if (!path) return;
+          outputPath = path as string;
         }
+        await api.exportQueryResultXlsx(
+          outputPath,
+          tableMeta.value?.tableName || "Export",
+          columns.value,
+          rowsToExport(rowIds).map((item) => item.data),
+        );
+        toast(t("grid.exported"));
       } catch (e: any) {
         toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
       }
@@ -370,7 +530,15 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     copyCell,
     copyRow,
     copyRowAsInsert,
+    copyRowAsInsertWithoutPrimaryKeys,
+    prefetchRowAsInsertStatement,
+    canCopyPreparedInsert,
+    copyPreparedRowAsInsert,
+    prefetchRowAsUpdateStatement,
+    canCopyPreparedUpdate,
+    copyPreparedRowAsUpdate,
     copyRowAsUpdate,
+    canCopyRowAsInsertWithoutPrimaryKeys,
     canCopyRowAsUpdate,
     copyAll,
     copySelectionTsv,
@@ -383,4 +551,21 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     exportXlsx,
     copySql,
   };
+}
+
+function effectiveColumns(
+  sourceColumns: Array<string | undefined> | undefined,
+  columns: string[],
+): Array<string | undefined> {
+  if (!sourceColumns || sourceColumns.length !== columns.length) return columns;
+  return sourceColumns;
+}
+
+function findColumnIndex(columns: Array<string | undefined>, target: string): number {
+  const normalizedTarget = normalizeColumnName(target);
+  return columns.findIndex((column) => (column ? normalizeColumnName(column) : "") === normalizedTarget);
+}
+
+function normalizeColumnName(name: string): string {
+  return name.toUpperCase();
 }

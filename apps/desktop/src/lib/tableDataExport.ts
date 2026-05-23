@@ -9,6 +9,14 @@ export interface FetchTableDataForExportOptions {
   tableName: string;
   columns?: string[];
   pageSize?: number;
+  buildPageSql?: (options: {
+    databaseType?: DatabaseType;
+    schema?: string;
+    tableName: string;
+    columns?: string[];
+    limit: number;
+    offset: number;
+  }) => Promise<string> | string;
   executePage: (sql: string) => Promise<QueryResult>;
 }
 
@@ -20,7 +28,7 @@ export async function fetchTableDataForExport(options: FetchTableDataForExportOp
   let executionTimeMs = 0;
 
   while (true) {
-    const sql = buildTableSelectSql({
+    const sql = await (options.buildPageSql ?? buildTableSelectSql)({
       databaseType: options.databaseType,
       schema: options.schema,
       tableName: options.tableName,

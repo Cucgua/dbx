@@ -10,15 +10,9 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
-import {
-  diffColumns,
-  diffForeignKeys,
-  diffIndexes,
-  diffTables,
-  diffTriggers,
-  generateSyncSql,
-  type TableDiff,
-} from "@/lib/schemaDiff";
+import { copyToClipboard } from "@/lib/clipboard";
+import type { TableDiff, TableSchemaDetail } from "@/lib/schemaDiff";
+import type { TableInfo } from "@/types/database";
 import { sqlMetadataRefreshTarget } from "@/lib/sqlMetadataRefresh";
 import { useToast } from "@/composables/useToast";
 import { Loader2, Copy, Play, GitCompareArrows, ArrowLeftRight } from "lucide-vue-next";
@@ -57,6 +51,7 @@ const executing = ref(false);
 const executedCount = ref(0);
 const executeTotal = ref(0);
 const syncErrors = ref<{ sql: string; error: string }[]>([]);
+const syncSql = ref("");
 
 const allSelected = computed(() => diffs.value.length > 0 && diffs.value.every((d) => d.selected));
 const someSelected = computed(() => diffs.value.some((d) => d.selected) && !allSelected.value);
@@ -64,14 +59,8 @@ const someSelected = computed(() => diffs.value.some((d) => d.selected) && !allS
 function toggleAll() {
   const next = !allSelected.value;
   diffs.value.forEach((d) => (d.selected = next));
+  refreshSelectedSyncSql().catch((e) => toast(e?.message || String(e), 5000));
 }
-
-const syncSql = computed(() => {
-  const selected = diffs.value.filter((d) => d.selected);
-  if (selected.length === 0) return "";
-  const srcConfig = store.getConfig(targetConnectionId.value);
-  return generateSyncSql(selected, srcConfig?.db_type || "mysql", targetSchema.value);
-});
 
 const sqlConnections = computed(() =>
   store.connections.filter((c) => !["redis", "mongodb", "elasticsearch"].includes(c.db_type)),
@@ -173,92 +162,86 @@ async function startCompare() {
   if (!canCompare.value) return;
   step.value = "comparing";
   diffs.value = [];
+  syncSql.value = "";
 
   try {
     await store.ensureConnected(sourceConnectionId.value);
     await store.ensureConnected(targetConnectionId.value);
+    const targetConfig = store.getConfig(targetConnectionId.value);
 
     const [srcTables, tgtTables] = await Promise.all([
       api.listTables(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value),
       api.listTables(targetConnectionId.value, targetDatabase.value, targetSchema.value),
     ]);
 
-    const srcTableNames = srcTables.filter((t) => t.table_type !== "VIEW").map((t) => t.name);
-    const tgtTableNames = tgtTables.filter((t) => t.table_type !== "VIEW").map((t) => t.name);
-    const srcTableComments = new Map(srcTables.map((t) => [t.name, t.comment ?? null]));
-    const tgtTableComments = new Map(tgtTables.map((t) => [t.name, t.comment ?? null]));
-    const srcViewNames = srcTables.filter((t) => t.table_type === "VIEW").map((t) => t.name);
-    const tgtViewNames = tgtTables.filter((t) => t.table_type === "VIEW").map((t) => t.name);
-    const { added, removed, common } = diffTables(srcTableNames, tgtTableNames);
-    const { added: addedViews, removed: removedViews } = diffTables(srcViewNames, tgtViewNames);
+    const { sourceDetails, targetDetails } = await loadSchemaDiffDetails(srcTables, tgtTables);
+    const result = await api.prepareSchemaDiff({
+      sourceTables: srcTables,
+      targetTables: tgtTables,
+      sourceDetails,
+      targetDetails,
+      databaseType: targetConfig?.db_type || "mysql",
+      targetSchema: targetSchema.value,
+    });
 
-    const result: SelectableTableDiff[] = [];
-
-    for (const name of added) {
-      const ddl = await api.getTableDdl(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name);
-      result.push({ type: "added", objectType: "table", name, ddl, selected: true });
-    }
-
-    for (const name of removed) {
-      result.push({ type: "removed", objectType: "table", name, selected: true });
-    }
-
-    for (const name of addedViews) {
-      result.push({ type: "added", objectType: "view", name, selected: true });
-    }
-
-    for (const name of removedViews) {
-      result.push({ type: "removed", objectType: "view", name, selected: true });
-    }
-
-    for (const name of common) {
-      const [srcCols, tgtCols, srcIdx, tgtIdx, srcFks, tgtFks, srcTriggers, tgtTriggers] = await Promise.all([
-        api.getColumns(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
-        api.getColumns(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
-        api.listIndexes(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
-        api.listIndexes(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
-        api.listForeignKeys(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
-        api.listForeignKeys(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
-        api.listTriggers(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
-        api.listTriggers(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
-      ]);
-
-      const colDiffs = diffColumns(srcCols, tgtCols);
-      const idxDiffs = diffIndexes(srcIdx, tgtIdx);
-      const fkDiffs = diffForeignKeys(srcFks, tgtFks);
-      const triggerDiffs = diffTriggers(srcTriggers, tgtTriggers);
-      const srcComment = srcTableComments.get(name) ?? null;
-      const tgtComment = tgtTableComments.get(name) ?? null;
-      const commentChanged = (srcComment ?? "") !== (tgtComment ?? "");
-
-      if (
-        colDiffs.length > 0 ||
-        idxDiffs.length > 0 ||
-        fkDiffs.length > 0 ||
-        triggerDiffs.length > 0 ||
-        commentChanged
-      ) {
-        result.push({
-          type: "modified",
-          objectType: "table",
-          name,
-          columns: colDiffs.length > 0 ? colDiffs : undefined,
-          indexes: idxDiffs.length > 0 ? idxDiffs : undefined,
-          foreignKeys: fkDiffs.length > 0 ? fkDiffs : undefined,
-          triggers: triggerDiffs.length > 0 ? triggerDiffs : undefined,
-          sourceTableComment: commentChanged ? srcComment : undefined,
-          targetTableComment: commentChanged ? tgtComment : undefined,
-          selected: true,
-        });
-      }
-    }
-
-    diffs.value = result;
+    diffs.value = result.diffs.map((diff) => ({ ...diff, selected: true }));
+    syncSql.value = result.syncSql;
     step.value = "result";
   } catch (e: any) {
     toast(e?.message || String(e), 5000);
     step.value = "select";
   }
+}
+
+async function loadSchemaDiffDetails(sourceTables: TableInfo[], targetTables: TableInfo[]) {
+  const sourceTableNames = sourceTables.filter((table) => table.table_type !== "VIEW").map((table) => table.name);
+  const targetTableNames = targetTables.filter((table) => table.table_type !== "VIEW").map((table) => table.name);
+  const targetTableSet = new Set(targetTableNames);
+  const sourceTableSet = new Set(sourceTableNames);
+  const sourceDetails: TableSchemaDetail[] = [];
+  const targetDetails: TableSchemaDetail[] = [];
+
+  for (const name of sourceTableNames) {
+    if (targetTableSet.has(name)) {
+      const [columns, indexes, foreignKeys, triggers] = await Promise.all([
+        api.getColumns(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
+        api.listIndexes(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
+        api.listForeignKeys(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
+        api.listTriggers(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name),
+      ]);
+      sourceDetails.push({ name, columns, indexes, foreignKeys, triggers });
+    } else {
+      const ddl = await api.getTableDdl(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, name);
+      sourceDetails.push({ name, ddl });
+    }
+  }
+
+  for (const name of targetTableNames) {
+    if (!sourceTableSet.has(name)) continue;
+    const [columns, indexes, foreignKeys, triggers] = await Promise.all([
+      api.getColumns(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
+      api.listIndexes(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
+      api.listForeignKeys(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
+      api.listTriggers(targetConnectionId.value, targetDatabase.value, targetSchema.value, name),
+    ]);
+    targetDetails.push({ name, columns, indexes, foreignKeys, triggers });
+  }
+
+  return { sourceDetails, targetDetails };
+}
+
+async function refreshSelectedSyncSql() {
+  const selected = diffs.value.filter((diff) => diff.selected);
+  if (selected.length === 0) {
+    syncSql.value = "";
+    return;
+  }
+  const targetConfig = store.getConfig(targetConnectionId.value);
+  syncSql.value = await api.generateSchemaSyncSql(selected, targetConfig?.db_type || "mysql", targetSchema.value);
+}
+
+function onDiffSelectionChange() {
+  refreshSelectedSyncSql().catch((e) => toast(e?.message || String(e), 5000));
 }
 
 async function executeSql() {
@@ -304,9 +287,13 @@ async function executeSql() {
   }
 }
 
-function copySql() {
-  navigator.clipboard.writeText(syncSql.value);
-  toast(t("grid.copied"));
+async function copySql() {
+  try {
+    await copyToClipboard(syncSql.value);
+    toast(t("grid.copied"));
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 function diffBadgeVariant(type: string) {
@@ -324,6 +311,7 @@ function diffLabel(type: string) {
 function resetResult() {
   step.value = "select";
   diffs.value = [];
+  syncSql.value = "";
   syncErrors.value = [];
   executedCount.value = 0;
   executeTotal.value = 0;
@@ -543,7 +531,12 @@ watch(
                   <tbody>
                     <tr v-for="d in diffs" :key="d.name" class="border-t border-border/50 hover:bg-accent/30">
                       <td class="px-2 py-1.5">
-                        <input v-model="d.selected" type="checkbox" class="accent-primary" />
+                        <input
+                          v-model="d.selected"
+                          type="checkbox"
+                          class="accent-primary"
+                          @change="onDiffSelectionChange"
+                        />
                       </td>
                       <td class="px-3 py-1.5 font-mono truncate">{{ d.name }}</td>
                       <td class="px-3 py-1.5">

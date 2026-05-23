@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onBeforeUnmount, watch, shallowRef } from "vue";
+import { ref, nextTick, onMounted, onBeforeUnmount, watch, shallowRef, computed } from "vue";
+import { useI18n } from "vue-i18n";
 import type { CompletionContext } from "@codemirror/autocomplete";
 import type { EditorView as EditorViewType } from "@codemirror/view";
 import {
@@ -16,11 +17,14 @@ import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { formatSqlText, type SqlFormatDialect } from "@/lib/sqlFormatter";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useTheme } from "@/composables/useTheme";
 import {
   buildSqlCompletionItemsFromContext,
   getSqlFunctionSignatureHelp,
   getSqlCompletionContext,
+  getSqlCompletionResultValidFor,
   shouldAutoOpenSqlCompletion,
+  extractCteDefinitions,
 } from "@/lib/sqlCompletion";
 import { extractIdentifierAt, isSqlKeyword, matchTable } from "@/lib/sqlNavigation";
 import { lineColumnToOffset, parseSqlErrorLocation } from "@/lib/sqlDiagnostics";
@@ -38,7 +42,16 @@ import {
   fontSizeFromWheelDelta,
 } from "@/lib/editorZoom";
 import { shortcutToCodeMirrorKey } from "@/lib/shortcutRegistry";
+import * as api from "@/lib/api";
+import {
+  areSqlSemanticDiagnosticsEqual,
+  buildSqlParserErrorDiagnostic,
+  buildSqlSemanticDiagnostics,
+  shouldRunSqlSemanticDiagnostics,
+  type SqlSemanticDiagnostic,
+} from "@/lib/sqlSemanticDiagnostics";
 import type { SqlCompletionColumn } from "@/lib/sqlCompletion";
+import type { SqlReferenceAnalysis, SqlTableReference, SqlTextSpan } from "@/types/database";
 
 const props = defineProps<{
   modelValue: string;
@@ -69,6 +82,59 @@ const editorRef = ref<HTMLDivElement>();
 const view = shallowRef<EditorViewType | null>(null);
 const connectionStore = useConnectionStore();
 const settingsStore = useSettingsStore();
+const { isDark } = useTheme();
+const { t } = useI18n();
+
+const SQL_FUNCTION_NAMES = [
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+  "GROUP_CONCAT",
+  "STRING_AGG",
+  "CONCAT",
+  "CONCAT_WS",
+  "SUBSTRING",
+  "REPLACE",
+  "TRIM",
+  "UPPER",
+  "LOWER",
+  "LENGTH",
+  "REGEXP_REPLACE",
+  "DATE_FORMAT",
+  "DATEDIFF",
+  "DATE_ADD",
+  "DATE_SUB",
+  "EXTRACT",
+  "NOW",
+  "ROUND",
+  "FLOOR",
+  "CEIL",
+  "ABS",
+  "MOD",
+  "COALESCE",
+  "IFNULL",
+  "NULLIF",
+  "CAST",
+  "JSON_EXTRACT",
+  "JSON_VALUE",
+  "JSON_OBJECT",
+  "JSON_ARRAY",
+] as const;
+
+const completionTranslations = computed(() => ({
+  nullValue: t("editor.completion.nullValue"),
+  isNull: t("editor.completion.isNull"),
+  isNotNull: t("editor.completion.isNotNull"),
+  stringLiteral: t("editor.completion.stringLiteral"),
+  numericLiteral: t("editor.completion.numericLiteral"),
+  booleanValue: t("editor.completion.booleanValue"),
+  starExpansionColumns: t("editor.completion.starExpansionColumns"),
+  functionDescriptions: Object.fromEntries(
+    SQL_FUNCTION_NAMES.map((name) => [name, t(`editor.completion.functionDescriptions.${name}`)]),
+  ) as Record<string, string>,
+}));
 const MAX_COMPLETION_TABLES = 200;
 const liveFontSize = ref(settingsStore.editorSettings.fontSize);
 const gestureStartFontSize = ref(settingsStore.editorSettings.fontSize);
@@ -99,6 +165,15 @@ let editorPrec: typeof import("@codemirror/state").Prec | null = null;
 let buildSqlDiagnosticExtension: (() => import("@codemirror/state").Extension) | null = null;
 let buildSqlSignatureExtension: (() => import("@codemirror/state").Extension) | null = null;
 let codeMirrorSnippetCompletion: typeof import("@codemirror/autocomplete").snippetCompletion;
+let codeMirrorCompletionStatus: typeof import("@codemirror/autocomplete").completionStatus | null = null;
+let setSqlDiagnosticsEffect: import("@codemirror/state").StateEffectType<SqlSemanticDiagnostic[]> | null = null;
+let semanticDiagnostics: SqlSemanticDiagnostic[] = [];
+let semanticDiagnosticTimer: ReturnType<typeof setTimeout> | null = null;
+let semanticDiagnosticRunId = 0;
+
+function editorThemeAppearance() {
+  return isDark.value ? "dark" : "light";
+}
 
 // Completion cache
 let cachedTables: Array<{ name: string; schema?: string; type?: "table" | "view" }> = [];
@@ -198,6 +273,7 @@ function runKeymapExtension(codeMirrorKeymap: (typeof import("@codemirror/view")
     },
     {
       key: shortcutToCodeMirrorKey(shortcuts.executeSql),
+      preventDefault: true,
       run: () => {
         if (view.value) emit("execute", executableSqlFromView(view.value));
         return true;
@@ -205,6 +281,7 @@ function runKeymapExtension(codeMirrorKeymap: (typeof import("@codemirror/view")
     },
     {
       key: shortcutToCodeMirrorKey(shortcuts.saveSql),
+      preventDefault: true,
       run: () => {
         emit("save");
         return true;
@@ -245,16 +322,16 @@ function identifierRangeAt(sql: string, pos: number): { from: number; to: number
   return { from, to, text };
 }
 
-function completionCacheKey(table: { name: string; schema?: string }) {
+function completionCacheKey(table: { name: string; schema?: string | null }) {
   return table.schema ? `${table.schema}.${table.name}` : table.name;
 }
 
-function withActiveSchema<T extends { name: string; schema?: string }>(table: T): T {
+function withActiveSchema<T extends { name: string; schema?: string | null }>(table: T): T {
   if (table.schema || !props.schema) return table;
   return { ...table, schema: props.schema };
 }
 
-async function ensureColumnsForTable(table: { name: string; schema?: string }) {
+async function ensureColumnsForTable(table: { name: string; schema?: string | null }) {
   const scopedTable = withActiveSchema(table);
   const cacheKey = completionCacheKey(scopedTable);
   if (cachedColumnsByTable.has(cacheKey) || !props.connectionId || !props.database) return;
@@ -262,7 +339,7 @@ async function ensureColumnsForTable(table: { name: string; schema?: string }) {
     props.connectionId,
     props.database,
     scopedTable.name,
-    scopedTable.schema,
+    scopedTable.schema ?? undefined,
   );
   cachedColumnsByTable.set(cacheKey, columns);
 }
@@ -417,6 +494,131 @@ function sqlErrorDecorationRange(currentState: import("@codemirror/state").Edito
   ];
 }
 
+function sqlTextSpanToRange(sql: string, span: SqlTextSpan): { from: number; to: number } | null {
+  if (!span.start_line || !span.start_column) return null;
+  const from = lineColumnToOffset(sql, { line: span.start_line - 1, column: span.start_column - 1 });
+  const to = lineColumnToOffset(sql, {
+    line: Math.max(span.end_line - 1, span.start_line - 1),
+    column: Math.max(span.end_column, span.start_column),
+  });
+  if (from == null || to == null || to <= from) return null;
+  return { from, to };
+}
+
+function sqlSemanticDecorationRanges(currentState: import("@codemirror/state").EditorState) {
+  const sql = currentState.doc.toString();
+  return semanticDiagnostics
+    .map((diagnostic) => {
+      const range = sqlTextSpanToRange(sql, diagnostic.span);
+      return range ? { ...range, message: diagnostic.message, severity: diagnostic.severity } : null;
+    })
+    .filter((range): range is { from: number; to: number; message: string; severity: "error" | "warning" } => !!range);
+}
+
+function reconfigureDiagnostics() {
+  if (!view.value) return;
+  if (setSqlDiagnosticsEffect) {
+    view.value.dispatch({
+      effects: setSqlDiagnosticsEffect.of(semanticDiagnostics),
+    });
+    return;
+  }
+  if (!diagnosticComp || !buildSqlDiagnosticExtension) return;
+  view.value.dispatch({
+    effects: diagnosticComp.reconfigure(buildSqlDiagnosticExtension()),
+  });
+}
+
+function setSemanticDiagnostics(next: SqlSemanticDiagnostic[]) {
+  if (areSqlSemanticDiagnosticsEqual(semanticDiagnostics, next)) return;
+  semanticDiagnostics = next;
+  reconfigureDiagnostics();
+}
+
+async function enrichSemanticDiagnosticTables(tables: SqlTableReference[]) {
+  if (!props.connectionId || !props.database) return tables;
+
+  const enriched: SqlTableReference[] = [];
+  for (const table of tables) {
+    if (table.schema) {
+      enriched.push(table);
+      continue;
+    }
+    const cached = cachedTables.find((item) => item.name.toLowerCase() === table.name.toLowerCase());
+    if (cached?.schema) {
+      enriched.push({ ...table, schema: cached.schema });
+      continue;
+    }
+    try {
+      const matches = await connectionStore.listCompletionTables(
+        props.connectionId,
+        props.database,
+        table.name,
+        MAX_COMPLETION_TABLES,
+      );
+      cachedTables = [...cachedTables, ...matches];
+      const match = matches.find((item) => item.name.toLowerCase() === table.name.toLowerCase());
+      enriched.push(match?.schema ? { ...table, schema: match.schema } : table);
+    } catch {
+      enriched.push(table);
+    }
+  }
+  return enriched;
+}
+
+async function refreshSemanticDiagnostics() {
+  const currentView = view.value;
+  const runId = ++semanticDiagnosticRunId;
+  if (!currentView || !props.connectionId || !props.database) {
+    setSemanticDiagnostics([]);
+    return;
+  }
+
+  const sql = currentView.state.doc.toString();
+  if (!sql.trim()) {
+    setSemanticDiagnostics([]);
+    return;
+  }
+  if (!shouldRunSqlSemanticDiagnostics(sql, currentView.state.selection.main.head)) {
+    scheduleSemanticDiagnostics(1200);
+    return;
+  }
+  if (codeMirrorCompletionStatus?.(currentView.state)) {
+    scheduleSemanticDiagnostics(900);
+    return;
+  }
+
+  try {
+    const analysis = await api.analyzeSqlReferences(sql, props.formatDialect ?? props.dialect ?? "generic");
+    if (runId !== semanticDiagnosticRunId) return;
+
+    const tables = await enrichSemanticDiagnosticTables(analysis.tables);
+    await Promise.all(tables.map((table) => ensureColumnsForTable(table)));
+    if (runId !== semanticDiagnosticRunId) return;
+
+    const enrichedAnalysis: SqlReferenceAnalysis = { ...analysis, tables };
+    setSemanticDiagnostics(
+      buildSqlSemanticDiagnostics(enrichedAnalysis, {
+        tables: cachedTables,
+        columnsByTable: cachedColumnsByTable,
+      }),
+    );
+  } catch (error) {
+    if (runId === semanticDiagnosticRunId) {
+      const diagnostic = buildSqlParserErrorDiagnostic(error, sql);
+      setSemanticDiagnostics(diagnostic ? [diagnostic] : []);
+    }
+  }
+}
+
+function scheduleSemanticDiagnostics(delay = 500) {
+  if (semanticDiagnosticTimer) clearTimeout(semanticDiagnosticTimer);
+  semanticDiagnosticTimer = setTimeout(() => {
+    semanticDiagnosticTimer = null;
+    void refreshSemanticDiagnostics();
+  }, delay);
+}
+
 async function formatCurrentSql() {
   const currentView = view.value;
   if (!currentView) return;
@@ -442,6 +644,8 @@ async function formatCurrentSql() {
   }
 }
 
+let completionEpoch = 0;
+
 async function provideSqlCompletions(
   currentState: import("@codemirror/state").EditorState,
   position: number,
@@ -449,11 +653,34 @@ async function provideSqlCompletions(
 ) {
   if (!props.connectionId || !props.database) return null;
 
+  const epoch = ++completionEpoch;
+
   try {
     const fullDoc = currentState.doc.toString();
     if (!explicit && !shouldAutoOpenSqlCompletion(fullDoc, position)) return null;
 
     const completionContext = getSqlCompletionContext(fullDoc, position);
+
+    // Handle INSERT column list: fetch columns for the target table
+    let insertColumnsByTable = new Map<string, SqlCompletionColumn[]>();
+    if (completionContext.insertTable) {
+      try {
+        const insertCols = await connectionStore.listCompletionColumns(
+          props.connectionId,
+          props.database,
+          completionContext.insertTable,
+          completionContext.insertSchema,
+        );
+        if (epoch !== completionEpoch) return null;
+        const insertKey = completionContext.insertSchema
+          ? `${completionContext.insertSchema}.${completionContext.insertTable}`
+          : completionContext.insertTable;
+        insertColumnsByTable.set(insertKey, insertCols);
+      } catch {
+        // ignore
+      }
+    }
+
     const shouldLoadTables = completionContext.suggestTables || !!completionContext.qualifier;
     let tables = shouldLoadTables
       ? await connectionStore.listCompletionTables(
@@ -464,10 +691,26 @@ async function provideSqlCompletions(
           props.schema,
         )
       : cachedTables;
+    if (epoch !== completionEpoch) return null;
+
+    // Fetch schemas for schema completion (only in table-suggesting context without qualifier)
+    let schemaNames: string[] = [];
+    if (completionContext.suggestTables && !completionContext.qualifier && !completionContext.insertTable) {
+      try {
+        schemaNames = await api.listSchemas(props.connectionId, props.database);
+        if (epoch !== completionEpoch) return null;
+      } catch {
+        // ignore
+      }
+    }
 
     // If qualifier didn't match any table names, try it as a schema name
     let qualifierIsSchema = false;
-    if (completionContext.qualifier && completionContext.suggestTables && tables.length === 0) {
+    if (
+      completionContext.qualifier &&
+      tables.length === 0 &&
+      (completionContext.suggestTables || completionContext.exclusiveColumnSuggestions)
+    ) {
       const schemaTables = await connectionStore.listCompletionTables(
         props.connectionId,
         props.database,
@@ -479,11 +722,11 @@ async function provideSqlCompletions(
         tables = schemaTables;
         qualifierIsSchema = true;
       }
+      if (epoch !== completionEpoch) return null;
     }
 
     // Collect referenced tables — enrich with schema from filtered table lookup
     let refs = completionContext.referencedTables.map((rt) => {
-      // If no schema, look it up in the cached tables
       if (!rt.schema) {
         const cached = tables.find((t) => t.name.toLowerCase() === rt.name.toLowerCase());
         if (cached && cached.schema) {
@@ -492,16 +735,17 @@ async function provideSqlCompletions(
       }
       return rt;
     });
-    const unresolvedRefs = refs.filter((rt) => !rt.schema);
+    const unresolvedRefs = refs.filter((rt) => !rt.schema && !rt.columns);
     if (unresolvedRefs.length > 0) {
       const lookupGroups = await Promise.all(
         unresolvedRefs.map((rt) =>
           connectionStore.listCompletionTables(props.connectionId!, props.database!, rt.name, 20, props.schema),
         ),
       );
+      if (epoch !== completionEpoch) return null;
       const lookupTables = lookupGroups.flat();
       refs = refs.map((rt) => {
-        if (rt.schema) return rt;
+        if (rt.schema || rt.columns) return rt;
         const matched = lookupTables.find((table) => table.name.toLowerCase() === rt.name.toLowerCase());
         return matched?.schema ? { ...rt, schema: matched.schema } : rt;
       });
@@ -514,8 +758,20 @@ async function provideSqlCompletions(
       refs = matched.map((t) => ({ name: t.name, schema: t.schema }));
     }
 
+    // Populate CTE columns from parsed definitions (no backend call needed)
+    const cteDefs = extractCteDefinitions(fullDoc);
+    for (const refTable of refs) {
+      if (refTable.columns) continue; // Already has columns from CTE parsing
+      const cteDef = cteDefs.find((c) => c.name.toLowerCase() === refTable.name.toLowerCase());
+      if (cteDef) {
+        refTable.columns = cteDef.columns;
+      }
+    }
+
     await Promise.all(
       refs.map(async (refTable) => {
+        // Skip backend fetch if columns already provided by CTE parsing
+        if (refTable.columns && refTable.columns.length > 0) return;
         const scopedTable = withActiveSchema(refTable);
         const cacheKey = completionCacheKey(scopedTable);
         if (cachedColumnsByTable.has(cacheKey)) {
@@ -526,32 +782,61 @@ async function provideSqlCompletions(
             props.connectionId!,
             props.database!,
             scopedTable.name,
-            scopedTable.schema,
+            scopedTable.schema ?? undefined,
           );
+          if (epoch !== completionEpoch) return;
           cachedColumnsByTable.set(cacheKey, columns);
         } catch (e) {
           console.error(`[DBX] Failed to load columns for ${cacheKey}:`, e);
         }
       }),
     );
+    if (epoch !== completionEpoch) return null;
 
-    // Build columnsByTable from persistent cache — only include columns for referenced tables
+    // Build columnsByTable — from cache or CTE definitions
     const columnsByTable = new Map<string, SqlCompletionColumn[]>();
-    for (const refTable of refs) {
-      const cacheKey = completionCacheKey(withActiveSchema(refTable));
-      const cached = cachedColumnsByTable.get(cacheKey);
-      if (cached) {
-        columnsByTable.set(cacheKey, cached);
+    if (insertColumnsByTable.size > 0) {
+      for (const [key, cols] of insertColumnsByTable.entries()) {
+        columnsByTable.set(key, cols);
+      }
+    } else {
+      for (const refTable of refs) {
+        // Use CTE columns if available
+        if (refTable.columns && refTable.columns.length > 0) {
+          const key = refTable.name;
+          columnsByTable.set(
+            key,
+            refTable.columns.map((name) => ({
+              name,
+              table: refTable.name,
+              dataType: undefined,
+            })),
+          );
+          continue;
+        }
+        const cacheKey = completionCacheKey(withActiveSchema(refTable));
+        const cached = cachedColumnsByTable.get(cacheKey);
+        if (cached) {
+          columnsByTable.set(cacheKey, cached);
+        }
       }
     }
 
     const effectiveContext = qualifierIsSchema
-      ? { ...completionContext, qualifier: undefined, suggestTables: true, suggestColumns: false }
+      ? {
+          ...completionContext,
+          qualifier: undefined,
+          suggestTables: true,
+          suggestColumns: false,
+          exclusiveColumnSuggestions: false,
+        }
       : completionContext;
 
     const items = buildSqlCompletionItemsFromContext(effectiveContext, {
       tables,
       columnsByTable,
+      schemas: schemaNames,
+      translations: completionTranslations.value,
     });
 
     if (items.length === 0) return null;
@@ -562,7 +847,7 @@ async function provideSqlCompletions(
         item.type === "snippet" && item.apply
           ? codeMirrorSnippetCompletion(item.apply, {
               label: item.label,
-              type: "snippet",
+              type: item.type,
               detail: item.detail,
               boost: item.boost,
             })
@@ -573,7 +858,7 @@ async function provideSqlCompletions(
               boost: item.boost,
             },
       ),
-      validFor: /^[\w$]*$/,
+      validFor: getSqlCompletionResultValidFor(fullDoc, position),
     };
   } catch {
     return null;
@@ -589,11 +874,11 @@ onMounted(async () => {
   if (!editorRef.value) return;
 
   const [
-    { EditorView, keymap, rectangularSelection, hoverTooltip, showTooltip, Decoration },
-    { EditorState, Compartment, Prec, StateField },
+    { EditorView, keymap, rectangularSelection, hoverTooltip, showTooltip, Decoration, tooltips },
+    { EditorState, Compartment, Prec, StateEffect, StateField },
     { sql, MSSQL, MySQL, PostgreSQL, SQLDialect },
     { basicSetup },
-    { autocompletion, startCompletion, closeBrackets, closeBracketsKeymap, snippetCompletion },
+    { autocompletion, startCompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, completionStatus },
     { indentWithTab },
     { bracketMatching },
   ] = await Promise.all([
@@ -614,29 +899,44 @@ onMounted(async () => {
   readOnlyComp = new Compartment();
   runKeymapComp = new Compartment();
   diagnosticComp = new Compartment();
+  setSqlDiagnosticsEffect = StateEffect.define<SqlSemanticDiagnostic[]>();
+  codeMirrorCompletionStatus = completionStatus;
 
   const diagnosticTheme = EditorView.baseTheme({
     ".cm-sql-error": {
       textDecoration: "underline wavy var(--destructive)",
       textUnderlineOffset: "3px",
     },
+    ".cm-sql-semantic-warning": {
+      textDecoration: "underline wavy hsl(var(--warning, 38 92% 50%))",
+      textUnderlineOffset: "3px",
+    },
   });
 
   buildSqlDiagnosticExtension = () => {
-    const buildDecorations = (state: import("@codemirror/state").EditorState) =>
-      Decoration.set(
-        sqlErrorDecorationRange(state).map((range) =>
-          Decoration.mark({
-            class: "cm-sql-error",
-            attributes: { title: range.message },
-          }).range(range.from, range.to),
-        ),
+    const diagnosticEffect = setSqlDiagnosticsEffect;
+    const buildDecorations = (state: import("@codemirror/state").EditorState) => {
+      const errorDecorations = sqlErrorDecorationRange(state).map((range) =>
+        Decoration.mark({
+          class: "cm-sql-error",
+          attributes: { title: range.message },
+        }).range(range.from, range.to),
       );
+      const semanticDecorations = sqlSemanticDecorationRanges(state).map((range) =>
+        Decoration.mark({
+          class: range.severity === "error" ? "cm-sql-error" : "cm-sql-semantic-warning",
+          attributes: { title: range.message },
+        }).range(range.from, range.to),
+      );
+      return Decoration.set([...errorDecorations, ...semanticDecorations], true);
+    };
 
     const field = StateField.define({
       create: buildDecorations,
       update(value, transaction) {
-        return transaction.docChanged ? buildDecorations(transaction.state) : value;
+        const diagnosticsChanged =
+          !!diagnosticEffect && transaction.effects.some((effect) => effect.is(diagnosticEffect));
+        return transaction.docChanged || diagnosticsChanged ? buildDecorations(transaction.state) : value;
       },
       provide: (field) => EditorView.decorations.from(field),
     });
@@ -666,7 +966,7 @@ onMounted(async () => {
     keywords: (baseDialect.spec.keywords || "") + " " + extraKeywords,
   });
 
-  const theme = await loadEditorTheme(ss.theme);
+  const theme = await loadEditorTheme(ss.theme, editorThemeAppearance());
 
   const state = EditorState.create({
     doc: props.modelValue,
@@ -681,6 +981,7 @@ onMounted(async () => {
       }),
       basicSetup,
       sql({ dialect }),
+      tooltips({ parent: document.body }),
       autocompletion({
         activateOnTyping: true,
         override: [
@@ -702,6 +1003,7 @@ onMounted(async () => {
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           emit("update:modelValue", update.state.doc.toString());
+          scheduleSemanticDiagnostics();
           let insertedText = "";
           update.changes.iterChanges((_fromA, _toA, _fromB, _toB, inserted) => {
             insertedText += inserted.toString();
@@ -871,6 +1173,7 @@ onMounted(async () => {
   syncEditorFontCssVars(liveFontSize.value, ss.fontFamily);
 
   cachedTables = [];
+  scheduleSemanticDiagnostics();
 });
 
 watch(
@@ -894,10 +1197,7 @@ watch(
 watch(
   () => props.executionError,
   () => {
-    if (!view.value || !diagnosticComp || !buildSqlDiagnosticExtension) return;
-    view.value.dispatch({
-      effects: diagnosticComp.reconfigure(buildSqlDiagnosticExtension()),
-    });
+    reconfigureDiagnostics();
   },
 );
 
@@ -905,6 +1205,8 @@ watch(
   () => props.connectionId,
   () => {
     refreshCompletionCache();
+    setSemanticDiagnostics([]);
+    scheduleSemanticDiagnostics();
   },
 );
 
@@ -912,6 +1214,8 @@ watch(
   () => props.database,
   () => {
     refreshCompletionCache();
+    setSemanticDiagnostics([]);
+    scheduleSemanticDiagnostics();
   },
 );
 
@@ -934,8 +1238,8 @@ watch(
 
 // Reactively apply editor settings changes
 watch(
-  () => settingsStore.editorSettings,
-  async (ss) => {
+  [() => settingsStore.editorSettings, () => isDark.value],
+  async ([ss]) => {
     if (
       !view.value ||
       !codeMirrorTheme ||
@@ -951,7 +1255,7 @@ watch(
       liveFontSize.value = ss.fontSize;
     }
     syncEditorFontCssVars(liveFontSize.value, ss.fontFamily);
-    const themeExt = await loadEditorTheme(ss.theme);
+    const themeExt = await loadEditorTheme(ss.theme, editorThemeAppearance());
     view.value.dispatch({
       effects: [
         codeMirrorTheme.reconfigure(themeExt),
@@ -965,6 +1269,7 @@ watch(
 
 onBeforeUnmount(() => {
   zoomCommitScheduler.dispose();
+  if (semanticDiagnosticTimer) clearTimeout(semanticDiagnosticTimer);
   view.value?.destroy();
 });
 
@@ -1119,13 +1424,13 @@ defineExpose({ openSearch });
             autocorrect="off"
             spellcheck="false"
             class="w-48 h-6 text-xs bg-input border rounded px-2 outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
-            placeholder="查找"
+            :placeholder="t('editor.search.find')"
             @keydown="onSearchKeydown"
           />
           <button
             class="w-6 h-6 flex items-center justify-center rounded text-xs font-mono hover:bg-accent"
             :class="caseSensitive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'"
-            title="区分大小写"
+            :title="t('editor.search.caseSensitive')"
             @click="caseSensitive = !caseSensitive"
           >
             Aa
@@ -1133,38 +1438,38 @@ defineExpose({ openSearch });
           <button
             class="w-6 h-6 flex items-center justify-center rounded text-xs font-mono hover:bg-accent"
             :class="useRegex ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'"
-            title="正则表达式"
+            :title="t('editor.search.regex')"
             @click="useRegex = !useRegex"
           >
             .*
           </button>
           <span v-if="searchText" class="text-xs text-muted-foreground min-w-[3rem] text-center shrink-0">
-            {{ matchCount > 0 ? `${currentMatchIndex}/${matchCount}` : "无结果" }}
+            {{ matchCount > 0 ? `${currentMatchIndex}/${matchCount}` : t("editor.search.noResults") }}
           </span>
           <button
             class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="上一个 (Shift+Enter)"
+            :title="t('editor.search.prevMatch')"
             @click="prevMatch"
           >
             <ChevronUp class="w-3.5 h-3.5" />
           </button>
           <button
             class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="下一个 (Enter)"
+            :title="t('editor.search.nextMatch')"
             @click="nextMatch"
           >
             <ChevronDown class="w-3.5 h-3.5" />
           </button>
           <button
             class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            :title="showReplace ? '收起替换' : '展开替换'"
+            :title="showReplace ? t('editor.search.collapseReplace') : t('editor.search.expandReplace')"
             @click="showReplace = !showReplace"
           >
             <ChevronRight class="w-3 h-3 transition-transform" :class="showReplace && 'rotate-90'" />
           </button>
           <button
             class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            title="关闭 (Esc)"
+            :title="t('editor.search.close')"
             @click="closeSearch"
           >
             <X class="w-3.5 h-3.5" />
@@ -1177,19 +1482,19 @@ defineExpose({ openSearch });
             autocorrect="off"
             spellcheck="false"
             class="w-48 h-6 text-xs bg-input border rounded px-2 outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
-            placeholder="替换"
+            :placeholder="t('editor.search.replace')"
             @keydown.enter.prevent="doReplace"
           />
           <button
             class="h-6 px-1.5 flex items-center justify-center rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground border"
-            title="替换"
+            :title="t('editor.search.replace')"
             @click="doReplace"
           >
-            替换
+            {{ t("editor.search.replace") }}
           </button>
           <button
             class="h-6 px-1.5 flex items-center justify-center rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground border"
-            title="全部替换"
+            :title="t('editor.search.replaceAll')"
             @click="doReplaceAll"
           >
             全部

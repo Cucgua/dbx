@@ -153,6 +153,9 @@ html.disable-transitions *::after {
 }
 
 /* Splitpanes */
+.splitpanes--horizontal .splitpanes__pane {
+  transition: none !important;
+}
 .splitpanes--vertical > .splitpanes__splitter {
   width: 3px !important;
   border-left: 1px solid var(--border);

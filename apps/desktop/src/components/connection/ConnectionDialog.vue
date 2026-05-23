@@ -19,6 +19,7 @@ import { applyParsedConnectionUrl, parseConnectionUrl } from "@/lib/connectionUr
 import type { ConnectionDeepLinkDraft } from "@/lib/connectionDeepLink";
 import { connectionUrlPlaceholder as getUrlPlaceholder } from "@/lib/connectionPresentation";
 import { mongodbAuthFailureHint, mongoUrlParam, setMongoUrlParam } from "@/lib/mongoConnectionOptions";
+import { copyToClipboard } from "@/lib/clipboard";
 import { showAgentDriverInstallHint, type AgentDriverInstallState } from "@/lib/agentDriverInstallHint";
 import {
   ArrowLeft,
@@ -134,6 +135,7 @@ const driverProfiles: Record<
     user: string;
     label: string;
     icon: string;
+    host?: string;
     urlParams?: string;
   }
 > = {
@@ -236,7 +238,14 @@ const driverProfiles: Record<
   informix: { type: "informix", port: 9088, user: "informix", label: "Informix", icon: "informix" },
   neo4j: { type: "neo4j", port: 7687, user: "neo4j", label: "Neo4j", icon: "neo4j" },
   cassandra: { type: "cassandra", port: 9042, user: "cassandra", label: "Cassandra", icon: "cassandra" },
-  bigquery: { type: "bigquery", port: 443, user: "", label: "BigQuery", icon: "bigquery" },
+  bigquery: {
+    type: "bigquery",
+    port: 443,
+    user: "",
+    label: "BigQuery",
+    icon: "bigquery",
+    host: "https://www.googleapis.com/bigquery/v2",
+  },
   kylin: { type: "kylin", port: 7070, user: "ADMIN", label: "Apache Kylin", icon: "kylin" },
   sundb: { type: "sundb", port: 22000, user: "root", label: "SunDB", icon: "sundb" },
   jdbc: { type: "jdbc", port: 0, user: "", label: "JDBC", icon: "jdbc" },
@@ -288,6 +297,9 @@ function applyProfile(val: string, preserveConnectionFields = false) {
     form.value.port = profile.port;
     form.value.username = profile.user;
     form.value.url_params = profile.urlParams || "";
+    if (profile.host) {
+      form.value.host = profile.host;
+    }
     if (profile.type === "sqlite" || profile.type === "duckdb" || profile.type === "access") {
       form.value.host = "";
     }
@@ -567,7 +579,7 @@ const canUseProxy = computed(
   () => form.value.db_type !== "sqlite" && form.value.db_type !== "duckdb" && form.value.db_type !== "access",
 );
 const shouldShowAgentDriverInstallHint = computed(() =>
-  showAgentDriverInstallHint(form.value.db_type, agentDrivers.value),
+  showAgentDriverInstallHint(form.value.db_type, agentDrivers.value, selectedType.value),
 );
 const canSubmit = computed(() => {
   if (mongoUseUrl.value && form.value.db_type === "mongodb") return !!form.value.connection_string;
@@ -613,6 +625,8 @@ watch(customDriverName, (value) => {
 });
 
 async function testConnection() {
+  if (!ensureConnectionHostResolvedFromUrl()) return;
+
   const runId = ++testRunId;
   isTesting.value = true;
   testResult.value = null;
@@ -631,6 +645,31 @@ async function testConnection() {
   }
 }
 
+function applyConnectionUrlToForm(input: string): boolean {
+  try {
+    const parsed = parseConnectionUrl(input, selectedType.value);
+    form.value = applyParsedConnectionUrl(form.value, parsed);
+    selectedType.value = parsed.driverProfile;
+    customDriverName.value = isCustomCompatibleProfile() ? parsed.driverLabel : "";
+    mongoUseUrl.value = !!parsed.useMongoUrl;
+    if (!form.value.name.trim()) {
+      form.value.name = parsed.database || parsed.host || parsed.driverLabel;
+    }
+    resetTestState();
+    return true;
+  } catch (e: any) {
+    toast(t("connection.parseConnectionUrlFailed", { message: e?.message || String(e) }), 5000);
+    return false;
+  }
+}
+
+function ensureConnectionHostResolvedFromUrl(): boolean {
+  if (form.value.host.trim()) return true;
+  const url = connectionUrlInput.value.trim();
+  if (!url) return true;
+  return applyConnectionUrlToForm(url);
+}
+
 function generateConnectionName(): string {
   const label = selectedProfile().label;
   const rand = Math.random().toString(36).slice(2, 6);
@@ -644,26 +683,19 @@ function resetTestState() {
 }
 
 function applyConnectionUrl() {
-  try {
-    const parsed = parseConnectionUrl(connectionUrlInput.value, selectedType.value);
-    form.value = applyParsedConnectionUrl(form.value, parsed);
-    selectedType.value = parsed.driverProfile;
-    customDriverName.value = isCustomCompatibleProfile() ? parsed.driverLabel : "";
-    mongoUseUrl.value = !!parsed.useMongoUrl;
-    if (!form.value.name.trim()) {
-      form.value.name = parsed.database || parsed.host || parsed.driverLabel;
-    }
-    resetTestState();
+  if (applyConnectionUrlToForm(connectionUrlInput.value)) {
     toast(t("connection.parseConnectionUrlApplied"), 2000);
-  } catch (e: any) {
-    toast(t("connection.parseConnectionUrlFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
 async function copyTestResult() {
   if (!testResultMessage.value) return;
-  await navigator.clipboard.writeText(testResultMessage.value);
-  toast(t("grid.copied"));
+  try {
+    await copyToClipboard(testResultMessage.value);
+    toast(t("grid.copied"));
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 function resetForm() {
@@ -785,6 +817,7 @@ watch(canUseProxy, (value) => {
 });
 
 async function save() {
+  if (!ensureConnectionHostResolvedFromUrl()) return;
   if (isSaving.value) return;
   isSaving.value = true;
   resetTestState();
@@ -1568,7 +1601,8 @@ function openExternalUrl(url: string) {
                       form.db_type === 'yashandb' ||
                       form.db_type === 'vastbase' ||
                       form.db_type === 'goldendb' ||
-                      form.db_type === 'saphana'
+                      form.db_type === 'saphana' ||
+                      form.db_type === 'bigquery'
                     "
                     class="grid grid-cols-4 items-center gap-4"
                   >
@@ -1581,9 +1615,11 @@ function openExternalUrl(url: string) {
                           ? 'charset=utf8mb4'
                           : form.db_type === 'saphana'
                             ? 'databaseName=TENANT_DB'
-                            : form.db_type === 'informix'
-                              ? 'INFORMIXSERVER=informix;CLIENT_LOCALE=en_US.utf8;DB_LOCALE=en_US.utf8'
-                              : 'sslmode=disable'
+                            : form.db_type === 'bigquery'
+                              ? 'OAuthType=0;OAuthServiceAcctEmail=svc@project.iam.gserviceaccount.com;OAuthPvtKeyPath=/path/key.json'
+                              : form.db_type === 'informix'
+                                ? 'INFORMIXSERVER=informix;CLIENT_LOCALE=en_US.utf8;DB_LOCALE=en_US.utf8'
+                                : 'sslmode=disable'
                       "
                     />
                   </div>

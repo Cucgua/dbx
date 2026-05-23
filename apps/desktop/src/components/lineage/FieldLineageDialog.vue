@@ -32,6 +32,7 @@ import {
   type FieldLineageTable,
   type FieldLineageView,
 } from "@/lib/fieldLineage";
+import { copyToClipboard } from "@/lib/clipboard";
 
 const props = defineProps<{
   open: boolean;
@@ -291,14 +292,18 @@ function itemDescription(item: FieldLineageItem) {
   return t("lineage.description.sameName");
 }
 
-function copyItem(item: FieldLineageItem) {
+async function copyItem(item: FieldLineageItem) {
   const text = itemPrimaryLabel(item);
-  navigator.clipboard.writeText(text);
-  copiedId.value = item.id;
-  toast(t("lineage.copied"));
-  setTimeout(() => {
-    if (copiedId.value === item.id) copiedId.value = "";
-  }, 1400);
+  try {
+    await copyToClipboard(text);
+    copiedId.value = item.id;
+    toast(t("lineage.copied"));
+    setTimeout(() => {
+      if (copiedId.value === item.id) copiedId.value = "";
+    }, 1400);
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 function openItemTarget(item: FieldLineageItem) {

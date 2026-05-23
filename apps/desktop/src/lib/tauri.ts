@@ -12,6 +12,8 @@ import type {
   ForeignKeyInfo,
   TriggerInfo,
   QueryResult,
+  SqlReferenceAnalysis,
+  DatabaseType,
   InstalledPlugin,
   JdbcDriverInfo,
   JdbcPluginStatus,
@@ -19,7 +21,39 @@ import type {
   SavedSqlFolder,
   SavedSqlLibrary,
 } from "@/types/database";
-import type { AiConfig, AppSettings } from "@/stores/settingsStore";
+import type { AiConfig, AppSettings, DesktopSettings } from "@/stores/settingsStore";
+import type { QueryEditability } from "@/lib/sqlAnalysis";
+import type {
+  DataGridColumnValueFilterConditionOptions,
+  DataGridContextFilterConditionOptions,
+  DataGridCountSqlOptions,
+  DataGridCopyInsertStatementOptions,
+  DataGridCopyUpdateStatementOptions,
+  DataGridSaveStatementOptions,
+  HiveTablePropertiesSqlOptions,
+} from "@/lib/dataGridSql";
+import type {
+  DataCompareFromTablesOptions,
+  DataCompareFromTablesPreparation,
+  DataComparePreparation,
+  DataComparePreparationOptions,
+} from "@/lib/dataCompare";
+import type { SchemaDiffPreparation, SchemaDiffPreparationOptions, TableDiff } from "@/lib/schemaDiff";
+import type { BuildTableStructureChangeSqlOptions, TableStructureChangeSql } from "@/lib/tableStructureEditorSql";
+import type { BuildTableSelectSqlOptions } from "@/lib/tableSelectSql";
+import type { DatabaseSearchSql, DatabaseSearchSqlOptions, SearchResultWhereOptions } from "@/lib/databaseSearch";
+import type { BuildEditableObjectSourceSqlInput, BuildRoutineRenameObjectSourceInput } from "@/lib/objectSourceEditor";
+import type { BuildViewDdlInput } from "@/lib/viewDdl";
+import type { BuildRenameObjectSqlOptions } from "@/lib/objectRenameSql";
+import type { CreateDatabaseSqlOptions } from "@/lib/createDatabaseSql";
+import type {
+  DatabaseNameSqlOptions,
+  DropObjectSqlOptions,
+  DuplicateTableStructureSqlOptions,
+  SchemaNameSqlOptions,
+  TableAdminSqlOptions,
+} from "@/lib/dbAdminSql";
+import type { BuildDatabaseSqlExportOptions, BuildExportInsertStatementsOptions } from "@/lib/databaseExport";
 
 export interface AgentDriverInfo {
   db_type: string;
@@ -39,6 +73,83 @@ export interface JavaRuntimeConfig {
   mode: JavaRuntimeMode;
   custom_java_path: string | null;
 }
+
+export interface DriverStoreUsageItem {
+  id: string;
+  bytes: number;
+}
+
+export interface DriverStoreUsage {
+  total_bytes: number;
+  jre_bytes: number;
+  agent_driver_bytes: number;
+  jdbc_plugin_bytes: number;
+  jdbc_driver_bytes: number;
+  jres: DriverStoreUsageItem[];
+  agent_drivers: DriverStoreUsageItem[];
+}
+
+export interface DesktopSettings {
+  show_tray_icon: boolean;
+}
+
+export interface QueryPagination {
+  limit: number;
+  offset: number;
+  sessionId?: string;
+}
+
+export interface QueryPaginationExecutionPlanOptions {
+  sql: string;
+  queryBaseSql: string;
+  databaseType?: DatabaseType;
+  pagination: QueryPagination;
+  useAgentCursor: boolean;
+}
+
+export interface QueryPaginationExecutionPlan {
+  sqlToExecute: string;
+  pageSql?: string;
+  pageLimit?: number;
+  pageOffset?: number;
+  countSql?: string;
+  useAgentResultSession: boolean;
+}
+
+export type QuerySortDirection = "asc" | "desc";
+
+export interface SortedQuerySqlOptions {
+  originalSql: string;
+  databaseType?: DatabaseType;
+  resultColumns: string[];
+  columnIndex: number;
+  column: string;
+  direction: QuerySortDirection;
+}
+
+export interface QuerySqlBuildResult {
+  ok: boolean;
+  sql?: string;
+  reason?: "empty" | "multi" | "not_select" | "unsupported" | "with";
+}
+
+export interface BuildExplainSqlOptions {
+  databaseType?: DatabaseType;
+  sql: string;
+}
+
+export interface ExplainSqlBuildResult {
+  ok: boolean;
+  sql?: string;
+  reason?: "unsupported" | "empty" | "unsafe";
+}
+
+export interface DroppedFilePreviewSqlOptions {
+  path: string;
+  limit?: number;
+}
+
+export type XlsxCellValue = string | number | boolean | null;
 
 export interface DriverInstallProgress {
   step: string;
@@ -136,6 +247,26 @@ export interface McpHttpStatus {
 
 export async function loadMcpHttpStatus(): Promise<McpHttpStatus | null> {
   return invoke("load_mcp_http_status");
+}
+
+export async function loadDesktopSettings(): Promise<DesktopSettings> {
+  return invoke("load_desktop_settings");
+}
+
+export async function saveDesktopSettings(settings: DesktopSettings): Promise<void> {
+  return invoke("save_desktop_settings", { settings });
+}
+
+export async function loadPinnedTreeNodeIds(): Promise<string[]> {
+  return invoke("load_pinned_tree_node_ids");
+}
+
+export async function savePinnedTreeNodeIds(ids: string[]): Promise<void> {
+  return invoke("save_pinned_tree_node_ids", { ids });
+}
+
+export async function listSystemFonts(): Promise<string[]> {
+  return invoke("list_system_fonts");
 }
 
 export async function pendingOpenSqlFiles(): Promise<string[]> {
@@ -302,6 +433,193 @@ export async function executeInTransaction(
   return invoke("execute_in_transaction", { connectionId, database, statements, schema });
 }
 
+export async function analyzeSqlReferences(sql: string, dialect?: string): Promise<SqlReferenceAnalysis> {
+  return invoke("analyze_sql_references", { sql, dialect });
+}
+
+export async function findStatementAtCursor(sql: string, cursorPos: number): Promise<string> {
+  return invoke("find_statement_at_cursor", { sql, cursorPos });
+}
+
+export async function prepareQueryPaginationExecutionPlan(
+  options: QueryPaginationExecutionPlanOptions,
+): Promise<QueryPaginationExecutionPlan> {
+  return invoke("prepare_query_pagination_execution_plan", { options });
+}
+
+export async function buildSortedQuerySql(options: SortedQuerySqlOptions): Promise<QuerySqlBuildResult> {
+  return invoke("build_sorted_query_sql", { options });
+}
+
+export async function buildExplainSql(options: BuildExplainSqlOptions): Promise<ExplainSqlBuildResult> {
+  return invoke("build_explain_sql", { options });
+}
+
+export async function buildDroppedFilePreviewSql(options: DroppedFilePreviewSqlOptions): Promise<string | undefined> {
+  const result = await invoke<string | null>("build_dropped_file_preview_sql", { options });
+  return result ?? undefined;
+}
+
+export async function buildTableSelectSql(options: BuildTableSelectSqlOptions): Promise<string> {
+  return invoke("build_table_select_sql", { options });
+}
+
+export async function buildDatabaseSearchSql(options: DatabaseSearchSqlOptions): Promise<DatabaseSearchSql | null> {
+  return invoke("build_database_search_sql", { options });
+}
+
+export async function buildSearchResultWhere(options: SearchResultWhereOptions): Promise<string> {
+  return invoke("build_search_result_where", { options });
+}
+
+export async function buildRenameObjectSql(options: BuildRenameObjectSqlOptions): Promise<string> {
+  return invoke("build_rename_object_sql", { options });
+}
+
+export async function buildCreateDatabaseSql(options: CreateDatabaseSqlOptions): Promise<string> {
+  return invoke("build_create_database_sql", { options });
+}
+
+export async function buildDuckDbAttachDatabaseSql(path: string, name: string): Promise<string> {
+  return invoke("build_duckdb_attach_database_sql", { options: { path, name } });
+}
+
+export async function buildDropObjectSql(options: DropObjectSqlOptions): Promise<string> {
+  return invoke("build_drop_object_sql", { options });
+}
+
+export async function buildDropTableSql(options: TableAdminSqlOptions): Promise<string> {
+  return invoke("build_drop_table_sql", { options });
+}
+
+export async function buildEmptyTableSql(options: TableAdminSqlOptions): Promise<string> {
+  return invoke("build_empty_table_sql", { options });
+}
+
+export async function buildTruncateTableSql(options: TableAdminSqlOptions): Promise<string> {
+  return invoke("build_truncate_table_sql", { options });
+}
+
+export async function buildDropDatabaseSql(options: DatabaseNameSqlOptions): Promise<string> {
+  return invoke("build_drop_database_sql", { options });
+}
+
+export async function buildCreateSchemaSql(options: SchemaNameSqlOptions): Promise<string> {
+  return invoke("build_create_schema_sql", { options });
+}
+
+export async function buildDropSchemaSql(options: SchemaNameSqlOptions): Promise<string> {
+  return invoke("build_drop_schema_sql", { options });
+}
+
+export async function buildDuplicateTableStructureSql(options: DuplicateTableStructureSqlOptions): Promise<string> {
+  return invoke("build_duplicate_table_structure_sql", { options });
+}
+
+export async function buildExecutableObjectSourceStatements(
+  input: BuildEditableObjectSourceSqlInput,
+): Promise<string[]> {
+  return invoke("build_executable_object_source_statements", { input });
+}
+
+export async function buildExecutableObjectSourceSql(input: BuildEditableObjectSourceSqlInput): Promise<string> {
+  return invoke("build_executable_object_source_sql", { input });
+}
+
+export async function buildRoutineRenameObjectSourceStatements(
+  input: BuildRoutineRenameObjectSourceInput,
+): Promise<string[]> {
+  return invoke("build_routine_rename_object_source_statements", { input });
+}
+
+export async function buildViewDdlSql(input: BuildViewDdlInput): Promise<string> {
+  return invoke("build_view_ddl_sql", { input });
+}
+
+export async function buildTableStructureChangeSql(
+  options: BuildTableStructureChangeSqlOptions,
+): Promise<TableStructureChangeSql> {
+  return invoke("build_table_structure_change_sql", { options });
+}
+
+export async function buildCreateTableSql(
+  options: BuildTableStructureChangeSqlOptions,
+): Promise<TableStructureChangeSql> {
+  return invoke("build_create_table_sql", { options });
+}
+
+export async function analyzeEditableQueryEditability(sql: string): Promise<QueryEditability> {
+  return invoke("analyze_editable_query_editability", { sql });
+}
+
+export interface DataGridSavePreparation {
+  validationError?: string;
+  statements: string[];
+  rollbackStatements: string[];
+  executionSchema?: string;
+}
+
+export async function prepareDataGridSave(options: DataGridSaveStatementOptions): Promise<DataGridSavePreparation> {
+  return invoke("prepare_data_grid_save", { options });
+}
+
+export async function buildDataGridCopyUpdateStatements(
+  options: DataGridCopyUpdateStatementOptions,
+): Promise<string[]> {
+  return invoke("build_data_grid_copy_update_statements", { options });
+}
+
+export async function buildDataGridCopyInsertStatement(
+  options: DataGridCopyInsertStatementOptions,
+): Promise<string | undefined> {
+  const result = await invoke<string | null>("build_data_grid_copy_insert_statement", { options });
+  return result ?? undefined;
+}
+
+export async function buildDataGridContextFilterCondition(
+  options: DataGridContextFilterConditionOptions,
+): Promise<string | undefined> {
+  const result = await invoke<string | null>("build_data_grid_context_filter_condition", { options });
+  return result ?? undefined;
+}
+
+export async function buildDataGridColumnValueFilterCondition(
+  options: DataGridColumnValueFilterConditionOptions,
+): Promise<string | undefined> {
+  const result = await invoke<string | null>("build_data_grid_column_value_filter_condition", { options });
+  return result ?? undefined;
+}
+
+export async function buildDataGridCountSql(options: DataGridCountSqlOptions): Promise<string> {
+  return invoke("build_data_grid_count_sql", { options });
+}
+
+export async function buildHiveTablePropertiesSql(options: HiveTablePropertiesSqlOptions): Promise<string> {
+  return invoke("build_hive_table_properties_sql", { options });
+}
+
+export async function buildExportInsertStatements(options: BuildExportInsertStatementsOptions): Promise<string[]> {
+  return invoke("build_export_insert_statements", { options });
+}
+
+export async function buildExportSqlInsert(options: BuildExportInsertStatementsOptions): Promise<string> {
+  return invoke("build_export_sql_insert", { options });
+}
+
+export async function buildDatabaseSqlExport(options: BuildDatabaseSqlExportOptions): Promise<string> {
+  return invoke("build_database_sql_export", { options });
+}
+
+export async function prepareDataCompare(options: DataComparePreparationOptions): Promise<DataComparePreparation> {
+  return invoke("prepare_data_compare", { options });
+}
+
+export async function prepareDataCompareFromTables(
+  options: DataCompareFromTablesOptions,
+): Promise<DataCompareFromTablesPreparation> {
+  return invoke("prepare_data_compare_from_tables", { options });
+}
+
 export async function listIndexes(
   connectionId: string,
   database: string,
@@ -336,6 +654,18 @@ export async function getTableDdl(
   table: string,
 ): Promise<string> {
   return invoke("get_table_ddl", { connectionId, database, schema, table });
+}
+
+export async function prepareSchemaDiff(options: SchemaDiffPreparationOptions): Promise<SchemaDiffPreparation> {
+  return invoke("prepare_schema_diff", { options });
+}
+
+export async function generateSchemaSyncSql(
+  diffs: TableDiff[],
+  databaseType: DatabaseType,
+  targetSchema?: string,
+): Promise<string> {
+  return invoke("generate_schema_sync_sql", { diffs, databaseType, targetSchema });
 }
 
 export async function saveConnections(configs: ConnectionConfig[]): Promise<void> {
@@ -386,6 +716,10 @@ export async function listInstalledAgents(): Promise<AgentDriverInfo[]> {
   return invoke("list_installed_agents");
 }
 
+export async function getDriverStoreUsage(): Promise<DriverStoreUsage> {
+  return invoke("get_driver_store_usage");
+}
+
 export async function installAgent(dbType: string): Promise<void> {
   return invoke("install_agent", { dbType });
 }
@@ -410,7 +744,10 @@ export async function invalidateAgentRegistryCache(): Promise<void> {
   return invoke("invalidate_agent_registry_cache");
 }
 
-export async function importAgentsFromZip(path: string): Promise<number> {
+export async function importAgentsFromZip(path: string | File): Promise<number> {
+  if (typeof path !== "string") {
+    throw new Error("Desktop offline ZIP import requires a local file path");
+  }
   return invoke("import_agents_from_zip", { path });
 }
 
@@ -962,4 +1299,62 @@ export async function exportDatabaseSql(
 
 export async function cancelDatabaseExport(exportId: string): Promise<void> {
   await invoke("cancel_database_export", { exportId });
+}
+
+export async function exportQueryResultCsv(
+  filePath: string,
+  columns: string[],
+  rows: readonly (readonly XlsxCellValue[])[],
+): Promise<void> {
+  return invoke("export_query_result_csv", {
+    request: {
+      filePath,
+      columns,
+      rows,
+    },
+  });
+}
+
+export async function exportQueryResultXlsx(
+  filePath: string,
+  sheetName: string | undefined,
+  columns: string[],
+  rows: readonly (readonly XlsxCellValue[])[],
+): Promise<void> {
+  return invoke("export_query_result_xlsx", {
+    request: {
+      filePath,
+      sheetName,
+      columns,
+      rows,
+    },
+  });
+}
+
+export async function exportQueryResultJson(
+  filePath: string,
+  columns: string[],
+  rows: readonly (readonly XlsxCellValue[])[],
+): Promise<void> {
+  return invoke("export_query_result_json", {
+    request: {
+      filePath,
+      columns,
+      rows,
+    },
+  });
+}
+
+export async function exportQueryResultMarkdown(
+  filePath: string,
+  columns: string[],
+  rows: readonly (readonly XlsxCellValue[])[],
+): Promise<void> {
+  return invoke("export_query_result_markdown", {
+    request: {
+      filePath,
+      columns,
+      rows,
+    },
+  });
 }

@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  ChevronUp,
   Database,
   KeyRound,
   Loader2,
@@ -32,12 +33,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToast } from "@/composables/useToast";
-import {
-  buildTableStructureChangeSql,
-  buildCreateTableSql,
-  type EditableStructureColumn,
-  type EditableStructureIndex,
-} from "@/lib/tableStructureEditorSql";
+import { type EditableStructureColumn, type EditableStructureIndex } from "@/lib/tableStructureEditorSql";
 import { getTableStructureCapabilities } from "@/lib/tableStructureCapabilities";
 import {
   buildStructureTargetLabel,
@@ -67,13 +63,16 @@ const emit = defineEmits<{
 const activeTab = ref("columns");
 const loading = ref(false);
 const saving = ref(false);
+const sqlPreviewLoading = ref(false);
 const errorMessage = ref("");
 const columns = ref<EditableStructureColumn[]>([]);
 const indexes = ref<EditableStructureIndex[]>([]);
+const pendingStatements = ref<string[]>([]);
+const warnings = ref<string[]>([]);
 const foreignKeys = ref<ForeignKeyInfo[]>([]);
 const triggers = ref<TriggerInfo[]>([]);
 
-const indexColWidths = ref([160, 240, 80, 112, 160, 192, 160, 96]);
+const indexColWidths = ref([132, 200, 64, 96, 132, 160, 132, 76]);
 const resizing = ref<{ col: number; startX: number; startW: number } | null>(null);
 
 function onIndexColResize(e: MouseEvent, col: number) {
@@ -130,30 +129,44 @@ const targetLabel = computed(() =>
   ),
 );
 
-const changeSql = computed(() => {
-  if (isCreateMode.value) {
-    return buildCreateTableSql({
-      databaseType: databaseType.value,
-      schema: props.prefillSchema,
-      tableName: newTableName.value,
-      columns: columns.value,
-      indexes: indexes.value,
-    });
+let sqlPreviewRequestId = 0;
+
+async function refreshSqlPreview() {
+  const requestId = ++sqlPreviewRequestId;
+  if (!open.value) {
+    pendingStatements.value = [];
+    warnings.value = [];
+    return;
   }
-  return buildTableStructureChangeSql({
+  sqlPreviewLoading.value = true;
+  const options = {
     databaseType: databaseType.value,
     schema: props.prefillSchema,
-    tableName: props.prefillTable || "",
+    tableName: isCreateMode.value ? newTableName.value : props.prefillTable || "",
     columns: columns.value,
     indexes: indexes.value,
-  });
-});
-const pendingStatements = computed(() => changeSql.value.statements);
-const warnings = computed(() => changeSql.value.warnings);
+  };
+  try {
+    const result = isCreateMode.value
+      ? await api.buildCreateTableSql(options)
+      : await api.buildTableStructureChangeSql(options);
+    if (requestId !== sqlPreviewRequestId) return;
+    pendingStatements.value = result.statements;
+    warnings.value = result.warnings;
+  } catch (e: any) {
+    if (requestId !== sqlPreviewRequestId) return;
+    pendingStatements.value = [];
+    warnings.value = [e?.message || String(e)];
+  } finally {
+    if (requestId === sqlPreviewRequestId) sqlPreviewLoading.value = false;
+  }
+}
+
 const canApply = computed(
   () =>
     !loading.value &&
     !saving.value &&
+    !sqlPreviewLoading.value &&
     pendingStatements.value.length > 0 &&
     warnings.value.length === 0 &&
     !!props.prefillConnectionId &&
@@ -164,9 +177,12 @@ function resetState() {
   activeTab.value = "columns";
   loading.value = false;
   saving.value = false;
+  sqlPreviewLoading.value = false;
   errorMessage.value = "";
   columns.value = [];
   indexes.value = [];
+  pendingStatements.value = [];
+  warnings.value = [];
   foreignKeys.value = [];
   triggers.value = [];
   newTableName.value = "";
@@ -222,6 +238,21 @@ function addColumn() {
 
 function removeNewColumn(column: EditableStructureColumn) {
   columns.value = columns.value.filter((item) => item.id !== column.id);
+}
+
+function canMoveColumn(index: number, direction: -1 | 1): boolean {
+  const targetIndex = index + direction;
+  if (targetIndex < 0 || targetIndex >= columns.value.length) return false;
+  if (columns.value[index]?.markedForDrop || columns.value[targetIndex]?.markedForDrop) return false;
+  return isCreateMode.value || structureCapabilities.value.reorderColumn;
+}
+
+function moveColumn(index: number, direction: -1 | 1) {
+  if (!canMoveColumn(index, direction)) return;
+  const targetIndex = index + direction;
+  const [column] = columns.value.splice(index, 1);
+  if (!column) return;
+  columns.value.splice(targetIndex, 0, column);
 }
 
 function toggleDropColumn(column: EditableStructureColumn) {
@@ -308,11 +339,21 @@ function toggleDropIndex(index: EditableStructureIndex) {
 }
 
 function canEditIndexDraft(index: EditableStructureIndex): boolean {
-  return !index.original && !index.markedForDrop && structureCapabilities.value.createIndex;
+  if (index.markedForDrop || index.isPrimary) return false;
+  if (!index.original) return structureCapabilities.value.createIndex;
+  return (
+    structureCapabilities.value.rebuildIndex &&
+    structureCapabilities.value.createIndex &&
+    structureCapabilities.value.dropIndex
+  );
 }
 
 function canEditIndexFilter(index: EditableStructureIndex): boolean {
   return canEditIndexDraft(index) && structureCapabilities.value.indexFilter;
+}
+
+function canEditIndexComment(index: EditableStructureIndex): boolean {
+  return canEditIndexDraft(index) && structureCapabilities.value.indexComment;
 }
 
 function canDropIndex(index: EditableStructureIndex): boolean {
@@ -349,11 +390,32 @@ watch(
   },
   { immediate: true },
 );
+
+watch(
+  [
+    open,
+    isCreateMode,
+    databaseType,
+    () => props.prefillSchema,
+    () => props.prefillTable,
+    newTableName,
+    columns,
+    indexes,
+  ],
+  () => {
+    void refreshSqlPreview();
+  },
+  { deep: true, immediate: true },
+);
 </script>
 
 <template>
   <Dialog v-model:open="open">
-    <DialogScrollContent class="sm:max-w-[1180px]" :trap-focus="false" @interact-outside.prevent>
+    <DialogScrollContent
+      class="max-h-[calc(100vh-32px)] gap-3 p-3 sm:max-w-[1180px]"
+      :trap-focus="false"
+      @interact-outside.prevent
+    >
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <TableProperties class="h-4 w-4" />
@@ -361,8 +423,8 @@ watch(
         </DialogTitle>
       </DialogHeader>
 
-      <div class="space-y-3 py-2">
-        <div class="flex items-center gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs">
+      <div class="space-y-2 py-1 text-[11px]" data-structure-density="compact">
+        <div class="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-[11px]">
           <Database class="h-3.5 w-3.5 text-muted-foreground" />
           <span class="min-w-0 flex-1 truncate font-medium">{{ targetLabel || t("editor.noDatabase") }}</span>
           <Badge variant="outline">{{ connection?.driver_label || databaseType }}</Badge>
@@ -370,7 +432,7 @@ watch(
             v-if="!isCreateMode"
             variant="ghost"
             size="sm"
-            class="h-7 gap-1"
+            class="h-6 gap-1 px-2 text-[11px]"
             :disabled="loading || saving"
             @click="loadStructure"
           >
@@ -379,12 +441,14 @@ watch(
           </Button>
         </div>
 
-        <div v-if="isCreateMode" class="flex items-center gap-3">
-          <label class="text-xs font-medium text-muted-foreground shrink-0">{{ t("structureEditor.tableName") }}</label>
+        <div v-if="isCreateMode" class="flex items-center gap-2">
+          <label class="shrink-0 text-[11px] font-medium text-muted-foreground">{{
+            t("structureEditor.tableName")
+          }}</label>
           <Input
             v-model="newTableName"
             :placeholder="t('contextMenu.duplicateNamePlaceholder')"
-            class="h-7 text-xs max-w-[240px]"
+            class="h-6 max-w-[220px] text-[11px]"
           />
         </div>
 
@@ -393,10 +457,10 @@ watch(
           {{ t("common.loading") }}
         </div>
 
-        <div v-else class="grid min-h-[520px] grid-cols-[minmax(0,1fr)_360px] gap-3">
+        <div v-else class="grid min-h-[520px] grid-cols-[minmax(0,1fr)_300px] gap-2">
           <div class="min-w-0 rounded-md border">
             <Tabs v-model="activeTab" class="flex h-full flex-col">
-              <div class="flex items-center justify-between border-b px-3 py-2">
+              <div class="flex items-center justify-between border-b px-2 py-1.5">
                 <TabsList>
                   <TabsTrigger value="columns">{{ t("structureEditor.columns") }}</TabsTrigger>
                   <TabsTrigger value="indexes">{{ t("structureEditor.indexes") }}</TabsTrigger>
@@ -406,7 +470,7 @@ watch(
                 <Button
                   v-if="activeTab === 'columns'"
                   size="sm"
-                  class="h-7 gap-1"
+                  class="h-6 gap-1 px-2 text-[11px]"
                   :disabled="!structureCapabilities.addColumn"
                   @click="addColumn"
                 >
@@ -416,7 +480,7 @@ watch(
                 <Button
                   v-if="activeTab === 'indexes'"
                   size="sm"
-                  class="h-7 gap-1"
+                  class="h-6 gap-1 px-2 text-[11px]"
                   :disabled="!structureCapabilities.createIndex"
                   @click="addIndex"
                 >
@@ -426,26 +490,26 @@ watch(
               </div>
 
               <TabsContent value="columns" class="m-0 min-h-0 flex-1 overflow-auto p-0">
-                <table class="min-w-full border-separate border-spacing-0 text-xs">
+                <table class="min-w-full border-separate border-spacing-0 text-[11px]">
                   <thead class="sticky top-0 z-10 bg-background">
                     <tr>
-                      <th class="w-8 border-b border-r px-2 py-2 text-left">#</th>
-                      <th class="min-w-36 border-b border-r px-2 py-2 text-left">
+                      <th class="w-7 border-b border-r px-1.5 py-1.5 text-left">#</th>
+                      <th class="min-w-32 border-b border-r px-1.5 py-1.5 text-left">
                         {{ t("structureEditor.columnName") }}
                       </th>
-                      <th class="min-w-40 border-b border-r px-2 py-2 text-left">
+                      <th class="min-w-36 border-b border-r px-1.5 py-1.5 text-left">
                         {{ t("structureEditor.dataType") }}
                       </th>
-                      <th class="w-20 border-b border-r px-2 py-2 text-left">
+                      <th class="w-16 whitespace-nowrap border-b border-r px-1.5 py-1.5 text-left">
                         {{ t("structureEditor.nullable") }}
                       </th>
-                      <th class="min-w-32 border-b border-r px-2 py-2 text-left">
+                      <th class="min-w-28 border-b border-r px-1.5 py-1.5 text-left">
                         {{ t("structureEditor.defaultValue") }}
                       </th>
-                      <th class="min-w-36 border-b border-r px-2 py-2 text-left">
+                      <th class="min-w-32 border-b border-r px-1.5 py-1.5 text-left">
                         {{ t("structureEditor.comment") }}
                       </th>
-                      <th class="w-24 border-b px-2 py-2 text-left">
+                      <th class="w-32 border-b px-1.5 py-1.5 text-left">
                         {{ t("structureEditor.actions") }}
                       </th>
                     </tr>
@@ -456,27 +520,27 @@ watch(
                       :key="column.id"
                       :class="column.markedForDrop ? 'bg-destructive/5 opacity-60' : ''"
                     >
-                      <td class="border-b border-r px-2 py-1.5 text-muted-foreground">
+                      <td class="border-b border-r px-1.5 py-1 text-muted-foreground">
                         <div class="flex items-center gap-1">
                           <span>{{ index + 1 }}</span>
                           <KeyRound v-if="column.isPrimaryKey" class="h-3 w-3 text-amber-500" />
                         </div>
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
+                      <td class="border-b border-r px-1.5 py-1">
                         <Input
                           v-model="column.name"
-                          class="h-7 min-w-32 text-xs"
+                          class="h-6 min-w-28 text-[11px]"
                           :disabled="isColumnNameDisabled(column)"
                         />
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
+                      <td class="border-b border-r px-1.5 py-1">
                         <Input
                           v-model="column.dataType"
-                          class="h-7 min-w-36 font-mono text-xs"
+                          class="h-6 min-w-32 font-mono text-[11px]"
                           :disabled="isColumnTypeDisabled(column)"
                         />
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
+                      <td class="border-b border-r px-1.5 py-1">
                         <label class="flex items-center gap-1.5">
                           <input
                             v-model="column.isNullable"
@@ -487,18 +551,18 @@ watch(
                           <span>{{ column.isNullable ? t("structureEditor.yes") : t("structureEditor.no") }}</span>
                         </label>
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
+                      <td class="border-b border-r px-1.5 py-1">
                         <Input
                           v-model="column.defaultValue"
-                          class="h-7 min-w-28 font-mono text-xs"
+                          class="h-6 min-w-24 font-mono text-[11px]"
                           :disabled="isColumnDefaultDisabled(column)"
                         />
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
-                        <div class="flex min-w-44 items-center gap-1">
+                      <td class="border-b border-r px-1.5 py-1">
+                        <div class="flex min-w-36 items-center gap-1">
                           <Input
                             v-model="column.comment"
-                            class="h-7 min-w-0 flex-1 text-xs"
+                            class="h-6 min-w-0 flex-1 text-[11px]"
                             :disabled="isColumnCommentDisabled(column)"
                           />
                           <Popover>
@@ -506,7 +570,7 @@ watch(
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                class="h-7 w-7 shrink-0"
+                                class="h-6 w-6 shrink-0"
                                 :disabled="isColumnCommentDisabled(column)"
                                 :aria-label="t('structureEditor.editComment')"
                                 :title="t('structureEditor.editComment')"
@@ -533,22 +597,52 @@ watch(
                           </Popover>
                         </div>
                       </td>
-                      <td class="border-b px-2 py-1.5">
-                        <Button
-                          v-if="column.original"
-                          variant="ghost"
-                          size="sm"
-                          class="h-7 gap-1"
-                          :disabled="!canDropColumn(column)"
-                          @click="toggleDropColumn(column)"
-                        >
-                          <Trash2 class="h-3.5 w-3.5" />
-                          {{ column.markedForDrop ? t("structureEditor.restore") : t("structureEditor.drop") }}
-                        </Button>
-                        <Button v-else variant="ghost" size="sm" class="h-7 gap-1" @click="removeNewColumn(column)">
-                          <X class="h-3.5 w-3.5" />
-                          {{ t("structureEditor.remove") }}
-                        </Button>
+                      <td class="border-b px-1.5 py-1">
+                        <div class="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            class="h-6 w-6"
+                            :disabled="!canMoveColumn(index, -1)"
+                            :title="t('structureEditor.moveColumnUp')"
+                            :aria-label="t('structureEditor.moveColumnUp')"
+                            @click="moveColumn(index, -1)"
+                          >
+                            <ChevronUp class="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            class="h-6 w-6"
+                            :disabled="!canMoveColumn(index, 1)"
+                            :title="t('structureEditor.moveColumnDown')"
+                            :aria-label="t('structureEditor.moveColumnDown')"
+                            @click="moveColumn(index, 1)"
+                          >
+                            <ChevronDown class="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            v-if="column.original"
+                            variant="ghost"
+                            size="sm"
+                            class="h-6 gap-1 px-1.5 text-[11px]"
+                            :disabled="!canDropColumn(column)"
+                            @click="toggleDropColumn(column)"
+                          >
+                            <Trash2 class="h-3.5 w-3.5" />
+                            {{ column.markedForDrop ? t("structureEditor.restore") : t("structureEditor.drop") }}
+                          </Button>
+                          <Button
+                            v-else
+                            variant="ghost"
+                            size="sm"
+                            class="h-6 gap-1 px-1.5 text-[11px]"
+                            @click="removeNewColumn(column)"
+                          >
+                            <X class="h-3.5 w-3.5" />
+                            {{ t("structureEditor.remove") }}
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   </tbody>
@@ -556,13 +650,13 @@ watch(
               </TabsContent>
 
               <TabsContent value="indexes" class="m-0 min-h-0 flex-1 overflow-auto p-0">
-                <table class="min-w-full border-separate border-spacing-0 text-xs">
+                <table class="min-w-full border-separate border-spacing-0 text-[11px]">
                   <thead class="sticky top-0 z-10 bg-background">
                     <tr>
                       <th
                         v-for="(label, i) in indexColLabels"
                         :key="i"
-                        class="relative border-b border-r px-2 py-2 text-left"
+                        class="relative border-b border-r px-1.5 py-1.5 text-left"
                         :style="{
                           width: indexColWidths[i] + 'px',
                           minWidth: indexColWidths[i] + 'px',
@@ -584,13 +678,13 @@ watch(
                       :key="index.id"
                       :class="index.markedForDrop ? 'bg-destructive/5 opacity-60' : ''"
                     >
-                      <td class="border-b border-r px-2 py-1.5">
-                        <Input v-model="index.name" class="h-7 text-xs" :disabled="!canEditIndexDraft(index)" />
+                      <td class="border-b border-r px-1.5 py-1">
+                        <Input v-model="index.name" class="h-6 text-[11px]" :disabled="!canEditIndexDraft(index)" />
                       </td>
-                      <td class="overflow-hidden border-b border-r px-2 py-1.5">
+                      <td class="overflow-hidden border-b border-r px-1.5 py-1">
                         <DropdownMenu v-if="canEditIndexDraft(index)">
                           <DropdownMenuTrigger as-child>
-                            <Button variant="outline" class="h-7 w-full justify-between font-mono text-xs">
+                            <Button variant="outline" class="h-6 w-full justify-between px-2 font-mono text-[11px]">
                               <span class="truncate">{{
                                 toColumnNames(index.columns) || t("structureEditor.indexColumnsPlaceholder")
                               }}</span>
@@ -598,7 +692,7 @@ watch(
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent
-                            class="max-h-60 min-w-48 overflow-y-auto"
+                            class="max-h-56 min-w-44 overflow-y-auto"
                             side="bottom"
                             :side-offset="2"
                             :avoid-collisions="false"
@@ -607,7 +701,7 @@ watch(
                             <div class="px-1.5 pb-1 pt-0.5">
                               <Input
                                 v-model="colSearch"
-                                class="h-6 text-xs"
+                                class="h-6 text-[11px]"
                                 :placeholder="t('grid.search')"
                                 @click.stop
                               />
@@ -624,11 +718,11 @@ watch(
                             </DropdownMenuCheckboxItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                        <span v-else class="font-mono text-xs text-muted-foreground">{{
+                        <span v-else class="font-mono text-[11px] text-muted-foreground">{{
                           toColumnNames(index.columns)
                         }}</span>
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
+                      <td class="border-b border-r px-1.5 py-1">
                         <label class="flex items-center gap-1.5">
                           <input
                             v-model="index.isUnique"
@@ -639,17 +733,14 @@ watch(
                           <span>{{ index.isUnique ? t("structureEditor.yes") : t("structureEditor.no") }}</span>
                         </label>
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
-                        <span v-if="index.original" class="text-muted-foreground">{{
-                          index.indexType || "BTREE"
-                        }}</span>
+                      <td class="border-b border-r px-1.5 py-1">
                         <Select
-                          v-else-if="indexTypeOptions.length > 0"
+                          v-if="indexTypeOptions.length > 0"
                           :model-value="index.indexType || 'BTREE'"
                           :disabled="!canEditIndexDraft(index)"
                           @update:model-value="(v: any) => (index.indexType = String(v ?? ''))"
                         >
-                          <SelectTrigger class="h-7 font-mono text-xs">
+                          <SelectTrigger class="h-6 font-mono text-[11px]">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -659,15 +750,15 @@ watch(
                         <Input
                           v-else
                           v-model="index.indexType"
-                          class="h-7 font-mono text-xs"
+                          class="h-6 font-mono text-[11px]"
                           placeholder="BTREE"
-                          :disabled="!canEditIndexDraft(index)"
+                          :disabled="!canEditIndexDraft(index) || !structureCapabilities.indexType"
                         />
                       </td>
-                      <td class="overflow-hidden border-b border-r px-2 py-1.5">
+                      <td class="overflow-hidden border-b border-r px-1.5 py-1">
                         <DropdownMenu v-if="canEditIndexDraft(index) && structureCapabilities.indexInclude">
                           <DropdownMenuTrigger as-child>
-                            <Button variant="outline" class="h-7 w-full justify-between font-mono text-xs">
+                            <Button variant="outline" class="h-6 w-full justify-between px-2 font-mono text-[11px]">
                               <span class="truncate">{{
                                 index.includedColumns.join(", ") || t("structureEditor.includedColumnsPlaceholder")
                               }}</span>
@@ -675,7 +766,7 @@ watch(
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent
-                            class="max-h-60 min-w-48 overflow-y-auto"
+                            class="max-h-56 min-w-44 overflow-y-auto"
                             side="bottom"
                             :side-offset="2"
                             :avoid-collisions="false"
@@ -684,7 +775,7 @@ watch(
                             <div class="px-1.5 pb-1 pt-0.5">
                               <Input
                                 v-model="colSearch"
-                                class="h-6 text-xs"
+                                class="h-6 text-[11px]"
                                 :placeholder="t('grid.search')"
                                 @click.stop
                               />
@@ -701,39 +792,45 @@ watch(
                             </DropdownMenuCheckboxItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
-                        <span v-else class="text-muted-foreground text-xs">{{ index.includedColumns.join(", ") }}</span>
+                        <span v-else class="text-[11px] text-muted-foreground">{{
+                          index.includedColumns.join(", ")
+                        }}</span>
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
+                      <td class="border-b border-r px-1.5 py-1">
                         <Input
                           v-model="index.filter"
-                          class="h-7 font-mono text-xs"
+                          class="h-6 font-mono text-[11px]"
                           :placeholder="index.original?.filter || ''"
                           :disabled="!canEditIndexFilter(index)"
                         />
                       </td>
-                      <td class="border-b border-r px-2 py-1.5">
-                        <span v-if="index.original" class="text-muted-foreground text-xs">{{ index.comment }}</span>
+                      <td class="border-b border-r px-1.5 py-1">
                         <Input
-                          v-else
                           v-model="index.comment"
-                          class="h-7 text-xs"
-                          :disabled="!canEditIndexDraft(index) || !structureCapabilities.indexComment"
+                          class="h-6 text-[11px]"
+                          :disabled="!canEditIndexComment(index)"
                         />
                       </td>
-                      <td class="border-b px-2 py-1.5">
+                      <td class="border-b px-1.5 py-1">
                         <Badge v-if="index.isPrimary" variant="outline">{{ t("structureEditor.primary") }}</Badge>
                         <Button
                           v-else-if="index.original"
                           variant="ghost"
                           size="sm"
-                          class="h-7 gap-1"
+                          class="h-6 gap-1 px-1.5 text-[11px]"
                           :disabled="!canDropIndex(index)"
                           @click="toggleDropIndex(index)"
                         >
                           <Trash2 class="h-3.5 w-3.5" />
                           {{ index.markedForDrop ? t("structureEditor.restore") : t("structureEditor.drop") }}
                         </Button>
-                        <Button v-else variant="ghost" size="sm" class="h-7 gap-1" @click="removeNewIndex(index)">
+                        <Button
+                          v-else
+                          variant="ghost"
+                          size="sm"
+                          class="h-6 gap-1 px-1.5 text-[11px]"
+                          @click="removeNewIndex(index)"
+                        >
                           <X class="h-3.5 w-3.5" />
                           {{ t("structureEditor.remove") }}
                         </Button>
@@ -743,12 +840,12 @@ watch(
                 </table>
               </TabsContent>
 
-              <TabsContent value="foreignKeys" class="m-0 min-h-0 flex-1 overflow-auto p-3">
+              <TabsContent value="foreignKeys" class="m-0 min-h-0 flex-1 overflow-auto p-2">
                 <div v-if="foreignKeys.length === 0" class="py-10 text-center text-sm text-muted-foreground">
                   {{ t("structureEditor.emptyReadonly") }}
                 </div>
-                <div v-else class="space-y-2">
-                  <div v-for="fk in foreignKeys" :key="fk.name" class="rounded-md border px-3 py-2 text-xs">
+                <div v-else class="space-y-1.5">
+                  <div v-for="fk in foreignKeys" :key="fk.name" class="rounded-md border px-2 py-1.5 text-[11px]">
                     <div class="font-medium">{{ fk.name }}</div>
                     <div class="mt-1 font-mono text-muted-foreground">
                       {{ fk.column }} -> {{ fk.ref_table }}.{{ fk.ref_column }}
@@ -757,12 +854,16 @@ watch(
                 </div>
               </TabsContent>
 
-              <TabsContent value="triggers" class="m-0 min-h-0 flex-1 overflow-auto p-3">
+              <TabsContent value="triggers" class="m-0 min-h-0 flex-1 overflow-auto p-2">
                 <div v-if="triggers.length === 0" class="py-10 text-center text-sm text-muted-foreground">
                   {{ t("structureEditor.emptyReadonly") }}
                 </div>
-                <div v-else class="space-y-2">
-                  <div v-for="trigger in triggers" :key="trigger.name" class="rounded-md border px-3 py-2 text-xs">
+                <div v-else class="space-y-1.5">
+                  <div
+                    v-for="trigger in triggers"
+                    :key="trigger.name"
+                    class="rounded-md border px-2 py-1.5 text-[11px]"
+                  >
                     <div class="font-medium">{{ trigger.name }}</div>
                     <div class="mt-1 font-mono text-muted-foreground">{{ trigger.timing }} {{ trigger.event }}</div>
                   </div>
@@ -772,16 +873,19 @@ watch(
           </div>
 
           <div class="flex min-w-0 flex-col rounded-md border">
-            <div class="flex items-center justify-between border-b px-3 py-2 text-xs font-medium">
+            <div class="flex items-center justify-between border-b px-2 py-1.5 text-[11px] font-medium">
               <span>{{ t("structureEditor.sqlPreview") }}</span>
-              <Badge variant="secondary">{{ pendingStatements.length }}</Badge>
+              <Badge variant="secondary">
+                <Loader2 v-if="sqlPreviewLoading" class="h-3 w-3 animate-spin" />
+                <span v-else>{{ pendingStatements.length }}</span>
+              </Badge>
             </div>
-            <div class="min-h-0 flex-1 overflow-auto p-3">
-              <div v-if="warnings.length" class="mb-3 space-y-1">
+            <div class="min-h-0 flex-1 overflow-auto p-2">
+              <div v-if="warnings.length" class="mb-2 space-y-1">
                 <div
                   v-for="warning in warnings"
                   :key="warning"
-                  class="flex gap-2 rounded-md border border-yellow-300/40 bg-yellow-500/10 px-2 py-1.5 text-xs text-yellow-700 dark:text-yellow-300"
+                  class="flex gap-1.5 rounded-md border border-yellow-300/40 bg-yellow-500/10 px-2 py-1 text-[11px] text-yellow-700 dark:text-yellow-300"
                 >
                   <AlertTriangle class="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span>{{ warning }}</span>
@@ -789,7 +893,7 @@ watch(
               </div>
               <pre
                 v-if="pendingStatements.length"
-                class="whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-mono text-xs leading-5"
+                class="whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 font-mono text-[11px] leading-4"
                 >{{ pendingStatements.join("\n") }}</pre
               >
               <div v-else class="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -801,7 +905,7 @@ watch(
 
         <div
           v-if="errorMessage"
-          class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          class="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive"
         >
           {{ errorMessage }}
         </div>

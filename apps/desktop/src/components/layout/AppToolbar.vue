@@ -7,7 +7,7 @@ import {
   Globe,
   Moon,
   Sun,
-  Monitor,
+  SunMoon,
   Check,
   History,
   Bot,
@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import WindowControls from "@/components/layout/WindowControls.vue";
-import { useWindowControls } from "@/composables/useWindowControls";
+import { shouldReserveMacTrafficLightInset, useWindowControls } from "@/composables/useWindowControls";
 import { currentLocale, setLocale, type Locale } from "@/i18n";
 import type { AppThemeMode } from "@/lib/appTheme";
 
@@ -68,7 +68,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { isMac, isDesktop, showControls, isMaximized, minimize, toggleMaximize, close } = useWindowControls();
+const { isMac, isDesktop, showControls, isMaximized, isFullscreen, minimize, toggleMaximize, close } =
+  useWindowControls();
 
 function onToolbarDblClick(e: MouseEvent) {
   if (isDesktop) return;
@@ -81,7 +82,7 @@ function onToolbarDblClick(e: MouseEvent) {
 <template>
   <div
     class="h-10 flex items-center gap-1 px-2 border-b bg-muted/30 shrink-0"
-    :class="{ 'pl-17.5': isMac }"
+    :class="{ 'pl-17.5': shouldReserveMacTrafficLightInset(isMac, isFullscreen) }"
     data-tauri-drag-region
     @dblclick="onToolbarDblClick"
   >
@@ -222,7 +223,7 @@ function onToolbarDblClick(e: MouseEvent) {
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
               <Button variant="ghost" size="icon" class="h-8 w-8" :aria-label="t('toolbar.theme')">
-                <Monitor v-if="themeMode === 'system'" class="h-4 w-4" />
+                <SunMoon v-if="themeMode === 'system'" class="h-4 w-4" />
                 <Moon v-else-if="isDark" class="h-4 w-4" />
                 <Sun v-else class="h-4 w-4" />
               </Button>
@@ -251,7 +252,7 @@ function onToolbarDblClick(e: MouseEvent) {
                 :class="{ 'bg-accent': themeMode === 'system' }"
                 @select="emit('set-theme-mode', 'system')"
               >
-                <Monitor class="h-4 w-4" />
+                <SunMoon class="h-4 w-4" />
                 {{ t("toolbar.themeSystem") }}
                 <Check v-if="themeMode === 'system'" class="ml-auto h-4 w-4" />
               </DropdownMenuItem>

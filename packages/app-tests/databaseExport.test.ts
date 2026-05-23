@@ -1,21 +1,16 @@
+import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import {
-  DATABASE_EXPORT_INSERT_BATCH_SIZE,
-  DATABASE_EXPORT_ROW_LIMIT,
-  buildExportPageSql,
-  buildDatabaseSqlExport,
-  buildInsertStatements,
-  formatSqlLiteral,
-  generateDatabaseExportId,
-} from "../../apps/desktop/src/lib/databaseExport.ts";
+import { generateDatabaseExportId } from "../../apps/desktop/src/lib/databaseExport.ts";
 
-test("formats SQL literals for exported INSERT statements", () => {
-  assert.equal(formatSqlLiteral(null), "NULL");
-  assert.equal(formatSqlLiteral(42), "42");
-  assert.equal(formatSqlLiteral(true), "TRUE");
-  assert.equal(formatSqlLiteral("O'Hara"), "'O''Hara'");
-});
+const databaseExportSource = readFileSync("apps/desktop/src/lib/databaseExport.ts", "utf8");
+const exportFormatsSource = readFileSync("apps/desktop/src/lib/exportFormats.ts", "utf8");
+const treeItemSource = readFileSync("apps/desktop/src/components/sidebar/TreeItem.vue", "utf8");
+const objectBrowserSource = readFileSync("apps/desktop/src/components/objects/ObjectBrowser.vue", "utf8");
+const apiSource = readFileSync("apps/desktop/src/lib/api.ts", "utf8");
+const tauriSource = readFileSync("apps/desktop/src/lib/tauri.ts", "utf8");
+const httpSource = readFileSync("apps/desktop/src/lib/http.ts", "utf8");
+const rustSource = readFileSync("crates/dbx-core/src/database_export.rs", "utf8");
 
 test("generates export ids when crypto.randomUUID is unavailable", () => {
   const originalCrypto = globalThis.crypto;
@@ -35,81 +30,34 @@ test("generates export ids when crypto.randomUUID is unavailable", () => {
   }
 });
 
-test("builds batched INSERT statements for one exported table", () => {
-  const statements = buildInsertStatements({
-    qualifiedTableName: "`users`",
-    columns: ["id", "name"],
-    rows: [
-      [1, "Ada"],
-      [2, "O'Hara"],
-      [3, "Linus"],
-    ],
-    quoteIdentifier: (name) => `\`${name}\``,
-    batchSize: 2,
-  });
-
-  assert.deepEqual(statements, [
-    "INSERT INTO `users` (`id`, `name`) VALUES (1, 'Ada'), (2, 'O''Hara');",
-    "INSERT INTO `users` (`id`, `name`) VALUES (3, 'Linus');",
-  ]);
+test("frontend database SQL export helpers delegate executable SQL generation to backend APIs", () => {
+  assert.match(databaseExportSource, /return api\.buildExportInsertStatements\(options\)/);
+  assert.match(databaseExportSource, /return api\.buildDatabaseSqlExport\(/);
+  assert.match(exportFormatsSource, /return api\.buildExportSqlInsert\(/);
+  assert.doesNotMatch(databaseExportSource, /INSERT INTO|formatSqlLiteral|replace\(\s*\/'/);
+  assert.doesNotMatch(exportFormatsSource, /INSERT INTO|VALUES|quoteIdent|replace\(\s*\/'/);
 });
 
-test("builds capped export page queries", () => {
-  assert.equal(
-    buildExportPageSql({
-      databaseType: "mysql",
-      tableName: "users",
-      limit: 500,
-      offset: 1000,
-    }),
-    "SELECT * FROM `users` LIMIT 500 OFFSET 1000;",
-  );
-
-  assert.equal(
-    buildExportPageSql({
-      databaseType: "sqlserver",
-      schema: "dbo",
-      tableName: "accounts",
-      limit: DATABASE_EXPORT_ROW_LIMIT,
-    }),
-    `SELECT TOP (${DATABASE_EXPORT_ROW_LIMIT}) * FROM [dbo].[accounts]`,
-  );
+test("SQL export callers await backend INSERT builders", () => {
+  assert.match(treeItemSource, /await formatSqlInsert\(/);
+  assert.match(objectBrowserSource, /await formatSqlInsert\(/);
 });
 
-test("builds a database SQL export with DDL before data", () => {
-  const sql = buildDatabaseSqlExport({
-    databaseName: "app",
-    exportedAt: new Date("2026-05-02T00:00:00.000Z"),
-    rowLimitPerTable: DATABASE_EXPORT_ROW_LIMIT,
-    tables: [
-      {
-        displayName: "users",
-        qualifiedTableName: "`users`",
-        ddl: "CREATE TABLE `users` (`id` int);",
-        columns: ["id"],
-        rows: [[1]],
-        truncated: true,
-      },
-    ],
-    quoteIdentifier: (name) => `\`${name}\``,
-    insertBatchSize: DATABASE_EXPORT_INSERT_BATCH_SIZE,
-  });
+test("shared API exposes backend database export SQL builders", () => {
+  assert.match(apiSource, /export const buildExportInsertStatements = forward\("buildExportInsertStatements"\)/);
+  assert.match(apiSource, /export const buildExportSqlInsert = forward\("buildExportSqlInsert"\)/);
+  assert.match(apiSource, /export const buildDatabaseSqlExport = forward\("buildDatabaseSqlExport"\)/);
+  assert.match(tauriSource, /invoke\("build_export_insert_statements"/);
+  assert.match(tauriSource, /invoke\("build_export_sql_insert"/);
+  assert.match(tauriSource, /invoke\("build_database_sql_export"/);
+  assert.match(httpSource, /\/api\/query\/build-export-insert-statements/);
+  assert.match(httpSource, /\/api\/query\/build-export-sql-insert/);
+  assert.match(httpSource, /\/api\/query\/build-database-sql-export/);
+});
 
-  assert.equal(
-    sql,
-    [
-      "-- DBX database export",
-      "-- Database: app",
-      "-- Exported at: 2026-05-02T00:00:00.000Z",
-      `-- Row limit per table: ${DATABASE_EXPORT_ROW_LIMIT}`,
-      "",
-      "-- Structure for users",
-      "CREATE TABLE `users` (`id` int);",
-      "",
-      "-- Data for users",
-      `-- Exported rows: 1 (truncated at ${DATABASE_EXPORT_ROW_LIMIT})`,
-      "INSERT INTO `users` (`id`) VALUES (1);",
-      "",
-    ].join("\n"),
-  );
+test("Rust database export SQL exposes INSERT and full export builders", () => {
+  assert.match(rustSource, /pub fn format_export_sql_literal/);
+  assert.match(rustSource, /pub fn build_export_insert_statements/);
+  assert.match(rustSource, /pub fn build_export_sql_insert/);
+  assert.match(rustSource, /pub fn build_database_sql_export/);
 });

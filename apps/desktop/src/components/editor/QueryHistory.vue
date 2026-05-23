@@ -13,6 +13,7 @@ import { resolveHistoryActivityKind } from "@/lib/historyActivityKind";
 import { canRollbackHistoryEntry } from "@/lib/historyAiAnalysis";
 import { HISTORY_ROW_HEIGHT, HISTORY_SCROLL_BUFFER, shouldVirtualizeHistory } from "@/lib/historyVirtualList";
 import type { HistoryEntry } from "@/lib/api";
+import { copyToClipboard } from "@/lib/clipboard";
 import * as api from "@/lib/api";
 
 const { t } = useI18n();
@@ -58,8 +59,12 @@ function restore(entry: HistoryEntry) {
 }
 
 async function copyText(text: string) {
-  await navigator.clipboard.writeText(text);
-  toast(t("grid.copied"));
+  try {
+    await copyToClipboard(text);
+    toast(t("grid.copied"));
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
 }
 
 function confirmDeleteEntry(id: string) {

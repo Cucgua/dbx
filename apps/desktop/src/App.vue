@@ -29,8 +29,9 @@ import "@/i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
 import * as api from "@/lib/api";
 import { resolveDefaultDatabase, resolveDefaultSchema } from "@/lib/defaultDatabase";
+import { findTreeNodeById, resolveNewQueryTarget } from "@/lib/newQueryContext";
 import { buildExecutableObjectSourceStatements, objectSourceSaveExecutionMode } from "@/lib/objectSourceEditor";
-import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
+import { resolveExecutableSql, resolveExecutableSqlWithBackend } from "@/lib/sqlExecutionTarget";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { sqlFileTitleFromPath } from "@/lib/sqlFileOpen";
 import { parseConnectionDeepLink, type ConnectionDeepLinkDraft } from "@/lib/connectionDeepLink";
@@ -38,6 +39,7 @@ import {
   isCloseTabShortcut,
   isExecuteSqlShortcut,
   isFocusSearchShortcut,
+  isNewQueryShortcut,
   isObjectSourceSaveShortcutTarget,
   isRefreshDataShortcut,
   isSaveShortcut,
@@ -102,7 +104,7 @@ const showSettingsDialog = ref(false);
 const showDriverStore = ref(false);
 const agentDriverUpdateCount = ref(0);
 const showHistory = ref(false);
-const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") !== "false");
+const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") === "true");
 const aiPanelReady = ref(false);
 const { sidebarWidth, aiPanelWidth, historyWidth, startSidebarResize, startAiPanelResize, startHistoryResize } =
   usePanelResize();
@@ -114,6 +116,7 @@ const selectedSql = ref("");
 const cursorPos = ref(0);
 const formatSqlRequestId = ref(0);
 const activeOutputView = ref<"result" | "explain" | "chart">("result");
+const newQueryContextSource = ref<"tab" | "sidebar">("tab");
 const showSaveSqlDialog = ref(false);
 const saveSqlName = ref("");
 const saveSqlFolderId = ref("");
@@ -166,6 +169,16 @@ const executableSql = computed(() => {
     : "";
 });
 
+async function resolveActiveExecutableSql() {
+  const tab = activeTab.value;
+  return tab
+    ? await resolveExecutableSqlWithBackend(tab.sql, selectedSql.value, {
+        mode: settingsStore.editorSettings.executeMode,
+        cursorPos: cursorPos.value,
+      })
+    : "";
+}
+
 const {
   dangerSql,
   pendingDangerSql,
@@ -175,7 +188,13 @@ const {
   cancelActiveExecution,
   tryExplain,
   onDangerConfirm,
-} = useSqlExecution({ activeTab, activeConnection, executableSql, activeOutputView });
+} = useSqlExecution({
+  activeTab,
+  activeConnection,
+  executableSql,
+  resolveExecutableSql: resolveActiveExecutableSql,
+  activeOutputView,
+});
 
 const dialogs = useDialogSources();
 const { getDatabaseOptions } = useDatabaseOptions();
@@ -214,10 +233,18 @@ function applyDefaultDatabaseToTab(tabId: string, connection: ConnectionConfig, 
 watch(
   () => queryStore.activeTabId,
   (id) => {
+    if (id) newQueryContextSource.value = "tab";
     selectedSql.value = "";
     activeOutputView.value = "result";
     showDriverStore.value = false;
     if (id) queryStore.reloadEvictedTab(id);
+  },
+);
+
+watch(
+  () => connectionStore.selectedTreeNodeId,
+  (id) => {
+    if (id) newQueryContextSource.value = "sidebar";
   },
 );
 
@@ -309,7 +336,7 @@ async function saveActiveObjectSource(tab: NonNullable<typeof activeTab.value>) 
   if (!connection || !source) return;
 
   try {
-    const statements = buildExecutableObjectSourceStatements({
+    const statements = await buildExecutableObjectSourceStatements({
       databaseType: connection.db_type,
       objectType: source.objectType,
       schema: source.schema || tab.schema || tab.database,
@@ -445,18 +472,25 @@ function setConnectionDialogOpen(value: boolean) {
 }
 
 async function newQuery() {
-  const connId = connectionStore.activeConnectionId || connectionStore.connections[0]?.id;
-  if (!connId) return;
-  const conn = connectionStore.getConfig(connId);
+  const target = resolveNewQueryTarget({
+    activeTab: activeTab.value,
+    selectedTreeNode: findTreeNodeById(connectionStore.treeNodes, connectionStore.selectedTreeNodeId),
+    activeConnectionId: connectionStore.activeConnectionId,
+    connections: connectionStore.connections,
+    preferredSource: newQueryContextSource.value,
+  });
+  if (!target) return;
+  const conn = connectionStore.getConfig(target.connectionId);
   if (!conn) return;
-  connectionStore.activeConnectionId = connId;
-  const initialDatabase = resolveDefaultDatabase(conn, []);
-  const tabId = queryStore.createTab(conn.id, initialDatabase);
-  queryStore.updateSchema(tabId, resolveDefaultSchema(conn, initialDatabase));
+  connectionStore.activeConnectionId = target.connectionId;
+  const tabId = queryStore.createTab(conn.id, target.database);
+  queryStore.updateSchema(tabId, resolveDefaultSchema(conn, target.database));
   try {
-    await connectionStore.ensureConnected(connId);
-    const options = await getDatabaseOptions(connId);
-    applyDefaultDatabaseToTab(tabId, conn, options);
+    await connectionStore.ensureConnected(target.connectionId);
+    if (target.shouldRefreshDefaultDatabase) {
+      const options = await getDatabaseOptions(target.connectionId);
+      applyDefaultDatabaseToTab(tabId, conn, options);
+    }
   } catch (e: any) {
     toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
   }
@@ -607,6 +641,12 @@ function handleKeydown(e: KeyboardEvent) {
     contentAreaRef.value?.refreshData();
     return;
   }
+  if (isNewQueryShortcut(e, shortcuts)) {
+    e.preventDefault();
+    e.stopPropagation();
+    void newQuery();
+    return;
+  }
   if (isCloseTabShortcut(e, shortcuts)) {
     e.preventDefault();
     if (showDriverStore.value) {
@@ -683,7 +723,7 @@ async function reconnectRestoredTabs() {
 function handleContextMenu(e: MouseEvent) {
   const target = e.target as HTMLElement;
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
-  if (target.closest("[data-radix-vue-collection-item], [data-context-menu]")) return;
+  if (target.closest("[data-reka-collection-item], [data-radix-vue-collection-item], [data-context-menu]")) return;
   e.preventDefault();
 }
 
@@ -813,7 +853,7 @@ onUnmounted(() => {
           <div
             :class="
               isClassicLayout
-                ? 'flex-1 min-w-0'
+                ? 'flex-1 min-w-0 overflow-hidden'
                 : 'flex-1 min-w-0 overflow-hidden rounded-md border border-border/80 bg-background'
             "
           >
@@ -921,8 +961,8 @@ onUnmounted(() => {
             v-if="showAiPanel"
             :class="
               isClassicLayout
-                ? 'h-full shrink-0 relative bg-background'
-                : 'h-full shrink-0 relative rounded-md border border-border/80 bg-background'
+                ? 'h-full shrink-0 relative z-30 isolate bg-background'
+                : 'h-full shrink-0 relative z-30 isolate rounded-md border border-border/80 bg-background'
             "
             :style="{ width: aiPanelWidth + 'px' }"
           >
@@ -945,8 +985,8 @@ onUnmounted(() => {
             v-if="showHistory"
             :class="
               isClassicLayout
-                ? 'h-full shrink-0 relative bg-background'
-                : 'h-full shrink-0 relative rounded-md border border-border/80 bg-background'
+                ? 'h-full shrink-0 relative z-30 isolate bg-background'
+                : 'h-full shrink-0 relative z-30 isolate rounded-md border border-border/80 bg-background'
             "
             :style="{ width: historyWidth + 'px' }"
           >

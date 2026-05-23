@@ -15,3 +15,7 @@ test("Oracle connection mode uses an inline option group", () => {
   assert.match(oracleModeBlock, /form\.oracle_connection_type = 'sid'/);
   assert.doesNotMatch(oracleModeBlock, /<Select/);
 });
+
+test("legacy Oracle edit configs without a mode default to service_name connections", () => {
+  assert.match(source, /oracle_connection_type: config\.oracle_connection_type \|\| "service_name"/);
+});

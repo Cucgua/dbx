@@ -46,6 +46,7 @@ export const installJdbcPluginLocal = forward("installJdbcPluginLocal");
 export const uninstallJdbcPlugin = forward("uninstallJdbcPlugin");
 export const listInstalledAgentsLocal = forward("listInstalledAgentsLocal");
 export const listInstalledAgents = forward("listInstalledAgents");
+export const getDriverStoreUsage = forward("getDriverStoreUsage");
 export const installAgent = forward("installAgent");
 export const upgradeAllAgents = forward("upgradeAllAgents");
 export const uninstallAgent = forward("uninstallAgent");
@@ -77,6 +78,8 @@ export const listIndexes = forward("listIndexes");
 export const listForeignKeys = forward("listForeignKeys");
 export const listTriggers = forward("listTriggers");
 export const getTableDdl = forward("getTableDdl");
+export const prepareSchemaDiff = forward("prepareSchemaDiff");
+export const generateSchemaSyncSql = forward("generateSchemaSyncSql");
 
 // Query
 export const executeQuery = forward("executeQuery");
@@ -86,6 +89,45 @@ export const executeScript = forward("executeScript");
 export const executeInTransaction = forward("executeInTransaction");
 export const cancelQuery = forward("cancelQuery");
 export const closeQuerySession = forward("closeQuerySession");
+export const analyzeSqlReferences = forward("analyzeSqlReferences");
+export const findStatementAtCursor = forward("findStatementAtCursor");
+export const prepareQueryPaginationExecutionPlan = forward("prepareQueryPaginationExecutionPlan");
+export const buildSortedQuerySql = forward("buildSortedQuerySql");
+export const buildExplainSql = forward("buildExplainSql");
+export const buildDroppedFilePreviewSql = forward("buildDroppedFilePreviewSql");
+export const buildTableSelectSql = forward("buildTableSelectSql");
+export const buildDatabaseSearchSql = forward("buildDatabaseSearchSql");
+export const buildSearchResultWhere = forward("buildSearchResultWhere");
+export const buildRenameObjectSql = forward("buildRenameObjectSql");
+export const buildCreateDatabaseSql = forward("buildCreateDatabaseSql");
+export const buildDuckDbAttachDatabaseSql = forward("buildDuckDbAttachDatabaseSql");
+export const buildDropObjectSql = forward("buildDropObjectSql");
+export const buildDropTableSql = forward("buildDropTableSql");
+export const buildEmptyTableSql = forward("buildEmptyTableSql");
+export const buildTruncateTableSql = forward("buildTruncateTableSql");
+export const buildDropDatabaseSql = forward("buildDropDatabaseSql");
+export const buildCreateSchemaSql = forward("buildCreateSchemaSql");
+export const buildDropSchemaSql = forward("buildDropSchemaSql");
+export const buildDuplicateTableStructureSql = forward("buildDuplicateTableStructureSql");
+export const buildExecutableObjectSourceStatements = forward("buildExecutableObjectSourceStatements");
+export const buildExecutableObjectSourceSql = forward("buildExecutableObjectSourceSql");
+export const buildRoutineRenameObjectSourceStatements = forward("buildRoutineRenameObjectSourceStatements");
+export const buildViewDdlSql = forward("buildViewDdlSql");
+export const buildTableStructureChangeSql = forward("buildTableStructureChangeSql");
+export const buildCreateTableSql = forward("buildCreateTableSql");
+export const analyzeEditableQueryEditability = forward("analyzeEditableQueryEditability");
+export const prepareDataGridSave = forward("prepareDataGridSave");
+export const buildDataGridCopyUpdateStatements = forward("buildDataGridCopyUpdateStatements");
+export const buildDataGridCopyInsertStatement = forward("buildDataGridCopyInsertStatement");
+export const buildDataGridContextFilterCondition = forward("buildDataGridContextFilterCondition");
+export const buildDataGridColumnValueFilterCondition = forward("buildDataGridColumnValueFilterCondition");
+export const buildDataGridCountSql = forward("buildDataGridCountSql");
+export const buildHiveTablePropertiesSql = forward("buildHiveTablePropertiesSql");
+export const buildExportInsertStatements = forward("buildExportInsertStatements");
+export const buildExportSqlInsert = forward("buildExportSqlInsert");
+export const buildDatabaseSqlExport = forward("buildDatabaseSqlExport");
+export const prepareDataCompare = forward("prepareDataCompare");
+export const prepareDataCompareFromTables = forward("prepareDataCompareFromTables");
 
 // AI
 export const aiComplete = forward("aiComplete");
@@ -95,6 +137,10 @@ export const aiTestConnection = forward("aiTestConnection");
 export const aiListModels = forward("aiListModels");
 export const saveAiConfig = forward("saveAiConfig");
 export const loadAiConfig = forward("loadAiConfig");
+export const loadDesktopSettings = forward("loadDesktopSettings");
+export const saveDesktopSettings = forward("saveDesktopSettings");
+export const loadPinnedTreeNodeIds = forward("loadPinnedTreeNodeIds");
+export const savePinnedTreeNodeIds = forward("savePinnedTreeNodeIds");
 export const saveAiConversation = forward("saveAiConversation");
 export const loadAiConversations = forward("loadAiConversations");
 export const deleteAiConversation = forward("deleteAiConversation");
@@ -103,6 +149,9 @@ export const deleteAiConversation = forward("deleteAiConversation");
 export const saveAppSettings = forward("saveAppSettings");
 export const loadAppSettings = forward("loadAppSettings");
 export const loadMcpHttpStatus = forward("loadMcpHttpStatus");
+
+// System
+export const listSystemFonts = forward("listSystemFonts");
 
 // SQL File Execution
 export const previewSqlFile = forward("previewSqlFile");
@@ -125,6 +174,10 @@ export const cancelTableImport = forward("cancelTableImport");
 // Database Export
 export const exportDatabaseSql = forward("exportDatabaseSql");
 export const cancelDatabaseExport = forward("cancelDatabaseExport");
+export const exportQueryResultCsv = forward("exportQueryResultCsv");
+export const exportQueryResultXlsx = forward("exportQueryResultXlsx");
+export const exportQueryResultJson = forward("exportQueryResultJson");
+export const exportQueryResultMarkdown = forward("exportQueryResultMarkdown");
 
 // Redis
 export const redisListDatabases = forward("redisListDatabases");
@@ -182,6 +235,8 @@ export type {
   AiChatMessage,
   AiConversation,
   AgentDriverInfo,
+  DriverStoreUsage,
+  DriverStoreUsageItem,
   JavaRuntimeMode,
   JavaRuntimeConfig,
   DriverInstallProgress,

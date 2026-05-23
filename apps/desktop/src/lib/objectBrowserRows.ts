@@ -7,7 +7,12 @@ export type ObjectBrowserRow = {
   schema?: string;
   type: "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
   comment?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
+
+export type ObjectBrowserSortKey = "name" | "type" | "created_at" | "updated_at" | "comment";
+export type ObjectBrowserSortDirection = "asc" | "desc";
 
 export function normalizeObjectBrowserType(type: string): ObjectBrowserRow["type"] {
   const value = type.toUpperCase();
@@ -40,6 +45,8 @@ export function buildObjectBrowserRows(options: {
         schema,
         type,
         comment: object.comment,
+        created_at: object.created_at,
+        updated_at: object.updated_at,
       },
     ];
   });
@@ -51,4 +58,49 @@ export function filterObjectBrowserRows(rows: ObjectBrowserRow[], query: string)
   return rows.filter((row) =>
     [row.name, row.type, row.comment].filter(Boolean).some((value) => String(value).toLowerCase().includes(q)),
   );
+}
+
+export function sortObjectBrowserRows(
+  rows: ObjectBrowserRow[],
+  key: ObjectBrowserSortKey,
+  direction: ObjectBrowserSortDirection,
+): ObjectBrowserRow[] {
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...rows].sort((left, right) => {
+    const compared = compareObjectBrowserValue(left[key], right[key], key, direction);
+    if (compared !== 0) return compared * multiplier;
+    return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
+  });
+}
+
+export function initialObjectBrowserSortDirection(key: ObjectBrowserSortKey): ObjectBrowserSortDirection {
+  return key === "created_at" || key === "updated_at" ? "desc" : "asc";
+}
+
+export function formatObjectBrowserTimestamp(value: string | null | undefined): string {
+  const text = value?.trim();
+  if (!text) return "";
+  return text
+    .replace("T", " ")
+    .replace(/\.\d+(?=$|[+-]\d{2}(?::?\d{2})?$)/, "")
+    .replace(/(?:Z|[+-]\d{2}(?::?\d{2})?)$/, "");
+}
+
+function compareObjectBrowserValue(
+  left: string | null | undefined,
+  right: string | null | undefined,
+  key: ObjectBrowserSortKey,
+  direction: ObjectBrowserSortDirection,
+): number {
+  const leftText = normalizeSortValue(left);
+  const rightText = normalizeSortValue(right);
+  if (!leftText && !rightText) return 0;
+  if (!leftText) return direction === "asc" ? 1 : -1;
+  if (!rightText) return direction === "asc" ? -1 : 1;
+  if (key === "created_at" || key === "updated_at") return leftText.localeCompare(rightText);
+  return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function normalizeSortValue(value: string | null | undefined): string {
+  return value?.trim() ?? "";
 }

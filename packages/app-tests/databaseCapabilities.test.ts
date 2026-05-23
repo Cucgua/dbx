@@ -24,6 +24,11 @@ test("treats Trino catalogs as schema tree roots", () => {
   assert.equal(TREE_SCHEMA_TYPES.has("trino"), true);
 });
 
+test("treats DB2 databases as schema tree roots", () => {
+  assert.equal(TREE_SCHEMA_TYPES.has("db2"), true);
+  assert.equal(usesTreeSchemaMode("db2"), true);
+});
+
 test("treats TDengine databases as schema tree roots and agent driver databases", () => {
   assert.equal(TREE_SCHEMA_TYPES.has("tdengine"), true);
   assert.equal(SCHEMA_AWARE_TYPES.has("tdengine"), true);

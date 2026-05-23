@@ -8,6 +8,11 @@ export interface MongoFindCommand {
   sort?: string;
 }
 
+export interface MongoCountDocumentsCommand {
+  collection: string;
+  filter: string;
+}
+
 const DEFAULT_LIMIT = 100;
 
 export function parseMongoFindCommand(input: string): MongoFindCommand | null {
@@ -47,6 +52,26 @@ export function parseMongoFindCommand(input: string): MongoFindCommand | null {
   };
 }
 
+export function parseMongoCountDocumentsCommand(input: string): MongoCountDocumentsCommand | null {
+  const source = input.trim().replace(/;$/, "").trim();
+  const target = parseCollectionMethodTarget(source, "countDocuments");
+  if (!target) return null;
+
+  const openIndex = source.indexOf("(", target.methodCallIndex);
+  const closeIndex = findMatchingParen(source, openIndex);
+  if (closeIndex < 0 || source.slice(closeIndex + 1).trim()) return null;
+
+  const args = splitTopLevel(source.slice(openIndex + 1, closeIndex));
+  if (args.length > 1 && args.slice(1).some((arg) => arg.trim())) return null;
+  const filter = normalizeJsonArgument(args[0] || "{}");
+  if (!filter) return null;
+
+  return {
+    collection: target.collection,
+    filter,
+  };
+}
+
 export function mongoDocumentsToQueryResult(documents: unknown[], executionTimeMs: number, total: number): QueryResult {
   const columns: string[] = [];
 
@@ -74,17 +99,44 @@ export function mongoDocumentsToQueryResult(documents: unknown[], executionTimeM
   };
 }
 
+export function mongoCountToQueryResult(total: number, executionTimeMs: number): QueryResult {
+  return {
+    columns: ["count"],
+    rows: [[total]],
+    affected_rows: total,
+    execution_time_ms: Math.max(0, Math.round(executionTimeMs)),
+  };
+}
+
 function parseFindTarget(source: string): { collection: string; findCallIndex: number } | null {
-  const direct = /^db\.([A-Za-z_$][\w$]*)\.find\s*\(/.exec(source);
+  const direct = parseCollectionMethodTarget(source, "find");
   if (direct) {
-    return { collection: direct[1], findCallIndex: source.indexOf(".find", direct[0].length - ".find(".length) };
+    return { collection: direct.collection, findCallIndex: direct.methodCallIndex };
   }
 
-  const getCollection = /^db\.getCollection\s*\(\s*(["'])(.*?)\1\s*\)\.find\s*\(/.exec(source);
+  return null;
+}
+
+function parseCollectionMethodTarget(
+  source: string,
+  method: string,
+): { collection: string; methodCallIndex: number } | null {
+  const escapedMethod = escapeRegExp(method);
+  const direct = new RegExp(`^db\\.([A-Za-z_$][\\w$]*)\\.${escapedMethod}\\s*\\(`).exec(source);
+  if (direct) {
+    return {
+      collection: direct[1],
+      methodCallIndex: source.indexOf(`.${method}`, direct[0].length - `.${method}(`.length),
+    };
+  }
+
+  const getCollection = new RegExp(
+    `^db\\.getCollection\\s*\\(\\s*(["'])(.*?)\\1\\s*\\)\\.${escapedMethod}\\s*\\(`,
+  ).exec(source);
   if (getCollection) {
     return {
       collection: getCollection[2],
-      findCallIndex: source.indexOf(".find", getCollection[0].length - ".find(".length),
+      methodCallIndex: source.indexOf(`.${method}`, getCollection[0].length - `.${method}(`.length),
     };
   }
 
@@ -184,6 +236,10 @@ function findMatchingParen(source: string, openIndex: number): number {
   }
 
   return -1;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

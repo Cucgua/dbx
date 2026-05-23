@@ -1,6 +1,5 @@
 import type { ColumnInfo, DatabaseType } from "../types/database.ts";
-import { qualifiedTableName, quoteTableIdentifier } from "./tableSelectSql.ts";
-import { usesFetchFirst } from "@/lib/databaseCapabilities";
+import * as api from "./api.ts";
 
 export interface DatabaseSearchSqlOptions {
   databaseType?: DatabaseType;
@@ -50,101 +49,14 @@ function cleanTerm(term: string): string {
   return term.trim();
 }
 
-function clampLimit(limit?: number): number {
-  if (!Number.isFinite(limit)) return 20;
-  return Math.min(100, Math.max(1, Math.trunc(limit ?? 20)));
-}
-
 function parseNumericTerm(term: string): string | null {
   const trimmed = cleanTerm(term);
   if (!/^[+-]?(?:\d+|\d+\.\d+|\.\d+)$/.test(trimmed)) return null;
   return trimmed;
 }
 
-function sqlStringLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-function likePattern(term: string): string {
-  return `%${cleanTerm(term)
-    .toLowerCase()
-    .replace(/[~%_]/g, (match) => `~${match}`)}%`;
-}
-
-function textCastExpression(databaseType: DatabaseType | undefined, identifier: string): string {
-  if (databaseType === "mysql") return `LOWER(CAST(${identifier} AS CHAR))`;
-  if (databaseType === "sqlserver") return `LOWER(CAST(${identifier} AS NVARCHAR(MAX)))`;
-  if (databaseType === "oracle") return `LOWER(CAST(${identifier} AS VARCHAR2(4000)))`;
-  if (databaseType === "clickhouse") return `lower(toString(${identifier}))`;
-  return `LOWER(CAST(${identifier} AS TEXT))`;
-}
-
-function sqlValueLiteral(
-  databaseType: DatabaseType | undefined,
-  column: ColumnInfo | undefined,
-  value: unknown,
-): string {
-  if (value === null || value === undefined) return "NULL";
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  const stringValue = String(value);
-  if (column && isNumericSearchColumn(column) && parseNumericTerm(stringValue)) {
-    return stringValue.trim();
-  }
-  if (databaseType === "sqlserver") return `N${sqlStringLiteral(stringValue)}`;
-  return sqlStringLiteral(stringValue);
-}
-
-export function buildDatabaseSearchSql(options: DatabaseSearchSqlOptions): DatabaseSearchSql | null {
-  const term = cleanTerm(options.term);
-  if (!term) return null;
-
-  const textColumns = options.columns.filter(isTextSearchColumn);
-  const numericTerm = parseNumericTerm(term);
-  const numericColumns = numericTerm ? options.columns.filter(isNumericSearchColumn) : [];
-  const conditions: string[] = [];
-
-  for (const column of textColumns) {
-    const identifier = quoteTableIdentifier(options.databaseType, column.name);
-    conditions.push(
-      `${textCastExpression(options.databaseType, identifier)} LIKE ${sqlStringLiteral(likePattern(term))} ESCAPE '~'`,
-    );
-  }
-
-  for (const column of numericColumns) {
-    const identifier = quoteTableIdentifier(options.databaseType, column.name);
-    conditions.push(`${identifier} = ${numericTerm}`);
-  }
-
-  if (!conditions.length) return null;
-
-  const table = qualifiedTableName({
-    databaseType: options.databaseType,
-    schema: options.schema,
-    tableName: options.tableName,
-  });
-  const where = conditions.join(" OR ");
-  const limit = clampLimit(options.limit);
-  const searchableColumns = [...textColumns, ...numericColumns].map((column) => column.name);
-
-  if (options.databaseType === "sqlserver") {
-    return {
-      sql: `SELECT TOP ${limit} * FROM ${table} WHERE (${where})`,
-      searchableColumns,
-    };
-  }
-
-  if (usesFetchFirst(options.databaseType)) {
-    return {
-      sql: `SELECT * FROM ${table} WHERE (${where}) FETCH FIRST ${limit} ROWS ONLY`,
-      searchableColumns,
-    };
-  }
-
-  return {
-    sql: `SELECT * FROM ${table} WHERE (${where}) LIMIT ${limit};`,
-    searchableColumns,
-  };
+export async function buildDatabaseSearchSql(options: DatabaseSearchSqlOptions): Promise<DatabaseSearchSql | null> {
+  return api.buildDatabaseSearchSql(options);
 }
 
 function columnByName(columns: ColumnInfo[], name: string): ColumnInfo | undefined {
@@ -180,28 +92,6 @@ export function findMatchedSearchColumns(
   return matches;
 }
 
-export function buildSearchResultWhere(options: SearchResultWhereOptions): string {
-  const valueByColumn = new Map<string, unknown>();
-  options.resultColumns.forEach((column, index) => {
-    valueByColumn.set(column.toLowerCase(), options.row[index]);
-  });
-
-  const primaryColumns = options.columns.filter(
-    (column) => column.is_primary_key && valueByColumn.get(column.name.toLowerCase()) !== undefined,
-  );
-  const fallbackColumns = options.columns.filter(
-    (column) =>
-      (options.matchedColumns ?? []).some((name) => name.toLowerCase() === column.name.toLowerCase()) &&
-      valueByColumn.get(column.name.toLowerCase()) !== undefined,
-  );
-  const selectedColumns = (primaryColumns.length ? primaryColumns : fallbackColumns).slice(0, 3);
-
-  return selectedColumns
-    .map((column) => {
-      const identifier = quoteTableIdentifier(options.databaseType, column.name);
-      const value = valueByColumn.get(column.name.toLowerCase());
-      if (value === null || value === undefined) return `${identifier} IS NULL`;
-      return `${identifier} = ${sqlValueLiteral(options.databaseType, column, value)}`;
-    })
-    .join(" AND ");
+export async function buildSearchResultWhere(options: SearchResultWhereOptions): Promise<string> {
+  return api.buildSearchResultWhere(options);
 }

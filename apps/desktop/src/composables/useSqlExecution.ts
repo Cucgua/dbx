@@ -35,6 +35,7 @@ export function useSqlExecution(deps: {
   activeTab: ComputedRef<QueryTab | undefined>;
   activeConnection: ComputedRef<ConnectionConfig | undefined>;
   executableSql: ComputedRef<string>;
+  resolveExecutableSql?: () => Promise<string>;
   activeOutputView: Ref<"result" | "explain" | "chart">;
 }) {
   const { t } = useI18n();
@@ -47,9 +48,13 @@ export function useSqlExecution(deps: {
   const pendingDangerSql = ref("");
   const showDangerDialog = ref(false);
 
-  function tryExecute(sqlOverride?: string) {
+  async function resolvedExecutableSql(): Promise<string> {
+    return deps.resolveExecutableSql ? await deps.resolveExecutableSql() : deps.executableSql.value;
+  }
+
+  async function tryExecute(sqlOverride?: string) {
     const tab = deps.activeTab.value;
-    const sql = sqlOverride ?? deps.executableSql.value;
+    const sql = sqlOverride ?? (await resolvedExecutableSql());
     if (!tab || !sql.trim()) return;
     if (isDangerousSql(sql)) {
       dangerSql.value = sql;
@@ -60,7 +65,8 @@ export function useSqlExecution(deps: {
     }
   }
 
-  async function doExecute(sql = deps.executableSql.value) {
+  async function doExecute(sql?: string) {
+    sql ??= await resolvedExecutableSql();
     const tab = deps.activeTab.value;
     if (!tab || !sql.trim()) return;
     deps.activeOutputView.value = "result";
@@ -106,7 +112,7 @@ export function useSqlExecution(deps: {
 
   async function tryExplain(sqlOverride?: string) {
     const tab = deps.activeTab.value;
-    const sql = sqlOverride ?? deps.executableSql.value;
+    const sql = sqlOverride ?? (await resolvedExecutableSql());
     if (!tab || !sql.trim()) {
       toast(t("explain.emptySql"));
       return;
@@ -123,10 +129,10 @@ export function useSqlExecution(deps: {
     if (current?.explainError) toast(current.explainError, 5000);
   }
 
-  function onDangerConfirm() {
-    const sql = pendingDangerSql.value || deps.executableSql.value;
+  async function onDangerConfirm() {
+    const sql = pendingDangerSql.value || (await resolvedExecutableSql());
     pendingDangerSql.value = "";
-    doExecute(sql);
+    await doExecute(sql);
   }
 
   return {

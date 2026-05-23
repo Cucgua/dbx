@@ -18,6 +18,8 @@ pub struct ObjectInfo {
     pub object_type: String,
     pub schema: Option<String>,
     pub comment: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

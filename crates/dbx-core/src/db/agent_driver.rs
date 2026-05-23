@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::path::Path;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -629,7 +630,7 @@ pub fn mongo_document_id_params(database: &str, collection: &str, id: &str) -> V
 }
 
 fn agent_java_args(jar_path: &str) -> Vec<String> {
-    [
+    let mut args = vec![
         "-Dfile.encoding=UTF-8",
         "-Dsun.stdout.encoding=UTF-8",
         "-Dsun.stderr.encoding=UTF-8",
@@ -639,14 +640,22 @@ fn agent_java_args(jar_path: &str) -> Vec<String> {
         "-DsocksProxyHost=",
         "-Doracle.net.disableOob=true",
         "-Doracle.jdbc.javaNetNio=false",
-        "-XX:TieredStopAtLevel=1",
-        "-XX:+UseSerialGC",
-        "-jar",
-        jar_path,
     ]
     .into_iter()
     .map(str::to_string)
-    .collect()
+    .collect::<Vec<_>>();
+
+    if !agent_jar_path_matches_key(jar_path, "oracle-10g") {
+        args.push("--add-opens=java.sql/java.sql=ALL-UNNAMED".to_string());
+    }
+
+    args.extend(["-XX:TieredStopAtLevel=1", "-XX:+UseSerialGC", "-jar", jar_path].into_iter().map(str::to_string));
+
+    args
+}
+
+fn agent_jar_path_matches_key(jar_path: &str, key: &str) -> bool {
+    Path::new(jar_path).components().any(|component| component.as_os_str().to_string_lossy() == key)
 }
 
 fn remove_agent_proxy_env(command: &mut Command) {
@@ -766,6 +775,20 @@ mod tests {
 
         assert!(args.iter().any(|arg| arg == "-Doracle.net.disableOob=true"));
         assert!(args.iter().any(|arg| arg == "-Doracle.jdbc.javaNetNio=false"));
+    }
+
+    #[test]
+    fn agent_java_args_open_java_sql_for_legacy_timestamp_serializers() {
+        let args = agent_java_args("/tmp/dbx-agent-dameng.jar");
+
+        assert!(args.iter().any(|arg| arg == "--add-opens=java.sql/java.sql=ALL-UNNAMED"));
+    }
+
+    #[test]
+    fn agent_java_args_skip_module_flags_for_oracle_10g_profile() {
+        let args = agent_java_args("/tmp/dbx/drivers/oracle-10g/agent.jar");
+
+        assert!(!args.iter().any(|arg| arg == "--add-opens=java.sql/java.sql=ALL-UNNAMED"));
     }
 
     #[test]

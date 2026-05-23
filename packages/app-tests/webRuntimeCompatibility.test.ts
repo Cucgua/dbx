@@ -20,7 +20,7 @@ test("web runtime handles driver store open events", () => {
 });
 
 test("web runtime can show driver install hints", () => {
-  assert.match(connectionDialogSource, /showAgentDriverInstallHint\(form\.value\.db_type, agentDrivers\.value\)/);
+  assert.match(connectionDialogSource, /showAgentDriverInstallHint\(form\.value\.db_type, agentDrivers\.value, selectedType\.value\)/);
   assert.doesNotMatch(connectionDialogSource, /isDesktop &&\s+showAgentDriverInstallHint/);
 });
 

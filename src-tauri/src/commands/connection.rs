@@ -3,8 +3,9 @@ use tauri::State;
 
 pub use dbx_core::connection::{
     agent_connect_params, connection_url_for_endpoint, expand_tilde, metadata_connection_config,
-    mongo_legacy_error_with_auth_hint, probe_connection_endpoint, redacted_connection_url_for_endpoint, AppState,
-    MysqlMode, OraclePool, PoolKind,
+    mongo_legacy_error_with_auth_hint, oracle_alternate_connect_config, probe_connection_endpoint,
+    redacted_connection_url_for_endpoint, should_retry_oracle_with_10g_driver, AppState, MysqlMode, OraclePool,
+    PoolKind,
 };
 use dbx_core::database_capabilities;
 use dbx_core::db;
@@ -15,6 +16,102 @@ fn mongo_legacy_connect_params(config: &ConnectionConfig, host: &str, port: u16)
     serde_json::json!({
         "connection": agent_connect_params(config, host, port, config.effective_database().unwrap_or(""))
     })
+}
+
+async fn test_agent_connection(
+    state: &Arc<AppState>,
+    config: &ConnectionConfig,
+    host: &str,
+    port: u16,
+) -> Result<String, String> {
+    let connect_params = agent_connect_params(config, host, port, config.database.as_deref().unwrap_or(""));
+    let result = state
+        .agent_manager
+        .call_daemon_method::<serde_json::Value>(
+            &config.db_type,
+            config.driver_profile.as_deref(),
+            AgentMethod::TestConnection,
+            connect_params.clone(),
+        )
+        .await;
+
+    if let Err(err) = result {
+        if let Some(alternate_config) = oracle_alternate_connect_config(config, &err) {
+            state
+                .agent_manager
+                .call_daemon_method::<serde_json::Value>(
+                    &alternate_config.db_type,
+                    alternate_config.driver_profile.as_deref(),
+                    AgentMethod::TestConnection,
+                    agent_connect_params(
+                        &alternate_config,
+                        host,
+                        port,
+                        alternate_config.database.as_deref().unwrap_or(""),
+                    ),
+                )
+                .await
+                .map_err(|alternate_err| {
+                    format!("{err}\n\nFallback with alternate Oracle descriptor failed: {alternate_err}")
+                })?;
+        } else if should_retry_oracle_with_10g_driver(config, &err) {
+            state
+                .agent_manager
+                .call_daemon_method::<serde_json::Value>(
+                    &config.db_type,
+                    Some("oracle-10g"),
+                    AgentMethod::TestConnection,
+                    connect_params,
+                )
+                .await
+                .map_err(|fallback_err| format!("{err}\n\nFallback with oracle-10g driver failed: {fallback_err}"))?;
+        } else {
+            return Err(err);
+        }
+    }
+
+    Ok("Connection successful".to_string())
+}
+
+async fn connect_agent_pool(
+    state: &Arc<AppState>,
+    config: &ConnectionConfig,
+    host: &str,
+    port: u16,
+) -> Result<PoolKind, String> {
+    let connect_params = agent_connect_params(config, host, port, config.effective_database().unwrap_or(""));
+    let mut client = state.agent_manager.spawn(&config.db_type, config.driver_profile.as_deref()).await?;
+    let connect_result = client.call_method::<serde_json::Value>(AgentMethod::Connect, connect_params.clone()).await;
+
+    if let Err(err) = connect_result {
+        if let Some(alternate_config) = oracle_alternate_connect_config(config, &err) {
+            client
+                .call_method::<serde_json::Value>(
+                    AgentMethod::Connect,
+                    agent_connect_params(
+                        &alternate_config,
+                        host,
+                        port,
+                        alternate_config.effective_database().unwrap_or(""),
+                    ),
+                )
+                .await
+                .map_err(|alternate_err| {
+                    format!("{err}\n\nFallback with alternate Oracle descriptor failed: {alternate_err}")
+                })?;
+        } else if should_retry_oracle_with_10g_driver(config, &err) {
+            let mut fallback_client = state.agent_manager.spawn(&config.db_type, Some("oracle-10g")).await?;
+            fallback_client
+                .call_method::<serde_json::Value>(AgentMethod::Connect, connect_params)
+                .await
+                .map_err(|fallback_err| format!("{err}\n\nFallback with oracle-10g driver failed: {fallback_err}"))?;
+            client = fallback_client;
+        } else {
+            return Err(err);
+        }
+    }
+
+    Ok(PoolKind::Agent(Arc::new(tokio::sync::Mutex::new(client))))
 }
 
 #[cfg(test)]
@@ -214,16 +311,7 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                 db::elasticsearch_driver::test_connection(&client).await.map(|_| "Connection successful".to_string())
             }
             db_type if database_capabilities::is_agent_type(&db_type) => {
-                state
-                    .agent_manager
-                    .call_daemon_method::<serde_json::Value>(
-                        &config.db_type,
-                        config.driver_profile.as_deref(),
-                        AgentMethod::TestConnection,
-                        agent_connect_params(&config, &host, port, config.database.as_deref().unwrap_or("")),
-                    )
-                    .await?;
-                Ok("Connection successful".to_string())
+                test_agent_connection(state.inner(), &config, &host, port).await
             }
             DatabaseType::Jdbc => {
                 let mut jdbc_config = config.clone();
@@ -343,14 +431,7 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
             PoolKind::Elasticsearch(client)
         }
         db_type if database_capabilities::is_agent_type(&db_type) => {
-            let mut client = state.agent_manager.spawn(&db_config.db_type, db_config.driver_profile.as_deref()).await?;
-            client
-                .call_method::<serde_json::Value>(
-                    AgentMethod::Connect,
-                    agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or("")),
-                )
-                .await?;
-            PoolKind::Agent(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
+            connect_agent_pool(state.inner(), &db_config, &host, port).await?
         }
         DatabaseType::Jdbc => state.external_driver_pool("jdbc", &db_config).await?,
         db_type => return Err(format!("Unsupported database type: {db_type:?}")),

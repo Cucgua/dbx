@@ -75,7 +75,7 @@
       "runtimeMode": "agent",
       "mcpMode": "bridge",
       "agentKey": "mongodb",
-      "singleConnectionPool": false,
+      "singleConnectionPool": true,
       "metadataConnectionScoped": false,
       "skipTcpProbe": true,
       "defaultPort": 27017

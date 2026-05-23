@@ -239,9 +239,8 @@ impl PluginDriverSession {
             method: method.to_string(),
             params,
         };
-        let line = serde_json::to_string(&request).map_err(|err| err.to_string())?;
-        process.stdin.write_all(line.as_bytes()).await.map_err(|err| err.to_string())?;
-        process.stdin.write_all(b"\n").await.map_err(|err| err.to_string())?;
+        let line = encode_plugin_request_line(&request)?;
+        process.stdin.write_all(&line).await.map_err(|err| err.to_string())?;
         process.stdin.flush().await.map_err(|err| err.to_string())?;
 
         let response_line = match read_plugin_line(&mut process.stdout, "response").await {
@@ -284,11 +283,10 @@ where
 
     let request =
         PluginRequest { jsonrpc: "2.0", id: 1, driver: driver_id.to_string(), method: method.to_string(), params };
-    let line = serde_json::to_string(&request).map_err(|err| err.to_string())?;
+    let line = encode_plugin_request_line(&request)?;
 
     let mut stdin = child.stdin.take().ok_or("Plugin stdin unavailable")?;
-    stdin.write_all(line.as_bytes()).await.map_err(|err| err.to_string())?;
-    stdin.write_all(b"\n").await.map_err(|err| err.to_string())?;
+    stdin.write_all(&line).await.map_err(|err| err.to_string())?;
     drop(stdin);
 
     let stdout = child.stdout.take().ok_or("Plugin stdout unavailable")?;
@@ -330,6 +328,13 @@ where
     }
 
     decode_plugin_response(plugin, request.id, &response_line)
+}
+
+fn encode_plugin_request_line(request: &PluginRequest) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    serde_json::to_writer(&mut bytes, request).map_err(|err| err.to_string())?;
+    bytes.push(b'\n');
+    Ok(bytes)
 }
 
 fn spawn_plugin_child(plugin: &InstalledPlugin) -> Result<Child, String> {

@@ -3,6 +3,7 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 
 const source = readFileSync("apps/desktop/src/components/editor/EditorSettingsDialog.vue", "utf8");
+const shortcutSource = readFileSync("apps/desktop/src/lib/shortcutRegistry.ts", "utf8");
 
 test("settings dialog uses a side category navigation", () => {
   assert.match(source, /settingsCategoryNav/);
@@ -22,14 +23,27 @@ test("Redis scan size lives in its own settings category", () => {
 });
 
 test("settings action footer stays at the bottom of the content pane", () => {
-  assert.match(source, /class="[^"]*min-h-full[^"]*flex-col[^"]*"/);
-  assert.match(source, /<DialogFooter class="[^"]*mt-auto[^"]*"/);
+  assert.match(source, /class="[^"]*overflow-hidden[^"]*flex-col[^"]*"/);
+  assert.match(source, /class="[^"]*overflow-y-auto[^"]*"/);
+  assert.match(source, /<DialogFooter[\s\S]*class="[^"]*shrink-0[^"]*"/);
+  assert.match(source, /<DialogFooter[\s\S]*class="[^"]*bg-transparent[^"]*"/);
+  assert.doesNotMatch(source, /<DialogFooter[\s\S]*sticky/);
+  assert.doesNotMatch(source, /<DialogFooter[\s\S]*bg-background/);
 });
 
 test("settings dialog has a shortcuts category", () => {
   assert.match(source, /value: "shortcuts"/);
   assert.match(source, /activeSettingsTab === ['"]shortcuts['"]/);
   assert.match(source, /SHORTCUT_DEFINITIONS/);
+  assert.match(shortcutSource, /settings\.shortcutToggleTranspose/);
+  assert.match(shortcutSource, /settings\.shortcutCopyCurrentRow/);
+  assert.match(shortcutSource, /settings\.shortcutDeleteCurrentRow/);
+});
+
+test("settings editor theme preview can follow app appearance", () => {
+  assert.match(source, /useTheme/);
+  assert.match(source, /appAppearance: isDark\.value \? "dark" : "light"/);
+  assert.match(source, /loadEditorTheme\(ss\.theme, ss\.appAppearance\)/);
 });
 
 test("shortcut settings capture custom keydown input instead of fixed select options", () => {
@@ -38,10 +52,26 @@ test("shortcut settings capture custom keydown input instead of fixed select opt
   assert.doesNotMatch(source, /definition\.options/);
 });
 
+test("shortcut conflicts only block applying changed shortcut settings", () => {
+  assert.match(source, /const shortcutsChanged = computed/);
+  assert.match(source, /const hasBlockingShortcutConflicts = computed/);
+  assert.match(source, /shortcutsChanged\.value && hasShortcutConflicts\.value/);
+  assert.match(source, /if \(hasBlockingShortcutConflicts\.value\) return/);
+  assert.match(source, /:disabled="!hasChanges\(\) \|\| hasBlockingShortcutConflicts"/);
+});
+
 test("settings dialog exposes sidebar activation in navigation settings", () => {
   assert.match(source, /value: "navigation"/);
   assert.match(source, /activeSettingsTab === ['"]navigation['"]/);
   assert.match(source, /settings\.sidebarActivation/);
+  assert.match(source, /settings\.autoSelectActiveSidebarNode/);
+  assert.match(source, /editAutoSelectActiveSidebarNode/);
+  assert.match(source, /<Switch id="auto-select-active-sidebar-node" v-model="editAutoSelectActiveSidebarNode"/);
+  assert.match(source, /<Switch id="editor-word-wrap" v-model="editWordWrap"/);
+  assert.doesNotMatch(source, /v-model:checked/);
+  assert.match(source, /settings\.sidebarHiddenTablePrefixes/);
+  assert.match(source, /editSidebarHiddenTablePrefixes/);
+  assert.match(source, /focus-visible:ring-inset/);
 });
 
 test("AI settings can browse provider model names while keeping manual input", () => {

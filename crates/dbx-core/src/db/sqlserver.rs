@@ -1,7 +1,7 @@
 use futures::TryStreamExt;
 use rust_decimal::Decimal;
 use std::time::Instant;
-use tiberius::{AuthMethod, Client, ColumnData, Config, FromSql, QueryItem, QueryStream};
+use tiberius::{AuthMethod, Client, ColumnData, Config, FromSql, QueryItem, QueryStream, SqlBrowser};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
@@ -12,6 +12,22 @@ use crate::types::{ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, QueryRes
 
 pub type SqlServerClient = Client<Compat<TcpStream>>;
 const SIMPLE_QUERY_MODULE_KEYWORDS: &[&str] = &["FUNCTION", "PROC", "PROCEDURE", "TRIGGER", "VIEW"];
+
+#[derive(Debug, PartialEq, Eq)]
+struct SqlServerEndpoint<'a> {
+    host: &'a str,
+    instance_name: Option<&'a str>,
+}
+
+fn sqlserver_endpoint(host: &str) -> SqlServerEndpoint<'_> {
+    if let Some((server, instance)) = host.split_once('\\') {
+        if !server.trim().is_empty() && !instance.trim().is_empty() {
+            return SqlServerEndpoint { host: server.trim(), instance_name: Some(instance.trim()) };
+        }
+    }
+
+    SqlServerEndpoint { host: host.trim(), instance_name: None }
+}
 
 fn query_result_row_limit(max_rows: Option<usize>) -> usize {
     max_rows.unwrap_or(MAX_ROWS).max(1)
@@ -39,8 +55,13 @@ async fn try_connect(
     use_encryption: bool,
 ) -> Result<SqlServerClient, String> {
     let mut config = Config::new();
-    config.host(host);
-    config.port(port);
+    let endpoint = sqlserver_endpoint(host);
+    config.host(endpoint.host);
+    if let Some(instance_name) = endpoint.instance_name {
+        config.instance_name(instance_name);
+    } else {
+        config.port(port);
+    }
     config.authentication(AuthMethod::sql_server(user, pass));
     if let Some(db) = database {
         config.database(db);
@@ -50,10 +71,17 @@ async fn try_connect(
         config.encryption(tiberius::EncryptionLevel::NotSupported);
     }
 
-    let tcp = tokio::time::timeout(connection_timeout(), TcpStream::connect(config.get_addr()))
-        .await
-        .map_err(|_| format!("SQL Server connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
-        .map_err(|e| format!("SQL Server connection failed: {e}"))?;
+    let tcp = if endpoint.instance_name.is_some() {
+        tokio::time::timeout(connection_timeout(), TcpStream::connect_named(&config))
+            .await
+            .map_err(|_| format!("SQL Server connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+            .map_err(|e| format!("SQL Server connection failed: {e}"))?
+    } else {
+        tokio::time::timeout(connection_timeout(), TcpStream::connect(config.get_addr()))
+            .await
+            .map_err(|_| format!("SQL Server connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+            .map_err(|e| format!("SQL Server connection failed: {e}"))?
+    };
     tokio::time::timeout(connection_timeout(), Client::connect(config, tcp.compat_write()))
         .await
         .map_err(|_| format!("SQL Server handshake timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
@@ -114,7 +142,7 @@ struct SqlServerResultSet {
 
 fn push_sqlserver_result_set(results: &mut Vec<QueryResult>, result: Option<SqlServerResultSet>, start: Instant) {
     if let Some(result) = result {
-        if result.rows.is_empty() {
+        if result.rows.is_empty() && result.columns.is_empty() {
             return;
         }
         results.push(QueryResult {
@@ -304,7 +332,24 @@ fn escape_like_literal(value: &str) -> String {
 }
 
 pub async fn list_objects(client: &mut SqlServerClient, schema: &str) -> Result<Vec<crate::types::ObjectInfo>, String> {
-    let sql = format!(
+    let sql = sqlserver_list_objects_sql(schema);
+    let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
+    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(|row| crate::types::ObjectInfo {
+            name: row.get::<&str, _>(0).unwrap_or("").to_string(),
+            object_type: row.get::<&str, _>(1).unwrap_or("TABLE").to_string(),
+            schema: Some(schema.to_string()),
+            comment: None,
+            created_at: row.get::<chrono::NaiveDateTime, _>(2).map(|value| value.to_string()),
+            updated_at: row.get::<chrono::NaiveDateTime, _>(3).map(|value| value.to_string()),
+        })
+        .collect())
+}
+
+fn sqlserver_list_objects_sql(schema: &str) -> String {
+    format!(
         "SELECT o.name, \
          CASE o.type \
            WHEN 'U' THEN 'TABLE' \
@@ -316,7 +361,9 @@ pub async fn list_objects(client: &mut SqlServerClient, schema: &str) -> Result<
            WHEN 'FS' THEN 'FUNCTION' \
            WHEN 'FT' THEN 'FUNCTION' \
            ELSE o.type_desc \
-         END AS object_type \
+         END AS object_type, \
+         o.create_date, \
+         o.modify_date \
          FROM sys.objects o \
          JOIN sys.schemas s ON s.schema_id = o.schema_id \
          WHERE s.name = '{}' \
@@ -329,18 +376,7 @@ pub async fn list_objects(client: &mut SqlServerClient, schema: &str) -> Result<
            ELSE 3 \
          END, o.name",
         schema.replace('\'', "''")
-    );
-    let stream = client.query(&*sql, &[]).await.map_err(|e| e.to_string())?;
-    let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
-    Ok(rows
-        .iter()
-        .map(|row| crate::types::ObjectInfo {
-            name: row.get::<&str, _>(0).unwrap_or("").to_string(),
-            object_type: row.get::<&str, _>(1).unwrap_or("TABLE").to_string(),
-            schema: Some(schema.to_string()),
-            comment: None,
-        })
-        .collect())
+    )
 }
 
 pub async fn get_columns(client: &mut SqlServerClient, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
@@ -686,9 +722,45 @@ fn first_sql_tokens(sql: &str, limit: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{requires_simple_query_batch, sqlserver_cell_to_json, sqlserver_columns_sql, sqlserver_indexes_sql};
+    use super::{
+        requires_simple_query_batch, sqlserver_cell_to_json, sqlserver_columns_sql, sqlserver_indexes_sql,
+        sqlserver_list_objects_sql, SqlServerResultSet,
+    };
     use chrono::NaiveDate;
+    use std::time::Instant;
     use tiberius::{ColumnData, IntoSql};
+
+    #[test]
+    fn sqlserver_endpoint_splits_named_instance_hosts() {
+        assert_eq!(
+            super::sqlserver_endpoint(r"192.168.1.10\SQL2022"),
+            super::SqlServerEndpoint { host: "192.168.1.10", instance_name: Some("SQL2022") }
+        );
+        assert_eq!(
+            super::sqlserver_endpoint(r" db.example.com\SQLEXPRESS "),
+            super::SqlServerEndpoint { host: "db.example.com", instance_name: Some("SQLEXPRESS") }
+        );
+    }
+
+    #[test]
+    fn sqlserver_endpoint_keeps_regular_hosts() {
+        assert_eq!(
+            super::sqlserver_endpoint("db.example.com"),
+            super::SqlServerEndpoint { host: "db.example.com", instance_name: None }
+        );
+        assert_eq!(
+            super::sqlserver_endpoint(r"db.example.com\"),
+            super::SqlServerEndpoint { host: r"db.example.com\", instance_name: None }
+        );
+    }
+
+    #[test]
+    fn sqlserver_connect_uses_named_instance_resolution() {
+        let source = include_str!("sqlserver.rs");
+        let try_connect = source.split("async fn try_connect").nth(1).unwrap();
+        let try_connect = try_connect.split("fn row_to_json").next().unwrap();
+        assert!(try_connect.contains("connect_named(&config)"));
+    }
 
     #[test]
     fn sqlserver_module_definitions_require_simple_query_batch() {
@@ -739,6 +811,14 @@ mod tests {
     }
 
     #[test]
+    fn sqlserver_list_objects_sql_includes_timestamps() {
+        let sql = sqlserver_list_objects_sql("dbo");
+
+        assert!(sql.contains("create_date"));
+        assert!(sql.contains("modify_date"));
+    }
+
+    #[test]
     fn sqlserver_tinyint_cells_are_json_numbers() {
         assert_eq!(sqlserver_cell_to_json(&ColumnData::U8(Some(7))), serde_json::json!(7));
     }
@@ -749,5 +829,35 @@ mod tests {
         let cell: ColumnData<'static> = datetime.into_sql();
 
         assert_eq!(sqlserver_cell_to_json(&cell), serde_json::json!("2026-05-13 09:08:07.123"));
+    }
+
+    #[test]
+    fn sqlserver_keeps_empty_result_sets_when_metadata_exists() {
+        let mut results = Vec::new();
+        super::push_sqlserver_result_set(
+            &mut results,
+            Some(SqlServerResultSet {
+                columns: vec!["id".to_string(), "name".to_string()],
+                rows: vec![],
+                truncated: false,
+            }),
+            Instant::now(),
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].columns, vec!["id".to_string(), "name".to_string()]);
+        assert!(results[0].rows.is_empty());
+    }
+
+    #[test]
+    fn sqlserver_drops_truly_empty_result_sets_without_metadata() {
+        let mut results = Vec::new();
+        super::push_sqlserver_result_set(
+            &mut results,
+            Some(SqlServerResultSet { columns: vec![], rows: vec![], truncated: false }),
+            Instant::now(),
+        );
+
+        assert!(results.is_empty());
     }
 }

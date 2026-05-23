@@ -1,6 +1,6 @@
 import type { DatabaseType } from "../types/database.ts";
-import { isSchemaAware, usesFetchFirst } from "./databaseCapabilities.ts";
-import { DBX_NEO4J_ELEMENT_ID_COLUMN, DBX_ROWID_COLUMN, DBX_TDENGINE_TBNAME_COLUMN } from "./tableEditing.ts";
+import { isSchemaAware } from "./databaseCapabilities.ts";
+import * as api from "./api.ts";
 
 export interface BuildTableSelectSqlOptions {
   databaseType?: DatabaseType;
@@ -29,17 +29,6 @@ function quoteCypherIdentifier(name: string): string {
   return `\`${name.replace(/`/g, "``")}\``;
 }
 
-function isOracleRowId(databaseType: DatabaseType | undefined, name: string): boolean {
-  return databaseType === "oracle" && name.toUpperCase() === DBX_ROWID_COLUMN;
-}
-
-function quoteOrderIdentifier(databaseType: DatabaseType | undefined, name: string, tableAlias?: string): string {
-  if (isOracleRowId(databaseType, name)) return tableAlias ? `${tableAlias}.ROWID` : "ROWID";
-  if (isTdengineTbname(databaseType, name)) return DBX_TDENGINE_TBNAME_COLUMN;
-  const quoted = quoteTableIdentifier(databaseType, name);
-  return tableAlias ? `${tableAlias}.${quoted}` : quoted;
-}
-
 export function qualifiedTableName(
   options: Pick<BuildTableSelectSqlOptions, "databaseType" | "schema" | "tableName">,
 ): string {
@@ -55,125 +44,6 @@ export function normalizeWhereInput(whereInput?: string): string {
   return withoutSemicolon.replace(/^where\b/i, "").trim();
 }
 
-export function buildTableSelectSql(options: BuildTableSelectSqlOptions): string {
-  const databaseType = options.databaseType;
-  const limit = options.limit ?? 100;
-  if (databaseType === "neo4j") return buildNeo4jTableSelectSql(options, limit);
-
-  const table = qualifiedTableName(options);
-  const predicate = normalizeWhereInput(options.whereInput);
-  const where = predicate ? ` WHERE (${predicate})` : "";
-  const rowIdAlias = options.includeRowId && databaseType === "oracle" ? "t" : undefined;
-  const defaultOrderAlias = databaseType === "jdbc" ? "dbx_t" : rowIdAlias;
-  const defaultOrderBy = options.primaryKeys?.length
-    ? options.primaryKeys.map((pk) => `${quoteOrderIdentifier(databaseType, pk, defaultOrderAlias)} ASC`).join(", ")
-    : options.fallbackOrderColumns?.length
-      ? options.fallbackOrderColumns.map((column) => `${quoteTableIdentifier(databaseType, column)} ASC`).join(", ")
-      : undefined;
-  const orderBy = options.orderBy ?? defaultOrderBy;
-  const order = orderBy ? ` ORDER BY ${orderBy}` : "";
-
-  const selectColumns =
-    options.includeRowId && databaseType === "oracle"
-      ? `ROWIDTOCHAR(t.ROWID) AS "${DBX_ROWID_COLUMN}", t.*`
-      : buildSelectColumns(databaseType, options.columns);
-  const tableAlias =
-    options.includeRowId && usesFetchFirst(databaseType)
-      ? `${table} t`
-      : databaseType === "jdbc" && defaultOrderBy
-        ? `${table} dbx_t`
-        : table;
-
-  if (usesFetchFirst(databaseType)) {
-    const offset = options.offset ? ` OFFSET ${options.offset} ROWS` : "";
-    return `SELECT ${selectColumns} FROM ${tableAlias}${where}${order}${offset} FETCH FIRST ${limit} ROWS ONLY`;
-  }
-
-  if (databaseType === "sqlserver") {
-    return buildSqlServerTableSelectSql({
-      table,
-      where,
-      orderBy: orderBy ?? "(SELECT NULL)",
-      columns: options.columns,
-      limit,
-      offset: options.offset ?? 0,
-    });
-  }
-
-  const offset = options.offset ? ` OFFSET ${options.offset}` : "";
-  return `SELECT ${selectColumns} FROM ${tableAlias}${where}${order} LIMIT ${limit}${offset};`;
-}
-
-function buildSelectColumns(databaseType: DatabaseType | undefined, columns?: string[]): string {
-  if (!columns?.length) return "*";
-  if (databaseType === "tdengine") {
-    const tdengineColumns = columns.some((column) => column.toLowerCase() === DBX_TDENGINE_TBNAME_COLUMN)
-      ? columns
-      : [DBX_TDENGINE_TBNAME_COLUMN, ...columns];
-    return tdengineColumns
-      .map((column) => {
-        if (isTdengineTbname(databaseType, column)) return DBX_TDENGINE_TBNAME_COLUMN;
-        const ident = quoteTableIdentifier(databaseType, column);
-        return `${ident} AS ${ident}`;
-      })
-      .join(", ");
-  }
-  if (databaseType !== "hive") return "*";
-  return columns
-    .map((column) => {
-      const ident = quoteTableIdentifier(databaseType, column);
-      return `${ident} AS ${ident}`;
-    })
-    .join(", ");
-}
-
-function buildSqlServerTableSelectSql(options: {
-  table: string;
-  where: string;
-  orderBy: string;
-  columns?: string[];
-  limit: number;
-  offset: number;
-}): string {
-  const columns = options.columns?.length
-    ? options.columns.map((column) => quoteTableIdentifier("sqlserver", column)).join(", ")
-    : "*";
-  const order = options.orderBy === "(SELECT NULL)" ? "" : ` ORDER BY ${options.orderBy}`;
-  if (options.offset <= 0) {
-    return `SELECT TOP (${options.limit}) ${columns} FROM ${options.table}${options.where}${order}`;
-  }
-
-  const pageAlias = quoteTableIdentifier("sqlserver", "dbx_page");
-  const rowNumberAlias = quoteTableIdentifier("sqlserver", "__dbx_row_num");
-  const end = options.offset + options.limit;
-  const rowNumberOrder = `ORDER BY ${options.orderBy}`;
-  return (
-    `WITH ${pageAlias} AS (` +
-    `SELECT ${columns}, ROW_NUMBER() OVER (${rowNumberOrder}) AS ${rowNumberAlias} FROM ${options.table}${options.where}` +
-    `) SELECT ${columns} FROM ${pageAlias}` +
-    ` WHERE ${rowNumberAlias} > ${options.offset} AND ${rowNumberAlias} <= ${end} ORDER BY ${rowNumberAlias}`
-  );
-}
-
-function isTdengineTbname(databaseType: DatabaseType | undefined, name: string): boolean {
-  return databaseType === "tdengine" && name.toLowerCase() === DBX_TDENGINE_TBNAME_COLUMN;
-}
-
-function buildNeo4jTableSelectSql(options: BuildTableSelectSqlOptions, limit: number): string {
-  const label = quoteCypherIdentifier(options.tableName);
-  const predicate = normalizeWhereInput(options.whereInput);
-  const where = predicate ? ` WHERE ${predicate}` : "";
-  const returnedColumns = options.columns?.length
-    ? options.columns
-        .map((column) => `n.${quoteCypherIdentifier(column)} AS ${quoteCypherIdentifier(column)}`)
-        .join(", ")
-    : "n";
-  const returns = `elementId(n) AS ${quoteCypherIdentifier(DBX_NEO4J_ELEMENT_ID_COLUMN)}, ${returnedColumns}`;
-  const defaultOrderBy = options.primaryKeys?.length
-    ? options.primaryKeys.map((pk) => `n.${quoteCypherIdentifier(pk)} ASC`).join(", ")
-    : undefined;
-  const orderBy = options.orderBy ?? defaultOrderBy;
-  const order = orderBy ? ` ORDER BY ${orderBy}` : "";
-  const skip = options.offset ? ` SKIP ${options.offset}` : "";
-  return `MATCH (n:${label})${where} RETURN ${returns}${order}${skip} LIMIT ${limit};`;
+export async function buildTableSelectSql(options: BuildTableSelectSqlOptions): Promise<string> {
+  return api.buildTableSelectSql(options);
 }

@@ -24,6 +24,8 @@ test("fetchTableDataForExport pages past the 10000 row export boundary", async (
   const exported = await fetchTableDataForExport({
     databaseType: "mysql",
     tableName: "users",
+    buildPageSql: ({ limit, offset }) =>
+      offset ? `SELECT * FROM \`users\` LIMIT ${limit} OFFSET ${offset};` : `SELECT * FROM \`users\` LIMIT ${limit};`,
     executePage: async (sql) => {
       sqls.push(sql);
       return pages.shift() ?? result([]);

@@ -146,3 +146,235 @@ pub async fn execute_in_transaction(
     )
     .await
 }
+
+#[tauri::command]
+pub async fn analyze_sql_references(
+    sql: String,
+    dialect: Option<String>,
+) -> Result<dbx_core::sql_analysis::SqlReferenceAnalysis, String> {
+    dbx_core::sql_analysis::analyze_sql_references(&sql, dialect.as_deref())
+}
+
+#[tauri::command]
+pub fn find_statement_at_cursor(sql: String, cursor_pos: usize) -> Result<String, String> {
+    Ok(dbx_core::sql::find_statement_at_cursor(&sql, cursor_pos))
+}
+
+#[tauri::command]
+pub fn prepare_query_pagination_execution_plan(
+    options: dbx_core::query_result_sql::QueryPaginationExecutionPlanOptions,
+) -> Result<dbx_core::query_result_sql::QueryPaginationExecutionPlan, String> {
+    Ok(dbx_core::query_result_sql::build_query_pagination_execution_plan(options))
+}
+
+#[tauri::command]
+pub fn build_sorted_query_sql(
+    options: dbx_core::query_result_sql::SortedQuerySqlOptions,
+) -> Result<dbx_core::query_result_sql::QuerySqlBuildResult, String> {
+    Ok(dbx_core::query_result_sql::build_sorted_query_sql(options))
+}
+
+#[tauri::command]
+pub fn build_explain_sql(
+    options: dbx_core::query_execution_sql::ExplainSqlOptions,
+) -> Result<dbx_core::query_execution_sql::ExplainSqlBuildResult, String> {
+    Ok(dbx_core::query_execution_sql::build_explain_sql(options))
+}
+
+#[tauri::command]
+pub fn build_dropped_file_preview_sql(
+    options: dbx_core::query_execution_sql::DroppedFilePreviewSqlOptions,
+) -> Result<Option<String>, String> {
+    Ok(dbx_core::query_execution_sql::build_dropped_file_preview_sql(options))
+}
+
+#[tauri::command]
+pub fn build_table_select_sql(options: dbx_core::sql_dialect::TableDataSelectSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::sql_dialect::build_table_data_select_sql(options))
+}
+
+#[tauri::command]
+pub fn build_database_search_sql(
+    options: dbx_core::database_search_sql::DatabaseSearchSqlOptions,
+) -> Result<Option<dbx_core::database_search_sql::DatabaseSearchSql>, String> {
+    Ok(dbx_core::database_search_sql::build_database_search_sql(options))
+}
+
+#[tauri::command]
+pub fn build_search_result_where(
+    options: dbx_core::database_search_sql::SearchResultWhereOptions,
+) -> Result<String, String> {
+    Ok(dbx_core::database_search_sql::build_search_result_where(options))
+}
+
+#[tauri::command]
+pub fn build_rename_object_sql(options: dbx_core::db_admin_sql::RenameObjectSqlOptions) -> Result<String, String> {
+    dbx_core::db_admin_sql::build_rename_object_sql(options)
+}
+
+#[tauri::command]
+pub fn build_create_database_sql(options: dbx_core::db_admin_sql::CreateDatabaseSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_create_database_sql(options))
+}
+
+#[tauri::command]
+pub fn build_duckdb_attach_database_sql(
+    options: dbx_core::db_admin_sql::DuckDbAttachDatabaseSqlOptions,
+) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_duckdb_attach_database_sql(options))
+}
+
+#[tauri::command]
+pub fn build_drop_object_sql(options: dbx_core::db_admin_sql::DropObjectSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_drop_object_sql(options))
+}
+
+#[tauri::command]
+pub fn build_drop_table_sql(options: dbx_core::db_admin_sql::TableAdminSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_drop_table_sql(options))
+}
+
+#[tauri::command]
+pub fn build_empty_table_sql(options: dbx_core::db_admin_sql::TableAdminSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_empty_table_sql(options))
+}
+
+#[tauri::command]
+pub fn build_truncate_table_sql(options: dbx_core::db_admin_sql::TableAdminSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_truncate_table_sql(options))
+}
+
+#[tauri::command]
+pub fn build_drop_database_sql(options: dbx_core::db_admin_sql::DatabaseNameSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_drop_database_sql(options))
+}
+
+#[tauri::command]
+pub fn build_create_schema_sql(options: dbx_core::db_admin_sql::SchemaNameSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_create_schema_sql(options))
+}
+
+#[tauri::command]
+pub fn build_drop_schema_sql(options: dbx_core::db_admin_sql::SchemaNameSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_drop_schema_sql(options))
+}
+
+#[tauri::command]
+pub fn build_duplicate_table_structure_sql(
+    options: dbx_core::db_admin_sql::DuplicateTableStructureSqlOptions,
+) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_duplicate_table_structure_sql(options))
+}
+
+#[tauri::command]
+pub fn build_executable_object_source_statements(
+    input: dbx_core::object_source_sql::EditableObjectSourceSqlInput,
+) -> Result<Vec<String>, String> {
+    dbx_core::object_source_sql::build_executable_object_source_statements(input)
+}
+
+#[tauri::command]
+pub fn build_executable_object_source_sql(
+    input: dbx_core::object_source_sql::EditableObjectSourceSqlInput,
+) -> Result<String, String> {
+    dbx_core::object_source_sql::build_executable_object_source_sql(input)
+}
+
+#[tauri::command]
+pub fn build_routine_rename_object_source_statements(
+    input: dbx_core::object_source_sql::RoutineRenameObjectSourceInput,
+) -> Result<Vec<String>, String> {
+    dbx_core::object_source_sql::build_routine_rename_object_source_statements(input)
+}
+
+#[tauri::command]
+pub fn build_view_ddl_sql(input: dbx_core::object_source_sql::BuildViewDdlInput) -> Result<String, String> {
+    Ok(dbx_core::object_source_sql::build_view_ddl_sql(input))
+}
+
+#[tauri::command]
+pub fn build_table_structure_change_sql(
+    options: dbx_core::table_structure_sql::TableStructureSqlOptions,
+) -> Result<dbx_core::table_structure_sql::TableStructureSqlResult, String> {
+    Ok(dbx_core::table_structure_sql::build_table_structure_change_sql(options))
+}
+
+#[tauri::command]
+pub fn build_create_table_sql(
+    options: dbx_core::table_structure_sql::TableStructureSqlOptions,
+) -> Result<dbx_core::table_structure_sql::TableStructureSqlResult, String> {
+    Ok(dbx_core::table_structure_sql::build_create_table_sql(options))
+}
+
+#[tauri::command]
+pub fn analyze_editable_query_editability(sql: String) -> Result<dbx_core::sql_editability::QueryEditability, String> {
+    Ok(dbx_core::sql_editability::analyze_editable_query_editability(&sql))
+}
+
+#[tauri::command]
+pub fn prepare_data_grid_save(
+    options: dbx_core::data_grid_sql::DataGridSaveStatementOptions,
+) -> Result<dbx_core::data_grid_sql::DataGridSavePreparation, String> {
+    Ok(dbx_core::data_grid_sql::prepare_data_grid_save(options))
+}
+
+#[tauri::command]
+pub fn build_data_grid_copy_update_statements(
+    options: dbx_core::data_grid_sql::DataGridCopyUpdateStatementOptions,
+) -> Result<Vec<String>, String> {
+    Ok(dbx_core::data_grid_sql::build_data_grid_copy_update_statements(options))
+}
+
+#[tauri::command]
+pub fn build_data_grid_copy_insert_statement(
+    options: dbx_core::data_grid_sql::DataGridCopyInsertStatementOptions,
+) -> Result<Option<String>, String> {
+    Ok(dbx_core::data_grid_sql::build_data_grid_copy_insert_statement(options))
+}
+
+#[tauri::command]
+pub fn build_data_grid_context_filter_condition(
+    options: dbx_core::data_grid_sql::DataGridContextFilterConditionOptions,
+) -> Result<Option<String>, String> {
+    Ok(dbx_core::data_grid_sql::build_data_grid_context_filter_condition(options))
+}
+
+#[tauri::command]
+pub fn build_data_grid_column_value_filter_condition(
+    options: dbx_core::data_grid_sql::DataGridColumnValueFilterConditionOptions,
+) -> Result<Option<String>, String> {
+    Ok(dbx_core::data_grid_sql::build_data_grid_column_value_filter_condition(options))
+}
+
+#[tauri::command]
+pub fn build_data_grid_count_sql(options: dbx_core::data_grid_sql::DataGridCountSqlOptions) -> Result<String, String> {
+    Ok(dbx_core::data_grid_sql::build_data_grid_count_sql(options))
+}
+
+#[tauri::command]
+pub fn build_hive_table_properties_sql(
+    options: dbx_core::data_grid_sql::HiveTablePropertiesSqlOptions,
+) -> Result<String, String> {
+    Ok(dbx_core::data_grid_sql::build_hive_table_properties_sql(options))
+}
+
+#[tauri::command]
+pub fn build_export_insert_statements(
+    options: dbx_core::database_export::BuildExportInsertStatementsOptions,
+) -> Result<Vec<String>, String> {
+    dbx_core::database_export::build_export_insert_statements(options)
+}
+
+#[tauri::command]
+pub fn build_export_sql_insert(
+    options: dbx_core::database_export::BuildExportSqlInsertOptions,
+) -> Result<String, String> {
+    dbx_core::database_export::build_export_sql_insert(options)
+}
+
+#[tauri::command]
+pub fn build_database_sql_export(
+    options: dbx_core::database_export::BuildDatabaseSqlExportOptions,
+) -> Result<String, String> {
+    dbx_core::database_export::build_database_sql_export(options)
+}

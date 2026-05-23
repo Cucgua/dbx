@@ -79,6 +79,8 @@ pub async fn list_objects(pool: &MySqlPool, schema: &str) -> Result<Vec<ObjectIn
             object_type: get_str(row, 1),
             schema: Some(schema.to_string()),
             comment: None,
+            created_at: None,
+            updated_at: None,
         })
         .collect())
 }

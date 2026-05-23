@@ -256,6 +256,223 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
     statements
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqlStatementRange {
+    pub text: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+pub fn find_statement_at_cursor(sql: &str, cursor_pos: usize) -> String {
+    let statements = split_sql_statement_ranges(sql);
+    let cursor = utf16_offset_to_byte_index(sql, cursor_pos);
+
+    for statement in &statements {
+        if cursor >= statement.start && cursor <= statement.end {
+            return statement.text.clone();
+        }
+    }
+
+    if let Some(last) = statements.last() {
+        if cursor >= last.end {
+            return last.text.clone();
+        }
+    }
+
+    sql.trim().to_string()
+}
+
+fn split_sql_statement_ranges(sql: &str) -> Vec<SqlStatementRange> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_backtick = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut dollar_quote_tag: Option<String> = None;
+    let mut custom_delimiter: Option<String> = None;
+
+    while i < sql.len() {
+        if let Some(tag) = &dollar_quote_tag {
+            if sql[i..].starts_with(tag) {
+                i += tag.len();
+                dollar_quote_tag = None;
+                continue;
+            }
+            i += next_char_len(sql, i);
+            continue;
+        }
+
+        let ch = next_char(sql, i);
+        let next = next_char_at(sql, i + ch.len_utf8());
+
+        if in_line_comment {
+            i += ch.len_utf8();
+            if ch == '\n' {
+                in_line_comment = false;
+            }
+            continue;
+        }
+
+        if in_block_comment {
+            if ch == '*' && next == Some('/') {
+                i += 2;
+                in_block_comment = false;
+            } else {
+                i += ch.len_utf8();
+            }
+            continue;
+        }
+
+        if !in_single_quote && !in_double_quote && !in_backtick {
+            if ch == '-' && next == Some('-') {
+                in_line_comment = true;
+                i += 2;
+                continue;
+            }
+            if ch == '/' && next == Some('*') {
+                in_block_comment = true;
+                i += 2;
+                continue;
+            }
+            if let Some(tag) = dollar_quote_tag_at_str(sql, i) {
+                if custom_delimiter.is_none() && !is_on_delimiter_line(sql, start, i) {
+                    i += tag.len();
+                    dollar_quote_tag = Some(tag);
+                    continue;
+                }
+            }
+            if ch == '\n' {
+                let line_start = sql[..i].rfind('\n').map_or(0, |pos| pos + 1);
+                let line = sql[line_start..i].trim();
+                if let Some(new_delimiter) = parse_delimiter_command(line) {
+                    let before = sql[start..line_start].trim();
+                    if has_executable_sql(before) {
+                        push_statement_range(&mut ranges, sql, start, line_start);
+                    }
+                    custom_delimiter = if new_delimiter == ";" { None } else { Some(new_delimiter.to_string()) };
+                    start = i + ch.len_utf8();
+                    i = start;
+                    continue;
+                }
+            }
+        }
+
+        match ch {
+            '\'' if !in_double_quote && !in_backtick && !is_escaped_single_quote(sql, i) => {
+                in_single_quote = !in_single_quote;
+                i += ch.len_utf8();
+            }
+            '"' if !in_single_quote && !in_backtick => {
+                in_double_quote = !in_double_quote;
+                i += ch.len_utf8();
+            }
+            '`' if !in_single_quote && !in_double_quote => {
+                in_backtick = !in_backtick;
+                i += ch.len_utf8();
+            }
+            ';' if !in_single_quote && !in_double_quote && !in_backtick && custom_delimiter.is_none() => {
+                push_statement_range(&mut ranges, sql, start, i);
+                i += ch.len_utf8();
+                start = i;
+            }
+            _ => {
+                i += ch.len_utf8();
+                if !in_single_quote && !in_double_quote && !in_backtick {
+                    if let Some(delimiter) = &custom_delimiter {
+                        if sql[start..i].ends_with(delimiter) {
+                            let end = i - delimiter.len();
+                            push_statement_range(&mut ranges, sql, start, end);
+                            start = i;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let trimmed = sql[start..].trim();
+    let last_line = trimmed.rsplit('\n').next().unwrap_or(trimmed).trim();
+    if parse_delimiter_command(last_line).is_some() {
+        if let Some(line_start) = sql[start..].rfind('\n').map(|pos| start + pos + 1) {
+            push_statement_range(&mut ranges, sql, start, line_start);
+        }
+    } else {
+        push_statement_range(&mut ranges, sql, start, sql.len());
+    }
+
+    ranges
+}
+
+fn push_statement_range(ranges: &mut Vec<SqlStatementRange>, sql: &str, start: usize, end: usize) {
+    let text = sql[start..end].trim();
+    if has_executable_sql(text) {
+        ranges.push(SqlStatementRange { text: text.to_string(), start, end });
+    }
+}
+
+fn utf16_offset_to_byte_index(sql: &str, offset: usize) -> usize {
+    let mut utf16_seen = 0;
+    for (byte_index, ch) in sql.char_indices() {
+        if utf16_seen >= offset {
+            return byte_index;
+        }
+        utf16_seen += ch.len_utf16();
+        if utf16_seen > offset {
+            return byte_index + ch.len_utf8();
+        }
+    }
+    sql.len()
+}
+
+fn next_char(sql: &str, index: usize) -> char {
+    sql[index..].chars().next().unwrap_or('\0')
+}
+
+fn next_char_at(sql: &str, index: usize) -> Option<char> {
+    if index >= sql.len() {
+        None
+    } else {
+        sql[index..].chars().next()
+    }
+}
+
+fn next_char_len(sql: &str, index: usize) -> usize {
+    next_char(sql, index).len_utf8()
+}
+
+fn is_escaped_single_quote(sql: &str, index: usize) -> bool {
+    index > 0 && sql.as_bytes().get(index - 1) == Some(&b'\\')
+}
+
+fn is_on_delimiter_line(sql: &str, range_start: usize, index: usize) -> bool {
+    let line_start = sql[range_start..index].rfind('\n').map_or(range_start, |pos| range_start + pos + 1);
+    sql[line_start..index]
+        .trim_start()
+        .as_bytes()
+        .get(..9)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"delimiter"))
+}
+
+fn dollar_quote_tag_at_str(sql: &str, index: usize) -> Option<String> {
+    let rest = &sql[index..];
+    if !rest.starts_with('$') {
+        return None;
+    }
+    let end = rest[1..].find('$')? + 1;
+    let tag = &rest[..=end];
+    if tag.len() == 2 {
+        return Some(tag.to_string());
+    }
+    let name = &tag[1..tag.len() - 1];
+    if !name.chars().all(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(tag.to_string())
+}
+
 pub fn split_sql_batches(sql: &str) -> Vec<String> {
     let mut batches = Vec::new();
     let mut current_start = 0;
@@ -971,5 +1188,48 @@ DELIMITER $$
 SELECT 2 $$
 DELIMITER ;";
         assert_eq!(super::split_sql_statements(sql), vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn finds_statement_at_cursor() {
+        let sql = "SELECT 1; SELECT 2";
+
+        assert_eq!(super::find_statement_at_cursor(sql, 3), "SELECT 1");
+        assert_eq!(super::find_statement_at_cursor(sql, 12), "SELECT 2");
+        assert_eq!(super::find_statement_at_cursor(sql, 18), "SELECT 2");
+    }
+
+    #[test]
+    fn finds_statement_at_cursor_after_unicode_comment() {
+        let sql = "-- 判断字段是否存在\nSELECT 1; SELECT 2";
+        let cursor_byte = sql.find("SELECT 2").unwrap();
+        let cursor = sql[..cursor_byte].encode_utf16().count();
+
+        assert_eq!(super::find_statement_at_cursor(sql, cursor), "SELECT 2");
+    }
+
+    #[test]
+    fn finds_statement_with_dollar_quote() {
+        let sql = "SELECT $$a;b$$; SELECT 2";
+
+        assert_eq!(super::find_statement_at_cursor(sql, 3), "SELECT $$a;b$$");
+        assert_eq!(super::find_statement_at_cursor(sql, 17), "SELECT 2");
+    }
+
+    #[test]
+    fn finds_statement_with_custom_delimiter() {
+        let sql = "\
+DELIMITER //
+CREATE PROCEDURE foo()
+BEGIN
+  SELECT 1;
+END //
+DELIMITER ;
+SELECT 2;";
+        let cursor = sql.find("SELECT 1").unwrap();
+        let next_cursor = sql.rfind("SELECT 2").unwrap();
+
+        assert_eq!(super::find_statement_at_cursor(sql, cursor), "CREATE PROCEDURE foo()\nBEGIN\n  SELECT 1;\nEND");
+        assert_eq!(super::find_statement_at_cursor(sql, next_cursor), "SELECT 2");
     }
 }

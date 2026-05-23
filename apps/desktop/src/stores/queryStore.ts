@@ -6,15 +6,14 @@ import { orderPinnedFirst } from "@/lib/pinnedItems";
 import { canCancelQueryExecution } from "@/lib/queryExecutionState";
 import { closeAllTabsState, closeOtherTabsState } from "@/lib/tabCloseActions";
 import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
-import {
-  allEditableColumnsWriteable,
-  allPrimaryKeysPresent,
-  analyzeEditableQueryEditability,
-  sourceColumnsForResult,
-} from "@/lib/sqlAnalysis";
+import { allEditableColumnsWriteable, allPrimaryKeysPresent, sourceColumnsForResult } from "@/lib/sqlAnalysis";
 import { restoreOpenTabsState, serializeOpenTabs } from "@/lib/openTabsPersistence";
-import { mongoDocumentsToQueryResult, parseMongoFindCommand } from "@/lib/mongoShellCommand";
-import { buildQueryPaginationExecutionPlan } from "@/lib/queryResultPagination";
+import {
+  mongoCountToQueryResult,
+  mongoDocumentsToQueryResult,
+  parseMongoCountDocumentsCommand,
+  parseMongoFindCommand,
+} from "@/lib/mongoShellCommand";
 import { AGENT_DRIVER_TYPES } from "@/lib/databaseCapabilities";
 import { editablePrimaryKeys } from "@/lib/tableEditing";
 import * as api from "@/lib/api";
@@ -62,6 +61,22 @@ export const useQueryStore = defineStore("query", () => {
     }
   }
 
+  function clearResultPayload(tab: QueryTab, options: { evicted?: boolean } = {}) {
+    tab.result = undefined;
+    tab.results = undefined;
+    tab.activeResultIndex = undefined;
+    tab.resultSessionId = undefined;
+    tab.queryAnalysis = undefined;
+    tab.querySourceColumns = undefined;
+    tab.queryEditabilityReason = undefined;
+    tab.resultEvicted = options.evicted ? true : undefined;
+  }
+
+  async function evictCachedResult(tab: QueryTab) {
+    await closeResultSession(tab);
+    clearResultPayload(tab, { evicted: true });
+  }
+
   const _persistSnapshot = computed(() =>
     tabs.value.map((t) => ({
       id: t.id,
@@ -92,13 +107,32 @@ export const useQueryStore = defineStore("query", () => {
     { flush: "post" },
   );
 
-  function findTabByTitle(connectionId: string, database: string, title: string) {
-    return tabs.value.find((t) => t.connectionId === connectionId && t.database === database && t.title === title);
+  function findTabByIdentity(
+    connectionId: string,
+    database: string,
+    title: string,
+    mode: QueryTab["mode"],
+    schema?: string,
+  ) {
+    return tabs.value.find(
+      (tab) =>
+        tab.connectionId === connectionId &&
+        tab.database === database &&
+        tab.title === title &&
+        tab.mode === mode &&
+        (tab.schema || "") === (schema || ""),
+    );
   }
 
-  function createTab(connectionId: string, database: string, title?: string, mode: QueryTab["mode"] = "query") {
+  function createTab(
+    connectionId: string,
+    database: string,
+    title?: string,
+    mode: QueryTab["mode"] = "query",
+    schema?: string,
+  ) {
     if (title) {
-      const existing = findTabByTitle(connectionId, database, title);
+      const existing = findTabByIdentity(connectionId, database, title, mode, schema);
       if (existing) {
         activeTabId.value = existing.id;
         return existing.id;
@@ -111,6 +145,7 @@ export const useQueryStore = defineStore("query", () => {
       title: title || `Query ${tabs.value.length + 1}`,
       connectionId,
       database,
+      schema,
       sql: "",
       isExecuting: false,
       isCancelling: false,
@@ -164,8 +199,7 @@ export const useQueryStore = defineStore("query", () => {
     if (tabs.value[idx].isExecuting) void cancelTabExecution(id);
     if (tabs.value[idx].isExplaining) void cancelTabExplain(id);
     void closeResultSession(tabs.value[idx]);
-    tabs.value[idx].result = undefined;
-    tabs.value[idx].results = undefined;
+    clearResultPayload(tabs.value[idx]);
     tabs.value.splice(idx, 1);
     if (activeTabId.value === id) {
       activeTabId.value = tabs.value[Math.min(idx, tabs.value.length - 1)]?.id ?? null;
@@ -248,13 +282,11 @@ export const useQueryStore = defineStore("query", () => {
     tab.database = database;
     tab.schema = undefined;
     tab.objectBrowser = undefined;
-    tab.result = undefined;
+    void closeResultSession(tab);
+    clearResultPayload(tab);
     tab.lastExecutedSql = undefined;
     tab.resultBaseSql = undefined;
     tab.resultSortedSql = undefined;
-    tab.queryAnalysis = undefined;
-    tab.querySourceColumns = undefined;
-    tab.queryEditabilityReason = undefined;
     clearExplain(tab);
     tab.tableMeta = undefined;
   }
@@ -272,13 +304,11 @@ export const useQueryStore = defineStore("query", () => {
     tab.connectionId = connectionId;
     tab.database = database;
     tab.schema = undefined;
-    tab.result = undefined;
+    void closeResultSession(tab);
+    clearResultPayload(tab);
     tab.lastExecutedSql = undefined;
     tab.resultBaseSql = undefined;
     tab.resultSortedSql = undefined;
-    tab.queryAnalysis = undefined;
-    tab.querySourceColumns = undefined;
-    tab.queryEditabilityReason = undefined;
     clearExplain(tab);
     tab.tableMeta = undefined;
   }
@@ -325,6 +355,9 @@ export const useQueryStore = defineStore("query", () => {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab) return;
     tab.result = toErrorResult(e);
+    tab.results = undefined;
+    tab.activeResultIndex = undefined;
+    tab.resultSessionId = undefined;
     tab.isExecuting = false;
     tab.isCancelling = false;
     tab.executionId = undefined;
@@ -354,7 +387,7 @@ export const useQueryStore = defineStore("query", () => {
       return;
     }
 
-    const editability = analyzeEditableQueryEditability(sql);
+    const editability = await api.analyzeEditableQueryEditability(sql);
     if (!editability.editable) {
       tab.queryAnalysis = undefined;
       tab.querySourceColumns = undefined;
@@ -470,7 +503,7 @@ export const useQueryStore = defineStore("query", () => {
       await closeResultSession(tab, options?.pagination?.sessionId);
       if (tab.mode === "query") {
         const pagination = options?.pagination ?? { limit: settingsStore.editorSettings.pageSize, offset: 0 };
-        const plan = buildQueryPaginationExecutionPlan({
+        const plan = await api.prepareQueryPaginationExecutionPlan({
           sql,
           queryBaseSql,
           databaseType: conn?.db_type,
@@ -509,6 +542,36 @@ export const useQueryStore = defineStore("query", () => {
           current.results = undefined;
           current.activeResultIndex = undefined;
           current.result = mongoDocumentsToQueryResult(result.documents, performance.now() - startedAt, result.total);
+          current.queryAnalysis = undefined;
+          current.querySourceColumns = undefined;
+          current.queryEditabilityReason = undefined;
+          current.tableMeta = undefined;
+          current.resultBaseSql = options?.resultBaseSql ?? sql;
+          current.resultSortedSql = options?.resultSortedSql;
+        }
+        return;
+      }
+      const mongoCount = conn?.db_type === "mongodb" ? parseMongoCountDocumentsCommand(sql) : null;
+      if (mongoCount) {
+        console.info("[DBX][executeTabSql:mongo-count:start]", { traceId, collection: mongoCount.collection });
+        const result = await api.mongoFindDocuments(
+          tab.connectionId,
+          tab.database,
+          mongoCount.collection,
+          0,
+          1,
+          mongoCount.filter,
+        );
+        console.info("[DBX][executeTabSql:mongo-count:done]", {
+          traceId,
+          total: result.total,
+          elapsed: elapsed(),
+        });
+        const current = tabs.value.find((t) => t.id === id);
+        if (current?.executionId === executionId) {
+          current.results = undefined;
+          current.activeResultIndex = undefined;
+          current.result = mongoCountToQueryResult(result.total, performance.now() - startedAt);
           current.queryAnalysis = undefined;
           current.querySourceColumns = undefined;
           current.queryEditabilityReason = undefined;
@@ -608,14 +671,14 @@ export const useQueryStore = defineStore("query", () => {
         });
       }
     }
-    trimResultCache();
+    await trimResultCache();
   }
 
   async function explainTabSql(id: string, sql: string, databaseType?: DatabaseType) {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab) return { ok: false as const, reason: "empty" as const };
 
-    const built = buildExplainSql(databaseType, sql);
+    const built = await buildExplainSql(databaseType, sql);
     if (!built.ok) {
       tab.explainPlan = undefined;
       tab.explainError = built.reason;
@@ -707,17 +770,11 @@ export const useQueryStore = defineStore("query", () => {
     tab.queryEditabilityReason = undefined;
   }
 
-  function trimResultCache() {
-    const inactive = tabs.value.filter((t) => t.id !== activeTabId.value && t.result);
+  async function trimResultCache() {
+    const inactive = tabs.value.filter((t) => t.id !== activeTabId.value && (t.result || t.results));
     if (inactive.length > MAX_CACHED_RESULTS) {
       const toEvict = inactive.slice(0, inactive.length - MAX_CACHED_RESULTS);
-      toEvict.forEach((t) => {
-        t.result = undefined;
-        t.resultEvicted = true;
-        t.queryAnalysis = undefined;
-        t.querySourceColumns = undefined;
-        t.queryEditabilityReason = undefined;
-      });
+      await Promise.all(toEvict.map((t) => evictCachedResult(t)));
     }
   }
 

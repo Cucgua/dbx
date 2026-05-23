@@ -27,7 +27,7 @@ async fn clear_cancelled(import_id: &str) {
 
 #[tauri::command]
 pub async fn preview_table_import_file(file_path: String) -> Result<TableImportPreview, String> {
-    dbx_core::table_import::preview_table_import_file_core(&file_path)
+    dbx_core::table_import::preview_table_import_file_core(&file_path).await
 }
 
 #[tauri::command]

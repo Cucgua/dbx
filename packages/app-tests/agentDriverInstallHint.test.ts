@@ -21,3 +21,29 @@ test("shows the agent driver install hint for Access when missing", () => {
 test("does not show agent driver install hints for built-in database types", () => {
   assert.equal(showAgentDriverInstallHint("mysql", [{ db_type: "informix", installed: false }]), false);
 });
+
+test("uses the selected Oracle driver profile for install hints", () => {
+  assert.equal(
+    showAgentDriverInstallHint(
+      "oracle",
+      [
+        { db_type: "oracle", installed: false },
+        { db_type: "oracle-10g", installed: true },
+      ],
+      "oracle-10g",
+    ),
+    false,
+  );
+  assert.equal(
+    showAgentDriverInstallHint(
+      "oracle",
+      [
+        { db_type: "oracle", installed: true },
+        { db_type: "oracle-10g", installed: false },
+      ],
+      "oracle",
+    ),
+    false,
+  );
+  assert.equal(showAgentDriverInstallHint("oracle", [{ db_type: "oracle", installed: false }], "oracle"), true);
+});

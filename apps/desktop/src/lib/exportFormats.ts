@@ -1,3 +1,6 @@
+import type { DatabaseType } from "@/types/database";
+import * as api from "@/lib/api";
+
 export type ExportCellValue = string | number | boolean | null;
 
 export function formatCsv(columns: string[], rows: ExportCellValue[][]): string {
@@ -7,33 +10,18 @@ export function formatCsv(columns: string[], rows: ExportCellValue[][]): string 
   return `${header}\n${body}`;
 }
 
-export function formatJson(columns: string[], rows: ExportCellValue[][]): string {
-  const data = rows.map((row) => {
-    const obj: Record<string, unknown> = {};
-    columns.forEach((col, i) => {
-      obj[col] = row[i];
-    });
-    return obj;
-  });
-  return JSON.stringify(data, null, 2);
+export interface FormatSqlInsertOptions {
+  databaseType?: DatabaseType;
+  schema?: string;
+  tableName?: string;
+  qualifiedTableName?: string;
+  columns: string[];
+  rows: ExportCellValue[][];
 }
 
-export function formatSqlInsert(
-  qualifiedName: string,
-  columns: string[],
-  rows: ExportCellValue[][],
-  quoteIdent: (name: string) => string,
-): string {
-  const cols = columns.map((c) => quoteIdent(c)).join(", ");
-  const lines = rows.map((row) => {
-    const vals = row
-      .map((v) => {
-        if (v === null) return "NULL";
-        if (typeof v === "number" || typeof v === "boolean") return String(v);
-        return `'${String(v).replace(/'/g, "''")}'`;
-      })
-      .join(", ");
-    return `INSERT INTO ${qualifiedName} (${cols}) VALUES (${vals});`;
+export function formatSqlInsert(options: FormatSqlInsertOptions): Promise<string> {
+  return api.buildExportSqlInsert({
+    ...options,
+    batchSize: 1,
   });
-  return lines.join("\n");
 }

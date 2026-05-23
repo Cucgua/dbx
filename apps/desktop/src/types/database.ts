@@ -145,6 +145,8 @@ export interface ObjectInfo {
   object_type: DatabaseObjectType | string;
   schema?: string | null;
   comment?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export type ObjectSourceKind = "VIEW" | "PROCEDURE" | "FUNCTION";
@@ -201,6 +203,31 @@ export interface QueryResult {
   truncated?: boolean;
   session_id?: string | null;
   has_more?: boolean;
+}
+
+export interface SqlTextSpan {
+  start_line: number;
+  start_column: number;
+  end_line: number;
+  end_column: number;
+}
+
+export interface SqlTableReference {
+  name: string;
+  schema?: string | null;
+  alias?: string | null;
+  span: SqlTextSpan;
+}
+
+export interface SqlColumnReference {
+  name: string;
+  qualifier?: string | null;
+  span: SqlTextSpan;
+}
+
+export interface SqlReferenceAnalysis {
+  tables: SqlTableReference[];
+  columns: SqlColumnReference[];
 }
 
 export type TreeNodeType =

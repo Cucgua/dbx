@@ -20,3 +20,12 @@ test("toolbar theme and language menus use shadcn tooltip without nesting trigge
   assert.doesNotMatch(source, /group\/toolbar-tip/);
   assert.doesNotMatch(source, /group-hover\/toolbar-tip/);
 });
+
+test("toolbar uses SunMoon for the system theme option", () => {
+  const source = readFileSync("apps/desktop/src/components/layout/AppToolbar.vue", "utf8");
+
+  assert.match(source, /SunMoon/);
+  assert.match(source, /<SunMoon v-if="themeMode === 'system'"/);
+  assert.match(source, /<SunMoon class="h-4 w-4" \/>/);
+  assert.doesNotMatch(source, /Monitor/);
+});

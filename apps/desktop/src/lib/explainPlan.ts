@@ -1,4 +1,5 @@
 import type { DatabaseType, QueryResult } from "@/types/database";
+import * as api from "@/lib/api";
 
 export interface ExplainPlanNode {
   id: string;
@@ -24,24 +25,12 @@ export type BuildExplainSqlResult =
   | { ok: false; reason: "unsupported" | "empty" | "unsafe" };
 
 const SUPPORTED_EXPLAIN_TYPES = new Set<DatabaseType>(["mysql", "postgres"]);
-const SAFE_EXPLAIN_RE = /^(select|with|table|values)\b/i;
-
 export function supportsExplainPlan(databaseType?: DatabaseType): databaseType is "mysql" | "postgres" {
   return !!databaseType && SUPPORTED_EXPLAIN_TYPES.has(databaseType);
 }
 
-export function buildExplainSql(databaseType: DatabaseType | undefined, sql: string): BuildExplainSqlResult {
-  if (!supportsExplainPlan(databaseType)) return { ok: false, reason: "unsupported" };
-
-  const source = stripTrailingSemicolons(sql.trim());
-  if (!source) return { ok: false, reason: "empty" };
-  if (!SAFE_EXPLAIN_RE.test(stripSqlComments(source).trim())) return { ok: false, reason: "unsafe" };
-
-  if (databaseType === "postgres") {
-    return { ok: true, sql: `EXPLAIN (FORMAT JSON) ${source}` };
-  }
-
-  return { ok: true, sql: `EXPLAIN FORMAT=JSON ${source}` };
+export function buildExplainSql(databaseType: DatabaseType | undefined, sql: string): Promise<BuildExplainSqlResult> {
+  return api.buildExplainSql({ databaseType, sql }) as Promise<BuildExplainSqlResult>;
 }
 
 export function parseExplainResult(databaseType: "mysql" | "postgres", result: QueryResult): ParsedExplainPlan {
@@ -59,17 +48,6 @@ export function flattenExplainPlanNodes(nodes: ExplainPlanNode[]): ExplainPlanNo
   }
   nodes.forEach((node) => visit(node));
   return rows;
-}
-
-function stripTrailingSemicolons(sql: string): string {
-  return sql.replace(/;\s*$/g, "");
-}
-
-function stripSqlComments(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/--.*$/gm, " ")
-    .replace(/#.*$/gm, " ");
 }
 
 function parseExplainCell(value: unknown): unknown {

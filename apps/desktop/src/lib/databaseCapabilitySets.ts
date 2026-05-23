@@ -183,6 +183,7 @@ export const TREE_SCHEMA_TYPES = new Set<DatabaseType>([
   "postgres",
   "redshift",
   "sqlserver",
+  "db2",
   "gaussdb",
   "kingbase",
   "highgo",

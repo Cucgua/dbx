@@ -78,6 +78,10 @@ pub fn qualified_table(table: &str, schema: &str, db_type: &DatabaseType) -> Str
 }
 
 pub fn escape_value(val: &serde_json::Value, db_type: &DatabaseType) -> String {
+    escape_value_typed(val, db_type, None)
+}
+
+pub fn escape_value_typed(val: &serde_json::Value, db_type: &DatabaseType, column_type: Option<&str>) -> String {
     match val {
         serde_json::Value::Null => "NULL".to_string(),
         serde_json::Value::Bool(b) => match db_type {
@@ -102,13 +106,134 @@ pub fn escape_value(val: &serde_json::Value, db_type: &DatabaseType) -> String {
         },
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => {
-            format!("'{}'", s.replace('\'', "''"))
+            format!("'{}'", format_literal_string(s, db_type, column_type).replace('\'', "''"))
         }
         _ => {
             let s = val.to_string();
             format!("'{}'", s.replace('\'', "''"))
         }
     }
+}
+
+fn format_literal_string(value: &str, db_type: &DatabaseType, column_type: Option<&str>) -> String {
+    if is_mysql_datetime_literal_database(db_type) && column_type.map(is_temporal_column_type).unwrap_or(true) {
+        normalize_mysql_temporal_literal(value, column_type).unwrap_or_else(|| value.to_string())
+    } else {
+        value.to_string()
+    }
+}
+
+fn is_mysql_datetime_literal_database(db_type: &DatabaseType) -> bool {
+    matches!(
+        db_type,
+        DatabaseType::Mysql
+            | DatabaseType::Doris
+            | DatabaseType::StarRocks
+            | DatabaseType::Goldendb
+            | DatabaseType::Sundb
+    )
+}
+
+fn normalize_mysql_temporal_literal(value: &str, column_type: Option<&str>) -> Option<String> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 20 || !is_mysql_datetime_base(bytes) {
+        return None;
+    }
+
+    let rest = &value[19..];
+    let (fraction, offset) = if let Some(after_dot) = rest.strip_prefix('.') {
+        let digit_count = after_dot.bytes().take_while(|b| b.is_ascii_digit()).count();
+        if digit_count == 0 {
+            return None;
+        }
+        let fraction_len = 1 + digit_count;
+        (&rest[..fraction_len.min(7)], &rest[fraction_len..])
+    } else {
+        ("", rest)
+    };
+
+    if !is_timezone_suffix(offset) {
+        return None;
+    }
+
+    match temporal_column_kind(column_type) {
+        Some("date") => Some(value[..10].to_string()),
+        Some("time") => Some(format!("{}{}", &value[11..19], fraction)),
+        _ => Some(format!("{} {}{}", &value[..10], &value[11..19], fraction)),
+    }
+}
+
+fn is_temporal_column_type(column_type: &str) -> bool {
+    temporal_column_kind(Some(column_type)).is_some()
+}
+
+fn temporal_column_kind(column_type: Option<&str>) -> Option<&'static str> {
+    let base = column_type?.trim().to_ascii_lowercase();
+    let base = base.split(['(', ':', ' ']).next().unwrap_or("");
+    match base {
+        "date" => Some("date"),
+        "time" => Some("time"),
+        "datetime" | "timestamp" => Some("datetime"),
+        _ => None,
+    }
+}
+
+fn is_mysql_datetime_base(bytes: &[u8]) -> bool {
+    matches!(
+        bytes,
+        [
+            y0,
+            y1,
+            y2,
+            y3,
+            b'-',
+            m0,
+            m1,
+            b'-',
+            d0,
+            d1,
+            sep,
+            h0,
+            h1,
+            b':',
+            min0,
+            min1,
+            b':',
+            s0,
+            s1,
+            ..
+        ] if y0.is_ascii_digit()
+            && y1.is_ascii_digit()
+            && y2.is_ascii_digit()
+            && y3.is_ascii_digit()
+            && m0.is_ascii_digit()
+            && m1.is_ascii_digit()
+            && d0.is_ascii_digit()
+            && d1.is_ascii_digit()
+            && (*sep == b'T' || *sep == b' ')
+            && h0.is_ascii_digit()
+            && h1.is_ascii_digit()
+            && min0.is_ascii_digit()
+            && min1.is_ascii_digit()
+            && s0.is_ascii_digit()
+            && s1.is_ascii_digit()
+    )
+}
+
+fn is_timezone_suffix(value: &str) -> bool {
+    if value.eq_ignore_ascii_case("z") {
+        return true;
+    }
+    let bytes = value.as_bytes();
+    matches!(
+        bytes,
+        [sign, h0, h1, b':', m0, m1]
+            if (*sign == b'+' || *sign == b'-')
+                && h0.is_ascii_digit()
+                && h1.is_ascii_digit()
+                && m0.is_ascii_digit()
+                && m1.is_ascii_digit()
+    )
 }
 
 pub fn map_column_type(source_type: &str, _source_db: &DatabaseType, target_db: &DatabaseType) -> String {
@@ -228,20 +353,25 @@ pub fn generate_create_table_ddl(
 ) -> String {
     let full_table = qualified_table(table, schema, target_db);
 
-    let col_lines: Vec<String> = columns
-        .iter()
-        .map(|c| {
+    let mut col_lines = Vec::with_capacity(columns.len());
+    for c in columns {
+        col_lines.push({
             let mapped_type = map_column_type(&c.data_type, source_db, target_db);
             let mut line = format!("  {} {}", quote_identifier(&c.name, target_db), mapped_type);
             if !c.is_nullable {
                 line.push_str(" NOT NULL");
             }
             line
-        })
-        .collect();
+        });
+    }
 
-    let pks: Vec<String> =
-        columns.iter().filter(|c| c.is_primary_key).map(|c| quote_identifier(&c.name, target_db)).collect();
+    let mut pks = Vec::new();
+    pks.reserve(columns.iter().filter(|c| c.is_primary_key).count());
+    for c in columns {
+        if c.is_primary_key {
+            pks.push(quote_identifier(&c.name, target_db));
+        }
+    }
 
     let mut ddl = match target_db {
         DatabaseType::SqlServer => {
@@ -278,6 +408,17 @@ pub fn generate_insert(
     schema: &str,
     db_type: &DatabaseType,
 ) -> String {
+    generate_insert_typed(columns, &vec![None; columns.len()], rows, table, schema, db_type)
+}
+
+pub fn generate_insert_typed(
+    columns: &[String],
+    column_types: &[Option<String>],
+    rows: &[Vec<serde_json::Value>],
+    table: &str,
+    schema: &str,
+    db_type: &DatabaseType,
+) -> String {
     if rows.is_empty() {
         return String::new();
     }
@@ -285,19 +426,41 @@ pub fn generate_insert(
     let full_table = qualified_table(table, schema, db_type);
     let col_list = columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
 
-    let value_rows: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            let vals: Vec<String> = row.iter().map(|v| escape_value(v, db_type)).collect();
-            format!("({})", vals.join(", "))
-        })
-        .collect();
+    let value_rows = value_rows_sql(rows, column_types, db_type);
 
     format!("INSERT INTO {full_table} ({col_list}) VALUES\n{}", value_rows.join(",\n"))
 }
 
+fn value_rows_sql(
+    rows: &[Vec<serde_json::Value>],
+    column_types: &[Option<String>],
+    db_type: &DatabaseType,
+) -> Vec<String> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut vals = Vec::with_capacity(row.len());
+        for (index, v) in row.iter().enumerate() {
+            vals.push(escape_value_typed(v, db_type, column_types.get(index).and_then(|value| value.as_deref())));
+        }
+        out.push(format!("({})", vals.join(", ")));
+    }
+    out
+}
+
 pub fn generate_upsert(
     columns: &[String],
+    rows: &[Vec<serde_json::Value>],
+    table: &str,
+    schema: &str,
+    db_type: &DatabaseType,
+    pk_columns: &[String],
+) -> String {
+    generate_upsert_typed(columns, &vec![None; columns.len()], rows, table, schema, db_type, pk_columns)
+}
+
+pub fn generate_upsert_typed(
+    columns: &[String],
+    column_types: &[Option<String>],
     rows: &[Vec<serde_json::Value>],
     table: &str,
     schema: &str,
@@ -311,15 +474,14 @@ pub fn generate_upsert(
     let full_table = qualified_table(table, schema, db_type);
     let col_list = columns.iter().map(|c| quote_identifier(c, db_type)).collect::<Vec<_>>().join(", ");
 
-    let value_rows: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            let vals: Vec<String> = row.iter().map(|v| escape_value(v, db_type)).collect();
-            format!("({})", vals.join(", "))
-        })
-        .collect();
+    let value_rows = value_rows_sql(rows, column_types, db_type);
 
-    let non_pk_columns: Vec<&String> = columns.iter().filter(|c| !pk_columns.contains(c)).collect();
+    let mut non_pk_columns = Vec::with_capacity(columns.len().saturating_sub(pk_columns.len()));
+    for c in columns {
+        if !pk_columns.contains(c) {
+            non_pk_columns.push(c);
+        }
+    }
 
     match db_type {
         DatabaseType::Postgres | DatabaseType::Sqlite | DatabaseType::DuckDb => {
@@ -394,17 +556,18 @@ pub fn generate_upsert(
             sql
         }
         DatabaseType::Oracle => {
-            let using_rows: Vec<String> = rows
-                .iter()
-                .map(|row| {
-                    let vals: Vec<String> = row
-                        .iter()
-                        .zip(columns.iter())
-                        .map(|(v, c)| format!("{} AS {}", escape_value(v, db_type), quote_identifier(c, db_type)))
-                        .collect();
-                    format!("SELECT {} FROM dual", vals.join(", "))
-                })
-                .collect();
+            let mut using_rows = Vec::with_capacity(rows.len());
+            for row in rows {
+                let mut vals = Vec::with_capacity(row.len().min(columns.len()));
+                for (index, (v, c)) in row.iter().zip(columns.iter()).enumerate() {
+                    vals.push(format!(
+                        "{} AS {}",
+                        escape_value_typed(v, db_type, column_types.get(index).and_then(|value| value.as_deref())),
+                        quote_identifier(c, db_type)
+                    ));
+                }
+                using_rows.push(format!("SELECT {} FROM dual", vals.join(", ")));
+            }
 
             let on_clause = pk_columns
                 .iter()
@@ -436,7 +599,7 @@ pub fn generate_upsert(
             sql.push_str(&format!("\nWHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})"));
             sql
         }
-        _ => generate_insert(columns, rows, table, schema, db_type),
+        _ => generate_insert_typed(columns, column_types, rows, table, schema, db_type),
     }
 }
 
@@ -712,6 +875,7 @@ where
     }
 
     let col_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+    let col_types: Vec<Option<String>> = columns.iter().map(|c| Some(c.data_type.clone())).collect();
     log::info!("[transfer] {} has {} columns, counting rows...", table, columns.len());
 
     // Count source rows
@@ -800,10 +964,23 @@ where
         }
 
         let batch_sql = match effective_mode {
-            TransferMode::Upsert => {
-                generate_upsert(&col_names, &result.rows, table, &request.target_schema, target_db_type, &pk_columns)
-            }
-            _ => generate_insert(&col_names, &result.rows, table, &request.target_schema, target_db_type),
+            TransferMode::Upsert => generate_upsert_typed(
+                &col_names,
+                &col_types,
+                &result.rows,
+                table,
+                &request.target_schema,
+                target_db_type,
+                &pk_columns,
+            ),
+            _ => generate_insert_typed(
+                &col_names,
+                &col_types,
+                &result.rows,
+                table,
+                &request.target_schema,
+                target_db_type,
+            ),
         };
         if !batch_sql.is_empty() {
             execute_on_pool(state, target_pool_key, &batch_sql)
@@ -832,4 +1009,51 @@ where
     }
 
     Ok(total_transferred)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn mysql_insert_normalizes_rfc3339_datetime_strings() {
+        let sql = generate_insert_typed(
+            &[String::from("insurance_start_time")],
+            &[Some(String::from("datetime"))],
+            &[vec![json!("2026-05-12T00:00:00+00:00")]],
+            "policies",
+            "",
+            &DatabaseType::Mysql,
+        );
+
+        assert_eq!(sql, "INSERT INTO `policies` (`insurance_start_time`) VALUES\n('2026-05-12 00:00:00')");
+    }
+
+    #[test]
+    fn mysql_insert_uses_column_types_for_temporal_literals() {
+        let sql = generate_insert_typed(
+            &[String::from("dt"), String::from("raw_text"), String::from("d"), String::from("t")],
+            &[
+                Some(String::from("datetime")),
+                Some(String::from("varchar(64)")),
+                Some(String::from("date")),
+                Some(String::from("time")),
+            ],
+            &[vec![
+                json!("2026-05-12T00:00:00+00:00"),
+                json!("2026-05-12T00:00:00+00:00"),
+                json!("2026-05-12T00:00:00+00:00"),
+                json!("2026-05-12T09:30:45+00:00"),
+            ]],
+            "policies",
+            "",
+            &DatabaseType::Mysql,
+        );
+
+        assert_eq!(
+            sql,
+            "INSERT INTO `policies` (`dt`, `raw_text`, `d`, `t`) VALUES\n('2026-05-12 00:00:00', '2026-05-12T00:00:00+00:00', '2026-05-12', '09:30:45')"
+        );
+    }
 }

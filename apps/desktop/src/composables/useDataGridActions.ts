@@ -5,7 +5,7 @@ import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { editablePrimaryKeys, usesSyntheticRowIdKey } from "@/lib/tableEditing";
-import { buildSortedQuerySql } from "@/lib/queryResultSort";
+import * as api from "@/lib/api";
 import type { QueryTab } from "@/types/database";
 import { useToast } from "@/composables/useToast";
 
@@ -24,7 +24,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
   function buildTableSql(
     tab: QueryTab,
     options: { orderBy?: string; limit?: number; offset?: number; whereInput?: string } = {},
-  ): string {
+  ): Promise<string> {
     const config = connectionStore.getConfig(tab.connectionId);
     const primaryKeys = tab.tableMeta ? editablePrimaryKeys(config?.db_type, tab.tableMeta.columns) : [];
     if (tab.tableMeta && primaryKeys.join("\0") !== tab.tableMeta.primaryKeys.join("\0")) {
@@ -67,7 +67,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     if (!tab) return;
     if (tab.mode === "data" && tab.tableMeta) {
       tab.whereInput = whereInput ?? "";
-      queryStore.updateSql(tab.id, buildTableSql(tab, { whereInput, orderBy, limit, offset }));
+      queryStore.updateSql(tab.id, await buildTableSql(tab, { whereInput, orderBy, limit, offset }));
       await queryStore.executeCurrentTab();
       return;
     }
@@ -109,7 +109,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
 
     if (!tab.tableMeta) return;
     tab.whereInput = whereInput ?? "";
-    const sql = buildTableSql(tab, { limit, offset, whereInput, orderBy });
+    const sql = await buildTableSql(tab, { limit, offset, whereInput, orderBy });
     queryStore.updateSql(tab.id, sql);
     await queryStore.executeCurrentTab();
   }
@@ -126,7 +126,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
       const orderBy = direction
         ? `${config?.db_type === "neo4j" ? `n.${quotedColumn}` : quotedColumn} ${direction.toUpperCase()}`
         : undefined;
-      const sql = buildTableSql(tab, { orderBy, whereInput });
+      const sql = await buildTableSql(tab, { orderBy, whereInput });
       queryStore.updateSql(tab.id, sql);
       await queryStore.executeCurrentTab();
       return;
@@ -144,15 +144,15 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     }
 
     const config = connectionStore.getConfig(tab.connectionId);
-    const built = buildSortedQuerySql(
-      baseSql,
-      config?.db_type,
-      tab.result?.columns ?? [],
+    const built = await api.buildSortedQuerySql({
+      originalSql: baseSql,
+      databaseType: config?.db_type,
+      resultColumns: tab.result?.columns ?? [],
       columnIndex,
       column,
       direction,
-    );
-    if (!built.ok) {
+    });
+    if (!built.ok || !built.sql) {
       toast(t("grid.sortUnsupported"), 5000);
       return;
     }

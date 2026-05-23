@@ -2,7 +2,15 @@ export type RedisMemberDetailFormat = "json" | "text";
 
 export interface RedisMemberDetail {
   text: string;
+  rawText: string;
   format: RedisMemberDetailFormat;
+  json?: RedisJsonDetail;
+}
+
+export interface RedisJsonDetail {
+  rawText: string;
+  formattedText: string;
+  value: unknown;
 }
 
 export type RedisMemberDetailKind = "list" | "set" | "hash" | "zset" | "stream";
@@ -24,14 +32,23 @@ export function clampRedisMemberDetailSheetWidth(width: number, viewportWidth: n
 
 export function formatRedisMemberDetail(value: unknown): RedisMemberDetail {
   if (typeof value === "string") {
-    const formatted = formatRedisJsonString(value);
-    return formatted ? { text: formatted, format: "json" } : { text: value, format: "text" };
+    const json = parseRedisJsonDetail(value);
+    return json
+      ? { text: json.formattedText, rawText: value, format: "json", json }
+      : { text: value, rawText: value, format: "text" };
   }
 
   try {
-    return { text: JSON.stringify(value, null, 2), format: "json" };
+    const formattedText = JSON.stringify(value, null, 2);
+    return {
+      text: formattedText,
+      rawText: formattedText,
+      format: "json",
+      json: { rawText: formattedText, formattedText, value },
+    };
   } catch {
-    return { text: String(value), format: "text" };
+    const text = String(value);
+    return { text, rawText: text, format: "text" };
   }
 }
 
@@ -46,14 +63,34 @@ export function formatRedisCommandResult(value: unknown): string {
 }
 
 function formatRedisJsonString(value: string): string | null {
+  return parseRedisJsonDetail(value)?.formattedText ?? null;
+}
+
+export function parseRedisJsonDetail(value: unknown): RedisJsonDetail | null {
+  if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
+  if (!looksLikeJsonContainer(trimmed)) return null;
 
   try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
+    const parsed = JSON.parse(trimmed);
+    if (!isJsonContainer(parsed)) return null;
+    return {
+      rawText: value,
+      formattedText: JSON.stringify(parsed, null, 2),
+      value: parsed,
+    };
   } catch {
     return null;
   }
+}
+
+function looksLikeJsonContainer(value: string): boolean {
+  return (value.startsWith("{") && value.endsWith("}")) || (value.startsWith("[") && value.endsWith("]"));
+}
+
+function isJsonContainer(value: unknown): boolean {
+  return value !== null && typeof value === "object";
 }
 
 export function getRedisMemberSelectionKey(title: string, value: unknown): string {

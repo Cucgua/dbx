@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import DataGrid from "@/components/grid/DataGrid.vue";
 import * as api from "@/lib/api";
+import { useSettingsStore } from "@/stores/settingsStore";
 import JsonEditNode from "./JsonEditNode.vue";
 import type { EditNode } from "@/types/editor";
 import type { QueryResult } from "@/types/database";
@@ -15,6 +16,7 @@ import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
 
 const { t } = useI18n();
+const settingsStore = useSettingsStore();
 
 const props = defineProps<{
   connectionId: string;
@@ -23,6 +25,7 @@ const props = defineProps<{
 }>();
 
 type JsonRecord = Record<string, unknown>;
+type ViewMode = "document" | "table";
 
 const documents = ref<JsonRecord[]>([]);
 const total = ref(0);
@@ -36,7 +39,10 @@ const isNew = ref(false);
 const error = ref("");
 const editFields = ref<EditNode[]>([]);
 const showDeleteConfirm = ref(false);
-const viewMode = ref<"document" | "table">("document");
+const viewMode = computed<ViewMode>({
+  get: () => settingsStore.editorSettings.mongoViewMode,
+  set: (value) => settingsStore.updateEditorSettings({ mongoViewMode: value }),
+});
 const filterInput = ref("");
 const sortInput = ref("");
 

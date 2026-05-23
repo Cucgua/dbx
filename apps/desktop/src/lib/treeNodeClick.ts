@@ -56,10 +56,6 @@ export function treeNodeRowDoubleClickAction(
   return "none";
 }
 
-export function sidebarSelectionCopyAction(
-  event: ShortcutLikeEvent,
-  activation: SidebarActivation,
-): SidebarSelectionCopyAction {
-  if (activation !== "double") return "none";
+export function sidebarSelectionCopyAction(event: ShortcutLikeEvent): SidebarSelectionCopyAction {
   return matchesShortcut(event, "Mod+C") ? "copy-name" : "none";
 }

@@ -1,34 +1,45 @@
+import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import {
-  buildExplainSql,
   flattenExplainPlanNodes,
   parseExplainResult,
   supportsExplainPlan,
 } from "../../apps/desktop/src/lib/explainPlan.ts";
 
-test("builds PostgreSQL JSON explain SQL from a selected query", () => {
-  const result = buildExplainSql("postgres", " select * from users where id = 1; ");
+const explainPlanSource = readFileSync("apps/desktop/src/lib/explainPlan.ts", "utf8");
+const queryStoreSource = readFileSync("apps/desktop/src/stores/queryStore.ts", "utf8");
+const apiSource = readFileSync("apps/desktop/src/lib/api.ts", "utf8");
+const tauriSource = readFileSync("apps/desktop/src/lib/tauri.ts", "utf8");
+const httpSource = readFileSync("apps/desktop/src/lib/http.ts", "utf8");
+const tauriLibSource = readFileSync("src-tauri/src/lib.rs", "utf8");
+const webMainSource = readFileSync("crates/dbx-web/src/main.rs", "utf8");
+const rustSource = readFileSync("crates/dbx-core/src/query_execution_sql.rs", "utf8");
 
-  assert.deepEqual(result, {
-    ok: true,
-    sql: "EXPLAIN (FORMAT JSON) select * from users where id = 1",
-  });
-});
-
-test("builds MySQL JSON explain SQL and rejects unsafe statement kinds", () => {
-  assert.deepEqual(buildExplainSql("mysql", "SELECT * FROM users;"), {
-    ok: true,
-    sql: "EXPLAIN FORMAT=JSON SELECT * FROM users",
-  });
-
-  assert.equal(buildExplainSql("mysql", "delete from users").ok, false);
+test("frontend explain SQL builder delegates executable SQL wrapping to backend API", () => {
+  assert.match(explainPlanSource, /return api\.buildExplainSql\(\{ databaseType, sql \}\)/);
+  assert.doesNotMatch(explainPlanSource, /EXPLAIN \(FORMAT JSON\)|EXPLAIN FORMAT=JSON|SAFE_EXPLAIN_RE|stripSqlComments/);
+  assert.match(queryStoreSource, /await buildExplainSql\(databaseType, sql\)/);
 });
 
 test("reports explain support by database type", () => {
   assert.equal(supportsExplainPlan("postgres"), true);
   assert.equal(supportsExplainPlan("mysql"), true);
   assert.equal(supportsExplainPlan("sqlite"), false);
+});
+
+test("shared API exposes backend explain SQL builder", () => {
+  assert.match(apiSource, /export const buildExplainSql = forward\("buildExplainSql"\)/);
+  assert.match(tauriSource, /invoke\("build_explain_sql"/);
+  assert.match(httpSource, /\/api\/query\/build-explain-sql/);
+  assert.match(tauriLibSource, /commands::query::build_explain_sql/);
+  assert.match(webMainSource, /\/query\/build-explain-sql/);
+});
+
+test("Rust query execution SQL exposes explain builder", () => {
+  assert.match(rustSource, /pub fn build_explain_sql/);
+  assert.match(rustSource, /EXPLAIN \(FORMAT JSON\)/);
+  assert.match(rustSource, /EXPLAIN FORMAT=JSON/);
 });
 
 test("parses PostgreSQL FORMAT JSON output into plan nodes", () => {

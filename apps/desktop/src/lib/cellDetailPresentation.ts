@@ -1,8 +1,20 @@
 export type CellDetailTab = "details" | "valueEditor";
-export type ValueEditorAction = "setNull" | "restoreOriginal";
+export type ValueEditorAction = "formatJson" | "setNull" | "restoreOriginal";
 
 export interface CellDetailPresentationOptions {
   isEditable: boolean;
+}
+
+export interface LinkedCellDetailOptions {
+  isOpen: boolean;
+  isEditing: boolean;
+  selectedCell: { rowIndex: number; visibleColIndex: number } | null;
+  actualColumnIndex: (visibleColIndex: number) => number;
+}
+
+export interface CellDetailTarget {
+  rowIndex: number;
+  col: number;
 }
 
 export function defaultCellDetailTab(): CellDetailTab {
@@ -17,12 +29,58 @@ export function visibleCellDetailTabs(options: CellDetailPresentationOptions): C
   return tabs;
 }
 
-export function cellDetailEditorText(value: unknown): string {
+export function cellDetailEditorText(value: unknown, _columnType?: string): string {
   if (value === null) return "";
+  return cellDetailRawEditorText(value);
+}
+
+function cellDetailRawEditorText(value: unknown): string {
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
 
-export function valueEditorActions(options: { canSetNull: boolean }): ValueEditorAction[] {
-  return options.canSetNull ? ["setNull", "restoreOriginal"] : ["restoreOriginal"];
+export function valueEditorActions(options: { canSetNull: boolean; canFormatJson?: boolean }): ValueEditorAction[] {
+  const actions: ValueEditorAction[] = [];
+  if (options.canFormatJson) actions.push("formatJson");
+  if (options.canSetNull) actions.push("setNull");
+  actions.push("restoreOriginal");
+  return actions;
+}
+
+export function linkedCellDetailTarget(options: LinkedCellDetailOptions): CellDetailTarget | null {
+  if (!options.isOpen || options.isEditing || !options.selectedCell) return null;
+  return {
+    rowIndex: options.selectedCell.rowIndex,
+    col: options.actualColumnIndex(options.selectedCell.visibleColIndex),
+  };
+}
+
+export function isJsonColumnType(columnType: string | undefined): boolean {
+  const base = (columnType ?? "")
+    .trim()
+    .toLowerCase()
+    .split(/[(:\s]/)[0];
+  return base === "json" || base === "jsonb";
+}
+
+export function canFormatCellDetailJson(value: unknown, columnType?: string): boolean {
+  if (value === null || value === undefined) return false;
+  const text = cellDetailRawEditorText(value);
+  if (isJsonColumnType(columnType)) return !!formatJsonText(text);
+  return typeof value === "string" && looksLikeJsonContainer(text) && !!formatJsonText(text);
+}
+
+export function formatJsonText(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return undefined;
+  }
+}
+
+function looksLikeJsonContainer(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
 }

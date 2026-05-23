@@ -82,10 +82,11 @@ test("double click does not open object browser for non-browsable rows", () => {
 });
 
 test("double click navigation mode copies the selected sidebar row name", () => {
-  assert.equal(sidebarSelectionCopyAction({ key: "c", metaKey: true }, "double"), "copy-name");
-  assert.equal(sidebarSelectionCopyAction({ key: "C", ctrlKey: true }, "double"), "copy-name");
+  assert.equal(sidebarSelectionCopyAction({ key: "c", metaKey: true }), "copy-name");
+  assert.equal(sidebarSelectionCopyAction({ key: "C", ctrlKey: true }), "copy-name");
 });
 
-test("single click navigation mode leaves copy shortcuts alone", () => {
-  assert.equal(sidebarSelectionCopyAction({ key: "c", metaKey: true }, "single"), "none");
+test("single click navigation mode copies the selected sidebar row name", () => {
+  assert.equal(sidebarSelectionCopyAction({ key: "c", metaKey: true }), "copy-name");
+  assert.equal(sidebarSelectionCopyAction({ key: "C", ctrlKey: true }), "copy-name");
 });

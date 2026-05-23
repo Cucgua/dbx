@@ -23,19 +23,41 @@ test("normalizes saved query result page size", () => {
   assert.equal(normalizeEditorSettings({ pageSize: 0 }).pageSize, 100);
 });
 
+test("normalizes editor theme settings", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.theme, "app");
+  assert.equal(normalizeEditorSettings({}).theme, "app");
+  assert.equal(normalizeEditorSettings({ theme: "app" }).theme, "app");
+  assert.equal(normalizeEditorSettings({ theme: "vscode-light" }).theme, "vscode-light");
+  assert.equal(normalizeEditorSettings({ theme: "invalid" as any }).theme, DEFAULT_EDITOR_SETTINGS.theme);
+});
+
 test("defaults shortcut settings", () => {
   const settings = normalizeEditorSettings({});
 
   assert.equal(settings.shortcuts.executeSql, "Mod+Enter");
   assert.equal(settings.shortcuts.saveSql, "Mod+S");
+  assert.equal(settings.shortcuts.copyCurrentRow, "Mod+D");
+  assert.equal(settings.shortcuts.deleteCurrentRow, "Delete");
+  assert.equal(settings.shortcuts.newQuery, "Mod+T");
   assert.equal(settings.shortcuts.focusSearch, "Mod+F");
   assert.equal(settings.shortcuts.refreshData, "F5");
+  assert.equal(settings.shortcuts.toggleTranspose, "Tab");
 });
 
 test("keeps saved shortcut overrides", () => {
-  const settings = normalizeEditorSettings({ shortcuts: { executeSql: "Shift+Mod+Enter" } as any });
+  const settings = normalizeEditorSettings({
+    shortcuts: {
+      executeSql: "Shift+Mod+Enter",
+      copyCurrentRow: "Alt+Shift+D",
+      deleteCurrentRow: "Backspace",
+      newQuery: "Shift+Mod+N",
+    } as any,
+  });
 
   assert.equal(settings.shortcuts.executeSql, "Shift+Mod+Enter");
+  assert.equal(settings.shortcuts.copyCurrentRow, "Alt+Shift+D");
+  assert.equal(settings.shortcuts.deleteCurrentRow, "Backspace");
+  assert.equal(settings.shortcuts.newQuery, "Shift+Mod+N");
   assert.equal(settings.shortcuts.saveSql, "Mod+S");
 });
 
@@ -44,9 +66,27 @@ test("defaults sidebar activation to single click", () => {
   assert.equal(normalizeEditorSettings({}).sidebarActivation, "single");
 });
 
+test("defaults active tab sidebar selection to off", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode, false);
+  assert.equal(normalizeEditorSettings({}).autoSelectActiveSidebarNode, false);
+});
+
+test("keeps saved active tab sidebar selection", () => {
+  assert.equal(normalizeEditorSettings({ autoSelectActiveSidebarNode: true } as any).autoSelectActiveSidebarNode, true);
+});
+
 test("keeps saved sidebar activation", () => {
   assert.equal(normalizeEditorSettings({ sidebarActivation: "double" } as any).sidebarActivation, "double");
   assert.equal(normalizeEditorSettings({ sidebarActivation: "invalid" } as any).sidebarActivation, "single");
+});
+
+test("normalizes saved sidebar hidden table prefixes", () => {
+  assert.deepEqual(DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes, []);
+  assert.deepEqual(
+    normalizeEditorSettings({ sidebarHiddenTablePrefixes: [" app_", "app_", "", "ods."] } as any)
+      .sidebarHiddenTablePrefixes,
+    ["app_", "ods."],
+  );
 });
 
 test("defaults column formatters to an empty record", () => {

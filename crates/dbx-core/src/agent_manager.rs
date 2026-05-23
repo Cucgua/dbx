@@ -8,7 +8,7 @@ use crate::database_capabilities;
 use crate::db::agent_driver::{AgentDriverClient, AgentMethod};
 use crate::models::connection::DatabaseType;
 
-pub const DEFAULT_JRE_KEY: &str = "17";
+pub const DEFAULT_JRE_KEY: &str = "21";
 
 fn default_jre_key() -> String {
     DEFAULT_JRE_KEY.to_string()
@@ -64,12 +64,12 @@ mod tests {
     #[test]
     fn resolves_managed_java_runtime_by_default() {
         let manager = test_manager("managed");
-        let java = manager.jre_java_path("17");
+        let java = manager.jre_java_path(DEFAULT_JRE_KEY);
         touch(&java);
 
         let state = AgentState::default();
 
-        assert_eq!(manager.resolve_java_runtime(&state, "17").unwrap(), java);
+        assert_eq!(manager.resolve_java_runtime(&state, DEFAULT_JRE_KEY).unwrap(), java);
     }
 
     #[test]
@@ -85,7 +85,7 @@ mod tests {
             ..AgentState::default()
         };
 
-        assert_eq!(manager.resolve_java_runtime(&state, "17").unwrap(), custom_java);
+        assert_eq!(manager.resolve_java_runtime(&state, DEFAULT_JRE_KEY).unwrap(), custom_java);
     }
 
     #[test]
@@ -99,7 +99,7 @@ mod tests {
             ..AgentState::default()
         };
 
-        let err = manager.resolve_java_runtime(&state, "17").unwrap_err();
+        let err = manager.resolve_java_runtime(&state, DEFAULT_JRE_KEY).unwrap_err();
 
         assert!(err.contains("Custom Java runtime does not exist"));
     }
@@ -195,6 +195,23 @@ pub struct AgentDriverInfo {
     pub jre_installed: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriverStoreUsageItem {
+    pub id: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriverStoreUsage {
+    pub total_bytes: u64,
+    pub jre_bytes: u64,
+    pub agent_driver_bytes: u64,
+    pub jdbc_plugin_bytes: u64,
+    pub jdbc_driver_bytes: u64,
+    pub jres: Vec<DriverStoreUsageItem>,
+    pub agent_drivers: Vec<DriverStoreUsageItem>,
+}
+
 pub struct AgentManager {
     base_dir: PathBuf,
     app_version: String,
@@ -279,6 +296,68 @@ impl AgentManager {
 
     pub fn is_driver_installed(&self, db_type: &str) -> bool {
         self.driver_jar_path(db_type).exists()
+    }
+
+    pub fn collect_driver_store_usage(&self, plugin_root: &Path) -> DriverStoreUsage {
+        let mut jres = Vec::new();
+        let mut jre_bytes = 0u64;
+        if let Ok(entries) = std::fs::read_dir(&self.base_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|v| v.to_str()) else {
+                    continue;
+                };
+                if !name.starts_with("jre-") {
+                    continue;
+                }
+                let key = name.trim_start_matches("jre-").to_string();
+                let bytes = path_size_bytes(&path);
+                jre_bytes = jre_bytes.saturating_add(bytes);
+                jres.push(DriverStoreUsageItem { id: key, bytes });
+            }
+        }
+        jres.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let mut agent_drivers = Vec::new();
+        let mut agent_driver_bytes = 0u64;
+        let drivers_root = self.base_dir.join("drivers");
+        if let Ok(entries) = std::fs::read_dir(&drivers_root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Some(id) = path.file_name().and_then(|v| v.to_str()) else {
+                    continue;
+                };
+                let bytes = path_size_bytes(&path);
+                agent_driver_bytes = agent_driver_bytes.saturating_add(bytes);
+                agent_drivers.push(DriverStoreUsageItem { id: id.to_string(), bytes });
+            }
+        }
+        agent_drivers.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let jdbc_root = plugin_root.join("jdbc");
+        let jdbc_driver_root = jdbc_root.join("drivers");
+        let jdbc_driver_bytes = path_size_bytes(&jdbc_driver_root);
+        let jdbc_total_bytes = path_size_bytes(&jdbc_root);
+        let jdbc_plugin_bytes = jdbc_total_bytes.saturating_sub(jdbc_driver_bytes);
+
+        DriverStoreUsage {
+            total_bytes: jre_bytes
+                .saturating_add(agent_driver_bytes)
+                .saturating_add(jdbc_plugin_bytes)
+                .saturating_add(jdbc_driver_bytes),
+            jre_bytes,
+            agent_driver_bytes,
+            jdbc_plugin_bytes,
+            jdbc_driver_bytes,
+            jres,
+            agent_drivers,
+        }
     }
 
     pub fn resolve_java_runtime(&self, state: &AgentState, jre_key: &str) -> Result<PathBuf, String> {
@@ -427,6 +506,27 @@ impl AgentManager {
             "unknown"
         }
     }
+}
+
+fn path_size_bytes(path: &Path) -> u64 {
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.is_file() {
+            return meta.len();
+        }
+        if !meta.is_dir() {
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+
+    let mut total = 0u64;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            total = total.saturating_add(path_size_bytes(&entry.path()));
+        }
+    }
+    total
 }
 
 fn java_executable_name() -> &'static str {

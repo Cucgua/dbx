@@ -2,8 +2,12 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 import {
   buildTransposeRows,
+  buildVisibleTransposeRows,
   nextContextTransposeState,
+  nextAppendedTransposeState,
+  nextKeyboardTransposeState,
   nextTransposeState,
+  nextTransposeStateForRecordCount,
   transposeAnchorRowIndex,
   transposeFieldWidth,
   transposeScrollLeftForRecord,
@@ -91,6 +95,117 @@ test("builds one virtualizable transpose row per field with all record values", 
       ],
     },
   ]);
+});
+
+test("builds transpose rows for only the visible record window", () => {
+  const formatted: string[] = [];
+  const rows = buildVisibleTransposeRows({
+    columns: ["id", "name"],
+    records: [
+      [1, "Ada"],
+      [2, "Grace"],
+      [3, "Linus"],
+    ],
+    recordIndexes: [1, 2],
+    displayValue: (value, column, _columnIndex, recordIndex) => {
+      formatted.push(`${recordIndex}:${column}`);
+      return String(value);
+    },
+  });
+
+  assert.deepEqual(
+    rows.map((row) => ({
+      column: row.column,
+      values: row.values.map((cell) => ({ recordIndex: cell.recordIndex, display: cell.display })),
+    })),
+    [
+      {
+        column: "id",
+        values: [
+          { recordIndex: 1, display: "2" },
+          { recordIndex: 2, display: "3" },
+        ],
+      },
+      {
+        column: "name",
+        values: [
+          { recordIndex: 1, display: "Grace" },
+          { recordIndex: 2, display: "Linus" },
+        ],
+      },
+    ],
+  );
+  assert.deepEqual(formatted, ["1:id", "2:id", "1:name", "2:name"]);
+});
+
+test("builds visible transpose rows from mapped source column indexes", () => {
+  const rows = buildVisibleTransposeRows({
+    columns: ["name"],
+    records: [
+      [1, "Ada"],
+      [2, "Grace"],
+    ],
+    recordIndexes: [0],
+    valueIndexes: [1],
+    displayValue: (value) => String(value),
+  });
+
+  assert.equal(rows[0].values[0].display, "Ada");
+  assert.equal(rows[0].values[0].valueIndex, 1);
+});
+
+test("keyboard transpose opens from the selected cell row and closes when active", () => {
+  assert.deepEqual(
+    nextKeyboardTransposeState({
+      showTranspose: false,
+      transposeRowIndex: null,
+      requestedRowIndex: 3,
+      rowIds: [10, 11, 12, 13, 14],
+      selectedRowIds: new Set(),
+      selectedRange: null,
+    }),
+    {
+      showTranspose: true,
+      transposeRowIndex: 3,
+    },
+  );
+
+  assert.deepEqual(
+    nextKeyboardTransposeState({
+      showTranspose: true,
+      transposeRowIndex: 3,
+      requestedRowIndex: 3,
+      rowIds: [10, 11, 12, 13, 14],
+      selectedRowIds: new Set(),
+      selectedRange: null,
+    }),
+    {
+      showTranspose: false,
+      transposeRowIndex: null,
+    },
+  );
+});
+
+test("transpose follows appended rows when already open", () => {
+  assert.deepEqual(nextAppendedTransposeState(true, 4), {
+    showTranspose: true,
+    transposeRowIndex: 3,
+  });
+  assert.deepEqual(nextAppendedTransposeState(false, 4), {
+    showTranspose: false,
+    transposeRowIndex: null,
+  });
+});
+
+test("transpose state is preserved and clamped after record refresh", () => {
+  assert.deepEqual(nextTransposeStateForRecordCount(true, 4, 3), {
+    showTranspose: true,
+    transposeRowIndex: 2,
+  });
+  assert.deepEqual(nextTransposeStateForRecordCount(true, 1, 0), {
+    showTranspose: false,
+    transposeRowIndex: null,
+  });
 });
 
 test("calculates a horizontal record window with spacer widths", () => {

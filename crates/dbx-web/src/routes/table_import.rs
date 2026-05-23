@@ -30,7 +30,7 @@ pub async fn preview_import(
     let tmp_dir = state.data_dir.join("tmp");
     std::fs::create_dir_all(&tmp_dir).map_err(|e| AppError(e.to_string()))?;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| AppError(e.to_string()))? {
+    if let Some(field) = multipart.next_field().await.map_err(|e| AppError(e.to_string()))? {
         let file_name = field.file_name().unwrap_or("upload.csv").to_string();
         let data = field.bytes().await.map_err(|e| AppError(e.to_string()))?;
 
@@ -42,8 +42,8 @@ pub async fn preview_import(
         std::fs::write(&file_path, &data).map_err(|e| AppError(e.to_string()))?;
 
         let file_path_str = file_path.to_string_lossy().to_string();
-        let preview = table_import::preview_table_import_file_core(&file_path_str);
-        let _ = std::fs::remove_file(&file_path);
+        let preview = table_import::preview_table_import_file_core(&file_path_str).await;
+        let _ = tokio::fs::remove_file(&file_path).await;
         let preview = preview.map_err(AppError)?;
         return Ok(Json(serde_json::to_value(preview).map_err(|e| AppError(e.to_string()))?));
     }

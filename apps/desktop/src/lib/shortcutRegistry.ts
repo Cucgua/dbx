@@ -1,6 +1,16 @@
-export type ShortcutActionId = "executeSql" | "saveSql" | "closeTab" | "focusSearch" | "refreshData" | "cancelSearch";
+export type ShortcutActionId =
+  | "executeSql"
+  | "saveSql"
+  | "copyCurrentRow"
+  | "deleteCurrentRow"
+  | "newQuery"
+  | "closeTab"
+  | "focusSearch"
+  | "refreshData"
+  | "toggleTranspose"
+  | "cancelSearch";
 
-export type ShortcutScope = "global" | "editor" | "search";
+export type ShortcutScope = "global" | "editor" | "grid" | "search";
 
 export interface ShortcutDefinition {
   id: ShortcutActionId;
@@ -25,6 +35,24 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     defaultShortcut: "Mod+S",
   },
   {
+    id: "copyCurrentRow",
+    labelKey: "settings.shortcutCopyCurrentRow",
+    scope: "grid",
+    defaultShortcut: "Mod+D",
+  },
+  {
+    id: "deleteCurrentRow",
+    labelKey: "settings.shortcutDeleteCurrentRow",
+    scope: "grid",
+    defaultShortcut: "Delete",
+  },
+  {
+    id: "newQuery",
+    labelKey: "settings.shortcutNewQuery",
+    scope: "global",
+    defaultShortcut: "Mod+T",
+  },
+  {
     id: "closeTab",
     labelKey: "settings.shortcutCloseTab",
     scope: "global",
@@ -41,6 +69,12 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     labelKey: "settings.shortcutRefreshData",
     scope: "global",
     defaultShortcut: "F5",
+  },
+  {
+    id: "toggleTranspose",
+    labelKey: "settings.shortcutToggleTranspose",
+    scope: "grid",
+    defaultShortcut: "Tab",
   },
   {
     id: "cancelSearch",

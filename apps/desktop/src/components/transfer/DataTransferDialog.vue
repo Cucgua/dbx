@@ -125,7 +125,7 @@ async function loadTables() {
       const schemas = await api.listSchemas(sourceConnectionId.value, sourceDatabase.value);
       sourceSchema.value = schemas.includes("public") ? "public" : (schemas[0] ?? "");
     } else {
-      sourceSchema.value = "";
+      sourceSchema.value = sourceDatabase.value;
     }
     const tables = await api.listTables(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value);
     sourceTables.value = tables
@@ -212,6 +212,8 @@ async function startTransfer() {
   // Auto-detect target schema
   const targetConfig = store.getConfig(targetConnectionId.value);
   const targetNeedsSchema = isSchemaAware(targetConfig?.db_type);
+  const sourceConfig = store.getConfig(sourceConnectionId.value);
+  const sourceNeedsSchema = isSchemaAware(sourceConfig?.db_type);
   if (targetNeedsSchema && !targetSchema.value) {
     try {
       const schemas = await api.listSchemas(targetConnectionId.value, targetDatabase.value);
@@ -220,15 +222,17 @@ async function startTransfer() {
       /* use empty */
     }
   }
+  const effectiveSourceSchema = sourceNeedsSchema ? sourceSchema.value : sourceDatabase.value;
+  const effectiveTargetSchema = targetNeedsSchema ? targetSchema.value : targetDatabase.value;
 
   const request: api.TransferRequest = {
     transferId: transferId.value,
     sourceConnectionId: sourceConnectionId.value,
     sourceDatabase: sourceDatabase.value,
-    sourceSchema: sourceSchema.value,
+    sourceSchema: effectiveSourceSchema,
     targetConnectionId: targetConnectionId.value,
     targetDatabase: targetDatabase.value,
-    targetSchema: targetSchema.value,
+    targetSchema: effectiveTargetSchema,
     tables: [...selectedTables.value],
     createTable: createTable.value,
     mode: transferMode.value,
