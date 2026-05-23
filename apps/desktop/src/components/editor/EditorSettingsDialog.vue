@@ -837,7 +837,6 @@ watch(
                     content-class="w-[var(--reka-popover-trigger-width)] min-w-[260px]"
                     @update:model-value="onFontFamilyChange"
                     @update:open="(open: boolean) => open && loadSystemFontOptions()"
-
                   >
                     <template #trigger-label="{ label, loading }">
                       <span class="truncate" :style="{ fontFamily: editFontFamily }">
@@ -900,7 +899,6 @@ watch(
                   <span>10px</span>
                   <span class="flex-1 border-b border-dashed border-muted-foreground/30" />
                   <span>24px</span>
-
                 </div>
               </div>
 
@@ -988,7 +986,6 @@ watch(
                 <Switch id="show-tray-icon" v-model="editShowTrayIcon" />
               </div>
             </section>
-
 
             <section v-else-if="activeSettingsTab === 'navigation'" class="flex flex-col gap-5 py-2">
               <div class="space-y-2">
@@ -1286,185 +1283,188 @@ watch(
               </div>
             </section>
 
-            <section v-else-if="activeSettingsTab === 'system' && isDesktop" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="space-y-4">
-              <div class="space-y-1">
-                <Label class="text-base">{{ t("settings.oracleOciTitle") }}</Label>
-                <p class="text-sm text-muted-foreground">{{ t("settings.oracleOciDescription") }}</p>
-              </div>
-
-              <div class="space-y-2">
-                <Label>{{ t("settings.oracleClientLibDir") }}</Label>
-                <div class="flex gap-2">
-                  <Input v-model="editOracleClientLibDir" class="h-9" placeholder="C:\\oracle\\instantclient_19_28" />
-                  <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseOracleClientLibDir">
-                    <FolderOpen class="h-4 w-4" />
-                  </Button>
-                </div>
-                <p class="text-xs text-muted-foreground">{{ t("settings.oracleClientLibDirHint") }}</p>
-              </div>
-
-              <div class="space-y-2">
-                <Label>{{ t("settings.oracleClientConfigDir") }}</Label>
-                <div class="flex gap-2">
-                  <Input v-model="editOracleClientConfigDir" class="h-9" placeholder="C:\\oracle\\network\\admin" />
-                  <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseOracleClientConfigDir">
-                    <FolderOpen class="h-4 w-4" />
-                  </Button>
-                </div>
-                <p class="text-xs text-muted-foreground">{{ t("settings.oracleClientConfigDirHint") }}</p>
-              </div>
-
-              <p class="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-                {{ t("settings.oracleOciRestartHint") }}
-              </p>
-            </div>
-
-            <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
-              <Button variant="outline" @click="resetSystemDefaults">
-                {{ t("settings.resetDefaults") }}
-              </Button>
-              <div class="flex-1" />
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
-              </Button>
-              <Button :disabled="!hasSystemChanges()" @click="applySystemSettings">
-                {{ t("settings.apply") }}
-              </Button>
-            </DialogFooter>
-          </section>
-
-          <section v-else-if="activeSettingsTab === 'mcp' && isDesktop" class="flex min-h-full flex-col gap-5 py-2">
-            <div class="space-y-4">
-              <div class="flex items-start justify-between gap-4">
+            <section
+              v-else-if="activeSettingsTab === 'system' && isDesktop"
+              class="flex min-h-full flex-col gap-5 py-2"
+            >
+              <div class="space-y-4">
                 <div class="space-y-1">
-                  <Label class="text-base">{{ t("settings.mcpTitle") }}</Label>
-                  <p class="text-sm text-muted-foreground">{{ t("settings.mcpDescription") }}</p>
+                  <Label class="text-base">{{ t("settings.oracleOciTitle") }}</Label>
+                  <p class="text-sm text-muted-foreground">{{ t("settings.oracleOciDescription") }}</p>
                 </div>
-                <Switch id="mcp-http-enabled" v-model="editMcpHttpEnabled" class="mt-0.5" />
-              </div>
 
-              <div class="grid gap-4 md:grid-cols-2">
                 <div class="space-y-2">
-                  <Label>{{ t("settings.mcpHost") }}</Label>
-                  <Input v-model="editMcpHttpHost" class="h-9 font-mono text-xs" />
-                  <p class="text-xs text-muted-foreground">{{ t("settings.mcpHostHint") }}</p>
+                  <Label>{{ t("settings.oracleClientLibDir") }}</Label>
+                  <div class="flex gap-2">
+                    <Input v-model="editOracleClientLibDir" class="h-9" placeholder="C:\\oracle\\instantclient_19_28" />
+                    <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseOracleClientLibDir">
+                      <FolderOpen class="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <p class="text-xs text-muted-foreground">{{ t("settings.oracleClientLibDirHint") }}</p>
                 </div>
+
                 <div class="space-y-2">
-                  <Label>{{ t("settings.mcpPort") }}</Label>
-                  <Input v-model="editMcpHttpPort" class="h-9 font-mono text-xs" inputmode="numeric" />
-                  <p class="text-xs text-muted-foreground">{{ t("settings.mcpPortHint") }}</p>
-                </div>
-              </div>
-
-              <div class="space-y-2">
-                <Label>{{ t("settings.mcpEndpointPreview") }}</Label>
-                <div class="flex gap-2">
-                  <Input :model-value="mcpEndpointPreview" readonly class="h-9 font-mono text-xs" />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    class="h-9 w-9 shrink-0"
-                    :title="t('settings.mcpCopyEndpoint')"
-                    @click="copyText(mcpEndpointPreview)"
-                  >
-                    <Copy class="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-
-              <div class="rounded-md border p-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="space-y-1">
-                    <Label class="text-sm">{{ t("settings.mcpCurrentStatus") }}</Label>
-                    <p class="text-xs text-muted-foreground">
-                      {{
-                        mcpHttpStatus
-                          ? mcpHttpStatus.enabled
-                            ? t("settings.mcpStatusRunning")
-                            : t("settings.mcpStatusDisabled")
-                          : t("settings.mcpStatusUnknown")
-                      }}
-                    </p>
+                  <Label>{{ t("settings.oracleClientConfigDir") }}</Label>
+                  <div class="flex gap-2">
+                    <Input v-model="editOracleClientConfigDir" class="h-9" placeholder="C:\\oracle\\network\\admin" />
+                    <Button variant="outline" size="icon" class="h-9 w-9 shrink-0" @click="browseOracleClientConfigDir">
+                      <FolderOpen class="h-4 w-4" />
+                    </Button>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    class="h-8 w-8"
-                    :title="t('settings.mcpRefreshStatus')"
-                    :disabled="mcpStatusLoading"
-                    @click="refreshMcpHttpStatus"
-                  >
-                    <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': mcpStatusLoading }" />
-                  </Button>
+                  <p class="text-xs text-muted-foreground">{{ t("settings.oracleClientConfigDirHint") }}</p>
                 </div>
 
-                <p v-if="mcpStatusError" class="mt-3 text-xs text-destructive">{{ mcpStatusError }}</p>
-
-                <div v-if="mcpHttpStatus" class="mt-3 space-y-3">
-                  <div class="space-y-2">
-                    <Label>{{ t("settings.mcpCurrentEndpoint") }}</Label>
-                    <div class="flex gap-2">
-                      <Input :model-value="mcpHttpStatus.endpoint" readonly class="h-9 font-mono text-xs" />
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        class="h-9 w-9 shrink-0"
-                        :title="t('settings.mcpCopyEndpoint')"
-                        @click="copyText(mcpHttpStatus.endpoint)"
-                      >
-                        <Copy class="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div class="space-y-2">
-                    <Label>{{ t("settings.mcpToken") }}</Label>
-                    <div class="flex gap-2">
-                      <Input
-                        :model-value="mcpHttpStatus.token"
-                        readonly
-                        type="password"
-                        class="h-9 font-mono text-xs"
-                      />
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        class="h-9 w-9 shrink-0"
-                        :title="t('settings.mcpCopyToken')"
-                        @click="copyText(mcpHttpStatus.token)"
-                      >
-                        <Copy class="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                <p v-if="mcpStatusStartedAt" class="mt-3 text-xs text-muted-foreground">
-                  {{ t("settings.mcpStartedAt", { time: mcpStatusStartedAt }) }}
+                <p class="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                  {{ t("settings.oracleOciRestartHint") }}
                 </p>
               </div>
 
-              <p class="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-                {{ t("settings.mcpRestartHint") }}
-              </p>
-            </div>
+              <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
+                <Button variant="outline" @click="resetSystemDefaults">
+                  {{ t("settings.resetDefaults") }}
+                </Button>
+                <div class="flex-1" />
+                <Button variant="outline" @click="emit('update:open', false)">
+                  {{ t("common.close") }}
+                </Button>
+                <Button :disabled="!hasSystemChanges()" @click="applySystemSettings">
+                  {{ t("settings.apply") }}
+                </Button>
+              </DialogFooter>
+            </section>
 
-            <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
-              <Button variant="outline" @click="resetMcpDefaults">
-                {{ t("settings.resetDefaults") }}
-              </Button>
-              <div class="flex-1" />
-              <Button variant="outline" @click="emit('update:open', false)">
-                {{ t("common.close") }}
-              </Button>
-              <Button :disabled="!hasMcpChanges() || !isMcpHttpSettingsValid" @click="applyMcpSettings">
-                {{ t("settings.apply") }}
-              </Button>
-            </DialogFooter>
-          </section>
+            <section v-else-if="activeSettingsTab === 'mcp' && isDesktop" class="flex min-h-full flex-col gap-5 py-2">
+              <div class="space-y-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="space-y-1">
+                    <Label class="text-base">{{ t("settings.mcpTitle") }}</Label>
+                    <p class="text-sm text-muted-foreground">{{ t("settings.mcpDescription") }}</p>
+                  </div>
+                  <Switch id="mcp-http-enabled" v-model="editMcpHttpEnabled" class="mt-0.5" />
+                </div>
 
-          <section v-else-if="activeSettingsTab === 'security' && isWeb" class="flex flex-col gap-5 py-2">
+                <div class="grid gap-4 md:grid-cols-2">
+                  <div class="space-y-2">
+                    <Label>{{ t("settings.mcpHost") }}</Label>
+                    <Input v-model="editMcpHttpHost" class="h-9 font-mono text-xs" />
+                    <p class="text-xs text-muted-foreground">{{ t("settings.mcpHostHint") }}</p>
+                  </div>
+                  <div class="space-y-2">
+                    <Label>{{ t("settings.mcpPort") }}</Label>
+                    <Input v-model="editMcpHttpPort" class="h-9 font-mono text-xs" inputmode="numeric" />
+                    <p class="text-xs text-muted-foreground">{{ t("settings.mcpPortHint") }}</p>
+                  </div>
+                </div>
+
+                <div class="space-y-2">
+                  <Label>{{ t("settings.mcpEndpointPreview") }}</Label>
+                  <div class="flex gap-2">
+                    <Input :model-value="mcpEndpointPreview" readonly class="h-9 font-mono text-xs" />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      class="h-9 w-9 shrink-0"
+                      :title="t('settings.mcpCopyEndpoint')"
+                      @click="copyText(mcpEndpointPreview)"
+                    >
+                      <Copy class="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div class="rounded-md border p-3">
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="space-y-1">
+                      <Label class="text-sm">{{ t("settings.mcpCurrentStatus") }}</Label>
+                      <p class="text-xs text-muted-foreground">
+                        {{
+                          mcpHttpStatus
+                            ? mcpHttpStatus.enabled
+                              ? t("settings.mcpStatusRunning")
+                              : t("settings.mcpStatusDisabled")
+                            : t("settings.mcpStatusUnknown")
+                        }}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      class="h-8 w-8"
+                      :title="t('settings.mcpRefreshStatus')"
+                      :disabled="mcpStatusLoading"
+                      @click="refreshMcpHttpStatus"
+                    >
+                      <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': mcpStatusLoading }" />
+                    </Button>
+                  </div>
+
+                  <p v-if="mcpStatusError" class="mt-3 text-xs text-destructive">{{ mcpStatusError }}</p>
+
+                  <div v-if="mcpHttpStatus" class="mt-3 space-y-3">
+                    <div class="space-y-2">
+                      <Label>{{ t("settings.mcpCurrentEndpoint") }}</Label>
+                      <div class="flex gap-2">
+                        <Input :model-value="mcpHttpStatus.endpoint" readonly class="h-9 font-mono text-xs" />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-9 w-9 shrink-0"
+                          :title="t('settings.mcpCopyEndpoint')"
+                          @click="copyText(mcpHttpStatus.endpoint)"
+                        >
+                          <Copy class="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div class="space-y-2">
+                      <Label>{{ t("settings.mcpToken") }}</Label>
+                      <div class="flex gap-2">
+                        <Input
+                          :model-value="mcpHttpStatus.token"
+                          readonly
+                          type="password"
+                          class="h-9 font-mono text-xs"
+                        />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-9 w-9 shrink-0"
+                          :title="t('settings.mcpCopyToken')"
+                          @click="copyText(mcpHttpStatus.token)"
+                        >
+                          <Copy class="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <p v-if="mcpStatusStartedAt" class="mt-3 text-xs text-muted-foreground">
+                    {{ t("settings.mcpStartedAt", { time: mcpStatusStartedAt }) }}
+                  </p>
+                </div>
+
+                <p class="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                  {{ t("settings.mcpRestartHint") }}
+                </p>
+              </div>
+
+              <DialogFooter class="mt-auto border-t-0 bg-transparent gap-3 sm:gap-3">
+                <Button variant="outline" @click="resetMcpDefaults">
+                  {{ t("settings.resetDefaults") }}
+                </Button>
+                <div class="flex-1" />
+                <Button variant="outline" @click="emit('update:open', false)">
+                  {{ t("common.close") }}
+                </Button>
+                <Button :disabled="!hasMcpChanges() || !isMcpHttpSettingsValid" @click="applyMcpSettings">
+                  {{ t("settings.apply") }}
+                </Button>
+              </DialogFooter>
+            </section>
+
+            <section v-else-if="activeSettingsTab === 'security' && isWeb" class="flex flex-col gap-5 py-2">
               <div class="space-y-3">
                 <Label class="text-base">{{ t("auth.changePassword") }}</Label>
                 <p class="text-sm text-muted-foreground">{{ t("auth.changePasswordDescription") }}</p>
