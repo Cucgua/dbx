@@ -21,7 +21,7 @@ import type {
   SavedSqlFolder,
   SavedSqlLibrary,
 } from "@/types/database";
-import type { AiConfig, AppSettings, DesktopSettings } from "@/stores/settingsStore";
+import type { AiConfig, AppSettings } from "@/stores/settingsStore";
 import type { QueryEditability } from "@/lib/sqlAnalysis";
 import type {
   DataGridColumnValueFilterConditionOptions,

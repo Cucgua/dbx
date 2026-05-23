@@ -382,7 +382,9 @@ pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate
            WHEN 'FUNCTION' THEN 'FUNCTION' \
            ELSE o.OBJECT_TYPE \
          END AS OBJECT_TYPE, \
-         c.COMMENTS \
+         c.COMMENTS, \
+         TO_CHAR(o.CREATED, 'YYYY-MM-DD HH24:MI:SS') AS CREATED_AT, \
+         TO_CHAR(o.LAST_DDL_TIME, 'YYYY-MM-DD HH24:MI:SS') AS UPDATED_AT \
          FROM ALL_OBJECTS o \
          LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME \
          WHERE o.OWNER = {s} \
@@ -407,6 +409,8 @@ pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate
                     object_type: row.get_string(1).unwrap_or("TABLE").to_string(),
                     schema: Some(schema.to_string()),
                     comment: row.get_string(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                    created_at: row.get_string(3).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                    updated_at: row.get_string(4).filter(|s| !s.is_empty()).map(|s| s.to_string()),
                 })
                 .collect())
         }
@@ -422,6 +426,8 @@ pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate
                         object_type: oci_string(&row, 1),
                         schema: Some(schema.clone()),
                         comment: Some(oci_string(&row, 2)).filter(|s| !s.is_empty()),
+                        created_at: Some(oci_string(&row, 3)).filter(|s| !s.is_empty()),
+                        updated_at: Some(oci_string(&row, 4)).filter(|s| !s.is_empty()),
                     });
                 }
                 Ok(objects)

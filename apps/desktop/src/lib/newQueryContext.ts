@@ -1,6 +1,8 @@
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import type { ConnectionConfig, QueryTab, TreeNode } from "@/types/database";
 
+type NewQueryConnection = Pick<ConnectionConfig, "id" | "database" | "default_database" | "db_type">;
+
 export interface NewQueryTarget {
   connectionId: string;
   database: string;
@@ -13,7 +15,7 @@ interface ResolveNewQueryTargetInput {
   activeTab?: Pick<QueryTab, "connectionId" | "database">;
   selectedTreeNode?: Pick<TreeNode, "connectionId" | "database"> | null;
   activeConnectionId?: string | null;
-  connections: Pick<ConnectionConfig, "id" | "database">[];
+  connections: NewQueryConnection[];
   preferredSource?: NewQueryContextSource;
 }
 
@@ -50,7 +52,7 @@ export function resolveNewQueryTarget(input: ResolveNewQueryTargetInput): NewQue
 
 function targetFromContext(
   context: Pick<QueryTab | TreeNode, "connectionId" | "database"> | undefined,
-  connections: Pick<ConnectionConfig, "id" | "database">[],
+  connections: NewQueryConnection[],
 ): NewQueryTarget | null {
   if (!context?.connectionId) return null;
   const connection = connections.find((item) => item.id === context.connectionId);
