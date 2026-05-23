@@ -23,12 +23,17 @@ test("Redis scan size lives in its own settings category", () => {
 });
 
 test("settings action footer stays at the bottom of the content pane", () => {
+  const footerTags = source.match(/<DialogFooter[^>]*class="[^"]*"[^>]*>/g) || [];
+
   assert.match(source, /class="[^"]*overflow-hidden[^"]*flex-col[^"]*"/);
   assert.match(source, /class="[^"]*overflow-y-auto[^"]*"/);
   assert.match(source, /<DialogFooter[\s\S]*class="[^"]*shrink-0[^"]*"/);
   assert.match(source, /<DialogFooter[\s\S]*class="[^"]*bg-transparent[^"]*"/);
-  assert.doesNotMatch(source, /<DialogFooter[\s\S]*sticky/);
-  assert.doesNotMatch(source, /<DialogFooter[\s\S]*bg-background/);
+  assert.ok(footerTags.length > 0);
+  for (const footerTag of footerTags) {
+    assert.doesNotMatch(footerTag, /sticky/);
+    assert.doesNotMatch(footerTag, /bg-background/);
+  }
 });
 
 test("settings dialog has a shortcuts category", () => {

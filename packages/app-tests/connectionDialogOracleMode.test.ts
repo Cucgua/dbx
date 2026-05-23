@@ -17,5 +17,8 @@ test("Oracle connection mode uses an inline option group", () => {
 });
 
 test("legacy Oracle edit configs without a mode default to service_name connections", () => {
-  assert.match(source, /oracle_connection_type: config\.oracle_connection_type \|\| "service_name"/);
+  assert.match(
+    source,
+    /oracle_connection_type:\s*config\.oracle_connection_type \|\| \(config\.oracle_connect_method === "sid" \? "sid" : "service_name"\)/,
+  );
 });

@@ -585,7 +585,7 @@ const canSubmit = computed(() => {
   if (mongoUseUrl.value && form.value.db_type === "mongodb") return !!form.value.connection_string;
   if (oracleUseConnectString.value && isOracleOci.value) return !!form.value.connection_string;
   if (isJdbcConnection.value) return !!form.value.connection_string;
-  return !!form.value.host;
+  return !!form.value.host || !!connectionUrlInput.value.trim();
 });
 const testResultMessage = computed(() => {
   if (!testResult.value) return "";

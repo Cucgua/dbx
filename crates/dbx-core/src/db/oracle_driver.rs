@@ -549,13 +549,14 @@ pub async fn get_table_comment(conn: &OracleClient, schema: &str, table: &str) -
         }
         OracleClient::Oci(conn) => {
             run_oci(conn, move |conn| {
-                let rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
-                for row in rows {
+                let mut rows = conn.query(&sql, &[]).map_err(|e| e.to_string())?;
+                if let Some(row) = rows.next() {
                     let row = row.map_err(|e| e.to_string())?;
                     let comment = oci_string(&row, 0);
-                    return Ok(Some(comment).filter(|s| !s.is_empty()));
+                    Ok(Some(comment).filter(|s| !s.is_empty()))
+                } else {
+                    Ok(None)
                 }
-                Ok(None)
             })
             .await
         }

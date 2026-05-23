@@ -11,5 +11,5 @@ test("connection dialog auto-resolves host from URL before test/save", () => {
 });
 
 test("save button allows URL-only submissions when host is empty", () => {
-  assert.match(source, /&&\s*!connectionUrlInput\.trim\(\)\)/);
+  assert.match(source, /return !!form\.value\.host \|\| !!connectionUrlInput\.value\.trim\(\)/);
 });
