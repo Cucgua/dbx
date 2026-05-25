@@ -2,7 +2,17 @@
 import { ref, watch, shallowRef, computed } from "vue";
 import type { EditorView as EditorViewType } from "@codemirror/view";
 import { useI18n } from "vue-i18n";
-import { CircleHelp, Copy, ExternalLink, FolderOpen, Loader2, Pencil, RefreshCw, Settings, Trash2 } from "lucide-vue-next";
+import {
+  CircleHelp,
+  Copy,
+  ExternalLink,
+  FolderOpen,
+  Loader2,
+  Pencil,
+  RefreshCw,
+  Settings,
+  Trash2,
+} from "lucide-vue-next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
