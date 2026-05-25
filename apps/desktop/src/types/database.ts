@@ -43,6 +43,13 @@ export type DatabaseType =
   | "tdengine"
   | "jdbc";
 
+export interface SqlSnippet {
+  id: string;
+  label: string;
+  prefix: string;
+  body: string;
+}
+
 export interface ConnectionConfig {
   id: string;
   name: string;
@@ -324,7 +331,8 @@ export interface QueryTab {
   executionId?: string;
   isExplaining?: boolean;
   explainExecutionId?: string;
-  mode: "data" | "query" | "redis" | "mongo" | "objects";
+  mode: "data" | "query" | "redis" | "mongo" | "objects" | "structure";
+  structureTableName?: string;
   objectBrowser?: {
     schema?: string;
     objectType?: "tables";

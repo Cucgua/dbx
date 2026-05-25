@@ -1,5 +1,6 @@
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use duckdb::types::{TimeUnit, ValueRef};
+use mysql_async::prelude::Queryable;
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -7,11 +8,17 @@ use tokio_util::sync::CancellationToken;
 
 use crate::connection::{AppState, PoolKind};
 use crate::db;
+use crate::models::connection::DatabaseType;
 use crate::sql::{split_sql_batches, split_sql_statements, starts_with_executable_sql_keyword};
 
 pub const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_ROWS: usize = 10000;
 pub const QUERY_CANCELED: &str = "Query canceled";
+
+async fn connection_database_type(state: &AppState, connection_id: &str) -> Option<DatabaseType> {
+    let configs = state.configs.read().await;
+    configs.get(connection_id).map(|config| config.db_type)
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct QueryExecutionOptions {
@@ -337,6 +344,9 @@ pub fn is_connection_error(err: &str) -> bool {
         || lower.contains("closed")
         || lower.contains("eof")
         || lower.contains("i/o error")
+        || lower.contains("not connected")
+        || lower.contains("end-of-file")
+        || lower.contains("idle")
         || is_os_connection_error(&lower)
 }
 
@@ -702,7 +712,11 @@ pub async fn execute_multi_core_with_options(
         return execute_multi_sqlserver(state, &pool_key, sql, cancel_token, options).await;
     }
 
-    let statements = split_sql_statements(sql);
+    let db_type = connection_database_type(state, connection_id).await;
+    let statements = db_type.map_or_else(
+        || split_sql_statements(sql),
+        |db_type| crate::sql::split_sql_statements_for_database(sql, db_type),
+    );
     if statements.len() <= 1 {
         let single_sql = statements.into_iter().next().unwrap_or_default();
         let result = execute_sql_statement_with_options(
@@ -872,13 +886,12 @@ pub async fn execute_statements(
 }
 
 /// Execute multiple SQL statements within a single transaction.
-/// For sqlx-based pools (Postgres/MySQL/SQLite), uses the Transaction API to
-/// guarantee all statements run on the same physical connection.
-/// For custom drivers (ClickHouse/SqlServer/Agent), uses explicit
-/// BEGIN/COMMIT/ROLLBACK on the already-single-connection client.
+/// For pooled drivers (Postgres/MySQL), uses the driver transaction API.
+/// For SQLite and already-single-connection drivers (ClickHouse/SqlServer/Agent),
+/// uses explicit BEGIN/COMMIT/ROLLBACK on the shared connection.
 /// For databases that don't support explicit transactions (Redis, MongoDB, Oracle),
 /// executes statements sequentially without transaction.
-/// If BEGIN fails, returns an error — no silent fallback to auto-commit.
+/// If BEGIN fails, returns an error instead of silently falling back to auto-commit.
 pub async fn execute_statements_in_transaction(
     state: &AppState,
     connection_id: &str,
@@ -924,90 +937,85 @@ pub async fn execute_statements_in_transaction(
 
 /// Owned pool variants for safe dispatch across async boundaries.
 enum TxPath {
-    Pg(sqlx::postgres::PgPool),
-    Mysql(sqlx::mysql::MySqlPool, bool),
-    Sqlite(sqlx::sqlite::SqlitePool),
+    Pg(deadpool_postgres::Pool),
+    Mysql(mysql_async::Pool, bool),
+    Sqlite(db::sqlite::SqliteHandle),
     Explicit,
     None,
 }
 
 // Each of these acquires a dedicated connection and runs all statements within
 // BEGIN ... COMMIT/ROLLBACK, guaranteeing a single physical connection.
-// This avoids sqlx::Transaction<T> which has Send/lifetime incompatibility with Tauri macro.
 
 async fn exec_tx_pg_inner(
-    pool: sqlx::postgres::PgPool,
+    pool: deadpool_postgres::Pool,
     statements: &[String],
     schema: Option<&str>,
     start: std::time::Instant,
 ) -> Result<db::QueryResult, String> {
-    let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
-    // Set schema first
+    let mut client = pool.get().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
+    let had_schema = schema.is_some();
     if let Some(s) = schema {
-        let sp = format!("SET search_path TO \"{}\", public", s);
-        sqlx::query(&sp).execute(&mut *conn).await.map_err(|e| format!("SET search_path failed: {}", e))?;
+        client
+            .execute(&format!("SET search_path TO {}, public", db::postgres::pg_quote_ident(s)), &[])
+            .await
+            .map_err(|e| format!("SET search_path failed: {}", e))?;
     }
-    sqlx::query("BEGIN").execute(&mut *conn).await.map_err(|e| format!("Failed to begin transaction: {}", e))?;
+    let tx_result = exec_tx_pg_statements(&mut client, statements).await;
+
+    // Always reset search_path so the connection is clean when returned to the pool
+    if had_schema {
+        let _ = client.execute("RESET search_path", &[]).await;
+    }
+
+    match tx_result {
+        Ok(total_affected) => Ok(db::QueryResult {
+            columns: vec![],
+            rows: vec![],
+            affected_rows: total_affected,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+            session_id: None,
+            has_more: false,
+        }),
+        Err(e) => Err(e),
+    }
+}
+
+async fn exec_tx_pg_statements(client: &mut deadpool_postgres::Client, statements: &[String]) -> Result<u64, String> {
+    let tx = client.transaction().await.map_err(|e| format!("Failed to begin transaction: {}", e))?;
     let mut total_affected: u64 = 0;
     for (i, sql) in statements.iter().enumerate() {
-        match sqlx::query(sql).execute(&mut *conn).await {
-            Ok(r) => total_affected += r.rows_affected(),
+        match tx.execute(sql, &[]).await {
+            Ok(affected) => total_affected += affected,
             Err(e) => {
-                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                // Transaction auto-rollbacks on drop
                 return Err(format!("Statement {} failed: {}", i + 1, e));
             }
         }
     }
-    sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| format!("COMMIT failed: {}", e))?;
-    Ok(db::QueryResult {
-        columns: vec![],
-        rows: vec![],
-        affected_rows: total_affected,
-        execution_time_ms: start.elapsed().as_millis(),
-        truncated: false,
-        session_id: None,
-        has_more: false,
-    })
+    tx.commit().await.map_err(|e| format!("COMMIT failed: {}", e))?;
+    Ok(total_affected)
 }
 
 async fn exec_tx_mysql_inner(
-    pool: sqlx::mysql::MySqlPool,
+    pool: mysql_async::Pool,
     statements: &[String],
     start: std::time::Instant,
 ) -> Result<db::QueryResult, String> {
-    let statements = statements.to_vec();
-    tokio::task::spawn_blocking(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("Failed to start MySQL transaction runtime: {}", e))?
-            .block_on(exec_tx_mysql_raw_inner(pool, statements, start))
-    })
-    .await
-    .map_err(|e| format!("MySQL transaction task failed: {}", e))?
-}
-
-async fn exec_tx_mysql_raw_inner(
-    pool: sqlx::mysql::MySqlPool,
-    statements: Vec<String>,
-    start: std::time::Instant,
-) -> Result<db::QueryResult, String> {
-    let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
-    sqlx::raw_sql("START TRANSACTION")
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| format!("Failed to begin transaction: {}", e))?;
+    let mut conn = pool.get_conn().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
+    conn.query_drop("START TRANSACTION").await.map_err(|e| format!("Failed to begin transaction: {}", e))?;
     let mut total_affected: u64 = 0;
     for (i, sql) in statements.iter().enumerate() {
-        match sqlx::raw_sql(sql).execute(&mut *conn).await {
-            Ok(r) => total_affected += r.rows_affected(),
+        match conn.query_iter(sql).await {
+            Ok(result) => total_affected += result.affected_rows(),
             Err(e) => {
-                let _ = sqlx::raw_sql("ROLLBACK").execute(&mut *conn).await;
+                let _ = conn.query_drop("ROLLBACK").await;
                 return Err(format!("Statement {} failed: {}", i + 1, e));
             }
         }
     }
-    sqlx::raw_sql("COMMIT").execute(&mut *conn).await.map_err(|e| format!("COMMIT failed: {}", e))?;
+    conn.query_drop("COMMIT").await.map_err(|e| format!("COMMIT failed: {}", e))?;
     Ok(db::QueryResult {
         columns: vec![],
         rows: vec![],
@@ -1020,32 +1028,38 @@ async fn exec_tx_mysql_raw_inner(
 }
 
 async fn exec_tx_sqlite_inner(
-    pool: sqlx::sqlite::SqlitePool,
+    pool: db::sqlite::SqliteHandle,
     statements: &[String],
     start: std::time::Instant,
 ) -> Result<db::QueryResult, String> {
-    let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
-    sqlx::query("BEGIN").execute(&mut *conn).await.map_err(|e| format!("Failed to begin transaction: {}", e))?;
-    let mut total_affected: u64 = 0;
-    for (i, sql) in statements.iter().enumerate() {
-        match sqlx::query(sql).execute(&mut *conn).await {
-            Ok(r) => total_affected += r.rows_affected(),
-            Err(e) => {
-                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                return Err(format!("Statement {} failed: {}", i + 1, e));
+    let statements = statements.to_vec();
+    tokio::task::spawn_blocking(move || {
+        pool.with_connection(|conn| {
+            conn.execute_batch("BEGIN").map_err(|e| format!("Failed to begin transaction: {}", e))?;
+            let mut total_affected: u64 = 0;
+            for (i, sql) in statements.iter().enumerate() {
+                match conn.execute_batch(sql) {
+                    Ok(_) => total_affected += conn.changes(),
+                    Err(e) => {
+                        let _ = conn.execute_batch("ROLLBACK");
+                        return Err(format!("Statement {} failed: {}", i + 1, e));
+                    }
+                }
             }
-        }
-    }
-    sqlx::query("COMMIT").execute(&mut *conn).await.map_err(|e| format!("COMMIT failed: {}", e))?;
-    Ok(db::QueryResult {
-        columns: vec![],
-        rows: vec![],
-        affected_rows: total_affected,
-        execution_time_ms: start.elapsed().as_millis(),
-        truncated: false,
-        session_id: None,
-        has_more: false,
+            conn.execute_batch("COMMIT").map_err(|e| format!("COMMIT failed: {}", e))?;
+            Ok(db::QueryResult {
+                columns: vec![],
+                rows: vec![],
+                affected_rows: total_affected,
+                execution_time_ms: start.elapsed().as_millis(),
+                truncated: false,
+                session_id: None,
+                has_more: false,
+            })
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 async fn exec_tx_explicit_inner(
@@ -1190,6 +1204,17 @@ mod tests {
         assert!(is_connection_error("Connection timed out"));
         assert!(is_connection_error("socket closed"));
         assert!(is_connection_error("unexpected eof"));
+    }
+
+    #[test]
+    fn is_connection_error_detects_oracle_idle_timeout() {
+        assert!(is_connection_error("ORA-02396: exceeded maximum idle time, please connect again"));
+        assert!(is_connection_error(
+            "Agent RPC error (-32603): ORA-02396: exceeded maximum idle time, please connect again"
+        ));
+        assert!(is_connection_error("ORA-03113: end-of-file on communication channel"));
+        assert!(is_connection_error("ORA-03114: not connected to Oracle"));
+        assert!(is_connection_error("ORA-03135: connection lost contact"));
     }
 
     #[test]

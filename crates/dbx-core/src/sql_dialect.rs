@@ -344,6 +344,7 @@ pub fn is_schema_aware(database_type: DatabaseType) -> bool {
             | DatabaseType::Trino
             | DatabaseType::Db2
             | DatabaseType::Tdengine
+            | DatabaseType::DuckDb
     )
 }
 

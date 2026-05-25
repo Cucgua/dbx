@@ -220,37 +220,34 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
         Ok(()) => match config.db_type {
             DatabaseType::Mysql if config.needs_bare_mysql() => match db::mysql::connect_bare(&url).await {
                 Ok(pool) => {
-                    pool.close().await;
+                    let _ = pool.disconnect().await;
                     Ok("Connection successful".to_string())
                 }
                 Err(e) => Err(e),
             },
             DatabaseType::Mysql => match db::mysql::connect(&url).await {
                 Ok(pool) => {
-                    pool.close().await;
+                    let _ = pool.disconnect().await;
                     Ok("Connection successful".to_string())
                 }
                 Err(e) => Err(e),
             },
             DatabaseType::Doris | DatabaseType::StarRocks => match db::mysql::connect_bare(&url).await {
                 Ok(pool) => {
-                    pool.close().await;
+                    let _ = pool.disconnect().await;
                     Ok("Connection successful".to_string())
                 }
                 Err(e) => Err(e),
             },
             DatabaseType::Postgres | DatabaseType::Redshift => match db::postgres::connect(&url).await {
                 Ok(pool) => {
-                    pool.close().await;
+                    pool.close();
                     Ok("Connection successful".to_string())
                 }
                 Err(e) => Err(e),
             },
             DatabaseType::Sqlite => match db::sqlite::connect_path(&expand_tilde(&config.host)).await {
-                Ok(pool) => {
-                    pool.close().await;
-                    Ok("Connection successful".to_string())
-                }
+                Ok(_) => Ok("Connection successful".to_string()),
                 Err(e) => Err(e),
             },
             DatabaseType::Redis => db::redis_driver::connect(&url).await.map(|_| "Connection successful".to_string()),
@@ -451,9 +448,11 @@ pub async fn disconnect_db(state: State<'_, Arc<AppState>>, connection_id: Strin
     for key in keys_to_remove {
         if let Some(pool) = conns.remove(&key) {
             match pool {
-                PoolKind::Mysql(p, _) => p.close().await,
-                PoolKind::Postgres(p) => p.close().await,
-                PoolKind::Sqlite(p) => p.close().await,
+                PoolKind::Mysql(p, _) => {
+                    let _ = p.disconnect().await;
+                }
+                PoolKind::Postgres(p) => p.close(),
+                PoolKind::Sqlite(_) => {}
                 PoolKind::Redis(_) => {}
                 PoolKind::DuckDb(_) => {}
                 PoolKind::MongoDb(_) => {}

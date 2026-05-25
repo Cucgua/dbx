@@ -62,6 +62,7 @@ pub struct AnalyzeEditableQueryRequest {
 pub struct FindStatementAtCursorRequest {
     pub sql: String,
     pub cursor_pos: usize,
+    pub database_type: Option<dbx_core::models::connection::DatabaseType>,
 }
 
 #[derive(Deserialize)]
@@ -338,7 +339,13 @@ pub async fn execute_script(
     State(state): State<Arc<WebState>>,
     Json(req): Json<ExecuteQueryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let statements = dbx_core::sql::split_sql_statements(&req.sql);
+    let db_type = {
+        let configs = state.app.configs.read().await;
+        configs.get(&req.connection_id).map(|config| config.db_type)
+    };
+    let statements = db_type
+        .map(|db_type| dbx_core::sql::split_sql_statements_for_database(&req.sql, db_type))
+        .unwrap_or_else(|| dbx_core::sql::split_sql_statements(&req.sql));
     let result = dbx_core::query::execute_statements(
         &state.app,
         &req.connection_id,
@@ -376,7 +383,11 @@ pub async fn analyze_sql_references(
 }
 
 pub async fn find_statement_at_cursor(Json(req): Json<FindStatementAtCursorRequest>) -> Json<String> {
-    Json(dbx_core::sql::find_statement_at_cursor(&req.sql, req.cursor_pos))
+    Json(
+        req.database_type
+            .map(|db_type| dbx_core::sql::find_statement_at_cursor_for_database(&req.sql, req.cursor_pos, db_type))
+            .unwrap_or_else(|| dbx_core::sql::find_statement_at_cursor(&req.sql, req.cursor_pos)),
+    )
 }
 
 pub async fn prepare_query_pagination_execution_plan(

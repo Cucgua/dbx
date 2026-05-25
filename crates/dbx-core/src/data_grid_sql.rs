@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::models::connection::DatabaseType;
 use crate::sql_dialect::quote_table_identifier;
+use crate::transfer::format_pg_array_sql_literal;
 
 const DBX_ROWID_COLUMN: &str = "__DBX_ROWID";
 const DBX_NEO4J_ELEMENT_ID_COLUMN: &str = "__DBX_ELEMENT_ID";
@@ -935,6 +936,9 @@ pub fn format_grid_sql_literal(
     }
     if let Some(number) = value.as_number() {
         return number.to_string();
+    }
+    if let Some(arr) = value.as_array() {
+        return format_pg_array_sql_literal(arr);
     }
     let text = value.as_str().map_or_else(|| value.to_string(), ToString::to_string);
     if text.is_empty() {

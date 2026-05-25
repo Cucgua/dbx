@@ -492,8 +492,12 @@ export async function analyzeSqlReferences(sql: string, dialect?: string): Promi
   return post("/api/query/analyze-sql-references", { sql, dialect });
 }
 
-export async function findStatementAtCursor(sql: string, cursorPos: number): Promise<string> {
-  return post("/api/query/find-statement-at-cursor", { sql, cursorPos });
+export async function findStatementAtCursor(
+  sql: string,
+  cursorPos: number,
+  databaseType?: DatabaseType,
+): Promise<string> {
+  return post("/api/query/find-statement-at-cursor", { sql, cursorPos, databaseType });
 }
 
 export async function prepareQueryPaginationExecutionPlan(

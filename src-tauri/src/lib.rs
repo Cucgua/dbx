@@ -76,11 +76,6 @@ fn setup_desktop_tray<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> tauri::R
     let menu = MenuBuilder::new(manager).text("show", "Show DBX").separator().text("quit", "Quit DBX").build()?;
     let mut tray =
         TrayIconBuilder::<R>::with_id(DESKTOP_TRAY_ID).tooltip("DBX").menu(&menu).show_menu_on_left_click(false);
-    #[cfg(target_os = "macos")]
-    {
-        tray = tray.title("DBX");
-    }
-
     if let Some(icon) = manager.app_handle().default_window_icon().cloned() {
         tray = tray.icon(icon);
     }

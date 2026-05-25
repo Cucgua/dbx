@@ -19,7 +19,7 @@ test("shared API exposes backend current statement resolution", () => {
 });
 
 test("execution target prefers backend current statement resolution", () => {
-  assert.match(executionTargetSource, /api\.findStatementAtCursor\(fullSql, options\.cursorPos\)/);
+  assert.match(executionTargetSource, /api\.findStatementAtCursor\(fullSql, options\.cursorPos, options\.databaseType\)/);
   assert.doesNotMatch(executionTargetSource, /sqlStatementSplit/);
   assert.doesNotMatch(executionTargetSource, /return findStatementAtCursor\(fullSql, options\.cursorPos\)/);
 });

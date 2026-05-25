@@ -102,12 +102,6 @@ export const useConnectionStore = defineStore("connection", () => {
     schema?: string;
     tableName: string;
   } | null>(null);
-  const structureEditorSource = ref<{
-    connectionId: string;
-    database: string;
-    schema?: string;
-    tableName: string;
-  } | null>(null);
   const fieldLineageSource = ref<{
     connectionId: string;
     database: string;
@@ -295,6 +289,16 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   function setChildren(parent: TreeNode, children: TreeNode[]) {
+    if (parent.children && parent.children.length > 0) {
+      const oldMap = new Map(parent.children.map((c) => [c.id, c] as const));
+      children = children.map((child) => {
+        const old = oldMap.get(child.id);
+        if (old && old.isExpanded && old.children && old.children.length > 0) {
+          return { ...child, isExpanded: true, children: old.children };
+        }
+        return child;
+      });
+    }
     parent.children = applyPinnedTreeNodeState(children, pinnedTreeNodeIds.value);
     loadedTreeNodeChildrenIds.value.add(parent.id);
   }
@@ -380,7 +384,11 @@ export const useConnectionStore = defineStore("connection", () => {
   function refreshStaleTreeNode(node: TreeNode) {
     if (staleTreeRefreshIds.has(node.id)) return;
     staleTreeRefreshIds.add(node.id);
-    void loadTreeNodeChildren(node, { force: true }).finally(() => staleTreeRefreshIds.delete(node.id));
+    const expandedIds = collectExpandedNodeIds([node]);
+    clearLoadedChildrenCache(node.id);
+    void loadTreeNodeChildren(node, { force: true })
+      .then(() => restoreExpandedChildren(node, expandedIds, { force: true }))
+      .finally(() => staleTreeRefreshIds.delete(node.id));
   }
 
   async function loadPersistedTreeChildren(node: TreeNode, cacheKey: string): Promise<PersistedTreeChildrenLoadResult> {
@@ -1787,7 +1795,6 @@ export const useConnectionStore = defineStore("connection", () => {
     sqlFileSource,
     diagramSource,
     tableImportSource,
-    structureEditorSource,
     fieldLineageSource,
     databaseSearchSource,
     databaseExportSource,

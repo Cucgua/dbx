@@ -21,6 +21,7 @@ export interface TableStructureCapabilities {
   alterType: boolean;
   alterNullability: boolean;
   alterDefault: boolean;
+  alterPrimaryKey: boolean;
   reorderColumn: boolean;
   comment: boolean;
   createIndex: boolean;
@@ -42,6 +43,7 @@ const unsupportedCapabilities: TableStructureCapabilities = {
   alterType: false,
   alterNullability: false,
   alterDefault: false,
+  alterPrimaryKey: false,
   reorderColumn: false,
   comment: false,
   createIndex: false,
@@ -73,6 +75,7 @@ const mysqlCapabilities = capabilities({
   dropIndex: true,
   rebuildIndex: true,
   indexType: true,
+  alterPrimaryKey: true,
 });
 
 const postgresCapabilities = capabilities({
@@ -93,6 +96,7 @@ const postgresCapabilities = capabilities({
   indexInclude: true,
   indexFilter: true,
   indexComment: true,
+  alterPrimaryKey: true,
 });
 
 const redshiftCapabilities = capabilities({
@@ -104,6 +108,7 @@ const redshiftCapabilities = capabilities({
   indexInclude: false,
   indexFilter: false,
   indexComment: false,
+  alterPrimaryKey: false,
 });
 
 const sqliteCapabilities = capabilities({

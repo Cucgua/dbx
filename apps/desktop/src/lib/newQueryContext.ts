@@ -6,14 +6,15 @@ type NewQueryConnection = Pick<ConnectionConfig, "id" | "database" | "default_da
 export interface NewQueryTarget {
   connectionId: string;
   database: string;
+  schema?: string;
   shouldRefreshDefaultDatabase: boolean;
 }
 
 export type NewQueryContextSource = "tab" | "sidebar";
 
 interface ResolveNewQueryTargetInput {
-  activeTab?: Pick<QueryTab, "connectionId" | "database">;
-  selectedTreeNode?: Pick<TreeNode, "connectionId" | "database"> | null;
+  activeTab?: Pick<QueryTab, "connectionId" | "database" | "schema">;
+  selectedTreeNode?: Pick<TreeNode, "connectionId" | "database" | "schema"> | null;
   activeConnectionId?: string | null;
   connections: NewQueryConnection[];
   preferredSource?: NewQueryContextSource;
@@ -51,7 +52,7 @@ export function resolveNewQueryTarget(input: ResolveNewQueryTargetInput): NewQue
 }
 
 function targetFromContext(
-  context: Pick<QueryTab | TreeNode, "connectionId" | "database"> | undefined,
+  context: Pick<QueryTab | TreeNode, "connectionId" | "database" | "schema"> | undefined,
   connections: NewQueryConnection[],
 ): NewQueryTarget | null {
   if (!context?.connectionId) return null;
@@ -61,6 +62,7 @@ function targetFromContext(
   return {
     connectionId: context.connectionId,
     database,
+    schema: "schema" in context ? (context as { schema?: string }).schema : undefined,
     shouldRefreshDefaultDatabase: !context.database,
   };
 }

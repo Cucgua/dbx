@@ -6,24 +6,29 @@ use crate::db;
 use crate::models::connection::DatabaseType;
 
 pub fn duckdb_query_tables(con: &duckdb::Connection) -> Result<Vec<db::TableInfo>, String> {
-    duckdb_query_tables_in_database(con, "main")
+    duckdb_query_tables_in_database(con, "main", "main")
 }
 
-pub fn duckdb_query_tables_in_database(con: &duckdb::Connection, database: &str) -> Result<Vec<db::TableInfo>, String> {
-    duckdb_query_tables_in_database_with_attached(con, database, &[])
+pub fn duckdb_query_tables_in_database(
+    con: &duckdb::Connection,
+    database: &str,
+    schema: &str,
+) -> Result<Vec<db::TableInfo>, String> {
+    duckdb_query_tables_in_database_with_attached(con, database, schema, &[])
 }
 
 pub fn duckdb_query_tables_in_database_with_attached(
     con: &duckdb::Connection,
     database: &str,
+    schema: &str,
     attached_names: &[String],
 ) -> Result<Vec<db::TableInfo>, String> {
     let database = duckdb_catalog_name(con, database, attached_names)?;
     let mut stmt = con.prepare(
-        "SELECT table_name, table_type FROM information_schema.tables WHERE table_catalog = ? AND table_schema = 'main' ORDER BY table_name"
+        "SELECT table_name, table_type FROM information_schema.tables WHERE table_catalog = ? AND table_schema = ? ORDER BY table_name"
     ).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([database.as_str()], |row| {
+        .query_map((database.as_str(), schema), |row| {
             Ok(db::TableInfo { name: row.get::<_, String>(0)?, table_type: row.get::<_, String>(1)?, comment: None })
         })
         .map_err(|e| e.to_string())?;
@@ -57,6 +62,25 @@ pub fn duckdb_list_databases_with_attached(
         })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|row| row.ok()).collect())
+}
+
+pub fn duckdb_list_schemas(con: &duckdb::Connection, database: &str) -> Result<Vec<String>, String> {
+    duckdb_list_schemas_with_attached(con, database, &[])
+}
+
+pub fn duckdb_list_schemas_with_attached(
+    con: &duckdb::Connection,
+    database: &str,
+    attached_names: &[String],
+) -> Result<Vec<String>, String> {
+    let database = duckdb_catalog_name(con, database, attached_names)?;
+    let mut stmt = con
+        .prepare(
+            "SELECT schema_name FROM information_schema.schemata WHERE catalog_name = ? AND schema_name NOT IN ('information_schema', 'pg_catalog') ORDER BY schema_name",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([database.as_str()], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
 fn duckdb_catalog_name(con: &duckdb::Connection, database: &str, attached_names: &[String]) -> Result<String, String> {
@@ -95,20 +119,22 @@ fn duckdb_quote_string(value: &str) -> String {
 }
 
 pub fn duckdb_query_columns(con: &duckdb::Connection, table: &str) -> Result<Vec<db::ColumnInfo>, String> {
-    duckdb_query_columns_in_database(con, "main", table)
+    duckdb_query_columns_in_database(con, "main", "main", table)
 }
 
 pub fn duckdb_query_columns_in_database(
     con: &duckdb::Connection,
     database: &str,
+    schema: &str,
     table: &str,
 ) -> Result<Vec<db::ColumnInfo>, String> {
-    duckdb_query_columns_in_database_with_attached(con, database, table, &[])
+    duckdb_query_columns_in_database_with_attached(con, database, schema, table, &[])
 }
 
 pub fn duckdb_query_columns_in_database_with_attached(
     con: &duckdb::Connection,
     database: &str,
+    schema: &str,
     table: &str,
     attached_names: &[String],
 ) -> Result<Vec<db::ColumnInfo>, String> {
@@ -123,25 +149,26 @@ pub fn duckdb_query_columns_in_database_with_attached(
           AND tc.table_name = kcu.table_name
          WHERE tc.constraint_type = 'PRIMARY KEY'
            AND tc.table_catalog = ?
-           AND tc.table_schema = 'main'
+           AND tc.table_schema = ?
            AND tc.table_name = ?
          ORDER BY kcu.ordinal_position",
         )
         .map_err(|e| e.to_string())?;
-    let pk_rows =
-        pk_stmt.query_map([database.as_str(), table], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?;
+    let pk_rows = pk_stmt
+        .query_map((database.as_str(), schema, table), |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
     let primary_keys: std::collections::HashSet<String> = pk_rows.filter_map(|r| r.ok()).collect();
 
     let mut stmt = con
         .prepare(
             "SELECT column_name, data_type, is_nullable, column_default
          FROM information_schema.columns
-         WHERE table_catalog = ? AND table_schema = 'main' AND table_name = ?
+         WHERE table_catalog = ? AND table_schema = ? AND table_name = ?
          ORDER BY ordinal_position",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([database.as_str(), table], |row| {
+        .query_map((database.as_str(), schema, table), |row| {
             let name = row.get::<_, String>(0)?;
             Ok(db::ColumnInfo {
                 is_primary_key: primary_keys.contains(&name),
@@ -340,6 +367,11 @@ pub async fn list_schemas_core(state: &AppState, connection_id: &str, database: 
 
     match pool {
         PoolKind::Postgres(p) => db::postgres::list_schemas(p).await,
+        PoolKind::DuckDb(con) => {
+            let duckdb_attached_names = duckdb_attached_database_names(state, connection_id).await;
+            let con = con.lock().map_err(|e| e.to_string())?;
+            duckdb_list_schemas_with_attached(&con, database, &duckdb_attached_names)
+        }
         _ => Ok(vec![]),
     }
 }
@@ -381,7 +413,7 @@ pub async fn list_tables_core(
         if let Some(con) = extract_duckdb(&connections, &pool_key) {
             drop(connections);
             let con = con.lock().map_err(|e| e.to_string())?;
-            return duckdb_query_tables_in_database_with_attached(&con, database, &duckdb_attached_names);
+            return duckdb_query_tables_in_database_with_attached(&con, database, schema, &duckdb_attached_names);
         }
         if let Some(client) = extract_clickhouse(&connections, &pool_key) {
             drop(connections);
@@ -471,8 +503,8 @@ mod tests {
         duckdb_attach_database(&con, "analytics", path.to_str().unwrap()).unwrap();
         con.execute_batch("CREATE TABLE analytics.attached_table(id INTEGER);").unwrap();
 
-        let main_tables = duckdb_query_tables_in_database(&con, "main").unwrap();
-        let attached_tables = duckdb_query_tables_in_database(&con, "analytics").unwrap();
+        let main_tables = duckdb_query_tables_in_database(&con, "main", "main").unwrap();
+        let attached_tables = duckdb_query_tables_in_database(&con, "analytics", "main").unwrap();
 
         assert!(main_tables.iter().any(|table| table.name == "main_table"));
         assert!(!main_tables.iter().any(|table| table.name == "attached_table"));
@@ -621,7 +653,13 @@ pub async fn get_columns_core(
         if let Some(con) = extract_duckdb(&connections, &pool_key) {
             drop(connections);
             let con = con.lock().map_err(|e| e.to_string())?;
-            return duckdb_query_columns_in_database_with_attached(&con, database, table, &duckdb_attached_names);
+            return duckdb_query_columns_in_database_with_attached(
+                &con,
+                database,
+                schema,
+                table,
+                &duckdb_attached_names,
+            );
         }
         if let Some(client) = extract_clickhouse(&connections, &pool_key) {
             drop(connections);
@@ -971,17 +1009,25 @@ fn first_string_cell(result: db::QueryResult) -> Result<String, String> {
 }
 
 async fn mysql_object_source(
-    pool: &sqlx::mysql::MySqlPool,
+    pool: &db::mysql::MySqlPool,
     name: &str,
     kind: &db::ObjectSourceKind,
 ) -> Result<String, String> {
-    use sqlx::Row;
+    use mysql_async::prelude::*;
     let sql = mysql_object_source_sql(name, kind);
-    let row: sqlx::mysql::MySqlRow = sqlx::raw_sql(&sql).fetch_one(pool).await.map_err(|e| e.to_string())?;
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn.query_iter(&sql).await.map_err(|e| e.to_string())?;
+    let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
+    let row = rows.first().ok_or("Object source not found")?;
     let index = if matches!(kind, db::ObjectSourceKind::View) { 1 } else { 2 };
-    row.try_get::<String, _>(index)
-        .or_else(|_| row.try_get::<Vec<u8>, _>(index).map(|b| String::from_utf8_lossy(&b).to_string()))
-        .map_err(|e| e.to_string())
+    row.get_opt::<String, usize>(index)
+        .and_then(|result| result.ok())
+        .or_else(|| {
+            row.get_opt::<Vec<u8>, usize>(index)
+                .and_then(|result| result.ok())
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+        })
+        .ok_or_else(|| "Failed to read object source".to_string())
 }
 
 pub async fn get_object_source_core(
@@ -1111,26 +1157,39 @@ mod ddl_tests {
     }
 }
 
-pub async fn mysql_ddl(pool: &sqlx::mysql::MySqlPool, table: &str) -> Result<String, String> {
-    use sqlx::Row;
+pub async fn mysql_ddl(pool: &db::mysql::MySqlPool, table: &str) -> Result<String, String> {
+    use mysql_async::prelude::*;
     let sql = format!("SHOW CREATE TABLE `{}`", table.replace('`', "``"));
-    let row: sqlx::mysql::MySqlRow = sqlx::raw_sql(&sql).fetch_one(pool).await.map_err(|e| e.to_string())?;
-    row.try_get::<String, _>(1)
-        .or_else(|_| row.try_get::<Vec<u8>, _>(1).map(|b| String::from_utf8_lossy(&b).to_string()))
-        .map_err(|e| e.to_string())
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn.query_iter(&sql).await.map_err(|e| e.to_string())?;
+    let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
+    let row = rows.first().ok_or("DDL not found")?;
+    row.get_opt::<String, usize>(1)
+        .and_then(|result| result.ok())
+        .or_else(|| {
+            row.get_opt::<Vec<u8>, usize>(1)
+                .and_then(|result| result.ok())
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+        })
+        .ok_or_else(|| "Failed to read DDL".to_string())
 }
 
-pub async fn sqlite_ddl(pool: &sqlx::sqlite::SqlitePool, table: &str) -> Result<String, String> {
-    use sqlx::Row;
-    let row: sqlx::sqlite::SqliteRow = sqlx::query("SELECT sql FROM sqlite_master WHERE type='table' AND name=?")
-        .bind(table)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    row.try_get::<String, _>(0).map_err(|e| e.to_string())
+pub async fn sqlite_ddl(pool: &db::sqlite::SqliteHandle, table: &str) -> Result<String, String> {
+    let pool = pool.clone();
+    let table = table.to_string();
+    tokio::task::spawn_blocking(move || {
+        pool.with_connection(|conn| {
+            conn.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name=?1", [table], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-pub async fn pg_ddl(pool: &sqlx::postgres::PgPool, schema: &str, table: &str) -> Result<String, String> {
+pub async fn pg_ddl(pool: &deadpool_postgres::Pool, schema: &str, table: &str) -> Result<String, String> {
     let (columns, indexes, fkeys) = tokio::try_join!(
         db::postgres::get_columns(pool, schema, table),
         db::postgres::list_indexes(pool, schema, table),

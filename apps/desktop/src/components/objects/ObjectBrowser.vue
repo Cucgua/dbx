@@ -511,12 +511,7 @@ function openViewData(row: ObjectBrowserRow) {
 
 function openStructureEditor(row: ObjectBrowserRow) {
   if (row.type !== "TABLE") return;
-  connectionStore.structureEditorSource = {
-    connectionId: props.connection.id,
-    database: props.database,
-    schema: row.schema || selectedSchema.value,
-    tableName: row.name,
-  };
+  queryStore.openTableStructure(props.connection.id, props.database, row.schema || selectedSchema.value, row.name);
 }
 
 function openDiagram(row: ObjectBrowserRow) {

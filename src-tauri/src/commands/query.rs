@@ -3,6 +3,7 @@ use tauri::State;
 
 use crate::commands::connection::AppState;
 use dbx_core::db;
+use dbx_core::models::connection::DatabaseType;
 use dbx_core::sql::split_sql_statements;
 
 // Re-export core functions for use by other modules (e.g., sql_file.rs)
@@ -119,11 +120,19 @@ pub async fn execute_script(
     sql: String,
     schema: Option<String>,
 ) -> Result<db::QueryResult, String> {
+    let db_type = {
+        let configs = state.configs.read().await;
+        configs.get(&connection_id).map(|config| config.db_type)
+    };
+
     dbx_core::query::execute_statements(
         &state,
         &connection_id,
         &database,
-        &split_sql_statements(&sql),
+        &db_type.map_or_else(
+            || split_sql_statements(&sql),
+            |db_type| dbx_core::sql::split_sql_statements_for_database(&sql, db_type),
+        ),
         schema.as_deref(),
     )
     .await
@@ -156,8 +165,14 @@ pub async fn analyze_sql_references(
 }
 
 #[tauri::command]
-pub fn find_statement_at_cursor(sql: String, cursor_pos: usize) -> Result<String, String> {
-    Ok(dbx_core::sql::find_statement_at_cursor(&sql, cursor_pos))
+pub fn find_statement_at_cursor(
+    sql: String,
+    cursor_pos: usize,
+    database_type: Option<DatabaseType>,
+) -> Result<String, String> {
+    Ok(database_type
+        .map(|db_type| dbx_core::sql::find_statement_at_cursor_for_database(&sql, cursor_pos, db_type))
+        .unwrap_or_else(|| dbx_core::sql::find_statement_at_cursor(&sql, cursor_pos)))
 }
 
 #[tauri::command]

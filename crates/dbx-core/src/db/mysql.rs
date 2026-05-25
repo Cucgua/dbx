@@ -1,41 +1,47 @@
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use futures::StreamExt;
+use mysql_async::consts::ColumnType;
+use mysql_async::prelude::*;
 use rust_decimal::Decimal;
-use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
-use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
+use std::borrow::Cow;
 use std::collections::HashSet;
-use std::str::FromStr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{
     ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, ObjectInfo, QueryResult, TableInfo, TriggerInfo,
 };
 
+pub type MySqlPool = mysql_async::Pool;
+
 fn quote_value(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
-fn get_str(row: &MySqlRow, idx: usize) -> String {
-    row.try_get::<String, _>(idx)
-        .or_else(|_| row.try_get::<Vec<u8>, _>(idx).map(|b| String::from_utf8_lossy(&b).to_string()))
+fn row_get<T, I>(row: &mysql_async::Row, index: I) -> Option<T>
+where
+    T: mysql_async::prelude::FromValue,
+    I: mysql_async::prelude::ColumnIndex,
+{
+    row.get_opt::<T, I>(index).and_then(|result| result.ok())
+}
+
+fn get_str(row: &mysql_async::Row, idx: usize) -> String {
+    row_get::<String, _>(row, idx)
+        .or_else(|| row_get::<Vec<u8>, _>(row, idx).map(|b| String::from_utf8_lossy(&b).to_string()))
         .unwrap_or_default()
 }
 
-fn get_str_by_name(row: &MySqlRow, name: &str) -> String {
-    row.try_get::<String, _>(name)
-        .or_else(|_| row.try_get::<Vec<u8>, _>(name).map(|b| String::from_utf8_lossy(&b).to_string()))
+fn get_str_by_name(row: &mysql_async::Row, name: &str) -> String {
+    row_get::<String, _>(row, name)
+        .or_else(|| row_get::<Vec<u8>, _>(row, name).map(|b| String::from_utf8_lossy(&b).to_string()))
         .unwrap_or_default()
 }
 
-fn get_opt_str(row: &MySqlRow, name: &str) -> Option<String> {
-    row.try_get::<Option<String>, _>(name)
-        .ok()
-        .flatten()
-        .or_else(|| row.try_get::<Option<NaiveDateTime>, _>(name).ok().flatten().map(|d| d.to_string()))
-        .or_else(|| {
-            row.try_get::<Option<Vec<u8>>, _>(name).ok().flatten().map(|b| String::from_utf8_lossy(&b).to_string())
-        })
+fn get_opt_str(row: &mysql_async::Row, name: &str) -> Option<String> {
+    row_get::<String, _>(row, name)
+        .or_else(|| row_get::<Vec<u8>, _>(row, name).map(|b| String::from_utf8_lossy(&b).to_string()))
 }
 
 fn numeric_metadata_u64_to_i32(value: Option<u64>) -> Option<i32> {
@@ -50,173 +56,150 @@ fn numeric_metadata_str_to_i32(value: Option<String>) -> Option<i32> {
     value.and_then(|v| v.parse::<i64>().ok()).and_then(|v| i32::try_from(v).ok())
 }
 
-fn get_opt_i32(row: &MySqlRow, name: &str) -> Option<i32> {
-    if row.try_get_raw(name).map(|v| v.is_null()).unwrap_or(true) {
-        return None;
-    }
-
-    row.try_get::<Option<i32>, _>(name)
-        .ok()
-        .flatten()
-        .or_else(|| numeric_metadata_i64_to_i32(row.try_get::<Option<i64>, _>(name).ok().flatten()))
-        .or_else(|| numeric_metadata_u64_to_i32(row.try_get::<Option<u64>, _>(name).ok().flatten()))
-        .or_else(|| numeric_metadata_str_to_i32(row.try_get::<Option<String>, _>(name).ok().flatten()))
+fn get_opt_i32(row: &mysql_async::Row, name: &str) -> Option<i32> {
+    row_get::<i32, _>(row, name)
+        .or_else(|| numeric_metadata_i64_to_i32(row_get::<i64, _>(row, name)))
+        .or_else(|| numeric_metadata_u64_to_i32(row_get::<u64, _>(row, name)))
+        .or_else(|| numeric_metadata_str_to_i32(row_get::<String, _>(row, name)))
         .or_else(|| {
-            row.try_get::<Option<Vec<u8>>, _>(name)
-                .ok()
-                .flatten()
+            row_get::<Vec<u8>, _>(row, name)
                 .and_then(|b| String::from_utf8(b).ok())
                 .and_then(|v| numeric_metadata_str_to_i32(Some(v)))
         })
 }
 
-fn mysql_temporal_to_json_value(row: &MySqlRow, idx: usize) -> Option<serde_json::Value> {
-    if let Ok(v) = row.try_get::<NaiveDateTime, _>(idx) {
-        return Some(serde_json::Value::String(v.to_string()));
-    }
-    if let Ok(v) = row.try_get::<DateTime<Utc>, _>(idx) {
-        return Some(serde_json::Value::String(mysql_datetime_to_string(v)));
-    }
-    if let Ok(v) = row.try_get::<NaiveDate, _>(idx) {
-        return Some(serde_json::Value::String(v.to_string()));
-    }
-    if let Ok(v) = row.try_get::<NaiveTime, _>(idx) {
-        return Some(serde_json::Value::String(v.to_string()));
-    }
-    None
+#[cfg(test)]
+fn mysql_datetime_to_string(value: NaiveDateTime) -> String {
+    value.to_string()
 }
 
-fn mysql_datetime_to_string(value: DateTime<Utc>) -> String {
-    value.naive_utc().to_string()
-}
-
+#[cfg(test)]
 fn is_mysql_lossless_integer_type(type_name: &str) -> bool {
     let upper_type = type_name.to_uppercase();
     upper_type.contains("BIGINT") || upper_type.contains("LARGEINT")
 }
 
-fn mysql_lossless_integer_to_json(row: &MySqlRow, idx: usize) -> serde_json::Value {
-    row.try_get::<String, _>(idx)
-        .map(serde_json::Value::String)
-        .or_else(|_| row.try_get::<Decimal, _>(idx).map(|v: Decimal| serde_json::Value::String(v.to_string())))
-        .or_else(|_| row.try_get::<i64, _>(idx).map(|v| serde_json::Value::String(v.to_string())))
-        .or_else(|_| row.try_get::<u64, _>(idx).map(|v| serde_json::Value::String(v.to_string())))
-        .or_else(|_| {
-            row.try_get::<Vec<u8>, _>(idx).map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
-        })
-        .or_else(|_| row.try_get_unchecked::<String, _>(idx).map(serde_json::Value::String))
-        .or_else(|_| {
-            row.try_get_unchecked::<Vec<u8>, _>(idx)
-                .map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
-        })
-        .unwrap_or(serde_json::Value::Null)
+fn is_lossless_integer_column(column: &mysql_async::Column) -> bool {
+    matches!(column.column_type(), ColumnType::MYSQL_TYPE_LONGLONG | ColumnType::MYSQL_TYPE_NEWDECIMAL)
 }
 
-fn mysql_value_to_json(row: &MySqlRow, idx: usize, type_name: &str) -> serde_json::Value {
-    if row.try_get_raw(idx).map(|v| v.is_null()).unwrap_or(true) {
+fn mysql_value_to_json(row: &mysql_async::Row, idx: usize) -> serde_json::Value {
+    let Some(column) = row.columns_ref().get(idx) else {
+        return serde_json::Value::Null;
+    };
+
+    let Some(value) = row.as_ref(idx) else {
+        return serde_json::Value::Null;
+    };
+    if matches!(value, mysql_async::Value::NULL) {
         return serde_json::Value::Null;
     }
 
-    let upper_type = type_name.to_uppercase();
-
-    if upper_type == "JSON" {
-        if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
-            return serde_json::Value::String(v.to_string());
+    match column.column_type() {
+        ColumnType::MYSQL_TYPE_JSON => {
+            if let Some(v) = row_get::<String, _>(row, idx) {
+                return serde_json::Value::String(v);
+            }
         }
-        if let Ok(v) = row.try_get::<String, _>(idx) {
-            return serde_json::Value::String(v);
+        ColumnType::MYSQL_TYPE_DECIMAL | ColumnType::MYSQL_TYPE_NEWDECIMAL | ColumnType::MYSQL_TYPE_LONGLONG => {
+            if is_lossless_integer_column(column) {
+                return row
+                    .get_opt::<String, usize>(idx)
+                    .and_then(|result| result.ok())
+                    .map(serde_json::Value::String)
+                    .or_else(|| {
+                        row_get::<Decimal, _>(row, idx).map(|v: Decimal| serde_json::Value::String(v.to_string()))
+                    })
+                    .or_else(|| row_get::<i64, _>(row, idx).map(|v| serde_json::Value::String(v.to_string())))
+                    .or_else(|| row_get::<u64, _>(row, idx).map(|v| serde_json::Value::String(v.to_string())))
+                    .or_else(|| {
+                        row_get::<Vec<u8>, _>(row, idx)
+                            .map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
+                    })
+                    .unwrap_or(serde_json::Value::Null);
+            }
+            return row
+                .get_opt::<Decimal, usize>(idx)
+                .and_then(|result| result.ok())
+                .map(|v: Decimal| serde_json::Value::String(v.to_string()))
+                .unwrap_or(serde_json::Value::Null);
         }
-        return serde_json::Value::Null;
-    }
-
-    if upper_type == "BOOLEAN" {
-        // MySQL BOOLEAN is an alias for TINYINT(1); display as integer
-        return row
-            .try_get::<i8, _>(idx)
-            .map(|v| serde_json::Value::Number((v as i64).into()))
-            .or_else(|_| row.try_get::<bool, _>(idx).map(|v| serde_json::Value::Number((v as i64).into())))
-            .unwrap_or(serde_json::Value::Null);
-    }
-
-    if is_mysql_lossless_integer_type(&upper_type) {
-        return mysql_lossless_integer_to_json(row, idx);
-    }
-
-    if upper_type == "DECIMAL" {
-        return row
-            .try_get::<Decimal, _>(idx)
-            .map(|v: Decimal| serde_json::Value::String(v.to_string()))
-            .unwrap_or(serde_json::Value::Null);
-    }
-
-    if upper_type.starts_with("DATETIME")
-        || upper_type.starts_with("TIMESTAMP")
-        || upper_type == "DATE"
-        || upper_type == "TIME"
-        || upper_type.starts_with("TIME(")
-    {
-        if let Some(v) = mysql_temporal_to_json_value(row, idx) {
-            return v;
+        ColumnType::MYSQL_TYPE_TIMESTAMP
+        | ColumnType::MYSQL_TYPE_TIMESTAMP2
+        | ColumnType::MYSQL_TYPE_DATETIME
+        | ColumnType::MYSQL_TYPE_DATETIME2
+        | ColumnType::MYSQL_TYPE_DATE
+        | ColumnType::MYSQL_TYPE_TIME
+        | ColumnType::MYSQL_TYPE_TIME2
+        | ColumnType::MYSQL_TYPE_NEWDATE => {
+            if let Some(v) = row_get::<NaiveDateTime, _>(row, idx) {
+                return serde_json::Value::String(v.to_string());
+            }
+            if let Some(v) = row_get::<NaiveDate, _>(row, idx) {
+                return serde_json::Value::String(v.to_string());
+            }
+            if let Some(v) = row_get::<NaiveTime, _>(row, idx) {
+                return serde_json::Value::String(v.to_string());
+            }
         }
+        _ => {}
     }
 
-    row.try_get::<String, _>(idx)
+    row_get::<String, _>(row, idx)
         .map(serde_json::Value::String)
-        .or_else(|_| row.try_get::<i64, _>(idx).map(super::safe_i64_to_json))
-        .or_else(|_| row.try_get::<u64, _>(idx).map(super::safe_u64_to_json))
-        .or_else(|_| row.try_get::<i32, _>(idx).map(|v| serde_json::Value::Number(v.into())))
-        .or_else(|_| row.try_get::<i16, _>(idx).map(|v| serde_json::Value::Number(v.into())))
-        .or_else(|_| {
-            row.try_get::<f64, _>(idx).map(|v| {
+        .or_else(|| row_get::<i64, _>(row, idx).map(super::safe_i64_to_json))
+        .or_else(|| row_get::<u64, _>(row, idx).map(super::safe_u64_to_json))
+        .or_else(|| row_get::<i32, _>(row, idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|| row_get::<i16, _>(row, idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|| {
+            row_get::<f64, _>(row, idx).map(|v| {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
             })
         })
-        .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
-        .or_else(|_| {
-            row.try_get::<Vec<u8>, _>(idx).map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
-        })
-        .or_else(|e| mysql_temporal_to_json_value(row, idx).ok_or(e))
-        .or_else(|_| row.try_get_unchecked::<String, _>(idx).map(serde_json::Value::String))
-        .or_else(|_| {
-            row.try_get_unchecked::<Vec<u8>, _>(idx)
-                .map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
+        .or_else(|| row_get::<bool, _>(row, idx).map(serde_json::Value::Bool))
+        .or_else(|| {
+            row_get::<Vec<u8>, _>(row, idx).map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
         })
         .unwrap_or(serde_json::Value::Null)
 }
 
 pub async fn connect(url: &str) -> Result<MySqlPool, String> {
-    let options = mysql_connect_options(url, true)?;
-    let result = super::with_connection_timeout("MySQL", async {
-        MySqlPoolOptions::new()
-            .max_connections(5)
-            .acquire_timeout(super::connection_timeout())
-            .idle_timeout(Duration::from_secs(300))
-            .connect_with(options)
-            .await
-            .map_err(|e| format!("MySQL connection failed: {e}"))
-    })
-    .await;
+    let pool = create_pool(url)?;
+    let result = verify_pool_connection(&pool).await;
 
     if let Err(ref e) = result {
         if mysql_error_should_retry_without_ssl(e) {
             if let Some(fallback_url) = ssl_fallback_url(url) {
-                let fallback_options = mysql_connect_options(&fallback_url, true)?;
                 log::info!("SSL handshake failed, retrying with ssl-mode=disabled");
-                return super::with_connection_timeout("MySQL", async {
-                    MySqlPoolOptions::new()
-                        .max_connections(5)
-                        .acquire_timeout(super::connection_timeout())
-                        .idle_timeout(Duration::from_secs(300))
-                        .connect_with(fallback_options)
-                        .await
-                        .map_err(|e| format!("MySQL connection failed: {e}"))
-                })
-                .await;
+                let fallback_pool = create_pool(&fallback_url)?;
+                return match verify_pool_connection(&fallback_pool).await {
+                    Ok(()) => Ok(fallback_pool),
+                    Err(e) => Err(e),
+                };
             }
         }
     }
 
-    result
+    result.map(|_| pool)
+}
+
+fn create_pool(url: &str) -> Result<MySqlPool, String> {
+    let opts = mysql_async::Opts::from_url(&mysql_async_url(url)).map_err(|e| format!("Invalid MySQL URL: {e}"))?;
+    let pool_opts = mysql_async::PoolOpts::new()
+        .with_constraints(mysql_async::PoolConstraints::new(1, 5).unwrap())
+        .with_inactive_connection_ttl(Duration::from_secs(300));
+    let builder =
+        mysql_async::OptsBuilder::from_opts(opts).stmt_cache_size(0).prefer_socket(false).pool_opts(Some(pool_opts));
+    Ok(MySqlPool::new(builder))
+}
+
+async fn verify_pool_connection(pool: &MySqlPool) -> Result<(), String> {
+    super::with_connection_timeout("MySQL", async {
+        let mut conn = pool.get_conn().await.map_err(|e| format!("MySQL connection failed: {e}"))?;
+        conn.ping().await.map_err(|e| format!("MySQL ping failed: {e}"))?;
+        Ok(())
+    })
+    .await
 }
 
 fn mysql_error_should_retry_without_ssl(error: &str) -> bool {
@@ -245,52 +228,48 @@ fn ssl_fallback_url(url: &str) -> Option<String> {
     }
 }
 
-pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
-    let options = mysql_connect_options(url, true)?;
-    super::with_connection_timeout("MySQL", async {
-        MySqlPoolOptions::new()
-            .max_connections(5)
-            .acquire_timeout(super::connection_timeout())
-            .idle_timeout(Duration::from_secs(300))
-            .connect_with(options)
-            .await
-            .map_err(|e| format!("MySQL connection failed: {e}"))
-    })
-    .await
-}
-
-fn mysql_connect_options(
-    url: &str,
-    preserve_server_timezone: bool,
-) -> Result<sqlx::mysql::MySqlConnectOptions, String> {
-    let mut options = sqlx::mysql::MySqlConnectOptions::from_str(url).map_err(|e| format!("Invalid MySQL URL: {e}"))?;
-    options = options.no_engine_substitution(false).set_names(false).pipes_as_concat(false);
-    if preserve_server_timezone && !mysql_url_has_timezone_param(url) {
-        options = options.timezone(None);
-    }
-    Ok(options)
-}
-
-fn mysql_url_has_timezone_param(url: &str) -> bool {
-    let Some((_, query)) = url.split_once('?') else {
-        return false;
+fn mysql_async_url(url: &str) -> Cow<'_, str> {
+    let Some((base, query)) = url.split_once('?') else {
+        return Cow::Borrowed(url);
     };
 
-    query.split('&').filter(|segment| !segment.is_empty()).any(|segment| {
-        let key = segment.split('=').next().unwrap_or("").trim().to_ascii_lowercase();
-        key == "timezone" || key == "time-zone"
-    })
+    let filtered: Vec<&str> = query
+        .split('&')
+        .filter(|segment| {
+            let segment = segment.trim();
+            !segment.is_empty()
+                && !segment.starts_with("ssl-mode=")
+                && !segment.starts_with("charset=")
+                && !segment.starts_with("time_zone=")
+                && !segment.starts_with("time-zone=")
+        })
+        .collect();
+
+    if filtered.len() == query.split('&').filter(|segment| !segment.trim().is_empty()).count() {
+        Cow::Borrowed(url)
+    } else if filtered.is_empty() {
+        Cow::Owned(base.to_string())
+    } else {
+        Cow::Owned(format!("{base}?{}", filtered.join("&")))
+    }
+}
+
+pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
+    let pool = create_pool(url)?;
+    verify_pool_connection(&pool).await.map(|_| pool)
 }
 
 pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, String> {
-    let rows: Vec<MySqlRow> = sqlx::raw_sql(
-        "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA \
-         WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
-         ORDER BY SCHEMA_NAME",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn
+        .query_iter(
+            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA \
+             WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
+             ORDER BY SCHEMA_NAME",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
 
     Ok(rows.iter().map(|row| DatabaseInfo { name: get_str(row, 0) }).collect())
 }
@@ -300,19 +279,21 @@ pub async fn list_tables(pool: &MySqlPool, database: &str) -> Result<Vec<TableIn
         "SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = {} ORDER BY TABLE_NAME",
         quote_value(database),
     );
-    let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn.query_iter(&sql).await.map_err(|e| e.to_string())?;
+    let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
         .map(|row| TableInfo {
             name: get_str_by_name(row, "TABLE_NAME"),
             table_type: get_str_by_name(row, "TABLE_TYPE"),
-            comment: row.try_get::<String, _>("TABLE_COMMENT").ok().filter(|s| !s.is_empty()),
+            comment: get_opt_str(row, "TABLE_COMMENT").filter(|s| !s.is_empty()),
         })
         .collect())
 }
 
-fn list_objects_sql(database: &str) -> String {
+fn list_tables_objects_sql(database: &str) -> String {
     format!(
         "SELECT TABLE_NAME AS object_name, \
            CASE WHEN TABLE_TYPE = 'VIEW' THEN 'VIEW' ELSE 'TABLE' END AS object_type, \
@@ -322,8 +303,14 @@ fn list_objects_sql(database: &str) -> String {
            CASE WHEN TABLE_TYPE = 'VIEW' THEN 1 ELSE 0 END AS sort_order \
          FROM information_schema.TABLES \
          WHERE TABLE_SCHEMA = {db} \
-         UNION ALL \
-         SELECT ROUTINE_NAME AS object_name, ROUTINE_TYPE AS object_type, NULL AS object_comment, \
+         ORDER BY sort_order, object_name",
+        db = quote_value(database),
+    )
+}
+
+fn list_routines_sql(database: &str) -> String {
+    format!(
+        "SELECT ROUTINE_NAME AS object_name, ROUTINE_TYPE AS object_type, NULL AS object_comment, \
            NULL AS created_at, NULL AS updated_at, \
            CASE WHEN ROUTINE_TYPE = 'PROCEDURE' THEN 2 ELSE 3 END AS sort_order \
          FROM information_schema.ROUTINES \
@@ -333,21 +320,44 @@ fn list_objects_sql(database: &str) -> String {
     )
 }
 
-pub async fn list_objects(pool: &MySqlPool, database: &str) -> Result<Vec<ObjectInfo>, String> {
-    let sql = list_objects_sql(database);
-    let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+fn row_to_object(row: &mysql_async::Row, database: &str) -> ObjectInfo {
+    ObjectInfo {
+        name: get_str_by_name(row, "object_name"),
+        object_type: get_str_by_name(row, "object_type"),
+        schema: Some(database.to_string()),
+        comment: get_opt_str(row, "object_comment").filter(|s| !s.is_empty()),
+        created_at: get_opt_str(row, "created_at"),
+        updated_at: get_opt_str(row, "updated_at"),
+    }
+}
 
-    Ok(rows
-        .iter()
-        .map(|row| ObjectInfo {
-            name: get_str_by_name(row, "object_name"),
-            object_type: get_str_by_name(row, "object_type"),
-            schema: Some(database.to_string()),
-            comment: get_opt_str(row, "object_comment").filter(|s| !s.is_empty()),
-            created_at: get_opt_str(row, "created_at"),
-            updated_at: get_opt_str(row, "updated_at"),
-        })
-        .collect())
+pub async fn list_objects(pool: &MySqlPool, database: &str) -> Result<Vec<ObjectInfo>, String> {
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+
+    let tables_sql = list_tables_objects_sql(database);
+    let result = conn.query_iter(&tables_sql).await.map_err(|e| e.to_string())?;
+    let table_rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
+    let mut objects: Vec<ObjectInfo> = table_rows.iter().map(|row| row_to_object(row, database)).collect();
+
+    // Routines are queried separately: some MySQL-compatible servers (sharding proxies,
+    // OceanBase/TiDB variants, restricted accounts) reject information_schema.ROUTINES with
+    // ER_UNKNOWN_ERROR (1105). Degrading gracefully keeps tables/views usable.
+    let routines_sql = list_routines_sql(database);
+    match conn.query_iter(&routines_sql).await {
+        Ok(result) => match result.collect_and_drop::<mysql_async::Row>().await {
+            Ok(routine_rows) => {
+                objects.extend(routine_rows.iter().map(|row| row_to_object(row, database)));
+            }
+            Err(e) => {
+                log::warn!("Skipping routines for database `{}` in object browser: {}", database, e);
+            }
+        },
+        Err(e) => {
+            log::warn!("Skipping routines for database `{}` in object browser: {}", database, e);
+        }
+    }
+
+    Ok(objects)
 }
 
 fn columns_sql(database: &str, table: &str) -> String {
@@ -379,11 +389,16 @@ fn is_primary_key_column(primary_key_columns: &HashSet<String>, name: &str, colu
 
 pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
     let pk_sql = primary_key_columns_sql(database, table);
-    let pk_rows: Vec<MySqlRow> = sqlx::raw_sql(&pk_sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn.query_iter(&pk_sql).await.map_err(|e| e.to_string())?;
+    let pk_rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
     let primary_key_columns: HashSet<String> = pk_rows.iter().map(|row| get_str_by_name(row, "COLUMN_NAME")).collect();
+    drop(conn);
 
     let sql = columns_sql(database, table);
-    let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn.query_iter(&sql).await.map_err(|e| e.to_string())?;
+    let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
@@ -416,22 +431,21 @@ async fn execute_result_set_with_text_protocol(
     row_limit: usize,
     start: Instant,
 ) -> Result<QueryResult, String> {
-    let mut stream = sqlx::raw_sql(sql).fetch(&*pool);
-    let mut columns: Vec<String> = vec![];
-    let mut column_types: Vec<String> = vec![];
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let mut result = conn.query_iter(sql).await.map_err(|e| e.to_string())?;
+    let columns: Vec<String> = result.columns_ref().iter().map(|c| c.name_str().to_string()).collect();
+
     let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+    let mut stream = result
+        .stream::<mysql_async::Row>()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Empty result set stream".to_string())?;
 
     while let Some(row) = stream.next().await {
-        let row: MySqlRow = row.map_err(|e| e.to_string())?;
-        if columns.is_empty() {
-            columns = row.columns().iter().map(|c| c.name().to_string()).collect();
-            column_types = row.columns().iter().map(|c| c.type_info().name().to_string()).collect();
-        }
-        result_rows.push(
-            (0..row.len())
-                .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                .collect(),
-        );
+        let row = row.map_err(|e| e.to_string())?;
+        let values: Vec<serde_json::Value> = (0..row.len()).map(|i| mysql_value_to_json(&row, i)).collect();
+        result_rows.push(values);
         if result_rows.len() > row_limit {
             break;
         }
@@ -459,20 +473,21 @@ async fn execute_result_set_with_prepared_protocol(
     row_limit: usize,
     start: Instant,
 ) -> Result<QueryResult, String> {
-    let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
-    let columns: Vec<String> = desc.columns().iter().map(|c| c.name().to_string()).collect();
-    let column_types: Vec<String> = desc.columns().iter().map(|c| c.type_info().name().to_string()).collect();
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let mut result = conn.exec_iter(sql, ()).await.map_err(|e| e.to_string())?;
+    let columns: Vec<String> = result.columns_ref().iter().map(|c| c.name_str().to_string()).collect();
 
-    let mut stream = sqlx::query(sql).fetch(&*pool);
     let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+    let mut stream = result
+        .stream::<mysql_async::Row>()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Empty result set stream".to_string())?;
 
     while let Some(row) = stream.next().await {
         let row = row.map_err(|e| e.to_string())?;
-        result_rows.push(
-            (0..row.len())
-                .map(|i| mysql_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                .collect(),
-        );
+        let values: Vec<serde_json::Value> = (0..row.len()).map(|i| mysql_value_to_json(&row, i)).collect();
+        result_rows.push(values);
         if result_rows.len() > row_limit {
             break;
         }
@@ -520,12 +535,15 @@ pub async fn execute_query_with_max_rows(
             }
         }
     } else {
-        let result = sqlx::raw_sql(sql).execute(pool).await.map_err(|e| e.to_string())?;
+        let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+        let result = conn.query_iter(sql).await.map_err(|e| e.to_string())?;
+        let affected_rows = result.affected_rows();
+        result.drop_result().await.map_err(|e| e.to_string())?;
 
         Ok(QueryResult {
             columns: vec![],
             rows: vec![],
-            affected_rows: result.rows_affected(),
+            affected_rows,
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
             session_id: None,
@@ -570,7 +588,9 @@ pub async fn list_indexes(pool: &MySqlPool, database: &str, table: &str) -> Resu
         quote_value(database),
         quote_value(table),
     );
-    let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn.query_iter(&sql).await.map_err(|e| e.to_string())?;
+    let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
@@ -579,8 +599,8 @@ pub async fn list_indexes(pool: &MySqlPool, database: &str, table: &str) -> Resu
             IndexInfo {
                 name: get_str_by_name(row, "INDEX_NAME"),
                 columns: cols_str.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
-                is_unique: row.get::<bool, _>("is_unique"),
-                is_primary: row.get::<bool, _>("is_primary"),
+                is_unique: row.get::<bool, &str>("is_unique").unwrap_or(false),
+                is_primary: row.get::<bool, &str>("is_primary").unwrap_or(false),
                 filter: None,
                 index_type: Some(get_str_by_name(row, "INDEX_TYPE")),
                 included_columns: None,
@@ -601,7 +621,9 @@ pub async fn list_foreign_keys(pool: &MySqlPool, database: &str, table: &str) ->
         quote_value(database),
         quote_value(table),
     );
-    let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn.query_iter(&sql).await.map_err(|e| e.to_string())?;
+    let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
@@ -623,7 +645,9 @@ pub async fn list_triggers(pool: &MySqlPool, database: &str, table: &str) -> Res
         quote_value(database),
         quote_value(table),
     );
-    let rows: Vec<MySqlRow> = sqlx::raw_sql(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let result = conn.query_iter(&sql).await.map_err(|e| e.to_string())?;
+    let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
@@ -642,7 +666,6 @@ mod tests {
     #[test]
     fn mysql_with_queries_are_treated_as_result_sets() {
         let sql = "WITH RECURSIVE org_tree AS (SELECT 1 AS id) SELECT id FROM org_tree";
-
         assert!(is_result_set_query(sql));
     }
 
@@ -658,13 +681,23 @@ mod tests {
     }
 
     #[test]
-    fn mysql_list_objects_sql_includes_routines() {
-        let sql = list_objects_sql("app");
+    fn mysql_list_tables_objects_sql_includes_timestamps() {
+        let sql = list_tables_objects_sql("app");
 
         assert!(sql.contains("information_schema.TABLES"));
-        assert!(sql.contains("information_schema.ROUTINES"));
+        assert!(!sql.contains("information_schema.ROUTINES"));
+        assert!(!sql.contains("UNION"));
         assert!(sql.contains("CREATE_TIME"));
         assert!(sql.contains("UPDATE_TIME"));
+    }
+
+    #[test]
+    fn mysql_list_routines_sql_is_independent_of_tables() {
+        let sql = list_routines_sql("app");
+
+        assert!(sql.contains("information_schema.ROUTINES"));
+        assert!(!sql.contains("information_schema.TABLES"));
+        assert!(!sql.contains("UNION"));
         assert!(sql.contains("'PROCEDURE'"));
         assert!(sql.contains("'FUNCTION'"));
         assert!(!sql.contains("LAST_ALTERED"));
@@ -737,35 +770,23 @@ mod tests {
     }
 
     #[test]
-    fn mysql_connect_options_preserve_server_timezone_by_default() {
-        let options = mysql_connect_options("mysql://root:secret@127.0.0.1:3306/app", true).expect("parse mysql url");
-        let debug = format!("{options:?}");
-
-        assert!(debug.contains("timezone: None"), "{debug}");
-        assert!(debug.contains("set_names: false"), "{debug}");
-        assert!(debug.contains("no_engine_substitution: false"), "{debug}");
-    }
-
-    #[test]
-    fn mysql_connect_options_keep_explicit_timezone_param() {
-        let options = mysql_connect_options("mysql://root:secret@127.0.0.1:3306/app?timezone=%2B08:00", true)
-            .expect("parse mysql url");
-        let debug = format!("{options:?}");
-
-        assert!(debug.contains("timezone: Some(\"+08:00\")"), "{debug}");
-    }
-
-    #[test]
-    fn mysql_timezone_param_detection_matches_supported_aliases() {
-        assert!(mysql_url_has_timezone_param("mysql://root@localhost/app?timezone=%2B08:00"));
-        assert!(mysql_url_has_timezone_param("mysql://root@localhost/app?charset=utf8mb4&time-zone=%2B08:00"));
-        assert!(!mysql_url_has_timezone_param("mysql://root@localhost/app?charset=utf8mb4"));
-    }
-
-    #[test]
     fn mysql_datetime_utc_values_display_without_rfc3339_offset() {
-        let value = DateTime::from_timestamp(1_778_544_000, 0).expect("valid timestamp");
+        let value = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(2026, 5, 12).unwrap(),
+            NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        );
 
         assert_eq!(mysql_datetime_to_string(value), "2026-05-12 00:00:00");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires remote MariaDB with ed25519 user"]
+    async fn test_ed25519_auth() {
+        let url = "mysql://edtest:test123@172.26.128.159:20026/testdb";
+        let pool = super::connect(url).await.expect("connect with ed25519");
+        let mut conn = pool.get_conn().await.expect("get connection");
+        conn.ping().await.expect("ping");
+        let _ = conn.disconnect().await;
+        let _ = pool.disconnect().await;
     }
 }

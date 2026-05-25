@@ -26,6 +26,7 @@ const DataGrid = defineAsyncComponent(() => import("@/components/grid/DataGrid.v
 const RedisKeyBrowser = defineAsyncComponent(() => import("@/components/redis/RedisKeyBrowser.vue"));
 const MongoDocBrowser = defineAsyncComponent(() => import("@/components/mongo/MongoDocBrowser.vue"));
 const ObjectBrowser = defineAsyncComponent(() => import("@/components/objects/ObjectBrowser.vue"));
+const TableStructureEditor = defineAsyncComponent(() => import("@/components/structure/TableStructureEditor.vue"));
 const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
 const QueryChart = defineAsyncComponent(() => import("@/components/chart/QueryChart.vue"));
 import { useQueryStore } from "@/stores/queryStore";
@@ -82,6 +83,8 @@ const emit = defineEmits<{
   clickTable: [tableName: string];
   openObjectTable: [target: { tableName: string; schema?: string }];
   objectSchemaChange: [schema: string | undefined];
+  structureEditorSaved: [];
+  structureEditorClose: [];
 }>();
 
 const { t } = useI18n();
@@ -677,6 +680,19 @@ defineExpose({ focusSearch, refreshData });
         :schema="activeTab.objectBrowser?.schema"
         @open-table="emit('openObjectTable', $event)"
         @schema-change="emit('objectSchemaChange', $event)"
+      />
+    </template>
+
+    <!-- Structure mode: table structure editor -->
+    <template v-else-if="activeTab.mode === 'structure'">
+      <TableStructureEditor
+        :key="activeTab.id"
+        :connection-id="activeTab.connectionId"
+        :database="activeTab.database"
+        :schema="activeTab.schema"
+        :table-name="activeTab.structureTableName || ''"
+        @saved="emit('structureEditorSaved')"
+        @close="emit('structureEditorClose')"
       />
     </template>
   </div>

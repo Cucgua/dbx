@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::models::connection::DatabaseType;
 use crate::sql_dialect::{qualified_table_name, quote_table_identifier};
+use crate::transfer::format_pg_array_sql_literal;
 
 static EXPORT_CANCELLED: std::sync::LazyLock<RwLock<HashSet<String>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashSet::new()));
@@ -125,8 +126,11 @@ pub fn format_export_sql_literal(value: &Value) -> String {
     if let Some(value) = value.as_bool() {
         return if value { "TRUE" } else { "FALSE" }.to_string();
     }
+    if let Some(arr) = value.as_array() {
+        return format_pg_array_sql_literal(arr);
+    }
     let text = value.as_str().map_or_else(|| value.to_string(), ToString::to_string);
-    format!("'{}'", text.replace('\'', "''"))
+    format!("'{}'", text.replace('\\', "\\\\").replace('\'', "''"))
 }
 
 pub fn build_export_insert_statements(options: BuildExportInsertStatementsOptions) -> Result<Vec<String>, String> {

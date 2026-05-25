@@ -12,9 +12,6 @@ const DataCompareDialog = defineAsyncComponent(() => import("@/components/diff/D
 const SqlFileExecutionDialog = defineAsyncComponent(() => import("@/components/sql-file/SqlFileExecutionDialog.vue"));
 const SchemaDiagramDialog = defineAsyncComponent(() => import("@/components/diagram/SchemaDiagramDialog.vue"));
 const TableImportDialog = defineAsyncComponent(() => import("@/components/import/TableImportDialog.vue"));
-const TableStructureEditorDialog = defineAsyncComponent(
-  () => import("@/components/structure/TableStructureEditorDialog.vue"),
-);
 const FieldLineageDialog = defineAsyncComponent(() => import("@/components/lineage/FieldLineageDialog.vue"));
 const ConfigPassphraseDialog = defineAsyncComponent(() => import("@/components/config/ConfigPassphraseDialog.vue"));
 const DatabaseSearchDialog = defineAsyncComponent(() => import("@/components/search/DatabaseSearchDialog.vue"));
@@ -42,7 +39,6 @@ const emit = defineEmits<{
   connectSucceeded: [name: string];
   connectFailed: [message: string];
   openDriverStore: [];
-  structureEditorSaved: [];
   openLineageTarget: [
     target: {
       connectionId: string;
@@ -164,15 +160,6 @@ watch(
     :prefill-database="dialogs.tableImportPrefillDatabase.value"
     :prefill-schema="dialogs.tableImportPrefillSchema.value"
     :prefill-table="dialogs.tableImportPrefillTable.value"
-  />
-  <TableStructureEditorDialog
-    v-if="dialogs.showStructureEditorDialog.value"
-    v-model:open="dialogs.showStructureEditorDialog.value"
-    :prefill-connection-id="dialogs.structurePrefillConnectionId.value"
-    :prefill-database="dialogs.structurePrefillDatabase.value"
-    :prefill-schema="dialogs.structurePrefillSchema.value"
-    :prefill-table="dialogs.structurePrefillTable.value"
-    @saved="emit('structureEditorSaved')"
   />
   <FieldLineageDialog
     v-if="dialogs.showFieldLineageDialog.value"

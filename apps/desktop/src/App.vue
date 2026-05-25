@@ -175,6 +175,7 @@ async function resolveActiveExecutableSql() {
     ? await resolveExecutableSqlWithBackend(tab.sql, selectedSql.value, {
         mode: settingsStore.editorSettings.executeMode,
         cursorPos: cursorPos.value,
+        databaseType: activeConnection.value?.db_type,
       })
     : "";
 }
@@ -483,8 +484,8 @@ async function newQuery() {
   const conn = connectionStore.getConfig(target.connectionId);
   if (!conn) return;
   connectionStore.activeConnectionId = target.connectionId;
-  const tabId = queryStore.createTab(conn.id, target.database);
-  queryStore.updateSchema(tabId, resolveDefaultSchema(conn, target.database));
+  const tabId = queryStore.createTab(conn.id, target.database, undefined, "query", target.schema);
+  if (!target.schema) queryStore.updateSchema(tabId, resolveDefaultSchema(conn, target.database));
   try {
     await connectionStore.ensureConnected(target.connectionId);
     if (target.shouldRefreshDefaultDatabase) {
@@ -937,6 +938,16 @@ onUnmounted(() => {
                         })
                     "
                     @object-schema-change="(schema) => activeTab && queryStore.updateSchema(activeTab.id, schema)"
+                    @structure-editor-saved="
+                      activeTab &&
+                      onStructureEditorSaved(onReloadData, toast, {
+                        connectionId: activeTab.connectionId,
+                        database: activeTab.database,
+                        schema: activeTab.schema,
+                        tableName: activeTab.structureTableName || '',
+                      })
+                    "
+                    @structure-editor-close="activeTab && queryStore.closeTab(activeTab.id)"
                   />
                 </KeepAlive>
               </div>
@@ -1019,7 +1030,6 @@ onUnmounted(() => {
             setConnectionDialogOpen(false);
             showDriverStore = true;
           "
-          @structure-editor-saved="onStructureEditorSaved(onReloadData, toast)"
           @open-lineage-target="openLineageTarget"
           @open-database-search-target="openDatabaseSearchTarget"
         />

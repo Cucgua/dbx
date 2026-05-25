@@ -10,7 +10,6 @@ const showDataCompareDialog = ref(false);
 const showSqlFileDialog = ref(false);
 const showDiagramDialog = ref(false);
 const showTableImportDialog = ref(false);
-const showStructureEditorDialog = ref(false);
 const showFieldLineageDialog = ref(false);
 const showDatabaseSearchDialog = ref(false);
 const showDatabaseExportDialog = ref(false);
@@ -40,10 +39,6 @@ const tableImportPrefillConnectionId = ref("");
 const tableImportPrefillDatabase = ref("");
 const tableImportPrefillSchema = ref("");
 const tableImportPrefillTable = ref("");
-const structurePrefillConnectionId = ref("");
-const structurePrefillDatabase = ref("");
-const structurePrefillSchema = ref("");
-const structurePrefillTable = ref("");
 const lineagePrefillConnectionId = ref("");
 const lineagePrefillDatabase = ref("");
 const lineagePrefillSchema = ref("");
@@ -143,20 +138,6 @@ export function useDialogSources() {
           tableImportPrefillTable.value = v.tableName;
           showTableImportDialog.value = true;
           connectionStore.tableImportSource = null;
-        }
-      },
-    );
-
-    watch(
-      () => connectionStore.structureEditorSource,
-      (v) => {
-        if (v) {
-          structurePrefillConnectionId.value = v.connectionId;
-          structurePrefillDatabase.value = v.database;
-          structurePrefillSchema.value = v.schema ?? "";
-          structurePrefillTable.value = v.tableName;
-          showStructureEditorDialog.value = true;
-          connectionStore.structureEditorSource = null;
         }
       },
     );
@@ -274,7 +255,6 @@ export function useDialogSources() {
     showSqlFileDialog,
     showDiagramDialog,
     showTableImportDialog,
-    showStructureEditorDialog,
     showFieldLineageDialog,
     showDatabaseSearchDialog,
     showDatabaseExportDialog,
@@ -303,10 +283,6 @@ export function useDialogSources() {
     tableImportPrefillDatabase,
     tableImportPrefillSchema,
     tableImportPrefillTable,
-    structurePrefillConnectionId,
-    structurePrefillDatabase,
-    structurePrefillSchema,
-    structurePrefillTable,
     lineagePrefillConnectionId,
     lineagePrefillDatabase,
     lineagePrefillSchema,

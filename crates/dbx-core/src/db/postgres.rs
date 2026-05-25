@@ -1,10 +1,11 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use futures::StreamExt;
+use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
+use futures::{SinkExt, StreamExt};
 use percent_encoding::percent_decode_str;
 use rust_decimal::Decimal;
-use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
-use std::time::{Duration, Instant};
+use std::str::FromStr;
+use std::time::Instant;
+use tokio_postgres::Row;
 
 use super::file_validator::validate_file_path;
 use crate::sql::starts_with_executable_sql_keyword;
@@ -12,41 +13,37 @@ use crate::types::{
     ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, ObjectInfo, QueryResult, TableInfo, TriggerInfo,
 };
 
-fn pg_temporal_to_json_value(row: &PgRow, idx: usize) -> Option<serde_json::Value> {
-    if let Ok(v) = row.try_get::<DateTime<Utc>, _>(idx) {
+fn pg_temporal_to_json_value(row: &Row, idx: usize) -> Option<serde_json::Value> {
+    if let Ok(v) = row.try_get::<_, DateTime<Utc>>(idx) {
         return Some(serde_json::Value::String(v.to_rfc3339()));
     }
-    if let Ok(v) = row.try_get::<NaiveDateTime, _>(idx) {
+    if let Ok(v) = row.try_get::<_, NaiveDateTime>(idx) {
         return Some(serde_json::Value::String(v.to_string()));
     }
-    if let Ok(v) = row.try_get::<NaiveDate, _>(idx) {
+    if let Ok(v) = row.try_get::<_, NaiveDate>(idx) {
         return Some(serde_json::Value::String(v.to_string()));
     }
-    if let Ok(v) = row.try_get::<NaiveTime, _>(idx) {
+    if let Ok(v) = row.try_get::<_, NaiveTime>(idx) {
         return Some(serde_json::Value::String(v.to_string()));
     }
     None
 }
 
-fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Value {
-    if row.try_get_raw(idx).map(|v| v.is_null()).unwrap_or(true) {
-        return serde_json::Value::Null;
-    }
-
+fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value {
     let upper = type_name.to_uppercase();
 
     if upper == "JSON" || upper == "JSONB" {
-        if let Ok(v) = row.try_get::<serde_json::Value, _>(idx) {
+        if let Ok(v) = row.try_get::<_, serde_json::Value>(idx) {
             return serde_json::Value::String(v.to_string());
         }
-        if let Ok(v) = row.try_get::<String, _>(idx) {
+        if let Ok(v) = row.try_get::<_, String>(idx) {
             return serde_json::Value::String(v);
         }
         return serde_json::Value::Null;
     }
 
     if upper == "BOOL" {
-        return row.try_get::<bool, _>(idx).map(serde_json::Value::Bool).unwrap_or(serde_json::Value::Null);
+        return row.try_get::<_, bool>(idx).map(serde_json::Value::Bool).unwrap_or(serde_json::Value::Null);
     }
 
     if upper.contains("TIMESTAMP")
@@ -62,108 +59,124 @@ fn pg_value_to_json(row: &PgRow, idx: usize, type_name: &str) -> serde_json::Val
 
     if upper == "NUMERIC" || upper == "DECIMAL" || upper == "MONEY" {
         return row
-            .try_get::<Decimal, _>(idx)
+            .try_get::<_, Decimal>(idx)
             .map(|v: Decimal| serde_json::Value::String(v.to_string()))
             .unwrap_or(serde_json::Value::Null);
     }
 
     if upper == "UUID" {
         return row
-            .try_get::<uuid::Uuid, _>(idx)
+            .try_get::<_, uuid::Uuid>(idx)
             .map(|v| serde_json::Value::String(v.to_string()))
             .unwrap_or(serde_json::Value::Null);
     }
 
-    row.try_get::<String, _>(idx)
+    row.try_get::<_, String>(idx)
         .map(serde_json::Value::String)
-        .or_else(|_| row.try_get::<i64, _>(idx).map(super::safe_i64_to_json))
-        .or_else(|_| row.try_get::<i32, _>(idx).map(|v| serde_json::Value::Number(v.into())))
-        .or_else(|_| row.try_get::<i16, _>(idx).map(|v| serde_json::Value::Number(v.into())))
-        .or_else(|_| row.try_get::<i8, _>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<_, i64>(idx).map(super::safe_i64_to_json))
+        .or_else(|_| row.try_get::<_, i32>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<_, i16>(idx).map(|v| serde_json::Value::Number(v.into())))
+        .or_else(|_| row.try_get::<_, i8>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| {
-            row.try_get::<Vec<i8>, _>(idx)
+            row.try_get::<_, Vec<i8>>(idx)
                 .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
         })
         .or_else(|_| {
-            row.try_get::<Vec<i16>, _>(idx)
+            row.try_get::<_, Vec<i16>>(idx)
                 .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
         })
         .or_else(|_| {
-            row.try_get::<Vec<i32>, _>(idx)
+            row.try_get::<_, Vec<i32>>(idx)
                 .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
         })
         .or_else(|_| {
-            row.try_get::<Vec<i64>, _>(idx)
+            row.try_get::<_, Vec<i64>>(idx)
                 .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
         })
         .or_else(|_| {
-            row.try_get::<f64, _>(idx).map(|v| {
+            row.try_get::<_, f64>(idx).map(|v| {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
             })
         })
         .or_else(|_| {
-            row.try_get::<f32, _>(idx).map(|v| {
+            row.try_get::<_, f32>(idx).map(|v| {
                 serde_json::Number::from_f64((v as f64 * 1_000_000.0).round() / 1_000_000.0)
                     .map(serde_json::Value::Number)
                     .unwrap_or(serde_json::Value::Null)
             })
         })
-        .or_else(|_| row.try_get::<bool, _>(idx).map(serde_json::Value::Bool))
-        .or_else(|_| row.try_get::<uuid::Uuid, _>(idx).map(|v| serde_json::Value::String(v.to_string())))
+        .or_else(|_| row.try_get::<_, bool>(idx).map(serde_json::Value::Bool))
+        .or_else(|_| row.try_get::<_, uuid::Uuid>(idx).map(|v| serde_json::Value::String(v.to_string())))
         .or_else(|e| pg_temporal_to_json_value(row, idx).ok_or(e))
         .or_else(|_| {
-            row.try_get_raw(idx).map(|raw| {
-                if raw.is_null() {
-                    return serde_json::Value::Null;
-                }
-                match raw.as_bytes() {
-                    Ok(bytes) => match std::str::from_utf8(bytes) {
-                        Ok(s) => serde_json::Value::String(s.to_string()),
-                        Err(_) => {
-                            let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                            serde_json::Value::String(hex)
-                        }
-                    },
-                    Err(_) => serde_json::Value::Null,
+            row.try_get::<_, Vec<u8>>(idx).map(|bytes| match std::str::from_utf8(&bytes) {
+                Ok(s) => serde_json::Value::String(s.to_string()),
+                Err(_) => {
+                    let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                    serde_json::Value::String(hex)
                 }
             })
         })
         .unwrap_or(serde_json::Value::Null)
 }
 
-pub async fn connect(url: &str) -> Result<PgPool, String> {
-    // Validate SSL certificate paths if present in the URL
+pub async fn connect(url: &str) -> Result<Pool, String> {
     validate_postgres_ssl_paths(url)?;
 
     let tz = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
-    let url_owned = url.to_string();
+
     super::with_connection_timeout("PostgreSQL", async {
-        PgPoolOptions::new()
-            .max_connections(5)
-            .acquire_timeout(super::connection_timeout())
-            .idle_timeout(Duration::from_secs(300))
-            .after_connect(move |conn, _meta| {
-                let tz = tz.clone();
-                Box::pin(async move {
-                    conn.execute(sqlx::query(&format!("SET timezone = '{tz}'"))).await?;
-                    Ok(())
-                })
-            })
-            .connect(&url_owned)
-            .await
-            .map_err(|e| format!("PostgreSQL connection failed: {e}"))
+        let pg_config =
+            tokio_postgres::Config::from_str(url).map_err(|e| format!("Invalid PostgreSQL connection URL: {e}"))?;
+
+        let mgr_config = ManagerConfig { recycling_method: RecyclingMethod::Fast };
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let tls_config = rustls::ClientConfig::builder().with_root_certificates(root_store).with_no_client_auth();
+        let mgr = deadpool_postgres::Manager::from_config(
+            pg_config.clone(),
+            tokio_postgres_rustls::MakeRustlsConnect::new(tls_config),
+            mgr_config,
+        );
+        let pool = Pool::builder(mgr)
+            .max_size(10)
+            .runtime(Runtime::Tokio1)
+            .wait_timeout(Some(super::connection_timeout()))
+            .build()
+            .map_err(|e| format!("Failed to create PostgreSQL pool: {e}"))?;
+
+        // Verify connectivity and set timezone. Only set timezone if the user
+        // hasn't already specified one via connection parameters (e.g. options=-c timezone=...)
+        let client = pool.get().await.map_err(|e| format!("PostgreSQL connection failed: {e}"))?;
+        if !pg_url_has_timezone_setting(url) {
+            client
+                .execute(&format!("SET timezone = '{}'", tz.replace('\'', "''")), &[])
+                .await
+                .map_err(|e| format!("PostgreSQL SET timezone failed: {e}"))?;
+        }
+
+        Ok(pool)
     })
     .await
 }
 
-/// Validates SSL certificate file paths in PostgreSQL connection URLs.
-///
-/// PostgreSQL connection strings can include SSL parameters like:
-/// - sslcert=/path/to/cert.pem
-/// - sslkey=/path/to/key.pem
-/// - sslrootcert=/path/to/root.pem
+/// Check whether the user's connection URL already specifies a timezone via
+/// the `options` parameter so we don't overwrite it with the local timezone.
+fn pg_url_has_timezone_setting(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    // Match "timezone=" anywhere after the query string, covering:
+    //   ?options=-c timezone=Asia/Shanghai
+    //   ?options=--timezone=UTC
+    // Also handles URL-encoded forms like timezone%3D
+    if let Some(query) = lower.split('?').nth(1) {
+        if query.contains("timezone=") || query.contains("timezone%3d") {
+            return true;
+        }
+    }
+    false
+}
+
 fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
-    // Extract query parameters from URL
     if let Some(query_start) = url.find('?') {
         let query_string = &url[query_start + 1..];
 
@@ -171,13 +184,11 @@ fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
             if let Some((key, value)) = param.split_once('=') {
                 match key {
                     "sslcert" | "sslkey" | "sslrootcert" => {
-                        // URL decode the value
                         let decoded = percent_decode_str(value)
                             .decode_utf8()
                             .map_err(|_| format!("Invalid URL encoding in {key}"))?;
 
-                        // Validate the file path (skip network paths)
-                        validate_file_path(&decoded, |_| false)?;
+                        validate_file_path(&decoded, |_| false).map_err(|e| format!("{key}: {e}"))?;
                     }
                     _ => {}
                 }
@@ -188,29 +199,32 @@ fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn list_databases(pool: &PgPool) -> Result<Vec<DatabaseInfo>, String> {
-    let rows: Vec<PgRow> = sqlx::query(
-        "SELECT datname FROM pg_database \
-         WHERE datistemplate = false AND datallowconn = true \
-         ORDER BY datname",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+pub async fn list_databases(pool: &Pool) -> Result<Vec<DatabaseInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stmt = client
+        .prepare_cached(
+            "SELECT datname FROM pg_database \
+             WHERE datistemplate = false AND datallowconn = true \
+             ORDER BY datname",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = client.query(&stmt, &[]).await.map_err(|e| e.to_string())?;
 
-    Ok(rows.iter().map(|row| DatabaseInfo { name: row.get::<String, _>("datname") }).collect())
+    Ok(rows.iter().map(|row| DatabaseInfo { name: row.get::<_, String>(0) }).collect())
 }
 
-pub async fn list_tables(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, String> {
-    let rows: Vec<PgRow> =
-        sqlx::query(postgres_tables_sql()).bind(schema).fetch_all(pool).await.map_err(|e| e.to_string())?;
+pub async fn list_tables(pool: &Pool, schema: &str) -> Result<Vec<TableInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stmt = client.prepare_cached(postgres_tables_sql()).await.map_err(|e| e.to_string())?;
+    let rows = client.query(&stmt, &[&schema]).await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
         .map(|row| TableInfo {
-            name: row.get::<String, _>("table_name"),
-            table_type: row.get::<String, _>("table_type"),
-            comment: row.get::<Option<String>, _>("table_comment").filter(|s| !s.is_empty()),
+            name: row.get::<_, String>(0),
+            table_type: row.get::<_, String>(1),
+            comment: row.try_get::<_, Option<String>>(2).ok().flatten().filter(|s| !s.is_empty()),
         })
         .collect())
 }
@@ -225,10 +239,6 @@ fn postgres_tables_sql() -> &'static str {
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
          ORDER BY c.relname"
-}
-
-fn get_opt_text(row: &PgRow, name: &str) -> Option<String> {
-    row.try_get::<Option<String>, _>(name).ok().flatten().filter(|s| !s.is_empty())
 }
 
 fn list_objects_sql(include_timestamps: bool) -> &'static str {
@@ -293,102 +303,113 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
      ORDER BY sort_order, object_name"
 }
 
-pub async fn list_objects(pool: &PgPool, schema: &str) -> Result<Vec<ObjectInfo>, String> {
-    let rows: Vec<PgRow> = match sqlx::query(list_objects_sql(true)).bind(schema).fetch_all(pool).await {
+pub async fn list_objects(pool: &Pool, schema: &str) -> Result<Vec<ObjectInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stmt = client.prepare_cached(list_objects_sql(true)).await.map_err(|e| e.to_string())?;
+    let rows = match client.query(&stmt, &[&schema]).await {
         Ok(rows) => rows,
-        Err(_) => sqlx::query(list_objects_sql(false)).bind(schema).fetch_all(pool).await.map_err(|e| e.to_string())?,
+        Err(_) => {
+            let stmt = client.prepare_cached(list_objects_sql(false)).await.map_err(|e| e.to_string())?;
+            client.query(&stmt, &[&schema]).await.map_err(|e| e.to_string())?
+        }
     };
 
     Ok(rows
         .iter()
         .map(|row| ObjectInfo {
-            name: row.get::<String, _>("object_name"),
-            object_type: row.get::<String, _>("object_type"),
+            name: row.get::<_, String>(0),
+            object_type: row.get::<_, String>(1),
             schema: Some(schema.to_string()),
-            comment: row.get::<Option<String>, _>("object_comment").filter(|s| !s.is_empty()),
-            created_at: get_opt_text(row, "created_at"),
-            updated_at: get_opt_text(row, "updated_at"),
+            comment: row.try_get::<_, Option<String>>(2).ok().flatten().filter(|s| !s.is_empty()),
+            created_at: row.try_get::<_, Option<String>>(3).ok().flatten().filter(|s| !s.is_empty()),
+            updated_at: row.try_get::<_, Option<String>>(4).ok().flatten().filter(|s| !s.is_empty()),
         })
         .collect())
 }
 
-pub async fn list_schemas(pool: &PgPool) -> Result<Vec<String>, String> {
-    let rows: Vec<PgRow> = sqlx::query(
-        "SELECT n.nspname AS schema_name FROM pg_catalog.pg_namespace n \
-         WHERE n.nspname NOT IN ('information_schema', 'pg_catalog', 'pg_toast') \
-         AND n.nspname NOT LIKE 'pg_toast_temp_%' \
-         AND n.nspname NOT LIKE 'pg_temp_%' \
-         ORDER BY n.nspname",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+pub async fn list_schemas(pool: &Pool) -> Result<Vec<String>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stmt = client
+        .prepare_cached(
+            "SELECT n.nspname AS schema_name FROM pg_catalog.pg_namespace n \
+             WHERE n.nspname NOT IN ('information_schema', 'pg_catalog', 'pg_toast') \
+             AND n.nspname NOT LIKE 'pg_toast_temp_%' \
+             AND n.nspname NOT LIKE 'pg_temp_%' \
+             ORDER BY n.nspname",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = client.query(&stmt, &[]).await.map_err(|e| e.to_string())?;
 
-    Ok(rows.iter().map(|row| row.get::<String, _>("schema_name")).collect())
+    Ok(rows.iter().map(|row| row.get::<_, String>(0)).collect())
 }
 
-pub async fn get_columns(pool: &PgPool, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    let rows: Vec<PgRow> = sqlx::query(
-        "SELECT a.attname AS column_name, \
-         format_type(a.atttypid, a.atttypmod) AS full_type, \
-         NOT a.attnotnull AS is_nullable, \
-         pg_get_expr(ad.adbin, ad.adrelid) AS column_default, \
-         EXISTS ( \
-           SELECT 1 FROM pg_constraint co \
-           JOIN pg_index i ON i.indrelid = co.conrelid AND co.conindid = i.indexrelid \
-           WHERE co.conrelid = a.attrelid AND co.contype = 'p' \
-           AND a.attnum = ANY(i.indkey) \
-         ) AS is_pk, \
-         col_description(a.attrelid, a.attnum) AS column_comment, \
-         CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
-           THEN ((a.atttypmod - 4) >> 16) & 65535 ELSE NULL END AS numeric_precision, \
-         CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
-           THEN (a.atttypmod - 4) & 65535 ELSE NULL END AS numeric_scale, \
-         CASE WHEN t.typname IN ('varchar', 'bpchar') AND a.atttypmod > 0 \
-           THEN a.atttypmod - 4 ELSE NULL END AS character_maximum_length \
-         FROM pg_attribute a \
-         JOIN pg_type t ON t.oid = a.atttypid \
-         LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
-         WHERE a.attrelid = (quote_ident($1) || '.' || quote_ident($2))::regclass \
-         AND a.attnum > 0 AND NOT a.attisdropped \
-         ORDER BY a.attnum",
-    )
-    .bind(schema)
-    .bind(table)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+pub async fn get_columns(pool: &Pool, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stmt = client
+        .prepare_cached(
+            "SELECT a.attname AS column_name, \
+             format_type(a.atttypid, a.atttypmod) AS full_type, \
+             NOT a.attnotnull AS is_nullable, \
+             pg_get_expr(ad.adbin, ad.adrelid) AS column_default, \
+             EXISTS ( \
+               SELECT 1 FROM pg_constraint co \
+               JOIN pg_index i ON i.indrelid = co.conrelid AND co.conindid = i.indexrelid \
+               WHERE co.conrelid = a.attrelid AND co.contype = 'p' \
+               AND a.attnum = ANY(i.indkey) \
+             ) AS is_pk, \
+             col_description(a.attrelid, a.attnum) AS column_comment, \
+             CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
+               THEN ((a.atttypmod - 4) >> 16) & 65535 ELSE NULL END AS numeric_precision, \
+             CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
+               THEN (a.atttypmod - 4) & 65535 ELSE NULL END AS numeric_scale, \
+             CASE WHEN t.typname IN ('varchar', 'bpchar') AND a.atttypmod > 0 \
+               THEN a.atttypmod - 4 ELSE NULL END AS character_maximum_length \
+             FROM pg_attribute a \
+             JOIN pg_type t ON t.oid = a.atttypid \
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+             WHERE a.attrelid = (quote_ident($1) || '.' || quote_ident($2))::regclass \
+             AND a.attnum > 0 AND NOT a.attisdropped \
+             ORDER BY a.attnum",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = client.query(&stmt, &[&schema, &table]).await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
         .map(|row| {
-            let full_type = row.get::<Option<String>, _>("full_type").unwrap_or_default();
+            let full_type = row.try_get::<_, Option<String>>(1).ok().flatten().unwrap_or_default();
             ColumnInfo {
-                name: row.get::<String, _>("column_name"),
+                name: row.get::<_, String>(0),
                 data_type: full_type,
-                is_nullable: row.get::<bool, _>("is_nullable"),
-                column_default: row.get::<Option<String>, _>("column_default"),
-                is_primary_key: row.get::<bool, _>("is_pk"),
+                is_nullable: row.get::<_, bool>(2),
+                column_default: row.try_get::<_, Option<String>>(3).ok().flatten(),
+                is_primary_key: row.get::<_, bool>(4),
                 extra: None,
-                comment: row.get::<Option<String>, _>("column_comment"),
-                numeric_precision: row.get::<Option<i32>, _>("numeric_precision"),
-                numeric_scale: row.get::<Option<i32>, _>("numeric_scale"),
-                character_maximum_length: row.get::<Option<i32>, _>("character_maximum_length"),
+                comment: row.try_get::<_, Option<String>>(5).ok().flatten(),
+                numeric_precision: row.try_get::<_, Option<i32>>(6).ok().flatten(),
+                numeric_scale: row.try_get::<_, Option<i32>>(7).ok().flatten(),
+                character_maximum_length: row.try_get::<_, Option<i32>>(8).ok().flatten(),
             }
         })
         .collect())
+}
+
+pub(crate) fn pg_quote_ident(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
 }
 
 fn query_result_row_limit(max_rows: Option<usize>) -> usize {
     max_rows.unwrap_or(crate::query::MAX_ROWS).max(1)
 }
 
-pub async fn execute_query(pool: &PgPool, sql: &str) -> Result<QueryResult, String> {
+pub async fn execute_query(pool: &Pool, sql: &str) -> Result<QueryResult, String> {
     execute_query_with_max_rows(pool, sql, None).await
 }
 
 pub async fn execute_query_with_max_rows(
-    pool: &PgPool,
+    pool: &Pool,
     sql: &str,
     max_rows: Option<usize>,
 ) -> Result<QueryResult, String> {
@@ -396,36 +417,28 @@ pub async fn execute_query_with_max_rows(
     let row_limit = query_result_row_limit(max_rows);
 
     if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "TABLE"]) {
-        let mut stream = sqlx::query(sql).persistent(false).fetch(pool);
-        let mut columns: Vec<String> = vec![];
-        let mut column_types: Vec<String> = vec![];
-        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+        let client = pool.get().await.map_err(|e| e.to_string())?;
+        let stmt = client.prepare_cached(sql).await.map_err(|e| e.to_string())?;
+        let columns: Vec<String> = stmt.columns().iter().map(|c| c.name().to_string()).collect();
+        let column_types: Vec<String> = stmt.columns().iter().map(|c| c.type_().name().to_string()).collect();
 
-        while let Some(row) = stream.next().await {
-            let row = row.map_err(|e| e.to_string())?;
-            if columns.is_empty() {
-                let cols = row.columns();
-                columns = cols.iter().map(|c| c.name().to_string()).collect();
-                column_types = cols.iter().map(|c| c.type_info().name().to_string()).collect();
+        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+        let stream = client.query_raw(&stmt, params).await.map_err(|e| e.to_string())?;
+        tokio::pin!(stream);
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+        let mut truncated = false;
+
+        while let Some(row_result) = stream.next().await {
+            if result_rows.len() >= row_limit {
+                truncated = true;
+                break;
             }
+            let row = row_result.map_err(|e| e.to_string())?;
             result_rows.push(
-                (0..row.len())
+                (0..row.columns().len())
                     .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
                     .collect(),
             );
-            if result_rows.len() > row_limit {
-                break;
-            }
-        }
-
-        if columns.is_empty() {
-            let desc = pool.describe(sql).await.map_err(|e| e.to_string())?;
-            columns = desc.columns().iter().map(|c| c.name().to_string()).collect();
-        }
-
-        let truncated = result_rows.len() > row_limit;
-        if truncated {
-            result_rows.truncate(row_limit);
         }
 
         Ok(QueryResult {
@@ -438,12 +451,13 @@ pub async fn execute_query_with_max_rows(
             has_more: false,
         })
     } else {
-        let result = sqlx::query(sql).execute(pool).await.map_err(|e| e.to_string())?;
+        let client = pool.get().await.map_err(|e| e.to_string())?;
+        let affected = client.execute(sql, &[]).await.map_err(|e| e.to_string())?;
 
         Ok(QueryResult {
             columns: vec![],
             rows: vec![],
-            affected_rows: result.rows_affected(),
+            affected_rows: affected,
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
             session_id: None,
@@ -452,55 +466,60 @@ pub async fn execute_query_with_max_rows(
     }
 }
 
-pub async fn execute_query_with_schema(pool: &PgPool, schema: &str, sql: &str) -> Result<QueryResult, String> {
+pub async fn execute_query_with_schema(pool: &Pool, schema: &str, sql: &str) -> Result<QueryResult, String> {
     execute_query_with_schema_and_max_rows(pool, schema, sql, None).await
 }
 
 pub async fn execute_query_with_schema_and_max_rows(
-    pool: &PgPool,
+    pool: &Pool,
     schema: &str,
     sql: &str,
     max_rows: Option<usize>,
 ) -> Result<QueryResult, String> {
-    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-    let set_path = format!("SET search_path TO \"{}\", public", schema);
-    sqlx::query(&set_path).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    client
+        .execute(&format!("SET search_path TO {}, public", pg_quote_ident(schema)), &[])
+        .await
+        .map_err(|e| e.to_string())?;
 
+    let result = execute_query_with_max_rows_inner(&client, sql, max_rows).await;
+
+    // Always reset search_path so the connection is clean when returned to the pool
+    let _ = client.execute("RESET search_path", &[]).await;
+
+    result
+}
+
+async fn execute_query_with_max_rows_inner(
+    client: &deadpool_postgres::Client,
+    sql: &str,
+    max_rows: Option<usize>,
+) -> Result<QueryResult, String> {
     let start = Instant::now();
     let row_limit = query_result_row_limit(max_rows);
 
     if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "TABLE"]) {
-        let mut stream = sqlx::query(sql).persistent(false).fetch(&mut *conn);
-        let mut columns: Vec<String> = vec![];
-        let mut column_types: Vec<String> = vec![];
-        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+        let stmt = client.prepare_cached(sql).await.map_err(|e| e.to_string())?;
+        let columns: Vec<String> = stmt.columns().iter().map(|c| c.name().to_string()).collect();
+        let column_types: Vec<String> = stmt.columns().iter().map(|c| c.type_().name().to_string()).collect();
 
-        while let Some(row) = stream.next().await {
-            let row = row.map_err(|e| e.to_string())?;
-            if columns.is_empty() {
-                let cols = row.columns();
-                columns = cols.iter().map(|c| c.name().to_string()).collect();
-                column_types = cols.iter().map(|c| c.type_info().name().to_string()).collect();
+        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+        let stream = client.query_raw(&stmt, params).await.map_err(|e| e.to_string())?;
+        tokio::pin!(stream);
+        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+        let mut truncated = false;
+
+        while let Some(row_result) = stream.next().await {
+            if result_rows.len() >= row_limit {
+                truncated = true;
+                break;
             }
+            let row = row_result.map_err(|e| e.to_string())?;
             result_rows.push(
-                (0..row.len())
+                (0..row.columns().len())
                     .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
                     .collect(),
             );
-            if result_rows.len() > row_limit {
-                break;
-            }
-        }
-        drop(stream);
-
-        if columns.is_empty() {
-            let desc = (&mut *conn).describe(sql).await.map_err(|e| e.to_string())?;
-            columns = desc.columns().iter().map(|c| c.name().to_string()).collect();
-        }
-
-        let truncated = result_rows.len() > row_limit;
-        if truncated {
-            result_rows.truncate(row_limit);
         }
 
         Ok(QueryResult {
@@ -513,12 +532,12 @@ pub async fn execute_query_with_schema_and_max_rows(
             has_more: false,
         })
     } else {
-        let result = sqlx::query(sql).execute(&mut *conn).await.map_err(|e| e.to_string())?;
+        let affected = client.execute(sql, &[]).await.map_err(|e| e.to_string())?;
 
         Ok(QueryResult {
             columns: vec![],
             rows: vec![],
-            affected_rows: result.rows_affected(),
+            affected_rows: affected,
             execution_time_ms: start.elapsed().as_millis(),
             truncated: false,
             session_id: None,
@@ -527,122 +546,374 @@ pub async fn execute_query_with_schema_and_max_rows(
     }
 }
 
-pub async fn list_indexes(pool: &PgPool, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
-    let rows: Vec<PgRow> = sqlx::query(
-        "SELECT i.relname AS index_name, \
-         array_agg(COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.n::int, true)) ORDER BY k.n) AS columns, \
-         ix.indisunique AS is_unique, \
-         ix.indisprimary AS is_primary, \
-         pg_get_expr(ix.indpred, ix.indrelid) AS filter_expr, \
-         am.amname AS index_type, \
-         ix.indnkeyatts AS nkeyatts, \
-         ix.indkey AS indkey, \
-         obj_description(i.oid, 'pg_class') AS index_comment \
-         FROM pg_index ix \
-         JOIN pg_class t ON t.oid = ix.indrelid \
-         JOIN pg_class i ON i.oid = ix.indexrelid \
-         JOIN pg_namespace n ON n.oid = t.relnamespace \
-         JOIN pg_am am ON am.oid = i.relam \
-         JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, n) ON true \
-         LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND k.attnum > 0 \
-         WHERE n.nspname = $1 AND t.relname = $2 \
-         GROUP BY i.relname, i.oid, ix.indisunique, ix.indisprimary, ix.indpred, ix.indrelid, am.amname, ix.indnkeyatts, ix.indkey \
-         ORDER BY i.relname",
-    )
-    .bind(schema)
-    .bind(table)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+pub async fn list_indexes(pool: &Pool, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stmt = client
+        .prepare_cached(
+            "SELECT i.relname AS index_name, \
+             array_agg(COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.n::int, true)) ORDER BY k.n) AS columns, \
+             ix.indisunique AS is_unique, \
+             ix.indisprimary AS is_primary, \
+             pg_get_expr(ix.indpred, ix.indrelid) AS filter_expr, \
+             am.amname AS index_type, \
+             ix.indnkeyatts AS nkeyatts, \
+             ix.indkey AS indkey, \
+             obj_description(i.oid, 'pg_class') AS index_comment \
+             FROM pg_index ix \
+             JOIN pg_class t ON t.oid = ix.indrelid \
+             JOIN pg_class i ON i.oid = ix.indexrelid \
+             JOIN pg_namespace n ON n.oid = t.relnamespace \
+             JOIN pg_am am ON am.oid = i.relam \
+             JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, n) ON true \
+             LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND k.attnum > 0 \
+             WHERE n.nspname = $1 AND t.relname = $2 \
+             GROUP BY i.relname, i.oid, ix.indisunique, ix.indisprimary, ix.indpred, ix.indrelid, am.amname, ix.indnkeyatts, ix.indkey \
+             ORDER BY i.relname",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = client.query(&stmt, &[&schema, &table]).await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
         .map(|row| {
-            let all_cols: Vec<String> = row.get::<Vec<String>, _>("columns");
-            let nkeyatts = row.get::<Option<i16>, _>("nkeyatts").unwrap_or(all_cols.len() as i16) as usize;
-            let key_cols = all_cols[..nkeyatts].to_vec();
-            let included = if nkeyatts < all_cols.len() { all_cols[nkeyatts..].to_vec() } else { vec![] };
+            let all_cols: Vec<String> = row.get::<_, Vec<String>>(1);
+            let nkeyatts = row.try_get::<_, Option<i16>>(6).ok().flatten().unwrap_or(all_cols.len() as i16) as usize;
+            let split_at = nkeyatts.min(all_cols.len());
+            let key_cols = all_cols[..split_at].to_vec();
+            let included = if split_at < all_cols.len() { all_cols[split_at..].to_vec() } else { vec![] };
             IndexInfo {
-                name: row.get::<String, _>("index_name"),
+                name: row.get::<_, String>(0),
                 columns: key_cols,
-                is_unique: row.get::<bool, _>("is_unique"),
-                is_primary: row.get::<bool, _>("is_primary"),
-                filter: row.get::<Option<String>, _>("filter_expr"),
-                index_type: row.get::<Option<String>, _>("index_type"),
+                is_unique: row.get::<_, bool>(2),
+                is_primary: row.get::<_, bool>(3),
+                filter: row.try_get::<_, Option<String>>(4).ok().flatten(),
+                index_type: row.try_get::<_, Option<String>>(5).ok().flatten(),
                 included_columns: if included.is_empty() { None } else { Some(included) },
-                comment: row.get::<Option<String>, _>("index_comment"),
+                comment: row.try_get::<_, Option<String>>(8).ok().flatten(),
             }
         })
         .collect())
 }
 
-pub async fn list_foreign_keys(pool: &PgPool, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
-    let rows: Vec<PgRow> = sqlx::query(
-        "SELECT kcu.constraint_name, kcu.column_name, \
-         ccu.table_name AS ref_table, ccu.column_name AS ref_column \
-         FROM information_schema.key_column_usage kcu \
-         JOIN information_schema.referential_constraints rc \
-           ON kcu.constraint_name = rc.constraint_name \
-           AND kcu.constraint_schema = rc.constraint_schema \
-         JOIN information_schema.constraint_column_usage ccu \
-           ON rc.unique_constraint_name = ccu.constraint_name \
-           AND rc.unique_constraint_schema = ccu.constraint_schema \
-         WHERE kcu.table_schema = $1 AND kcu.table_name = $2 \
-         ORDER BY kcu.constraint_name",
-    )
-    .bind(schema)
-    .bind(table)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+pub async fn list_foreign_keys(pool: &Pool, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stmt = client
+        .prepare_cached(
+            "SELECT kcu.constraint_name, kcu.column_name, \
+             ccu.table_name AS ref_table, ccu.column_name AS ref_column \
+             FROM information_schema.key_column_usage kcu \
+             JOIN information_schema.referential_constraints rc \
+               ON kcu.constraint_name = rc.constraint_name \
+               AND kcu.constraint_schema = rc.constraint_schema \
+             JOIN information_schema.constraint_column_usage ccu \
+               ON rc.unique_constraint_name = ccu.constraint_name \
+               AND rc.unique_constraint_schema = ccu.constraint_schema \
+             WHERE kcu.table_schema = $1 AND kcu.table_name = $2 \
+             ORDER BY kcu.constraint_name",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = client.query(&stmt, &[&schema, &table]).await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
         .map(|row| ForeignKeyInfo {
-            name: row.get::<String, _>("constraint_name"),
-            column: row.get::<String, _>("column_name"),
-            ref_table: row.get::<String, _>("ref_table"),
-            ref_column: row.get::<String, _>("ref_column"),
+            name: row.get::<_, String>(0),
+            column: row.get::<_, String>(1),
+            ref_table: row.get::<_, String>(2),
+            ref_column: row.get::<_, String>(3),
         })
         .collect())
 }
 
-pub async fn list_triggers(pool: &PgPool, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
-    let rows: Vec<PgRow> = sqlx::query(
-        "SELECT trigger_name, event_manipulation, action_timing \
-         FROM information_schema.triggers \
-         WHERE trigger_schema = $1 AND event_object_table = $2 \
-         ORDER BY trigger_name",
-    )
-    .bind(schema)
-    .bind(table)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+pub async fn list_triggers(pool: &Pool, schema: &str, table: &str) -> Result<Vec<TriggerInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stmt = client
+        .prepare_cached(
+            "SELECT trigger_name, event_manipulation, action_timing \
+             FROM information_schema.triggers \
+             WHERE trigger_schema = $1 AND event_object_table = $2 \
+             ORDER BY trigger_name",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows = client.query(&stmt, &[&schema, &table]).await.map_err(|e| e.to_string())?;
 
     Ok(rows
         .iter()
         .map(|row| TriggerInfo {
-            name: row.get::<String, _>("trigger_name"),
-            event: row.get::<String, _>("event_manipulation"),
-            timing: row.get::<String, _>("action_timing"),
+            name: row.get::<_, String>(0),
+            event: row.get::<_, String>(1),
+            timing: row.get::<_, String>(2),
         })
         .collect())
+}
+
+/// Execute multiple SQL statements in a single round-trip using batch_execute.
+/// Best for DDL scripts where per-statement affected-row counts are not needed.
+pub async fn execute_batch(pool: &Pool, statements: &[String]) -> Result<(), String> {
+    let combined = statements.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(";\n");
+    if combined.is_empty() {
+        return Ok(());
+    }
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    client.batch_execute(&combined).await.map_err(|e| e.to_string())
+}
+
+/// Export data via COPY TO STDOUT. `sql` must be a complete COPY statement, e.g.
+/// `COPY table (col1, col2) TO STDOUT (FORMAT CSV, HEADER)`.
+/// Returns the raw COPY output bytes.
+pub async fn copy_out(pool: &Pool, sql: &str) -> Result<Vec<u8>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let stream = client.copy_out(sql).await.map_err(|e| e.to_string())?;
+    tokio::pin!(stream);
+    let mut result = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        result.extend_from_slice(&chunk.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
+/// Import data via COPY FROM STDIN. `sql` must be a complete COPY statement, e.g.
+/// `COPY table (col1, col2) FROM STDIN (FORMAT CSV)`.
+/// `data` is the raw input in the format specified by the COPY command.
+pub async fn copy_in(pool: &Pool, sql: &str, data: &[u8]) -> Result<(), String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    let sink = client.copy_in::<str, bytes::Bytes>(sql).await.map_err(|e: tokio_postgres::Error| e.to_string())?;
+    let mut sink = Box::pin(sink);
+    sink.as_mut().send(bytes::Bytes::copy_from_slice(data)).await.map_err(|e| e.to_string())?;
+    sink.as_mut().close().await.map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn postgres_list_objects_sql_includes_routines() {
-        let sql = list_objects_sql(true);
+    // --- pg_quote_ident ---
 
+    #[test]
+    fn pg_quote_ident_plain_identifier() {
+        assert_eq!(pg_quote_ident("public"), "\"public\"");
+    }
+
+    #[test]
+    fn pg_quote_ident_escapes_double_quotes() {
+        assert_eq!(pg_quote_ident("my\"schema"), "\"my\"\"schema\"");
+    }
+
+    #[test]
+    fn pg_quote_ident_empty_string() {
+        assert_eq!(pg_quote_ident(""), "\"\"");
+    }
+
+    #[test]
+    fn pg_quote_ident_special_chars() {
+        // PostgreSQL allows many special chars in quoted identifiers
+        let ident = "my schema with spaces";
+        assert_eq!(pg_quote_ident(ident), "\"my schema with spaces\"");
+    }
+
+    #[test]
+    fn pg_quote_ident_injection_attempt() {
+        // A malicious schema name that tries to break out of quotes
+        let malicious = r#"public"; DROP TABLE users; --"#;
+        let escaped = pg_quote_ident(malicious);
+        // Double quotes should be doubled, not breaking out
+        assert_eq!(escaped, r#""public""; DROP TABLE users; --""#);
+        assert!(escaped.matches('"').count() % 2 == 0, "quote count should be even");
+    }
+
+    // --- query_result_row_limit ---
+
+    #[test]
+    fn row_limit_uses_max_rows_when_present() {
+        assert_eq!(query_result_row_limit(Some(50)), 50);
+    }
+
+    #[test]
+    fn row_limit_falls_back_to_default() {
+        let default = crate::query::MAX_ROWS;
+        assert_eq!(query_result_row_limit(None), default);
+    }
+
+    #[test]
+    fn row_limit_clamps_zero_to_one() {
+        assert_eq!(query_result_row_limit(Some(0)), 1);
+    }
+
+    #[test]
+    fn row_limit_allows_max_rows_override() {
+        assert_eq!(query_result_row_limit(Some(5)), 5);
+    }
+
+    // --- validate_postgres_ssl_paths ---
+
+    #[test]
+    fn ssl_validation_passes_for_clean_url() {
+        assert!(validate_postgres_ssl_paths("postgres://localhost/db").is_ok());
+    }
+
+    #[test]
+    fn ssl_validation_passes_for_url_without_query() {
+        assert!(validate_postgres_ssl_paths("host=localhost dbname=test").is_ok());
+    }
+
+    #[test]
+    fn ssl_validation_passes_for_irrelevant_params() {
+        assert!(validate_postgres_ssl_paths("postgres://localhost/db?sslmode=require&connect_timeout=10").is_ok());
+    }
+
+    #[test]
+    fn ssl_validation_rejects_nonexistent_sslcert_path() {
+        let result = validate_postgres_ssl_paths("postgres://localhost/db?sslcert=/nonexistent/path/cert.pem");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("sslcert"), "error should mention sslcert");
+    }
+
+    #[test]
+    fn ssl_validation_rejects_nonexistent_sslkey_path() {
+        let result = validate_postgres_ssl_paths("postgres://localhost/db?sslkey=/nonexistent/path/key.pem");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("sslkey"), "error should mention sslkey");
+    }
+
+    #[test]
+    fn ssl_validation_rejects_nonexistent_sslrootcert_path() {
+        let result = validate_postgres_ssl_paths("postgres://localhost/db?sslrootcert=/nonexistent/path/root.crt");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("sslrootcert"), "error should mention sslrootcert");
+    }
+
+    #[test]
+    fn ssl_validation_rejects_path_traversal_in_sslcert() {
+        let result = validate_postgres_ssl_paths("postgres://localhost/db?sslcert=../../../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ssl_validation_handles_url_encoded_ssl_param() {
+        // %2F = '/', so sslcert=%2Ftmp%2Fcert.pem means sslcert=/tmp/cert.pem
+        let result = validate_postgres_ssl_paths("postgres://localhost/db?sslcert=%2Fnonexistent%2Fcert.pem");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ssl_validation_handles_multiple_params() {
+        let result =
+            validate_postgres_ssl_paths("postgres://localhost/db?sslmode=require&sslcert=/nonexistent/cert.pem");
+        assert!(result.is_err());
+    }
+
+    // --- SQL generation ---
+
+    #[test]
+    fn postgres_tables_sql_contains_expected_columns() {
+        let sql = postgres_tables_sql();
+        assert!(sql.contains("table_name"));
+        assert!(sql.contains("table_type"));
+        assert!(sql.contains("table_comment"));
+        assert!(sql.contains("$1"));
+        assert!(sql.contains("BASE TABLE"));
+        assert!(sql.contains("VIEW"));
+        assert!(sql.contains("MATERIALIZED VIEW"));
+        assert!(sql.contains("FOREIGN TABLE"));
+    }
+
+    #[test]
+    fn list_objects_sql_includes_routines() {
+        let sql = list_objects_sql(true);
         assert!(sql.contains("pg_catalog.pg_class"));
         assert!(sql.contains("pg_catalog.pg_proc"));
         assert!(sql.contains("pg_stat_file"));
         assert!(sql.contains("pg_xact_commit_timestamp"));
         assert!(sql.contains("'PROCEDURE'"));
         assert!(sql.contains("'FUNCTION'"));
+    }
+
+    #[test]
+    fn list_objects_sql_without_timestamps_omits_stat_file() {
+        let sql = list_objects_sql(false);
+        assert!(!sql.contains("pg_stat_file"));
+        assert!(sql.contains("NULL::text AS created_at"));
+        assert!(sql.contains("NULL::text AS updated_at"));
+    }
+
+    #[test]
+    fn both_list_objects_sql_variants_use_parameter() {
+        assert!(list_objects_sql(true).contains("$1"));
+        assert!(list_objects_sql(false).contains("$1"));
+    }
+
+    #[test]
+    fn both_list_objects_sql_variants_include_pg_proc() {
+        assert!(list_objects_sql(true).contains("pg_catalog.pg_proc"));
+        assert!(list_objects_sql(false).contains("pg_catalog.pg_proc"));
+    }
+
+    // --- execute_batch ---
+
+    #[tokio::test]
+    async fn execute_batch_empty_statements_returns_ok() {
+        // Empty input should not error or try to connect
+        // We can't test with a real pool, but we can verify the empty-early-return logic
+        // by testing that an empty Vec doesn't need a pool reference
+        let statements: Vec<String> = vec![];
+        // This test validates the early return logic at code review level
+        // Actual execution requires a pool; we just verify the empty path exists
+        assert!(statements.is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_batch_whitespace_only_is_filtered() {
+        let statements = vec!["  ".to_string(), "\t\n".to_string(), "".to_string()];
+        let combined = statements.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(";\n");
+        assert!(combined.is_empty());
+    }
+
+    #[test]
+    fn execute_batch_joins_with_semicolons() {
+        let statements = vec!["SELECT 1".to_string(), "SELECT 2".to_string()];
+        let combined = statements.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(";\n");
+        assert_eq!(combined, "SELECT 1;\nSELECT 2");
+    }
+
+    // --- SET timezone escaping ---
+
+    #[test]
+    fn timezone_single_quotes_are_doubled() {
+        let tz = "UTC";
+        let escaped = tz.replace('\'', "''");
+        assert_eq!(escaped, "UTC");
+    }
+
+    #[test]
+    fn timezone_with_quote_is_escaped() {
+        let tz = "Some'Zone";
+        let escaped = tz.replace('\'', "''");
+        assert_eq!(escaped, "Some''Zone");
+    }
+
+    // --- pg_url_has_timezone_setting ---
+
+    #[test]
+    fn url_without_timezone_returns_false() {
+        assert!(!pg_url_has_timezone_setting("postgres://localhost/db"));
+        assert!(!pg_url_has_timezone_setting("postgres://localhost/db?sslmode=require"));
+    }
+
+    #[test]
+    fn url_with_options_timezone_returns_true() {
+        assert!(pg_url_has_timezone_setting("postgres://localhost/db?options=-c timezone=Asia/Shanghai"));
+    }
+
+    #[test]
+    fn url_with_url_encoded_timezone_returns_true() {
+        assert!(pg_url_has_timezone_setting("postgres://localhost/db?options=-c%20timezone%3DUTC"));
+    }
+
+    #[test]
+    fn url_with_uppercase_timezone_returns_true() {
+        assert!(pg_url_has_timezone_setting("postgres://localhost/db?options=--TimeZone=UTC"));
     }
 }

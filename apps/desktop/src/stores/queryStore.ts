@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { uuid } from "@/lib/utils";
 import { ref, watch, computed } from "vue";
+import { useI18n } from "vue-i18n";
 import type { DatabaseType, QueryTab } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/pinnedItems";
 import { canCancelQueryExecution } from "@/lib/queryExecutionState";
@@ -42,7 +43,16 @@ function loadSavedTabs(): { tabs: QueryTab[]; activeTabId: string | null } {
   }
 }
 
+function getI18nT() {
+  try {
+    return useI18n().t;
+  } catch {
+    return ((key: string, ..._args: unknown[]) => key) as ReturnType<typeof useI18n>["t"];
+  }
+}
+
 export const useQueryStore = defineStore("query", () => {
+  const t = getI18nT();
   const restored = loadSavedTabs();
   const tabs = ref<QueryTab[]>(restored.tabs);
   const activeTabId = ref<string | null>(restored.activeTabId);
@@ -187,6 +197,42 @@ export const useQueryStore = defineStore("query", () => {
         schema,
         objectType: "tables",
       },
+    };
+    tabs.value.push(tab);
+    activeTabId.value = id;
+    return id;
+  }
+
+  function openTableStructure(connectionId: string, database: string, schema?: string, tableName?: string) {
+    const resolvedTableName = tableName || "";
+    const existing = tabs.value.find(
+      (tab) =>
+        tab.mode === "structure" &&
+        tab.connectionId === connectionId &&
+        tab.database === database &&
+        (tab.structureTableName || "") === resolvedTableName,
+    );
+    if (existing) {
+      activeTabId.value = existing.id;
+      return existing.id;
+    }
+
+    const title = resolvedTableName
+      ? t("structureEditor.editTabTitle", { tableName: resolvedTableName })
+      : t("structureEditor.createTitle");
+    const id = uuid();
+    const tab: QueryTab = {
+      id,
+      title,
+      connectionId,
+      database,
+      schema,
+      sql: "",
+      isExecuting: false,
+      isCancelling: false,
+      isExplaining: false,
+      mode: "structure",
+      structureTableName: resolvedTableName,
     };
     tabs.value.push(tab);
     activeTabId.value = id;
@@ -799,6 +845,7 @@ export const useQueryStore = defineStore("query", () => {
     closeAllTabs,
     updateSql,
     openObjectBrowser,
+    openTableStructure,
     linkSavedSql,
     openSavedSql,
     togglePinnedTab,

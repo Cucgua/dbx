@@ -131,6 +131,7 @@ struct TableStructureCapabilities {
     index_include: bool,
     index_filter: bool,
     index_comment: bool,
+    alter_primary_key: bool,
 }
 
 impl Default for TableStructureCapabilities {
@@ -150,6 +151,7 @@ impl Default for TableStructureCapabilities {
             index_include: false,
             index_filter: false,
             index_comment: false,
+            alter_primary_key: false,
         }
     }
 }
@@ -175,6 +177,7 @@ fn capabilities_for(database_type: Option<DatabaseType>) -> TableStructureCapabi
             drop_index: true,
             rebuild_index: true,
             index_type: true,
+            alter_primary_key: true,
             ..base
         },
         Some(
@@ -198,6 +201,7 @@ fn capabilities_for(database_type: Option<DatabaseType>) -> TableStructureCapabi
             index_include: true,
             index_filter: true,
             index_comment: true,
+            alter_primary_key: true,
             ..base
         },
         Some(DatabaseType::Redshift) => TableStructureCapabilities {
@@ -467,6 +471,63 @@ fn build_column_sql(options: &TableStructureSqlOptions, warnings: &mut Vec<Strin
             StructureDialect::Sqlite => statements.extend(build_sqlite_existing_column_sql(&table, column, warnings)),
             _ => warnings.push(format!("Editing existing columns is not supported for {database_label} yet.")),
         }
+    }
+
+    // Emit primary key constraint changes after individual column changes
+    statements.extend(build_primary_key_sql(options, dialect, &table, warnings));
+
+    statements
+}
+
+fn build_primary_key_sql(
+    options: &TableStructureSqlOptions,
+    dialect: StructureDialect,
+    table: &str,
+    warnings: &mut Vec<String>,
+) -> Vec<String> {
+    let capabilities = capabilities_for(options.database_type);
+
+    let old_pk_names: Vec<&str> = options
+        .columns
+        .iter()
+        .filter(|c| c.original.as_ref().is_some_and(|o| o.is_primary_key))
+        .map(|c| c.name.as_str())
+        .collect();
+
+    let new_pk_names: Vec<&str> =
+        options.columns.iter().filter(|c| !c.marked_for_drop && c.is_primary_key).map(|c| c.name.as_str()).collect();
+
+    if old_pk_names == new_pk_names {
+        return Vec::new();
+    }
+
+    if !capabilities.alter_primary_key {
+        warnings.push(format!(
+            "Changing primary keys is not supported for {} from this editor.",
+            database_label(options.database_type)
+        ));
+        return Vec::new();
+    }
+
+    let mut statements = Vec::new();
+
+    if !old_pk_names.is_empty() {
+        match dialect {
+            StructureDialect::Postgres => {
+                let raw_table = options.table_name.split('.').last().unwrap_or(&options.table_name);
+                let pk_name = format!("{}_pkey", clean(raw_table));
+                statements.push(format!("ALTER TABLE {table} DROP CONSTRAINT {};", quote_ident(dialect, &pk_name)));
+            }
+            StructureDialect::Mysql => {
+                statements.push(format!("ALTER TABLE {table} DROP PRIMARY KEY;"));
+            }
+            _ => {}
+        }
+    }
+
+    if !new_pk_names.is_empty() {
+        let pk_list = new_pk_names.iter().map(|n| quote_ident(dialect, n)).collect::<Vec<_>>().join(", ");
+        statements.push(format!("ALTER TABLE {table} ADD PRIMARY KEY ({pk_list});"));
     }
 
     statements
@@ -1491,5 +1552,165 @@ mod tests {
                 "CREATE INDEX \"IDX_USERS_DISPLAY_NAME\" ON \"PUBLIC\".\"USERS\" (\"DISPLAY_NAME\");",
             ]
         );
+    }
+
+    #[test]
+    fn builds_postgres_alter_table_add_primary_key() {
+        let mut id = column("id");
+        id.data_type = "integer".to_string();
+        id.is_nullable = false;
+        id.is_primary_key = true;
+        id.original = Some(ColumnInfo {
+            name: "id".to_string(),
+            data_type: "integer".to_string(),
+            is_nullable: false,
+            column_default: None,
+            is_primary_key: false,
+            extra: None,
+            comment: None,
+        });
+
+        let result = build_table_structure_change_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Postgres),
+            schema: Some("public".to_string()),
+            table_name: "users".to_string(),
+            columns: vec![id],
+            indexes: Vec::new(),
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert_eq!(result.statements, vec!["ALTER TABLE \"public\".\"users\" ADD PRIMARY KEY (\"id\");"]);
+    }
+
+    #[test]
+    fn builds_postgres_alter_table_drop_primary_key() {
+        let mut id = column("id");
+        id.data_type = "integer".to_string();
+        id.is_nullable = false;
+        id.is_primary_key = false;
+        id.original = Some(ColumnInfo {
+            name: "id".to_string(),
+            data_type: "integer".to_string(),
+            is_nullable: false,
+            column_default: None,
+            is_primary_key: true,
+            extra: None,
+            comment: None,
+        });
+
+        let result = build_table_structure_change_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Postgres),
+            schema: Some("public".to_string()),
+            table_name: "users".to_string(),
+            columns: vec![id],
+            indexes: Vec::new(),
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert_eq!(result.statements, vec!["ALTER TABLE \"public\".\"users\" DROP CONSTRAINT \"users_pkey\";"]);
+    }
+
+    #[test]
+    fn builds_mysql_alter_table_change_primary_key() {
+        let mut old_pk = column("id");
+        old_pk.id = "old_id".to_string();
+        old_pk.data_type = "int".to_string();
+        old_pk.is_nullable = false;
+        old_pk.is_primary_key = false;
+        old_pk.original = Some(ColumnInfo {
+            name: "id".to_string(),
+            data_type: "int".to_string(),
+            is_nullable: false,
+            column_default: None,
+            is_primary_key: true,
+            extra: None,
+            comment: None,
+        });
+
+        let mut new_pk = column("uuid");
+        new_pk.id = "new_uuid".to_string();
+        new_pk.data_type = "varchar(36)".to_string();
+        new_pk.is_nullable = false;
+        new_pk.is_primary_key = true;
+        new_pk.original = Some(ColumnInfo {
+            name: "uuid".to_string(),
+            data_type: "varchar(36)".to_string(),
+            is_nullable: false,
+            column_default: None,
+            is_primary_key: false,
+            extra: None,
+            comment: None,
+        });
+
+        let result = build_table_structure_change_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Mysql),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![old_pk, new_pk],
+            indexes: Vec::new(),
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert_eq!(
+            result.statements,
+            vec!["ALTER TABLE `users` DROP PRIMARY KEY;", "ALTER TABLE `users` ADD PRIMARY KEY (`uuid`);",]
+        );
+    }
+
+    #[test]
+    fn builds_no_statements_when_primary_key_unchanged() {
+        let mut id = column("id");
+        id.data_type = "integer".to_string();
+        id.is_nullable = false;
+        id.is_primary_key = true;
+        id.original = Some(ColumnInfo {
+            name: "id".to_string(),
+            data_type: "integer".to_string(),
+            is_nullable: false,
+            column_default: None,
+            is_primary_key: true,
+            extra: None,
+            comment: None,
+        });
+
+        let result = build_table_structure_change_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Postgres),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![id],
+            indexes: Vec::new(),
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert!(result.statements.is_empty());
+    }
+
+    #[test]
+    fn warns_sqlite_cannot_alter_primary_key() {
+        let mut id = column("id");
+        id.data_type = "integer".to_string();
+        id.is_nullable = false;
+        id.is_primary_key = true;
+        id.original = Some(ColumnInfo {
+            name: "id".to_string(),
+            data_type: "integer".to_string(),
+            is_nullable: false,
+            column_default: None,
+            is_primary_key: false,
+            extra: None,
+            comment: None,
+        });
+
+        let result = build_table_structure_change_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Sqlite),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![id],
+            indexes: Vec::new(),
+        });
+
+        assert_eq!(result.statements, Vec::<String>::new());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("primary key"));
     }
 }

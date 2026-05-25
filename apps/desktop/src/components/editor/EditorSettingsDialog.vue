@@ -2,7 +2,7 @@
 import { ref, watch, shallowRef, computed } from "vue";
 import type { EditorView as EditorViewType } from "@codemirror/view";
 import { useI18n } from "vue-i18n";
-import { CircleHelp, Copy, ExternalLink, FolderOpen, Loader2, RefreshCw, Settings } from "lucide-vue-next";
+import { CircleHelp, Copy, ExternalLink, FolderOpen, Loader2, Pencil, RefreshCw, Settings, Trash2 } from "lucide-vue-next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -45,6 +45,9 @@ import {
   type ShortcutActionId,
 } from "@/lib/shortcutRegistry";
 import { normalizeSidebarHiddenTablePrefixes } from "@/lib/sidebarTableNameDisplay";
+import type { SqlSnippet } from "@/types/database";
+import { uuid } from "@/lib/utils";
+import { DEFAULT_SQL_SNIPPETS } from "@/lib/sqlCompletion";
 import AiProviderLogo from "@/components/icons/AiProviderLogo.vue";
 import type { AppThemeAppearance } from "@/lib/appTheme";
 
@@ -104,6 +107,74 @@ const redisScanPageSizeOptions = [200, 1000, 5000, 10000];
 const systemFonts = ref<string[]>([]);
 const systemFontsLoading = ref(false);
 const systemFontsLoaded = ref(false);
+
+// --- Snippet state ---
+const editSnippets = ref<SqlSnippet[]>(settingsStore.editorSettings.snippets.map((s) => ({ ...s })));
+
+const snippetDialogOpen = ref(false);
+const snippetEditingId = ref<string | null>(null);
+const snippetForm = ref({ label: "", prefix: "", body: "" });
+const snippetFormPrefixError = ref("");
+
+function openAddSnippetDialog() {
+  snippetEditingId.value = null;
+  snippetForm.value = { label: "", prefix: "", body: "" };
+  snippetFormPrefixError.value = "";
+  snippetDialogOpen.value = true;
+}
+
+function openEditSnippetDialog(snippet: SqlSnippet) {
+  snippetEditingId.value = snippet.id;
+  snippetForm.value = { label: snippet.label, prefix: snippet.prefix, body: snippet.body };
+  snippetFormPrefixError.value = "";
+  snippetDialogOpen.value = true;
+}
+
+function saveSnippet() {
+  const prefix = snippetForm.value.prefix.trim();
+  if (!prefix) {
+    snippetFormPrefixError.value = "Prefix is required.";
+    return;
+  }
+  const duplicate = editSnippets.value.find((s) => s.prefix === prefix && s.id !== snippetEditingId.value);
+  if (duplicate) {
+    snippetFormPrefixError.value = "Prefix must be unique.";
+    return;
+  }
+  if (snippetEditingId.value) {
+    const idx = editSnippets.value.findIndex((s) => s.id === snippetEditingId.value);
+    if (idx !== -1) {
+      editSnippets.value[idx] = {
+        id: snippetEditingId.value,
+        label: snippetForm.value.label.trim() || prefix,
+        prefix,
+        body: snippetForm.value.body,
+      };
+    }
+  } else {
+    editSnippets.value.push({
+      id: uuid(),
+      label: snippetForm.value.label.trim() || prefix,
+      prefix,
+      body: snippetForm.value.body,
+    });
+  }
+  snippetDialogOpen.value = false;
+}
+
+function deleteSnippet(id: string) {
+  editSnippets.value = editSnippets.value.filter((s) => s.id !== id);
+}
+
+function confirmDeleteSnippet(snippet: SqlSnippet) {
+  if (window.confirm(`Delete snippet "${snippet.label}"?`)) {
+    deleteSnippet(snippet.id);
+  }
+}
+
+function restoreDefaultSnippets() {
+  editSnippets.value = DEFAULT_SQL_SNIPPETS.map((s) => ({ ...s }));
+}
 
 const presetFontLabels = new Map(FONT_FAMILIES.map((font) => [font.value, font.label]));
 
@@ -173,9 +244,18 @@ watch(
       void refreshMcpHttpStatus();
       editAutoSelectActiveSidebarNode.value = settingsStore.editorSettings.autoSelectActiveSidebarNode;
       editSidebarHiddenTablePrefixes.value = settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n");
+      editSnippets.value = settingsStore.editorSettings.snippets.map((s) => ({ ...s }));
       void loadSystemFontOptions();
     }
   },
+);
+
+watch(
+  () => settingsStore.editorSettings.snippets,
+  (snippets) => {
+    editSnippets.value = snippets.map((s) => ({ ...s }));
+  },
+  { deep: true },
 );
 
 const shortcutConflicts = computed(() =>
@@ -204,7 +284,8 @@ function hasChanges(): boolean {
     editSidebarActivation.value !== settingsStore.editorSettings.sidebarActivation ||
     editAutoSelectActiveSidebarNode.value !== settingsStore.editorSettings.autoSelectActiveSidebarNode ||
     JSON.stringify(normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value)) !==
-      JSON.stringify(settingsStore.editorSettings.sidebarHiddenTablePrefixes)
+      JSON.stringify(settingsStore.editorSettings.sidebarHiddenTablePrefixes) ||
+    JSON.stringify(editSnippets.value) !== JSON.stringify(settingsStore.editorSettings.snippets)
   );
 }
 
@@ -222,6 +303,7 @@ async function applySettings() {
     sidebarActivation: editSidebarActivation.value,
     autoSelectActiveSidebarNode: editAutoSelectActiveSidebarNode.value,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value),
+    snippets: editSnippets.value,
   });
   await settingsStore.updateDesktopSettings({
     show_tray_icon: editShowTrayIcon.value,
@@ -242,6 +324,7 @@ function resetDefaults() {
   editSidebarActivation.value = DEFAULT_EDITOR_SETTINGS.sidebarActivation;
   editAutoSelectActiveSidebarNode.value = DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode;
   editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
+  editSnippets.value = DEFAULT_SQL_SNIPPETS.map((s) => ({ ...s }));
 }
 
 function hasSystemChanges(): boolean {
@@ -344,6 +427,7 @@ type SettingsCategory =
   | "navigation"
   | "redis"
   | "shortcuts"
+  | "snippets"
   | "ai"
   | "system"
   | "mcp"
@@ -355,6 +439,7 @@ const settingsCategoryNav = computed<{ value: SettingsCategory; label: string }[
   { value: "navigation", label: t("settings.navigationTab") },
   { value: "redis", label: t("settings.redisTab") },
   { value: "shortcuts", label: t("settings.shortcutsTab") },
+  { value: "snippets", label: t("settings.snippetsTab") },
   { value: "ai", label: t("settings.aiTab") },
   ...(isDesktop
     ? [
@@ -371,6 +456,7 @@ const settingsTabsWithApplyFooter = new Set<SettingsCategory>([
   "navigation",
   "redis",
   "shortcuts",
+  "snippets",
 ]);
 
 function hasSettingsApplyFooter(value: SettingsCategory): boolean {
@@ -872,7 +958,7 @@ watch(
                                 : 'bg-muted-foreground/30 border-muted-foreground/40'
                             "
                           />
-                          {{ theme.label }}
+                          {{ theme.value === "app" ? t("settings.followAppTheme") : theme.label }}
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -1105,6 +1191,59 @@ watch(
                 </div>
               </div>
             </section>
+
+            <!-- Snippets Tab -->
+            <section v-else-if="activeSettingsTab === 'snippets'" class="flex flex-col gap-4 py-2">
+              <div class="flex items-center justify-between">
+                <p class="text-sm text-muted-foreground">{{ t("settings.snippetsDescription") }}</p>
+                <Button variant="outline" size="sm" @click="openAddSnippetDialog">
+                  {{ t("settings.snippetsAdd") }}
+                </Button>
+              </div>
+
+              <div class="rounded-md border">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b bg-muted/50">
+                      <th class="px-3 py-2 text-left font-medium">{{ t("settings.snippetsLabel") }}</th>
+                      <th class="px-3 py-2 text-left font-medium">{{ t("settings.snippetsPrefix") }}</th>
+                      <th class="px-3 py-2 text-left font-medium">{{ t("settings.snippetsBody") }}</th>
+                      <th class="px-3 py-2 w-20"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="snippet in editSnippets"
+                      :key="snippet.id"
+                      class="border-b last:border-b-0 hover:bg-muted/30"
+                    >
+                      <td class="px-3 py-2">{{ snippet.label }}</td>
+                      <td class="px-3 py-2 font-mono text-xs">{{ snippet.prefix }}</td>
+                      <td class="px-3 py-2 font-mono text-xs text-muted-foreground max-w-[300px] truncate">
+                        {{ snippet.body }}
+                      </td>
+                      <td class="px-3 py-2">
+                        <div class="flex items-center gap-1">
+                          <Button variant="ghost" size="icon-xs" @click="openEditSnippetDialog(snippet)">
+                            <Pencil class="size-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon-xs" @click="confirmDeleteSnippet(snippet)">
+                            <Trash2 class="size-3.5" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="flex justify-end">
+                <Button variant="outline" size="sm" @click="restoreDefaultSnippets">
+                  {{ t("settings.snippetsRestoreDefaults") }}
+                </Button>
+              </div>
+            </section>
+
             <!-- AI Settings Tab -->
             <section v-else-if="activeSettingsTab === 'ai'" class="flex flex-col gap-5 py-2">
               <p class="text-xs text-muted-foreground">{{ t("ai.settingsHint") }}</p>
@@ -1668,5 +1807,49 @@ watch(
         </div>
       </div>
     </DialogContent>
+
+    <!-- Snippet Add/Edit Dialog -->
+    <Dialog :open="snippetDialogOpen" @update:open="snippetDialogOpen = $event">
+      <DialogContent class="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle>
+            {{ snippetEditingId ? t("settings.snippetsEditTitle") : t("settings.snippetsAddTitle") }}
+          </DialogTitle>
+        </DialogHeader>
+        <div class="flex flex-col gap-4 py-2">
+          <div class="flex flex-col gap-1.5">
+            <Label for="snippet-label">{{ t("settings.snippetsLabel") }}</Label>
+            <Input
+              id="snippet-label"
+              v-model="snippetForm.label"
+              :placeholder="t('settings.snippetsLabelPlaceholder')"
+            />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label for="snippet-prefix">{{ t("settings.snippetsPrefix") }}</Label>
+            <Input
+              id="snippet-prefix"
+              v-model="snippetForm.prefix"
+              :placeholder="t('settings.snippetsPrefixPlaceholder')"
+            />
+            <p v-if="snippetFormPrefixError" class="text-xs text-destructive">{{ snippetFormPrefixError }}</p>
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <Label for="snippet-body">{{ t("settings.snippetsBody") }}</Label>
+            <textarea
+              id="snippet-body"
+              v-model="snippetForm.body"
+              :placeholder="t('settings.snippetsBodyPlaceholder')"
+              rows="6"
+              class="flex min-h-[120px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="snippetDialogOpen = false">{{ t("settings.cancel") }}</Button>
+          <Button @click="saveSnippet">{{ t("settings.save") }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </Dialog>
 </template>

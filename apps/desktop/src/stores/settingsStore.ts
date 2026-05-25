@@ -11,6 +11,8 @@ import { normalizeShortcutSettings, type ShortcutSettings } from "@/lib/shortcut
 import { normalizeResultPageSize } from "@/lib/paginationPageSize";
 import { normalizeSidebarHiddenTablePrefixes } from "@/lib/sidebarTableNameDisplay";
 import type { SidebarActivation } from "@/lib/treeNodeClick";
+import type { SqlSnippet } from "@/types/database";
+import { DEFAULT_SQL_SNIPPETS } from "@/lib/sqlCompletion";
 
 export type AiProvider =
   | "claude"
@@ -184,6 +186,7 @@ export interface EditorSettings {
   sidebarHiddenTablePrefixes: string[];
   columnFormatters: Record<string, ColumnFormatterConfig>;
   customColumnFormatters: Record<string, CustomColumnFormatterConfig>;
+  snippets: SqlSnippet[];
 }
 
 export interface AppSettings {
@@ -236,6 +239,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   sidebarHiddenTablePrefixes: [],
   columnFormatters: {},
   customColumnFormatters: {},
+  snippets: DEFAULT_SQL_SNIPPETS,
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -269,7 +273,33 @@ function normalizeCustomColumnFormatters(value: unknown): Record<string, CustomC
   return formatters;
 }
 
-export function normalizeEditorSettings(settings: Partial<EditorSettings>): EditorSettings {
+function normalizeSqlSnippets(value: unknown, existing?: SqlSnippet[]): SqlSnippet[] {
+  if (!Array.isArray(value)) return existing ?? DEFAULT_SQL_SNIPPETS;
+  const valid: SqlSnippet[] = [];
+  const seenPrefixes = new Set<string>();
+  for (const item of value) {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof item.id !== "string" ||
+      !item.id ||
+      typeof item.label !== "string" ||
+      !item.label ||
+      typeof item.prefix !== "string" ||
+      !item.prefix ||
+      typeof item.body !== "string"
+    ) {
+      continue;
+    }
+    if (seenPrefixes.has(item.prefix)) continue;
+    seenPrefixes.add(item.prefix);
+    valid.push({ id: item.id, label: item.label, prefix: item.prefix, body: item.body });
+  }
+  if (valid.length === 0) return existing ?? DEFAULT_SQL_SNIPPETS;
+  return valid;
+}
+
+export function normalizeEditorSettings(settings: Partial<EditorSettings>, existing?: EditorSettings): EditorSettings {
   return {
     fontFamily: settings.fontFamily ?? DEFAULT_EDITOR_SETTINGS.fontFamily,
     fontSize: settings.fontSize ?? DEFAULT_EDITOR_SETTINGS.fontSize,
@@ -291,6 +321,7 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>): Edit
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(settings.sidebarHiddenTablePrefixes),
     columnFormatters: normalizeColumnFormatters(settings.columnFormatters),
     customColumnFormatters: normalizeCustomColumnFormatters(settings.customColumnFormatters),
+    snippets: normalizeSqlSnippets(settings.snippets, existing?.snippets),
   };
 }
 

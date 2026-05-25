@@ -2,7 +2,7 @@
 import { computed, ref, watch, nextTick } from "vue";
 import type { CSSProperties } from "vue";
 import { useI18n } from "vue-i18n";
-import { X, Pin, ChevronDown, Table2, Code2, TableProperties, Package, Check } from "lucide-vue-next";
+import { X, Pin, ChevronDown, Table2, Code2, TableProperties, PencilRuler, Package, Check } from "lucide-vue-next";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -120,7 +120,8 @@ function tabColorStyle(tab: QueryTab) {
 }
 
 function tabIconClass(tab: QueryTab) {
-  if (tab.mode === "data" || tab.mode === "objects") return "text-emerald-600 dark:text-emerald-400";
+  if (tab.mode === "data" || tab.mode === "objects" || tab.mode === "structure")
+    return "text-emerald-600 dark:text-emerald-400";
   return "text-blue-600 dark:text-blue-400";
 }
 
@@ -205,6 +206,7 @@ const dataTabsMenuContainerClass = computed(() =>
                 <span class="shrink-0" :class="tabIconClass(tab)">
                   <Table2 v-if="tab.mode === 'data'" class="h-3.5 w-3.5" />
                   <TableProperties v-else-if="tab.mode === 'objects'" class="h-3.5 w-3.5" />
+                  <PencilRuler v-else-if="tab.mode === 'structure'" class="h-3.5 w-3.5" />
                   <Code2 v-else class="h-3.5 w-3.5" />
                 </span>
                 <span class="min-w-0 truncate flex-1">{{ tabDisplayTitle(tab) }}</span>

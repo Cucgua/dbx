@@ -23,7 +23,7 @@ async function openTableTarget(target: NavigationTarget) {
   connectionStore.activeConnectionId = target.connectionId;
   const config = connectionStore.getConfig(target.connectionId);
   const tabTitle = target.schema ? `${target.schema}.${target.tableName}` : target.tableName;
-  const tabId = queryStore.createTab(target.connectionId, target.database, tabTitle, "data");
+  const tabId = queryStore.createTab(target.connectionId, target.database, tabTitle, "data", target.schema);
   queryStore.setExecuting(tabId, true);
 
   try {
@@ -105,10 +105,6 @@ async function openTableTarget(target: NavigationTarget) {
 export function useNavigationTargets(dialogs: {
   showFieldLineageDialog: { value: boolean };
   showDatabaseSearchDialog: { value: boolean };
-  structurePrefillTable: { value: string };
-  structurePrefillConnectionId?: { value: string };
-  structurePrefillDatabase?: { value: string };
-  structurePrefillSchema?: { value: string };
 }) {
   const connectionStore = useConnectionStore();
   const queryStore = useQueryStore();
@@ -126,20 +122,20 @@ export function useNavigationTargets(dialogs: {
   async function onStructureEditorSaved(
     reloadData: () => Promise<void>,
     toast: (msg: string, duration?: number) => void,
+    context: { connectionId: string; database: string; schema?: string; tableName: string },
   ) {
-    if (!dialogs.structurePrefillTable.value) {
-      const connId = dialogs.structurePrefillConnectionId?.value;
-      const db = dialogs.structurePrefillDatabase?.value;
-      const schema = dialogs.structurePrefillSchema?.value;
-      if (connId && db) {
-        try {
-          await connectionStore.refreshObjectListTreeNode(connId, db, schema || undefined);
-        } catch {}
-      }
+    if (!context.tableName) {
+      try {
+        await connectionStore.refreshObjectListTreeNode(
+          context.connectionId,
+          context.database,
+          context.schema || undefined,
+        );
+      } catch {}
       return;
     }
     const activeTab = queryStore.tabs.find((t) => t.id === queryStore.activeTabId);
-    if (activeTab?.mode === "data" && activeTab.tableMeta?.tableName === dialogs.structurePrefillTable.value) {
+    if (activeTab?.mode === "data" && activeTab.tableMeta?.tableName === context.tableName) {
       try {
         const columns = await api.getColumns(
           activeTab.connectionId,

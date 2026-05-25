@@ -25,6 +25,7 @@ export const SCHEMA_AWARE_TYPES = new Set<DatabaseType>([
   "trino",
   "db2",
   "tdengine",
+  "duckdb",
 ]);
 
 export const SQL_FILE_UNSUPPORTED_TYPES = new Set<DatabaseType>(["redis", "mongodb", "elasticsearch"]);
@@ -201,6 +202,7 @@ export const TREE_SCHEMA_TYPES = new Set<DatabaseType>([
   "trino",
   "h2",
   "tdengine",
+  "duckdb",
 ]);
 
 export const PG_LIKE_STRUCTURE_TYPES = new Set<DatabaseType>(["postgres", "redshift", "gaussdb", "opengauss"]);

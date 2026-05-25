@@ -1,3 +1,5 @@
+import type { SqlSnippet } from "@/types/database";
+
 const SQL_KEYWORDS = [
   "SELECT",
   "FROM",
@@ -381,72 +383,72 @@ function getFunctionDescriptions(t?: SqlCompletionTranslations): Map<string, str
   ]);
 }
 
-const SQL_SNIPPETS: Array<{ label: string; prefix: string; apply: string; detail: string }> = [
+export const DEFAULT_SQL_SNIPPETS: SqlSnippet[] = [
   {
+    id: "builtin-sel",
     label: "select *",
     prefix: "sel",
-    apply: "SELECT *\nFROM ${table}\nLIMIT 100;",
-    detail: "SELECT template",
+    body: "SELECT *\nFROM table\nLIMIT 100;",
   },
   {
+    id: "builtin-ins",
     label: "insert into",
     prefix: "ins",
-    apply: "INSERT INTO ${table} (${columns})\nVALUES (${values});",
-    detail: "INSERT template",
+    body: "INSERT INTO table (columns)\nVALUES (values);",
   },
   {
+    id: "builtin-upd",
     label: "update set",
     prefix: "upd",
-    apply: "UPDATE ${table}\nSET ${column} = ${value}\nWHERE ${condition};",
-    detail: "UPDATE template",
+    body: "UPDATE table\nSET column = value\nWHERE condition;",
   },
   {
+    id: "builtin-cte",
     label: "common table expression",
     prefix: "cte",
-    apply: "WITH ${name} AS (\n  SELECT ${columns}\n  FROM ${table}\n)\nSELECT *\nFROM ${name};",
-    detail: "CTE template",
+    body: "WITH name AS (\n  SELECT columns\n  FROM table\n)\nSELECT *\nFROM name;",
   },
   {
+    id: "builtin-join",
     label: "join",
     prefix: "join",
-    apply: "JOIN ${table} ON ${left_column} = ${right_column}",
-    detail: "JOIN template",
+    body: "JOIN table ON left_column = right_column",
   },
   {
+    id: "builtin-case",
     label: "case when",
     prefix: "case",
-    apply: "CASE\n  WHEN ${condition} THEN ${value}\n  ELSE ${default}\nEND",
-    detail: "CASE expression",
+    body: "CASE\n  WHEN condition THEN value\n  ELSE default\nEND",
   },
   {
+    id: "builtin-ct",
     label: "create table",
     prefix: "ct",
-    apply: "CREATE TABLE ${table} (\n  ${column} ${type}\n);",
-    detail: "CREATE TABLE template",
+    body: "CREATE TABLE table (\n  column type\n);",
   },
   {
+    id: "builtin-ex",
     label: "exists",
     prefix: "ex",
-    apply: "EXISTS (\n  SELECT 1\n  FROM ${table}\n  WHERE ${condition}\n)",
-    detail: "EXISTS subquery",
+    body: "EXISTS (\n  SELECT 1\n  FROM table\n  WHERE condition\n)",
   },
   {
+    id: "builtin-nex",
     label: "not exists",
     prefix: "nex",
-    apply: "NOT EXISTS (\n  SELECT 1\n  FROM ${table}\n  WHERE ${condition}\n)",
-    detail: "NOT EXISTS subquery",
+    body: "NOT EXISTS (\n  SELECT 1\n  FROM table\n  WHERE condition\n)",
   },
   {
+    id: "builtin-at",
     label: "alter table add column",
     prefix: "at",
-    apply: "ALTER TABLE ${table}\nADD COLUMN ${column} ${type};",
-    detail: "ALTER TABLE template",
+    body: "ALTER TABLE table\nADD COLUMN column type;",
   },
   {
+    id: "builtin-ci",
     label: "create index",
     prefix: "ci",
-    apply: "CREATE INDEX ${idx_name}\nON ${table} (${column});",
-    detail: "CREATE INDEX template",
+    body: "CREATE INDEX idx_name\nON table (column);",
   },
 ];
 
@@ -639,13 +641,14 @@ export function buildSqlCompletionItemsFromContext(
     columnsByTable: Map<string, SqlCompletionColumn[]>;
     schemas?: string[];
     translations?: SqlCompletionTranslations;
+    snippets?: SqlSnippet[];
   },
 ): SqlCompletionItem[] {
   const items: SqlCompletionItem[] = [];
   const t = input.translations;
 
   if (!context.exclusiveTableSuggestions && !context.exclusiveColumnSuggestions) {
-    items.push(...buildSnippetItems(context.prefix));
+    items.push(...buildSnippetItems(context.prefix, input.snippets ?? DEFAULT_SQL_SNIPPETS));
     items.push(...buildFunctionSnippetItems(context.prefix, getFunctionDescriptions(t)));
   }
 
@@ -1879,21 +1882,25 @@ function singularTableName(name: string): string {
   return lower;
 }
 
-function buildSnippetItems(prefix: string): SqlCompletionItem[] {
+export function buildSnippetItemsForTest(prefix: string, snippets: SqlSnippet[]): SqlCompletionItem[] {
+  return buildSnippetItems(prefix, snippets);
+}
+
+function buildSnippetItems(prefix: string, snippets: SqlSnippet[]): SqlCompletionItem[] {
   if (!prefix) return [];
-  return SQL_SNIPPETS.filter(
-    (snippet) => matchesPrefix(snippet.prefix, prefix) || matchesPrefix(snippet.label, prefix),
-  ).map((snippet) => {
-    const boostByPrefix = computeBoost(snippet.prefix, prefix);
-    const boostByLabel = computeBoost(snippet.label, prefix);
-    return {
-      label: snippet.label,
-      type: "snippet" as const,
-      detail: snippet.detail,
-      apply: snippet.apply,
-      boost: Math.max(boostByPrefix, boostByLabel) - 1100,
-    };
-  });
+  return snippets
+    .filter((snippet) => matchesPrefix(snippet.prefix, prefix) || matchesPrefix(snippet.label, prefix))
+    .map((snippet) => {
+      const boostByPrefix = computeBoost(snippet.prefix, prefix);
+      const boostByLabel = computeBoost(snippet.label, prefix);
+      return {
+        label: snippet.label,
+        type: "snippet" as const,
+        detail: snippet.label,
+        apply: snippet.body,
+        boost: Math.max(boostByPrefix, boostByLabel) - 1100,
+      };
+    });
 }
 
 function buildFunctionSnippetItems(prefix: string, functionDescriptions: Map<string, string>): SqlCompletionItem[] {
