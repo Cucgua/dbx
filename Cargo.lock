@@ -1745,7 +1745,7 @@ dependencies = [
  "ident_case",
  "proc-macro2",
  "quote",
- "strsim",
+ "strsim 0.11.1",
  "syn 2.0.117",
 ]
 
@@ -2323,7 +2323,7 @@ version = "3.0.0-rc.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6e914c7c52decb085cea910552e24c63ac019e3ab8bf001ff736da9a9d9d890"
 dependencies = [
- "pkcs8",
+ "pkcs8 0.11.0-rc.11",
  "signature",
 ]
 
@@ -2357,7 +2357,7 @@ dependencies = [
  "hybrid-array",
  "once_cell",
  "pem-rfc7468 1.0.0",
- "pkcs8",
+ "pkcs8 0.11.0-rc.11",
  "rand_core 0.10.1",
  "rustcrypto-ff",
  "rustcrypto-group",
@@ -6419,7 +6419,7 @@ dependencies = [
  "crypto-primes",
  "digest 0.11.3",
  "pkcs1",
- "pkcs8",
+ "pkcs8 0.11.0-rc.11",
  "rand_core 0.10.1",
  "sha2 0.11.0",
  "signature",
@@ -6571,7 +6571,7 @@ dependencies = [
  "hmac 0.12.1",
  "hostname",
  "indexmap 2.14.0",
- "md-5",
+ "md-5 0.10.6",
  "pbkdf2 0.12.2",
  "pkcs8 0.10.2",
  "rand 0.8.6",
