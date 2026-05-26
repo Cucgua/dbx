@@ -168,16 +168,11 @@ pub fn build_paginated_query_sql(options: PaginatedQuerySqlOptions) -> QuerySqlB
         return ok(add_mysql_limit(&statement, safe_limit, safe_offset));
     }
 
-    let alias = quote_table_identifier(options.database_type, "dbx_page");
-    let base = format!("SELECT * FROM ({statement}) {alias}");
-
     if options.database_type.is_some_and(uses_fetch_first) {
-        let offset_sql = if safe_offset > 0 { format!(" OFFSET {safe_offset} ROWS") } else { String::new() };
-        return ok(format!("{base}{offset_sql} FETCH FIRST {safe_limit} ROWS ONLY"));
+        return ok(add_fetch_first_limit(&statement, safe_limit, safe_offset));
     }
 
-    let offset_sql = if safe_offset > 0 { format!(" OFFSET {safe_offset}") } else { String::new() };
-    ok(format!("{base} LIMIT {safe_limit}{offset_sql};"))
+    ok(add_standard_limit(&statement, safe_limit, safe_offset))
 }
 
 pub fn build_count_query_sql(options: CountQuerySqlOptions) -> QuerySqlBuildResult {
@@ -355,6 +350,35 @@ fn add_mysql_limit(statement: &str, limit: usize, offset: usize) -> String {
 
 fn has_top_level_limit(sql: &str) -> bool {
     top_level_sql_tokens(sql).iter().any(|token| token.text == "LIMIT")
+}
+
+fn has_top_level_fetch_first(sql: &str) -> bool {
+    let tokens = top_level_sql_tokens(sql);
+    tokens.windows(2).any(|w| w[0].text == "FETCH" && w[1].text == "FIRST")
+}
+
+fn add_fetch_first_limit(statement: &str, limit: usize, offset: usize) -> String {
+    if has_top_level_fetch_first(statement) {
+        return format!("{statement};");
+    }
+    let offset_sql = if offset > 0 {
+        format!(" OFFSET {offset} ROWS")
+    } else {
+        String::new()
+    };
+    format!("{statement}{offset_sql} FETCH FIRST {limit} ROWS ONLY;")
+}
+
+fn add_standard_limit(statement: &str, limit: usize, offset: usize) -> String {
+    if has_top_level_limit(statement) {
+        return format!("{statement};");
+    }
+    let offset_sql = if offset > 0 {
+        format!(" OFFSET {offset}")
+    } else {
+        String::new()
+    };
+    format!("{statement} LIMIT {limit}{offset_sql};")
 }
 
 fn find_top_level_trailing_order_by(sql: &str) -> Option<usize> {
@@ -577,7 +601,7 @@ mod tests {
         assert_eq!(result.ok, true);
         assert_eq!(
             result.sql.unwrap(),
-            "SELECT * FROM (SELECT id, name FROM users) \"dbx_page\" LIMIT 100 OFFSET 200;"
+            "SELECT id, name FROM users LIMIT 100 OFFSET 200;"
         );
     }
 
@@ -654,7 +678,10 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.sql.unwrap(), "SELECT * FROM (SELECT id FROM users) \"dbx_page\" FETCH FIRST 100 ROWS ONLY");
+        assert_eq!(
+            result.sql.unwrap(),
+            "SELECT id FROM users FETCH FIRST 100 ROWS ONLY;"
+        );
     }
 
     #[test]
