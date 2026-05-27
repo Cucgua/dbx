@@ -54,6 +54,28 @@ pub fn is_memory_database_path(path: &str) -> bool {
     path.trim().eq_ignore_ascii_case(":memory:")
 }
 
+/// Closes a DuckDB connection, releasing the file lock.
+///
+/// Unlike relying on Drop, this calls `duckdb_disconnect` synchronously
+/// so the file handle is released before this function returns.
+/// On Windows this prevents "file already in use" errors when reconnecting.
+pub fn close_connection(con: Arc<Mutex<duckdb::Connection>>) {
+    match Arc::try_unwrap(con) {
+        Ok(mutex) => match mutex.into_inner() {
+            Ok(conn) => {
+                let _ = conn.close();
+            }
+            Err(poisoned) => {
+                let _ = poisoned.into_inner().close();
+            }
+        },
+        Err(_) => {
+            // Arc still referenced elsewhere (e.g. running queries);
+            // the last holder will drop and close the connection.
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

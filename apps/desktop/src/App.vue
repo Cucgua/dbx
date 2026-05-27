@@ -36,9 +36,11 @@ import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { sqlFileTitleFromPath } from "@/lib/sqlFileOpen";
 import { parseConnectionDeepLink, type ConnectionDeepLinkDraft } from "@/lib/connectionDeepLink";
 import {
+  isBrowserReloadShortcut,
   isCloseTabShortcut,
   isExecuteSqlShortcut,
   isFocusSearchShortcut,
+  isModRShortcut,
   isNewQueryShortcut,
   isObjectSourceSaveShortcutTarget,
   isRefreshDataShortcut,
@@ -626,6 +628,8 @@ function onAiRequestAutoExecuteSql(sql: string) {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  if (e.defaultPrevented) return;
+
   const shortcuts = settingsStore.editorSettings.shortcuts;
 
   if (isFocusSearchShortcut(e, shortcuts)) {
@@ -675,6 +679,16 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault();
     e.stopPropagation();
     tryExecute();
+    return;
+  }
+  if (isModRShortcut(e) && e.target instanceof Element && contentAreaRef.value?.handleModRTarget(e.target)) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+  if (isDesktop && isBrowserReloadShortcut(e)) {
+    e.preventDefault();
+    e.stopPropagation();
   }
 }
 
@@ -739,7 +753,7 @@ onMounted(async () => {
     aiPanelReady.value = true;
   });
   applyTheme();
-  window.addEventListener("keydown", handleKeydown, true);
+  window.addEventListener("keydown", handleKeydown);
   window.addEventListener("dbx-open-driver-store", openDriverStoreFromEvent);
   if (isDesktop) {
     document.addEventListener("contextmenu", handleContextMenu);
@@ -794,7 +808,7 @@ onUnmounted(() => {
   if (updateCheckTimer) {
     clearInterval(updateCheckTimer);
   }
-  window.removeEventListener("keydown", handleKeydown, true);
+  window.removeEventListener("keydown", handleKeydown);
   window.removeEventListener("dbx-open-driver-store", openDriverStoreFromEvent);
   document.removeEventListener("contextmenu", handleContextMenu);
 });
@@ -939,13 +953,19 @@ onUnmounted(() => {
                     "
                     @object-schema-change="(schema) => activeTab && queryStore.updateSchema(activeTab.id, schema)"
                     @structure-editor-saved="
-                      activeTab &&
-                      onStructureEditorSaved(onReloadData, toast, {
-                        connectionId: activeTab.connectionId,
-                        database: activeTab.database,
-                        schema: activeTab.schema,
-                        tableName: activeTab.structureTableName || '',
-                      })
+                      (commentChanged) =>
+                        activeTab &&
+                        onStructureEditorSaved(
+                          onReloadData,
+                          toast,
+                          {
+                            connectionId: activeTab.connectionId,
+                            database: activeTab.database,
+                            schema: activeTab.schema,
+                            tableName: activeTab.structureTableName || '',
+                          },
+                          commentChanged,
+                        )
                     "
                     @structure-editor-close="activeTab && queryStore.closeTab(activeTab.id)"
                   />

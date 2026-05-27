@@ -31,6 +31,9 @@ function matchesSubsequence(text: string, query: string): boolean {
 
   let j = 0;
   for (let i = 0; i < text.length && j < query.length; i++) {
+    if (isWordBoundary(text, i) && i > 0) {
+      j = 0;
+    }
     if (text[i] === query[j]) j++;
   }
   return j === query.length;

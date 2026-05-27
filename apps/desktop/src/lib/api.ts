@@ -89,6 +89,7 @@ export const executeScript = forward("executeScript");
 export const executeInTransaction = forward("executeInTransaction");
 export const cancelQuery = forward("cancelQuery");
 export const closeQuerySession = forward("closeQuerySession");
+export const closeClientConnectionSession = forward("closeClientConnectionSession");
 export const analyzeSqlReferences = forward("analyzeSqlReferences");
 export const findStatementAtCursor = forward("findStatementAtCursor");
 export const prepareQueryPaginationExecutionPlan = forward("prepareQueryPaginationExecutionPlan");
@@ -141,6 +142,12 @@ export const loadDesktopSettings = forward("loadDesktopSettings");
 export const saveDesktopSettings = forward("saveDesktopSettings");
 export const loadPinnedTreeNodeIds = forward("loadPinnedTreeNodeIds");
 export const savePinnedTreeNodeIds = forward("savePinnedTreeNodeIds");
+export const webdavSyncTest = forward("webdavSyncTest");
+export const webdavPasswordStatus = forward("webdavPasswordStatus");
+export const saveWebdavSavedPassword = forward("saveWebdavSavedPassword");
+export const forgetWebdavSavedPassword = forward("forgetWebdavSavedPassword");
+export const webdavSyncUpload = forward("webdavSyncUpload");
+export const webdavSyncDownload = forward("webdavSyncDownload");
 export const saveAiConversation = forward("saveAiConversation");
 export const loadAiConversations = forward("loadAiConversations");
 export const deleteAiConversation = forward("deleteAiConversation");
@@ -217,6 +224,7 @@ export const deleteHistoryEntry = forward("deleteHistoryEntry");
 
 // Updates
 export const checkForUpdates = forward("checkForUpdates");
+export const getSystemProxyUrl = forward("getSystemProxyUrl");
 export const getAppVersion = forward("getAppVersion");
 
 // Layout
@@ -240,6 +248,10 @@ export type {
   JavaRuntimeMode,
   JavaRuntimeConfig,
   DriverInstallProgress,
+  WebDavConfig,
+  WebDavPasswordStatus,
+  WebDavSyncSummary,
+  WebDavDownloadResult,
   UpdateInfo,
   McpHttpStatus,
   RedisDatabaseInfo,

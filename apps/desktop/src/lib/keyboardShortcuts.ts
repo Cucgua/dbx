@@ -88,12 +88,20 @@ export function isRefreshDataShortcut(event: ShortcutLikeEvent, shortcuts?: Part
   return matchesShortcut(event, actionShortcut("refreshData", shortcuts));
 }
 
+export function isModRShortcut(event: ShortcutLikeEvent): boolean {
+  return matchesShortcut(event, "Mod+R");
+}
+
 export function isToggleTransposeShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
   return matchesShortcut(event, actionShortcut("toggleTranspose", shortcuts));
 }
 
 export function isSaveShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
   return matchesShortcut(event, actionShortcut("saveSql", shortcuts));
+}
+
+export function isAcceptCompletionShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  return matchesShortcut(event, actionShortcut("acceptCompletion", shortcuts));
 }
 
 export function isObjectSourceSaveShortcutTarget(
@@ -112,4 +120,11 @@ export function isDeleteCurrentRowShortcut(event: ShortcutLikeEvent, shortcuts?:
 
 export function isCancelSearchShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
   return matchesShortcut(event, actionShortcut("cancelSearch", shortcuts));
+}
+
+export function isBrowserReloadShortcut(event: ShortcutLikeEvent): boolean {
+  if (event.isComposing || event.altKey) return false;
+  const key = normalizeKey(event.key);
+  if (key === "F5") return true;
+  return key === "r" && (!!event.metaKey || !!event.ctrlKey);
 }

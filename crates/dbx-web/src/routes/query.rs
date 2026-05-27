@@ -19,6 +19,8 @@ pub struct ExecuteQueryRequest {
     pub fetch_size: Option<usize>,
     pub page_size: Option<usize>,
     pub result_session_id: Option<String>,
+    pub client_session_id: Option<String>,
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +35,15 @@ pub struct CloseSessionRequest {
     pub connection_id: String,
     pub database: String,
     pub session_id: String,
+    pub client_session_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseClientConnectionSessionRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub client_session_id: String,
 }
 
 #[derive(Deserialize)]
@@ -260,6 +271,8 @@ pub async fn execute_query(
             fetch_size: req.fetch_size,
             page_size: req.page_size,
             result_session_id: req.result_session_id,
+            client_session_id: req.client_session_id,
+            timeout_secs: req.timeout_secs,
         },
     )
     .await
@@ -290,6 +303,8 @@ pub async fn execute_multi(
             fetch_size: req.fetch_size,
             page_size: req.page_size,
             result_session_id: req.result_session_id,
+            client_session_id: req.client_session_id,
+            timeout_secs: req.timeout_secs,
         },
     )
     .await
@@ -328,7 +343,27 @@ pub async fn close_query_session(
     State(state): State<Arc<WebState>>,
     Json(req): Json<CloseSessionRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let closed = dbx_core::query::close_query_session(&state.app, &req.connection_id, &req.database, &req.session_id)
+    let closed = dbx_core::query::close_query_session(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &req.session_id,
+        req.client_session_id.as_deref(),
+    )
+    .await
+    .map_err(AppError)?;
+
+    Ok(Json(serde_json::json!(closed)))
+}
+
+pub async fn close_client_connection_session(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<CloseClientConnectionSessionRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let database = if req.database.trim().is_empty() { None } else { Some(req.database.as_str()) };
+    let closed = state
+        .app
+        .close_client_session_pool(&req.connection_id, database, &req.client_session_id)
         .await
         .map_err(AppError)?;
 

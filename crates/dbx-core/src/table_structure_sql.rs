@@ -93,6 +93,10 @@ pub struct TableStructureSqlOptions {
     pub columns: Vec<EditableStructureColumn>,
     #[serde(default)]
     pub indexes: Vec<EditableStructureIndex>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_comment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_table_comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,7 +295,41 @@ pub fn build_table_structure_change_sql(options: TableStructureSqlOptions) -> Ta
     let mut warnings = validate_draft(&options);
     let mut statements = build_column_sql(&options, &mut warnings);
     statements.extend(build_index_sql(&options, &mut warnings));
+    statements.extend(build_table_comment_sql(&options, &mut warnings));
     TableStructureSqlResult { statements, warnings }
+}
+
+fn build_table_comment_sql(options: &TableStructureSqlOptions, warnings: &mut Vec<String>) -> Vec<String> {
+    let capabilities = capabilities_for(options.database_type);
+    if !capabilities.comment {
+        return Vec::new();
+    }
+    let new_comment = options.table_comment.as_deref().unwrap_or("");
+    let original_comment = options.original_table_comment.as_deref().unwrap_or("");
+    if clean(new_comment) == clean(original_comment) {
+        return Vec::new();
+    }
+    let dialect = capabilities.dialect;
+    let table = qualified_table(dialect, options.schema.as_deref(), &options.table_name);
+    let quoted = quote_string(&clean(new_comment));
+    match dialect {
+        StructureDialect::Mysql => {
+            vec![format!("ALTER TABLE {table} COMMENT = {quoted};")]
+        }
+        StructureDialect::Postgres | StructureDialect::Oracle | StructureDialect::H2 => {
+            vec![format!("COMMENT ON TABLE {table} IS {quoted};")]
+        }
+        StructureDialect::ClickHouse => {
+            vec![format!("ALTER TABLE {table} MODIFY COMMENT {quoted};")]
+        }
+        StructureDialect::SqlServer | StructureDialect::Sqlite | StructureDialect::DuckDb | _ => {
+            if !clean(new_comment).is_empty() {
+                warnings
+                    .push(format!("Table comments are not supported for {} from this editor.", dialect_label(dialect)));
+            }
+            Vec::new()
+        }
+    }
 }
 
 pub fn build_create_table_sql(options: TableStructureSqlOptions) -> TableStructureSqlResult {
@@ -315,11 +353,7 @@ pub fn build_create_table_sql(options: TableStructureSqlOptions) -> TableStructu
     let mut column_definitions = Vec::new();
 
     for column in &active_columns {
-        let data_type = if dialect == StructureDialect::ClickHouse {
-            clickhouse_column_type(column)
-        } else {
-            column.data_type.trim().to_string()
-        };
+        let data_type = column_data_type(dialect, column);
         let mut parts = vec![quote_ident(dialect, &column.name), data_type];
         if !column.is_nullable && !column.is_primary_key && dialect != StructureDialect::ClickHouse {
             parts.push("NOT NULL".to_string());
@@ -341,6 +375,21 @@ pub fn build_create_table_sql(options: TableStructureSqlOptions) -> TableStructu
     }
 
     statements.push(format!("CREATE TABLE {table} (\n  {}\n);", column_definitions.join(",\n  ")));
+
+    if capabilities.comment {
+        let table_comment = clean(options.table_comment.as_deref().unwrap_or(""));
+        if !table_comment.is_empty() {
+            if dialect == StructureDialect::Mysql {
+                if let Some(last) = statements.last_mut() {
+                    *last = last.replace(");", &format!(") COMMENT = {};", quote_string(&table_comment)));
+                }
+            } else if matches!(dialect, StructureDialect::Postgres | StructureDialect::Oracle | StructureDialect::H2) {
+                statements.push(format!("COMMENT ON TABLE {table} IS {};", quote_string(&table_comment)));
+            } else if dialect == StructureDialect::ClickHouse {
+                statements.push(format!("ALTER TABLE {table} MODIFY COMMENT {};", quote_string(&table_comment)));
+            }
+        }
+    }
 
     if capabilities.comment
         && matches!(dialect, StructureDialect::Postgres | StructureDialect::Oracle | StructureDialect::H2)
@@ -650,7 +699,7 @@ fn build_postgres_existing_column_sql(table: &str, column: &EditableStructureCol
         statements.push(format!(
             "ALTER TABLE {table} ALTER COLUMN {} TYPE {};",
             quote_ident(StructureDialect::Postgres, current_name),
-            column.data_type.trim()
+            column_data_type(StructureDialect::Postgres, column)
         ));
     }
     if column.is_nullable != original.is_nullable {
@@ -702,7 +751,7 @@ fn build_oracle_like_existing_column_sql(
         statements.push(format!(
             "ALTER TABLE {table} MODIFY ({} {});",
             quote_ident(dialect, &current_name),
-            column.data_type.trim()
+            column_data_type(dialect, column)
         ));
     }
     if column.is_nullable != original.is_nullable {
@@ -744,7 +793,7 @@ fn build_h2_existing_column_sql(table: &str, column: &EditableStructureColumn) -
         statements.push(format!(
             "ALTER TABLE {table} ALTER COLUMN {} SET DATA TYPE {};",
             quote_ident(StructureDialect::H2, &current_name),
-            column.data_type.trim()
+            column_data_type(StructureDialect::H2, column)
         ));
     }
     if column.is_nullable != original.is_nullable {
@@ -991,11 +1040,7 @@ fn validate_columns(columns: &[&EditableStructureColumn], warnings: &mut Vec<Str
 }
 
 fn column_definition(dialect: StructureDialect, column: &EditableStructureColumn) -> String {
-    let data_type = if dialect == StructureDialect::ClickHouse {
-        clickhouse_column_type(column)
-    } else {
-        column.data_type.trim().to_string()
-    };
+    let data_type = column_data_type(dialect, column);
     let mut parts = vec![quote_ident(dialect, &column.name), data_type];
     if !column.is_nullable && !is_oracle_like(dialect) && dialect != StructureDialect::ClickHouse {
         parts.push("NOT NULL".to_string());
@@ -1008,6 +1053,68 @@ fn column_definition(dialect: StructureDialect, column: &EditableStructureColumn
         parts.push(format!("COMMENT {}", quote_string(&clean(&column.comment))));
     }
     parts.join(" ")
+}
+
+fn column_data_type(dialect: StructureDialect, column: &EditableStructureColumn) -> String {
+    if dialect == StructureDialect::ClickHouse {
+        return clickhouse_column_type(column);
+    }
+    normalize_column_data_type(dialect, &column.data_type)
+}
+
+fn normalize_column_data_type(dialect: StructureDialect, data_type: &str) -> String {
+    let trimmed = data_type.trim();
+    let Some(open_index) = trimmed.find('(') else {
+        return trimmed.to_string();
+    };
+    if !trimmed.ends_with(')') {
+        return trimmed.to_string();
+    }
+
+    let base_type = trimmed[..open_index].trim();
+    let params = trimmed[open_index + 1..trimmed.len() - 1].trim();
+    if base_type.is_empty() || params.is_empty() {
+        return trimmed.to_string();
+    }
+
+    if is_temporal_precision_type(dialect, base_type) {
+        return if is_valid_temporal_precision(params, dialect) {
+            format!("{base_type}({params})")
+        } else {
+            base_type.to_string()
+        };
+    }
+
+    trimmed.to_string()
+}
+
+fn is_temporal_precision_type(dialect: StructureDialect, base_type: &str) -> bool {
+    let normalized = base_type.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+    match dialect {
+        StructureDialect::Mysql => matches!(normalized.as_str(), "time" | "datetime" | "timestamp"),
+        StructureDialect::Postgres => matches!(
+            normalized.as_str(),
+            "time"
+                | "time without time zone"
+                | "time with time zone"
+                | "timestamp"
+                | "timestamp without time zone"
+                | "timestamp with time zone"
+        ),
+        StructureDialect::SqlServer => matches!(normalized.as_str(), "time" | "datetime2" | "datetimeoffset"),
+        StructureDialect::Oracle => {
+            matches!(normalized.as_str(), "timestamp" | "timestamp with time zone" | "timestamp with local time zone")
+        }
+        _ => false,
+    }
+}
+
+fn is_valid_temporal_precision(params: &str, dialect: StructureDialect) -> bool {
+    let Ok(value) = params.parse::<u8>() else {
+        return false;
+    };
+    let max = if dialect == StructureDialect::Oracle { 9 } else { 6 };
+    value <= max && params == value.to_string()
 }
 
 fn clickhouse_column_type(column: &EditableStructureColumn) -> String {
@@ -1285,6 +1392,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![renamed, email],
             indexes: vec![old_index, email_index],
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1296,6 +1405,52 @@ mod tests {
                 "DROP INDEX `idx_old` ON `users`;",
                 "CREATE UNIQUE INDEX `uniq_users_email` ON `users` (`email`);",
             ]
+        );
+    }
+
+    #[test]
+    fn mysql_add_timestamp_column_drops_invalid_precision() {
+        let mut created_at = column("created_at");
+        created_at.data_type = "timestamp(255)".to_string();
+        created_at.default_value = "CURRENT_TIMESTAMP".to_string();
+
+        let result = build_table_structure_change_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Mysql),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![created_at],
+            indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert_eq!(
+            result.statements,
+            vec!["ALTER TABLE `users` ADD COLUMN `created_at` timestamp DEFAULT CURRENT_TIMESTAMP;"]
+        );
+    }
+
+    #[test]
+    fn mysql_add_timestamp_column_preserves_valid_precision() {
+        let mut created_at = column("created_at");
+        created_at.data_type = "timestamp(3)".to_string();
+        created_at.default_value = "CURRENT_TIMESTAMP(3)".to_string();
+
+        let result = build_table_structure_change_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Mysql),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![created_at],
+            indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert_eq!(
+            result.statements,
+            vec!["ALTER TABLE `users` ADD COLUMN `created_at` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3);"]
         );
     }
 
@@ -1318,6 +1473,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![id, name],
             indexes: vec![idx],
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1352,6 +1509,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![col],
             indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.statements, Vec::<String>::new());
@@ -1410,6 +1569,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![id, email, name],
             indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1434,6 +1595,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![email],
             indexes: vec![index("idx_users_email", &["email"])],
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1461,6 +1624,8 @@ mod tests {
             table_name: "events".to_string(),
             columns: vec![name, created_at],
             indexes: vec![index("idx_events_name", &["name"])],
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1499,6 +1664,8 @@ mod tests {
             table_name: "events".to_string(),
             columns: vec![source, status],
             indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1538,6 +1705,8 @@ mod tests {
             table_name: "USERS".to_string(),
             columns: vec![name],
             indexes: vec![index("IDX_USERS_DISPLAY_NAME", &["DISPLAY_NAME"])],
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1576,6 +1745,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![id],
             indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1604,6 +1775,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![id],
             indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1648,6 +1821,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![old_pk, new_pk],
             indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1679,6 +1854,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![id],
             indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.warnings, Vec::<String>::new());
@@ -1707,6 +1884,8 @@ mod tests {
             table_name: "users".to_string(),
             columns: vec![id],
             indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
         });
 
         assert_eq!(result.statements, Vec::<String>::new());

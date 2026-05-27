@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tauri::{AppHandle, Emitter, State};
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -13,8 +12,8 @@ use crate::commands::query::execute_sql_statement;
 use dbx_core::models::connection::DatabaseType;
 
 pub use dbx_core::sql::{
-    prepare_sql_file_statement, statement_summary, SqlFilePreview, SqlFileProgress, SqlFileRequest,
-    SqlFileStatementAction, SqlFileStatus, SqlStatementSplitter,
+    decode_sql_file_bytes, prepare_sql_file_statement, statement_summary, SqlFilePreview, SqlFileProgress,
+    SqlFileRequest, SqlFileStatementAction, SqlFileStatus, SqlParsingOptions, SqlStatementSplitter,
 };
 
 static SQL_FILE_EXECUTIONS: std::sync::LazyLock<RwLock<HashMap<String, CancellationToken>>> =
@@ -46,11 +45,8 @@ struct SqlFileSummary {
 pub async fn preview_sql_file(file_path: String) -> Result<SqlFilePreview, String> {
     let path = PathBuf::from(&file_path);
     let metadata = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?;
-    let mut file = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
-    let mut buffer = vec![0; 4096];
-    let bytes_read = tokio::io::AsyncReadExt::read(&mut file, &mut buffer).await.map_err(|e| e.to_string())?;
-    buffer.truncate(bytes_read);
-    let preview = String::from_utf8_lossy(&buffer).to_string();
+    let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
+    let preview = decode_sql_file_bytes(&bytes)?.chars().take(5000).collect();
 
     Ok(SqlFilePreview {
         file_name: path.file_name().and_then(|name| name.to_str()).unwrap_or("script.sql").to_string(),
@@ -106,8 +102,8 @@ async fn execute_sql_file_inner(
     let mut failure_count = 0;
     let mut affected_rows = 0;
 
-    let file = match tokio::fs::File::open(&request.file_path).await {
-        Ok(file) => file,
+    let file_bytes = match tokio::fs::read(&request.file_path).await {
+        Ok(bytes) => bytes,
         Err(error) => {
             let error = error.to_string();
             emit_file_io_error_progress(
@@ -123,12 +119,30 @@ async fn execute_sql_file_inner(
             return Err(error);
         }
     };
-    let mut reader = BufReader::new(file);
-    let mut splitter = SqlStatementSplitter::default();
-    let mut line = String::new();
+    let file_content = match decode_sql_file_bytes(&file_bytes) {
+        Ok(content) => content,
+        Err(error) => {
+            emit_file_io_error_progress(
+                app,
+                &request.execution_id,
+                statement_index,
+                success_count,
+                failure_count,
+                affected_rows,
+                started_at,
+                error.clone(),
+            );
+            return Err(error);
+        }
+    };
     let import_target = sql_file_import_target(state.inner().as_ref(), &request.connection_id).await;
+    let options =
+        import_target.as_ref().map(|target| SqlParsingOptions::for_database_type(target.db_type)).unwrap_or_default();
+    let mut splitter = SqlStatementSplitter::with_options(options);
+    let mut statements = splitter.push_chunk(&file_content);
+    statements.extend(splitter.finish());
 
-    loop {
+    for statement in statements {
         if token.is_cancelled() {
             emit_progress(
                 app,
@@ -145,51 +159,6 @@ async fn execute_sql_file_inner(
             return Ok(());
         }
 
-        line.clear();
-        let bytes_read = match reader.read_line(&mut line).await {
-            Ok(bytes_read) => bytes_read,
-            Err(error) => {
-                let error = error.to_string();
-                emit_file_io_error_progress(
-                    app,
-                    &request.execution_id,
-                    statement_index,
-                    success_count,
-                    failure_count,
-                    affected_rows,
-                    started_at,
-                    error.clone(),
-                );
-                return Err(error);
-            }
-        };
-        if bytes_read == 0 {
-            break;
-        }
-
-        for statement in splitter.push_chunk(&line) {
-            statement_index += 1;
-            if execute_statement_with_progress(
-                app,
-                state,
-                request,
-                &token,
-                started_at,
-                statement_index,
-                &statement,
-                import_target.as_ref(),
-                &mut success_count,
-                &mut failure_count,
-                &mut affected_rows,
-            )
-            .await?
-            {
-                return Ok(());
-            }
-        }
-    }
-
-    for statement in splitter.finish() {
         statement_index += 1;
         if execute_statement_with_progress(
             app,

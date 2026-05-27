@@ -3,9 +3,19 @@ use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
 use futures::{SinkExt, StreamExt};
 use percent_encoding::percent_decode_str;
 use rust_decimal::Decimal;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::verify_server_cert_signed_by_trust_anchor;
+use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
+use rustls::server::ParsedCertificate;
+use std::fs::File;
+use std::io::BufReader;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Instant;
-use tokio_postgres::Row;
+use tokio_postgres::config::SslMode;
+use tokio_postgres::types::{FromSql, Type};
+use tokio_postgres::{Row, SimpleQueryMessage};
 
 use super::file_validator::validate_file_path;
 use crate::sql::starts_with_executable_sql_keyword;
@@ -29,8 +39,122 @@ fn pg_temporal_to_json_value(row: &Row, idx: usize) -> Option<serde_json::Value>
     None
 }
 
+struct PgSystemU32(u32);
+
+impl<'a> FromSql<'a> for PgSystemU32 {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        let bytes: [u8; 4] = raw.try_into().map_err(|_| "expected 4 bytes for PostgreSQL system u32")?;
+        Ok(Self(u32::from_be_bytes(bytes)))
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::XID | Type::CID)
+    }
+}
+
+/// A `FromSql` adapter that accepts any PostgreSQL type and reads its raw
+/// bytes as a UTF-8 string. This is used as a last-resort fallback to handle
+/// custom types (enums, domains, etc.) that tokio_postgres cannot map to
+/// built-in Rust types in the binary protocol.
+struct PgAnyString(String);
+
+impl<'a> FromSql<'a> for PgAnyString {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        std::str::from_utf8(raw)
+            .map(|s| PgAnyString(s.to_string()))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Sync + Send>)
+    }
+
+    fn accepts(_: &Type) -> bool {
+        true
+    }
+}
+
+fn pg_u32_number(v: u32) -> serde_json::Value {
+    serde_json::Value::Number(serde_json::Number::from(v))
+}
+
+fn pg_system_u32_to_json(row: &Row, idx: usize) -> Option<serde_json::Value> {
+    if let Ok(v) = row.try_get::<_, u32>(idx) {
+        return Some(pg_u32_number(v));
+    }
+    row.try_get::<_, PgSystemU32>(idx).ok().map(|v| pg_u32_number(v.0))
+}
+
+fn pg_optional_array_to_json<T>(
+    values: Vec<Option<T>>,
+    map_value: impl Fn(T) -> serde_json::Value,
+) -> serde_json::Value {
+    serde_json::Value::Array(
+        values.into_iter().map(|value| value.map(&map_value).unwrap_or(serde_json::Value::Null)).collect(),
+    )
+}
+
+fn pg_float_number(v: f64) -> serde_json::Value {
+    serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+}
+
+fn pg_array_to_json_value(row: &Row, idx: usize) -> Option<serde_json::Value> {
+    if let Ok(values) = row.try_get::<_, Vec<Option<String>>>(idx) {
+        return Some(pg_optional_array_to_json(values, serde_json::Value::String));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<bool>>>(idx) {
+        return Some(pg_optional_array_to_json(values, serde_json::Value::Bool));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<Decimal>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_string())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<uuid::Uuid>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_string())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<DateTime<Utc>>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_rfc3339())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<NaiveDateTime>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_string())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<NaiveDate>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_string())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<NaiveTime>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_string())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<u32>>>(idx) {
+        return Some(pg_optional_array_to_json(values, pg_u32_number));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<i8>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::Number(v.into())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<i16>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::Number(v.into())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<i32>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::Number(v.into())));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<i64>>>(idx) {
+        return Some(pg_optional_array_to_json(values, super::safe_i64_to_json));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<f32>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| pg_float_number(v as f64)));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<f64>>>(idx) {
+        return Some(pg_optional_array_to_json(values, pg_float_number));
+    }
+    if let Ok(values) = row.try_get::<_, Vec<Option<PgAnyString>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.0)));
+    }
+    None
+}
+
 fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value {
     let upper = type_name.to_uppercase();
+
+    if upper == "BYTEA" {
+        return row
+            .try_get::<_, Vec<u8>>(idx)
+            .map(|bytes| super::binary_value_to_json(&bytes))
+            .unwrap_or(serde_json::Value::Null);
+    }
 
     if upper == "JSON" || upper == "JSONB" {
         if let Ok(v) = row.try_get::<_, serde_json::Value>(idx) {
@@ -71,28 +195,22 @@ fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value
             .unwrap_or(serde_json::Value::Null);
     }
 
+    if matches!(upper.as_str(), "OID" | "XID" | "CID") {
+        return pg_system_u32_to_json(row, idx).unwrap_or(serde_json::Value::Null);
+    }
+
+    if upper.starts_with('_') {
+        return pg_array_to_json_value(row, idx).unwrap_or(serde_json::Value::Null);
+    }
+
     row.try_get::<_, String>(idx)
         .map(serde_json::Value::String)
+        .or_else(|e| pg_system_u32_to_json(row, idx).ok_or(e))
         .or_else(|_| row.try_get::<_, i64>(idx).map(super::safe_i64_to_json))
         .or_else(|_| row.try_get::<_, i32>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| row.try_get::<_, i16>(idx).map(|v| serde_json::Value::Number(v.into())))
         .or_else(|_| row.try_get::<_, i8>(idx).map(|v| serde_json::Value::Number(v.into())))
-        .or_else(|_| {
-            row.try_get::<_, Vec<i8>>(idx)
-                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
-        })
-        .or_else(|_| {
-            row.try_get::<_, Vec<i16>>(idx)
-                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
-        })
-        .or_else(|_| {
-            row.try_get::<_, Vec<i32>>(idx)
-                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
-        })
-        .or_else(|_| {
-            row.try_get::<_, Vec<i64>>(idx)
-                .map(|v| serde_json::Value::Array(v.into_iter().map(|v| serde_json::Value::Number(v.into())).collect()))
-        })
+        .or_else(|e| pg_array_to_json_value(row, idx).ok_or(e))
         .or_else(|_| {
             row.try_get::<_, f64>(idx).map(|v| {
                 serde_json::Number::from_f64(v).map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
@@ -108,38 +226,148 @@ fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value
         .or_else(|_| row.try_get::<_, bool>(idx).map(serde_json::Value::Bool))
         .or_else(|_| row.try_get::<_, uuid::Uuid>(idx).map(|v| serde_json::Value::String(v.to_string())))
         .or_else(|e| pg_temporal_to_json_value(row, idx).ok_or(e))
-        .or_else(|_| {
-            row.try_get::<_, Vec<u8>>(idx).map(|bytes| match std::str::from_utf8(&bytes) {
-                Ok(s) => serde_json::Value::String(s.to_string()),
-                Err(_) => {
-                    let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-                    serde_json::Value::String(hex)
-                }
-            })
-        })
+        .or_else(|_| row.try_get::<_, Vec<u8>>(idx).map(|bytes| super::binary_value_to_json(&bytes)))
+        .or_else(|_| row.try_get::<_, PgAnyString>(idx).map(|v| serde_json::Value::String(v.0)))
         .unwrap_or(serde_json::Value::Null)
 }
 
+fn pg_error_to_string(err: tokio_postgres::Error) -> String {
+    err.as_db_error().map(ToString::to_string).unwrap_or_else(|| err.to_string())
+}
+
+fn should_retry_postgres_text_query(err: &tokio_postgres::Error) -> bool {
+    let message = err.as_db_error().map(ToString::to_string).unwrap_or_else(|| err.to_string()).to_ascii_lowercase();
+    message.contains("no binary output function")
+        || message.contains("no binary send function")
+        || message.contains("cannot display a value of type")
+}
+
+async fn execute_select_prepared(
+    client: &deadpool_postgres::Client,
+    sql: &str,
+    start: Instant,
+    row_limit: usize,
+) -> Result<QueryResult, tokio_postgres::Error> {
+    let stmt = client.prepare_cached(sql).await?;
+    let columns: Vec<String> = stmt.columns().iter().map(|c| c.name().to_string()).collect();
+    let column_types: Vec<String> = stmt.columns().iter().map(|c| c.type_().name().to_string()).collect();
+
+    let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+    let stream = client.query_raw(&stmt, params).await?;
+    tokio::pin!(stream);
+    let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+    let mut truncated = false;
+
+    while let Some(row_result) = stream.next().await {
+        if result_rows.len() >= row_limit {
+            truncated = true;
+            break;
+        }
+        let row = row_result?;
+        result_rows.push(
+            (0..row.columns().len())
+                .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
+                .collect(),
+        );
+    }
+
+    Ok(QueryResult {
+        columns,
+        rows: result_rows,
+        affected_rows: 0,
+        execution_time_ms: start.elapsed().as_millis(),
+        truncated,
+        session_id: None,
+        has_more: false,
+    })
+}
+
+async fn execute_select_text(
+    client: &deadpool_postgres::Client,
+    sql: &str,
+    start: Instant,
+    row_limit: usize,
+) -> Result<QueryResult, String> {
+    let messages = client.simple_query(sql).await.map_err(pg_error_to_string)?;
+    let mut columns: Vec<String> = Vec::new();
+    let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
+    let mut truncated = false;
+
+    for message in messages {
+        match message {
+            SimpleQueryMessage::RowDescription(cols) => {
+                columns = cols.iter().map(|c| c.name().to_string()).collect();
+            }
+            SimpleQueryMessage::Row(row) => {
+                if columns.is_empty() {
+                    columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+                }
+                if result_rows.len() >= row_limit {
+                    truncated = true;
+                    continue;
+                }
+                let mut values = Vec::with_capacity(row.len());
+                for i in 0..row.len() {
+                    values.push(match row.try_get(i).map_err(pg_error_to_string)? {
+                        Some(value) => serde_json::Value::String(value.to_string()),
+                        None => serde_json::Value::Null,
+                    });
+                }
+                result_rows.push(values);
+            }
+            SimpleQueryMessage::CommandComplete(_) => {}
+            _ => {}
+        }
+    }
+
+    Ok(QueryResult {
+        columns,
+        rows: result_rows,
+        affected_rows: 0,
+        execution_time_ms: start.elapsed().as_millis(),
+        truncated,
+        session_id: None,
+        has_more: false,
+    })
+}
+
+async fn execute_select_query(
+    client: &deadpool_postgres::Client,
+    sql: &str,
+    start: Instant,
+    row_limit: usize,
+) -> Result<QueryResult, String> {
+    match execute_select_prepared(client, sql, start, row_limit).await {
+        Ok(result) => Ok(result),
+        Err(err) if should_retry_postgres_text_query(&err) => execute_select_text(client, sql, start, row_limit).await,
+        Err(err) => Err(pg_error_to_string(err)),
+    }
+}
+
 pub async fn connect(url: &str) -> Result<Pool, String> {
-    validate_postgres_ssl_paths(url)?;
+    let postgres_url = postgres_connection_url(url)?;
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let tz = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
 
-    super::with_connection_timeout("PostgreSQL", async {
-        let pg_config =
-            tokio_postgres::Config::from_str(url).map_err(|e| format!("Invalid PostgreSQL connection URL: {e}"))?;
+    super::with_connection_timeout("PostgreSQL", super::connection_timeout(), async {
+        let pg_config = tokio_postgres::Config::from_str(&postgres_url.url)
+            .map_err(|e| format!("Invalid PostgreSQL connection URL: {e}"))?;
 
         let mgr_config = ManagerConfig { recycling_method: RecyclingMethod::Fast };
-        let mut root_store = rustls::RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let tls_config = rustls::ClientConfig::builder().with_root_certificates(root_store).with_no_client_auth();
+        let tls_config = postgres_tls_config(
+            &pg_config,
+            &postgres_url.ssl_files,
+            postgres_url.accepts_invalid_certs,
+            postgres_url.verifies_hostname,
+        )?;
         let mgr = deadpool_postgres::Manager::from_config(
             pg_config.clone(),
             tokio_postgres_rustls::MakeRustlsConnect::new(tls_config),
             mgr_config,
         );
         let pool = Pool::builder(mgr)
-            .max_size(10)
+            .max_size(1)
             .runtime(Runtime::Tokio1)
             .wait_timeout(Some(super::connection_timeout()))
             .build()
@@ -160,6 +388,277 @@ pub async fn connect(url: &str) -> Result<Pool, String> {
     .await
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct PostgresSslFiles {
+    sslcert: Option<String>,
+    sslkey: Option<String>,
+    sslrootcert: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PostgresConnectionUrl {
+    url: String,
+    ssl_files: PostgresSslFiles,
+    accepts_invalid_certs: bool,
+    verifies_hostname: bool,
+}
+
+fn postgres_connection_url(url: &str) -> Result<PostgresConnectionUrl, String> {
+    let Some(query_start) = url.find('?') else {
+        let pg_config =
+            tokio_postgres::Config::from_str(url).map_err(|e| format!("Invalid PostgreSQL connection URL: {e}"))?;
+        return Ok(PostgresConnectionUrl {
+            url: url.to_string(),
+            ssl_files: PostgresSslFiles::default(),
+            accepts_invalid_certs: postgres_sslmode_accepts_invalid_certs(pg_config.get_ssl_mode()),
+            verifies_hostname: false,
+        });
+    };
+
+    let prefix = &url[..query_start];
+    let suffix = &url[query_start + 1..];
+    let (query_string, fragment) = suffix.split_once('#').map_or((suffix, ""), |(query, fragment)| (query, fragment));
+    let mut ssl_files = PostgresSslFiles::default();
+    let mut kept_params = Vec::new();
+    let mut accepts_invalid_certs = true;
+    let mut verifies_hostname = false;
+
+    for param in query_string.split('&') {
+        if param.is_empty() {
+            continue;
+        }
+
+        let Some((key, value)) = param.split_once('=') else {
+            kept_params.push(param.to_string());
+            continue;
+        };
+
+        if key.eq_ignore_ascii_case("sslcert")
+            || key.eq_ignore_ascii_case("sslkey")
+            || key.eq_ignore_ascii_case("sslrootcert")
+        {
+            let decoded = percent_decode_str(value)
+                .decode_utf8()
+                .map_err(|_| format!("Invalid URL encoding in {key}"))?
+                .into_owned();
+            validate_file_path(&decoded, |_| false).map_err(|e| format!("{key}: {e}"))?;
+
+            if key.eq_ignore_ascii_case("sslcert") {
+                ssl_files.sslcert = Some(decoded);
+            } else if key.eq_ignore_ascii_case("sslkey") {
+                ssl_files.sslkey = Some(decoded);
+            } else {
+                ssl_files.sslrootcert = Some(decoded);
+            }
+        } else if key.eq_ignore_ascii_case("sslmode") {
+            match value.to_ascii_lowercase().as_str() {
+                "verify-ca" => {
+                    accepts_invalid_certs = false;
+                    kept_params.push("sslmode=require".to_string());
+                }
+                "verify-full" | "verify_identity" | "verify-identity" => {
+                    accepts_invalid_certs = false;
+                    verifies_hostname = true;
+                    kept_params.push("sslmode=require".to_string());
+                }
+                "disable" => {
+                    accepts_invalid_certs = false;
+                    kept_params.push(param.to_string());
+                }
+                "prefer" | "require" => {
+                    accepts_invalid_certs = true;
+                    kept_params.push(param.to_string());
+                }
+                _ => kept_params.push(param.to_string()),
+            }
+        } else {
+            kept_params.push(param.to_string());
+        }
+    }
+
+    let mut sanitized_url = prefix.to_string();
+    if !kept_params.is_empty() {
+        sanitized_url.push('?');
+        sanitized_url.push_str(&kept_params.join("&"));
+    }
+    if !fragment.is_empty() {
+        sanitized_url.push('#');
+        sanitized_url.push_str(fragment);
+    }
+
+    Ok(PostgresConnectionUrl { url: sanitized_url, ssl_files, accepts_invalid_certs, verifies_hostname })
+}
+
+fn postgres_tls_config(
+    pg_config: &tokio_postgres::Config,
+    ssl_files: &PostgresSslFiles,
+    accepts_invalid_certs: bool,
+    verifies_hostname: bool,
+) -> Result<rustls::ClientConfig, String> {
+    if pg_config.get_ssl_mode() != SslMode::Disable && accepts_invalid_certs {
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let builder = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoPostgresCertVerification { provider }));
+        return postgres_tls_client_auth(builder, ssl_files);
+    }
+
+    let root_store = postgres_root_cert_store(ssl_files)?;
+    let builder = if verifies_hostname {
+        rustls::ClientConfig::builder().with_root_certificates(root_store)
+    } else {
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        rustls::ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(
+            PostgresCaOnlyCertVerification { provider, roots: Arc::new(root_store) },
+        ))
+    };
+    postgres_tls_client_auth(builder, ssl_files)
+}
+
+fn postgres_root_cert_store(ssl_files: &PostgresSslFiles) -> Result<rustls::RootCertStore, String> {
+    let mut root_store = rustls::RootCertStore::empty();
+    if let Some(path) = ssl_files.sslrootcert.as_deref() {
+        let certs = read_postgres_pem_certs("sslrootcert", path)?;
+        let (valid_count, _) = root_store.add_parsable_certificates(certs);
+        if valid_count == 0 {
+            return Err(format!("sslrootcert: no valid CA certificates found in {path}"));
+        }
+    } else {
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+    Ok(root_store)
+}
+
+fn postgres_tls_client_auth(
+    builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>,
+    ssl_files: &PostgresSslFiles,
+) -> Result<rustls::ClientConfig, String> {
+    match (ssl_files.sslcert.as_deref(), ssl_files.sslkey.as_deref()) {
+        (Some(cert_path), Some(key_path)) => {
+            let certs = read_postgres_pem_certs("sslcert", cert_path)?;
+            if certs.is_empty() {
+                return Err(format!("sslcert: no certificates found in {cert_path}"));
+            }
+            let private_key = read_postgres_private_key(key_path)?;
+            builder
+                .with_client_auth_cert(certs, private_key)
+                .map_err(|e| format!("PostgreSQL client certificate/key mismatch or invalid key: {e}"))
+        }
+        (Some(_), None) => Err("PostgreSQL sslcert requires sslkey".to_string()),
+        (None, Some(_)) => Err("PostgreSQL sslkey requires sslcert".to_string()),
+        (None, None) => Ok(builder.with_no_client_auth()),
+    }
+}
+
+fn read_postgres_pem_certs(label: &str, path: &str) -> Result<Vec<CertificateDer<'static>>, String> {
+    let file = File::open(path).map_err(|e| format!("{label}: failed to open {path}: {e}"))?;
+    let mut reader = BufReader::new(file);
+    rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("{label}: failed to read PEM certificates from {path}: {e}"))
+}
+
+fn read_postgres_private_key(path: &str) -> Result<PrivateKeyDer<'static>, String> {
+    let file = File::open(path).map_err(|e| format!("sslkey: failed to open {path}: {e}"))?;
+    let mut reader = BufReader::new(file);
+    rustls_pemfile::private_key(&mut reader)
+        .map_err(|e| format!("sslkey: failed to read PEM private key from {path}: {e}"))?
+        .ok_or_else(|| format!("sslkey: no private key found in {path}"))
+}
+
+fn postgres_sslmode_accepts_invalid_certs(ssl_mode: SslMode) -> bool {
+    matches!(ssl_mode, SslMode::Prefer | SslMode::Require)
+}
+
+#[derive(Debug)]
+struct NoPostgresCertVerification {
+    provider: Arc<CryptoProvider>,
+}
+
+impl ServerCertVerifier for NoPostgresCertVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+#[derive(Debug)]
+struct PostgresCaOnlyCertVerification {
+    provider: Arc<CryptoProvider>,
+    roots: Arc<rustls::RootCertStore>,
+}
+
+impl ServerCertVerifier for PostgresCaOnlyCertVerification {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        let cert = ParsedCertificate::try_from(end_entity)?;
+        verify_server_cert_signed_by_trust_anchor(
+            &cert,
+            &self.roots,
+            intermediates,
+            now,
+            self.provider.signature_verification_algorithms.all,
+        )?;
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider.signature_verification_algorithms.supported_schemes()
+    }
+}
+
 /// Check whether the user's connection URL already specifies a timezone via
 /// the `options` parameter so we don't overwrite it with the local timezone.
 fn pg_url_has_timezone_setting(url: &str) -> bool {
@@ -176,27 +675,9 @@ fn pg_url_has_timezone_setting(url: &str) -> bool {
     false
 }
 
+#[cfg(test)]
 fn validate_postgres_ssl_paths(url: &str) -> Result<(), String> {
-    if let Some(query_start) = url.find('?') {
-        let query_string = &url[query_start + 1..];
-
-        for param in query_string.split('&') {
-            if let Some((key, value)) = param.split_once('=') {
-                match key {
-                    "sslcert" | "sslkey" | "sslrootcert" => {
-                        let decoded = percent_decode_str(value)
-                            .decode_utf8()
-                            .map_err(|_| format!("Invalid URL encoding in {key}"))?;
-
-                        validate_file_path(&decoded, |_| false).map_err(|e| format!("{key}: {e}"))?;
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    Ok(())
+    postgres_connection_url(url).map(|_| ())
 }
 
 pub async fn list_databases(pool: &Pool) -> Result<Vec<DatabaseInfo>, String> {
@@ -204,7 +685,7 @@ pub async fn list_databases(pool: &Pool) -> Result<Vec<DatabaseInfo>, String> {
     let stmt = client
         .prepare_cached(
             "SELECT datname FROM pg_database \
-             WHERE datistemplate = false AND datallowconn = true \
+             WHERE datallowconn = true \
              ORDER BY datname",
         )
         .await
@@ -418,41 +899,10 @@ pub async fn execute_query_with_max_rows(
 
     if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "TABLE"]) {
         let client = pool.get().await.map_err(|e| e.to_string())?;
-        let stmt = client.prepare_cached(sql).await.map_err(|e| e.to_string())?;
-        let columns: Vec<String> = stmt.columns().iter().map(|c| c.name().to_string()).collect();
-        let column_types: Vec<String> = stmt.columns().iter().map(|c| c.type_().name().to_string()).collect();
-
-        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-        let stream = client.query_raw(&stmt, params).await.map_err(|e| e.to_string())?;
-        tokio::pin!(stream);
-        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
-        let mut truncated = false;
-
-        while let Some(row_result) = stream.next().await {
-            if result_rows.len() >= row_limit {
-                truncated = true;
-                break;
-            }
-            let row = row_result.map_err(|e| e.to_string())?;
-            result_rows.push(
-                (0..row.columns().len())
-                    .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                    .collect(),
-            );
-        }
-
-        Ok(QueryResult {
-            columns,
-            rows: result_rows,
-            affected_rows: 0,
-            execution_time_ms: start.elapsed().as_millis(),
-            truncated,
-            session_id: None,
-            has_more: false,
-        })
+        execute_select_query(&client, sql, start, row_limit).await
     } else {
         let client = pool.get().await.map_err(|e| e.to_string())?;
-        let affected = client.execute(sql, &[]).await.map_err(|e| e.to_string())?;
+        let affected = client.execute(sql, &[]).await.map_err(pg_error_to_string)?;
 
         Ok(QueryResult {
             columns: vec![],
@@ -480,7 +930,7 @@ pub async fn execute_query_with_schema_and_max_rows(
     client
         .execute(&format!("SET search_path TO {}, public", pg_quote_ident(schema)), &[])
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(pg_error_to_string)?;
 
     let result = execute_query_with_max_rows_inner(&client, sql, max_rows).await;
 
@@ -499,40 +949,9 @@ async fn execute_query_with_max_rows_inner(
     let row_limit = query_result_row_limit(max_rows);
 
     if starts_with_executable_sql_keyword(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "TABLE"]) {
-        let stmt = client.prepare_cached(sql).await.map_err(|e| e.to_string())?;
-        let columns: Vec<String> = stmt.columns().iter().map(|c| c.name().to_string()).collect();
-        let column_types: Vec<String> = stmt.columns().iter().map(|c| c.type_().name().to_string()).collect();
-
-        let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-        let stream = client.query_raw(&stmt, params).await.map_err(|e| e.to_string())?;
-        tokio::pin!(stream);
-        let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
-        let mut truncated = false;
-
-        while let Some(row_result) = stream.next().await {
-            if result_rows.len() >= row_limit {
-                truncated = true;
-                break;
-            }
-            let row = row_result.map_err(|e| e.to_string())?;
-            result_rows.push(
-                (0..row.columns().len())
-                    .map(|i| pg_value_to_json(&row, i, column_types.get(i).map(String::as_str).unwrap_or("")))
-                    .collect(),
-            );
-        }
-
-        Ok(QueryResult {
-            columns,
-            rows: result_rows,
-            affected_rows: 0,
-            execution_time_ms: start.elapsed().as_millis(),
-            truncated,
-            session_id: None,
-            has_more: false,
-        })
+        execute_select_query(client, sql, start, row_limit).await
     } else {
-        let affected = client.execute(sql, &[]).await.map_err(|e| e.to_string())?;
+        let affected = client.execute(sql, &[]).await.map_err(pg_error_to_string)?;
 
         Ok(QueryResult {
             columns: vec![],
@@ -658,7 +1077,7 @@ pub async fn execute_batch(pool: &Pool, statements: &[String]) -> Result<(), Str
         return Ok(());
     }
     let client = pool.get().await.map_err(|e| e.to_string())?;
-    client.batch_execute(&combined).await.map_err(|e| e.to_string())
+    client.batch_execute(&combined).await.map_err(pg_error_to_string)
 }
 
 /// Export data via COPY TO STDOUT. `sql` must be a complete COPY statement, e.g.
@@ -666,11 +1085,11 @@ pub async fn execute_batch(pool: &Pool, statements: &[String]) -> Result<(), Str
 /// Returns the raw COPY output bytes.
 pub async fn copy_out(pool: &Pool, sql: &str) -> Result<Vec<u8>, String> {
     let client = pool.get().await.map_err(|e| e.to_string())?;
-    let stream = client.copy_out(sql).await.map_err(|e| e.to_string())?;
+    let stream = client.copy_out(sql).await.map_err(pg_error_to_string)?;
     tokio::pin!(stream);
     let mut result = Vec::new();
     while let Some(chunk) = stream.next().await {
-        result.extend_from_slice(&chunk.map_err(|e| e.to_string())?);
+        result.extend_from_slice(&chunk.map_err(pg_error_to_string)?);
     }
     Ok(result)
 }
@@ -680,17 +1099,61 @@ pub async fn copy_out(pool: &Pool, sql: &str) -> Result<Vec<u8>, String> {
 /// `data` is the raw input in the format specified by the COPY command.
 pub async fn copy_in(pool: &Pool, sql: &str, data: &[u8]) -> Result<(), String> {
     let client = pool.get().await.map_err(|e| e.to_string())?;
-    let sink = client.copy_in::<str, bytes::Bytes>(sql).await.map_err(|e: tokio_postgres::Error| e.to_string())?;
+    let sink = client.copy_in::<str, bytes::Bytes>(sql).await.map_err(pg_error_to_string)?;
     let mut sink = Box::pin(sink);
-    sink.as_mut().send(bytes::Bytes::copy_from_slice(data)).await.map_err(|e| e.to_string())?;
-    sink.as_mut().close().await.map_err(|e| e.to_string())
+    sink.as_mut().send(bytes::Bytes::copy_from_slice(data)).await.map_err(pg_error_to_string)?;
+    sink.as_mut().close().await.map_err(pg_error_to_string)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_postgres::types::FromSql;
 
     // --- pg_quote_ident ---
+
+    #[test]
+    fn pg_system_u32_decodes_catalog_integer_types() {
+        let raw = 42_u32.to_be_bytes();
+
+        assert_eq!(u32::from_sql(&Type::OID, &raw).unwrap(), 42);
+        assert_eq!(PgSystemU32::from_sql(&Type::XID, &raw).unwrap().0, 42);
+        assert_eq!(PgSystemU32::from_sql(&Type::CID, &raw).unwrap().0, 42);
+        assert!(u32::accepts(&Type::OID));
+        assert!(PgSystemU32::accepts(&Type::XID));
+        assert!(PgSystemU32::accepts(&Type::CID));
+        assert!(!PgSystemU32::accepts(&Type::OID));
+        assert!(!PgSystemU32::accepts(&Type::INT4));
+    }
+
+    #[test]
+    fn pg_any_string_accepts_all_types_and_decodes_utf8() {
+        // Accepts any type — built-in, custom enum OIDs, domains, etc.
+        assert!(PgAnyString::accepts(&Type::TEXT));
+        assert!(PgAnyString::accepts(&Type::INT4));
+        assert!(PgAnyString::accepts(&Type::UNKNOWN));
+        assert!(PgAnyString::accepts(&Type::OID));
+        assert!(PgAnyString::accepts(&Type::BOOL));
+
+        let label = PgAnyString::from_sql(&Type::UNKNOWN, b"pending").unwrap();
+        assert_eq!(label.0, "pending");
+
+        let label = PgAnyString::from_sql(&Type::UNKNOWN, b"hello world").unwrap();
+        assert_eq!(label.0, "hello world");
+
+        // Non-UTF-8 bytes should fail gracefully
+        assert!(PgAnyString::from_sql(&Type::UNKNOWN, &[0xFF, 0xFE, 0xFD]).is_err());
+    }
+
+    #[test]
+    fn pg_optional_array_to_json_preserves_text_values_and_nulls() {
+        let value = pg_optional_array_to_json(
+            vec![Some("productManager".to_string()), None, Some("projectOwner".to_string())],
+            serde_json::Value::String,
+        );
+
+        assert_eq!(value, serde_json::json!(["productManager", null, "projectOwner"]));
+    }
 
     #[test]
     fn pg_quote_ident_plain_identifier() {
@@ -803,6 +1266,81 @@ mod tests {
         let result =
             validate_postgres_ssl_paths("postgres://localhost/db?sslmode=require&sslcert=/nonexistent/cert.pem");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn postgres_connection_url_strips_ssl_file_params_before_driver_parse() {
+        let dir = std::env::temp_dir();
+        let cert = dir.join(format!("dbx-postgres-cert-{}.pem", std::process::id()));
+        let key = dir.join(format!("dbx-postgres-key-{}.pem", std::process::id()));
+        let root = dir.join(format!("dbx-postgres-root-{}.pem", std::process::id()));
+        std::fs::write(&cert, "not a real cert").unwrap();
+        std::fs::write(&key, "not a real key").unwrap();
+        std::fs::write(&root, "not a real root").unwrap();
+
+        let url = format!(
+            "postgres://localhost/db?sslmode=verify-full&sslcert={}&sslkey={}&sslrootcert={}&application_name=dbx",
+            cert.display(),
+            key.display(),
+            root.display()
+        );
+        let parsed = postgres_connection_url(&url).unwrap();
+
+        assert_eq!(parsed.url, "postgres://localhost/db?sslmode=require&application_name=dbx");
+        assert_eq!(parsed.ssl_files.sslcert.as_deref(), Some(cert.to_str().unwrap()));
+        assert_eq!(parsed.ssl_files.sslkey.as_deref(), Some(key.to_str().unwrap()));
+        assert_eq!(parsed.ssl_files.sslrootcert.as_deref(), Some(root.to_str().unwrap()));
+        assert!(!parsed.accepts_invalid_certs);
+        assert!(parsed.verifies_hostname);
+        tokio_postgres::Config::from_str(&parsed.url).unwrap();
+
+        let _ = std::fs::remove_file(cert);
+        let _ = std::fs::remove_file(key);
+        let _ = std::fs::remove_file(root);
+    }
+
+    #[test]
+    fn postgres_connection_url_keeps_verify_ca_ca_only_semantics() {
+        let parsed = postgres_connection_url("postgres://localhost/db?sslmode=verify-ca").unwrap();
+
+        assert_eq!(parsed.url, "postgres://localhost/db?sslmode=require");
+        assert!(!parsed.accepts_invalid_certs);
+        assert!(!parsed.verifies_hostname);
+    }
+
+    #[test]
+    fn postgres_tls_rejects_unpaired_client_cert_and_key() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let pg_config = tokio_postgres::Config::from_str("postgres://localhost/db?sslmode=require").unwrap();
+        let ssl_files =
+            PostgresSslFiles { sslcert: Some("/tmp/client.crt".to_string()), sslkey: None, sslrootcert: None };
+
+        let error = match postgres_tls_config(&pg_config, &ssl_files, true, false) {
+            Ok(_) => panic!("expected missing sslkey to fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("sslkey"));
+    }
+
+    #[test]
+    fn postgres_tls_accepts_invalid_certs_for_require_sslmode() {
+        let pg_config = tokio_postgres::Config::from_str("postgres://localhost/db?sslmode=require").unwrap();
+
+        assert!(postgres_sslmode_accepts_invalid_certs(pg_config.get_ssl_mode()));
+    }
+
+    #[test]
+    fn postgres_tls_accepts_invalid_certs_for_default_prefer_sslmode() {
+        let pg_config = tokio_postgres::Config::from_str("postgres://localhost/db").unwrap();
+
+        assert!(postgres_sslmode_accepts_invalid_certs(pg_config.get_ssl_mode()));
+    }
+
+    #[test]
+    fn postgres_tls_keeps_verification_off_only_when_ssl_is_disabled() {
+        let pg_config = tokio_postgres::Config::from_str("postgres://localhost/db?sslmode=disable").unwrap();
+
+        assert!(!postgres_sslmode_accepts_invalid_certs(pg_config.get_ssl_mode()));
     }
 
     // --- SQL generation ---

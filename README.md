@@ -53,6 +53,31 @@
   </p>
 </div>
 
+## Why DBX?
+
+<table>
+  <tr>
+    <td width="50%">
+      <h3>🪶 15 MB, zero runtime bloat</h3>
+      <p>No Java JRE. No Python venv. No bundled Chromium. DBX ships as a single small binary — download, install, connect. DBeaver needs Java; TablePlus is macOS-only. DBX runs everywhere with nothing extra.</p>
+    </td>
+    <td width="50%">
+      <h3>🤖 AI that lives in your editor</h3>
+      <p>Highlight a table, describe what you want, get SQL back — no copy-paste between tools. Works with Claude, OpenAI, or local models via Ollama. Built-in safety checks review AI-generated SQL before it runs.</p>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>🔌 MCP: your databases, AI-ready</h3>
+      <p>DBX speaks the Model Context Protocol. Claude Code, Cursor, Windsurf, and other AI coding agents can query your databases through connections you already set up. One config, everywhere.</p>
+    </td>
+    <td>
+      <h3>🌐 Desktop + Docker + Web</h3>
+      <p>Native app on macOS, Windows, and Linux. Self-host via Docker for team access. Web version for browser-only environments. Same feature set. Same connections.</p>
+    </td>
+  </tr>
+</table>
+
 ## Features
 
 ### 40+ Databases, One Tool
@@ -242,6 +267,38 @@ The installer will be in `src-tauri/target/release/bundle/`.
 <a href="https://qm.qq.com/q/1087880322" target="_blank"><img src="https://img.shields.io/badge/QQ%20群-1087880322-EB1923?logo=tencentqq&logoColor=white" alt="QQ Group" /></a>
 <a href="https://docs.qq.com/doc/DVVhMY0h1ekJqc0tz" target="_blank"><img src="https://img.shields.io/badge/微信群-Join-07C160?logo=wechat&logoColor=white" alt="WeChat Group" /></a>
 [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-Community-blue)](https://linux.do)
+
+## FAQ
+
+<details>
+<summary><strong>Is DBX free?</strong></summary>
+Yes. DBX is open source under AGPL-3.0. All features are free.
+</details>
+
+<details>
+<summary><strong>Does DBX phone home?</strong></summary>
+No. DBX does not collect telemetry. The auto-update feature checks GitHub Releases for new versions — you can disable it in settings.
+</details>
+
+<details>
+<summary><strong>Can I use DBX without an internet connection?</strong></summary>
+Yes. The desktop app works fully offline. AI features need network access to the model endpoint (or a local model via Ollama).
+</details>
+
+<details>
+<summary><strong>How is DBX different from DBeaver / TablePlus / Beekeeper Studio?</strong></summary>
+DBX is 15 MB with no runtime dependencies (no Java, no Python). It includes AI and MCP natively — not as plugins. It supports 40+ databases across desktop, Docker, and web from a single codebase.
+</details>
+
+<details>
+<summary><strong>What databases are supported?</strong></summary>
+MySQL, PostgreSQL, SQLite, Redis, MongoDB, DuckDB, ClickHouse, SQL Server, Oracle, Elasticsearch, MariaDB, TiDB, OceanBase, openGauss, GaussDB, KingBase, Vastbase, GoldenDB, Doris, SelectDB, StarRocks, Redshift, DM, TDengine, CockroachDB, Access, HighGo, and more. JDBC-oriented profiles extend support to H2, Snowflake, Trino, Hive, DB2, Informix, Neo4j, Cassandra, BigQuery, Kylin, SunDB, and custom JDBC connections.
+</details>
+
+<details>
+<summary><strong>How do I report a bug or request a feature?</strong></summary>
+Open an issue on <a href="https://github.com/t8y2/dbx/issues">GitHub Issues</a>.
+</details>
 
 ## Contributors
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDatabaseTreeNodes } from "../../apps/desktop/src/lib/databaseTree.ts";
+import { buildDatabaseTreeNodes, buildDuckDbConnectionTreeNodes } from "../../apps/desktop/src/lib/databaseTree.ts";
 
 test("设置默认库后侧边栏数据库树仍保留全部数据库", () => {
   const nodes = buildDatabaseTreeNodes("conn-1", [{ name: "campaign_data" }, { name: "cms" }, { name: "mk_campaign" }]);
@@ -34,4 +34,23 @@ test("tree schema mode can show a default node when no catalog is returned", () 
   assert.equal(nodes.length, 1);
   assert.equal(nodes[0].database, "");
   assert.equal(nodes[0].label, "tree.defaultDatabase");
+});
+
+test("DuckDB shows primary catalog schemas directly under the connection", () => {
+  const nodes = buildDuckDbConnectionTreeNodes(
+    "conn-1",
+    [{ name: "main" }, { name: "attached_reports" }],
+    ["main", "mysql", "prod_sales"],
+  );
+
+  assert.deepEqual(
+    nodes.map((node) => [node.type, node.label, node.database, node.schema]),
+    [
+      ["schema", "main", "main", "main"],
+      ["schema", "mysql", "main", "mysql"],
+      ["schema", "prod_sales", "main", "prod_sales"],
+      ["database", "attached_reports", "attached_reports", undefined],
+    ],
+  );
+  assert.equal(nodes.find((node) => node.label === "mysql")?.id, "conn-1:main:mysql");
 });

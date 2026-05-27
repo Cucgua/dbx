@@ -183,6 +183,7 @@ pub fn build_database_sql_export(options: BuildDatabaseSqlExportOptions) -> Resu
 
     for table in options.tables {
         if let Some(ddl) = table.ddl.as_ref().map(|ddl| ddl.trim()).filter(|ddl| !ddl.is_empty()) {
+            let ddl = normalize_export_table_ddl(ddl, table.database_type);
             lines.push(format!("-- Structure for {}", table.display_name));
             lines.push(format!("{};", ddl.trim_end_matches(';')));
             lines.push(String::new());
@@ -228,6 +229,17 @@ fn export_qualified_table_name(
         .filter(|name| !name.trim().is_empty())
         .ok_or_else(|| "tableName is required when qualifiedTableName is not provided".to_string())?;
     Ok(qualified_table_name(database_type, schema, table_name))
+}
+
+fn normalize_export_table_ddl(ddl: &str, database_type: Option<DatabaseType>) -> String {
+    if database_type != Some(DatabaseType::Mysql) {
+        return ddl.to_string();
+    }
+
+    static LEGACY_MYSQL_ROW_FORMAT_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)\bROW_FORMAT\s*=\s*(COMPACT|REDUNDANT)\b").unwrap());
+
+    LEGACY_MYSQL_ROW_FORMAT_RE.replace_all(ddl, "ROW_FORMAT=DYNAMIC").into_owned()
 }
 
 pub async fn is_export_cancelled(export_id: &str) -> bool {
@@ -358,6 +370,7 @@ pub async fn export_database_sql_core(
             .await
             {
                 Ok(ddl) => {
+                    let ddl = normalize_export_table_ddl(&ddl, Some(db_type));
                     writeln!(file, "{};\n", ddl).map_err(|e| format!("Failed to write file: {e}"))?;
                 }
                 Err(e) => {
@@ -648,9 +661,9 @@ fn drop_table_if_exists_sql(table_name: &str, schema: &str, db_type: &DatabaseTy
 mod tests {
     use super::{
         build_database_sql_export, build_export_insert_statements, drop_table_if_exists_sql,
-        filter_selected_table_infos, format_export_sql_literal, BuildDatabaseSqlExportOptions,
-        BuildExportInsertStatementsOptions, ExportedTableSql, DATABASE_EXPORT_INSERT_BATCH_SIZE,
-        DATABASE_EXPORT_ROW_LIMIT,
+        filter_selected_table_infos, format_export_sql_literal, normalize_export_table_ddl,
+        BuildDatabaseSqlExportOptions, BuildExportInsertStatementsOptions, ExportedTableSql,
+        DATABASE_EXPORT_INSERT_BATCH_SIZE, DATABASE_EXPORT_ROW_LIMIT,
     };
     use crate::models::connection::DatabaseType;
     use crate::types::TableInfo;
@@ -761,5 +774,35 @@ mod tests {
             ]
             .join("\n")
         );
+    }
+
+    #[test]
+    fn normalizes_legacy_mysql_row_format_for_export_compatibility() {
+        let ddl = "CREATE TABLE `wide_table` (\n  `payload` varchar(4096) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=COMPACT";
+
+        let normalized = normalize_export_table_ddl(ddl, Some(DatabaseType::Mysql));
+
+        assert_eq!(
+            normalized,
+            "CREATE TABLE `wide_table` (\n  `payload` varchar(4096) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=DYNAMIC"
+        );
+    }
+
+    #[test]
+    fn normalizes_lowercase_redundant_mysql_row_format_for_export_compatibility() {
+        let ddl = "CREATE TABLE `wide_table` (`payload` varchar(4096)) engine=InnoDB row_format = redundant";
+
+        let normalized = normalize_export_table_ddl(ddl, Some(DatabaseType::Mysql));
+
+        assert_eq!(normalized, "CREATE TABLE `wide_table` (`payload` varchar(4096)) engine=InnoDB ROW_FORMAT=DYNAMIC");
+    }
+
+    #[test]
+    fn preserves_non_legacy_or_non_mysql_row_formats() {
+        let mysql_ddl = "CREATE TABLE `ok` (`payload` text) ENGINE=InnoDB ROW_FORMAT=COMPRESSED";
+        let postgres_ddl = "CREATE TABLE users (payload text) ROW_FORMAT=COMPACT";
+
+        assert_eq!(normalize_export_table_ddl(mysql_ddl, Some(DatabaseType::Mysql)), mysql_ddl);
+        assert_eq!(normalize_export_table_ddl(postgres_ddl, Some(DatabaseType::Postgres)), postgres_ddl);
     }
 }

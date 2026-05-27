@@ -167,7 +167,7 @@ async function load() {
     documents.value = result.documents.map(asRecord);
     total.value = result.total;
   } catch (e: unknown) {
-    error.value = String(e);
+    error.value = e instanceof Error ? e.message : String(e);
   } finally {
     loading.value = false;
   }
@@ -354,7 +354,7 @@ async function saveDoc() {
       editJson.value = JSON.stringify(documents.value[selectedIdx.value], null, 2);
     }
   } catch (e: unknown) {
-    error.value = String(e);
+    error.value = e instanceof Error ? e.message : String(e);
   }
 }
 
@@ -371,7 +371,7 @@ async function applyDeleteDoc(idx: number) {
     }
     await load();
   } catch (e: unknown) {
-    error.value = String(e);
+    error.value = e instanceof Error ? e.message : String(e);
   }
 }
 

@@ -1,4 +1,4 @@
-import type { ColumnInfo, IndexInfo } from "../types/database.ts";
+import type { ColumnInfo, DatabaseType, IndexInfo } from "../types/database.ts";
 import type { EditableStructureColumn, EditableStructureIndex } from "./tableStructureEditorSql.ts";
 
 export const DATA_TYPE_OPTIONS: Record<string, string[]> = {
@@ -280,6 +280,59 @@ export function combineDataType(baseType: string, params: string): string {
   if (!type) return "";
   if (!p) return type;
   return `${type}(${p})`;
+}
+
+export function combineDataTypeForDatabase(dbType: DatabaseType | undefined, baseType: string, params: string): string {
+  return combineDataType(baseType, normalizeDataTypeParams(dbType, baseType, params));
+}
+
+export function normalizeDataTypeParams(dbType: DatabaseType | undefined, baseType: string, params: string): string {
+  const p = params.trim();
+  if (!p) return "";
+  if (!isTemporalPrecisionType(dbType, baseType)) return p;
+  return isValidTemporalPrecision(dbType, p) ? p : "";
+}
+
+function isTemporalPrecisionType(dbType: DatabaseType | undefined, baseType: string): boolean {
+  const normalized = baseType.trim().replace(/\s+/g, " ").toLowerCase();
+  switch (dbType) {
+    case "mysql":
+    case "doris":
+    case "starrocks":
+    case "goldendb":
+    case "sundb":
+      return ["time", "datetime", "timestamp"].includes(normalized);
+    case "postgres":
+    case "gaussdb":
+    case "opengauss":
+    case "highgo":
+    case "vastbase":
+    case "kingbase":
+    case "redshift":
+      return [
+        "time",
+        "time without time zone",
+        "time with time zone",
+        "timestamp",
+        "timestamp without time zone",
+        "timestamp with time zone",
+      ].includes(normalized);
+    case "sqlserver":
+      return ["time", "datetime2", "datetimeoffset"].includes(normalized);
+    case "oracle":
+    case "dameng":
+    case "oceanbase-oracle":
+      return ["timestamp", "timestamp with time zone", "timestamp with local time zone"].includes(normalized);
+    default:
+      return false;
+  }
+}
+
+function isValidTemporalPrecision(dbType: DatabaseType | undefined, params: string): boolean {
+  if (!/^\d+$/.test(params)) return false;
+  const value = Number(params);
+  const max = dbType === "oracle" || dbType === "dameng" || dbType === "oceanbase-oracle" ? 9 : 6;
+  return Number.isInteger(value) && value >= 0 && value <= max && String(value) === params;
 }
 
 export function buildStructureTargetLabel(

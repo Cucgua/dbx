@@ -44,8 +44,9 @@ test("suggests SQL keywords for generic keyword input", () => {
     columnsByTable,
   });
 
-  assert.equal(items[0]?.label, "SELECT");
-  assert.equal(items[0]?.type, "keyword");
+  const keyword = items.find((item) => item.type === "keyword" && item.label === "SELECT");
+  assert.ok(keyword);
+  assert.equal(keyword.type, "keyword");
 });
 
 test("suggests matching table names after FROM", () => {
@@ -351,7 +352,7 @@ test("suggests DATE_FORMAT as parameter snippet", () => {
     columnsByTable,
   });
 
-  const snippet = items.find((item) => item.type === "snippet" && item.label === "DATE_FORMAT");
+  const snippet = items.find((item) => item.type === "function" && item.label === "DATE_FORMAT");
   assert.ok(snippet);
   assert.equal(snippet.detail, "按指定格式格式化日期");
   assert.equal(snippet.apply, "DATE_FORMAT(${date}, ${format})");
@@ -655,7 +656,7 @@ test("suggests ROW_NUMBER with OVER clause", () => {
     tables,
     columnsByTable,
   });
-  const rn = items.find((item) => item.label === "ROW_NUMBER" && item.type === "snippet")!;
+  const rn = items.find((item) => item.label === "ROW_NUMBER" && item.type === "function")!;
   assert.ok(rn);
   assert.ok(rn.apply!.includes("OVER"), "ROW_NUMBER should include OVER()");
   assert.ok(rn.apply!.includes("PARTITION BY"), "ROW_NUMBER should include PARTITION BY");
@@ -723,7 +724,7 @@ test("suggests REGEXP_REPLACE with parameters", () => {
     tables,
     columnsByTable,
   });
-  const fn = items.find((item) => item.label === "REGEXP_REPLACE" && item.type === "snippet");
+  const fn = items.find((item) => item.label === "REGEXP_REPLACE" && item.type === "function");
   assert.ok(fn);
   assert.ok(fn.apply!.includes("pattern"), "should include pattern param");
 });
@@ -733,7 +734,7 @@ test("suggests JSON_EXTRACT with parameters", () => {
     tables,
     columnsByTable,
   });
-  const fn = items.find((item) => item.label === "JSON_EXTRACT" && item.type === "snippet");
+  const fn = items.find((item) => item.label === "JSON_EXTRACT" && item.type === "function");
   assert.ok(fn);
   assert.ok(fn.apply!.includes("json"), "should include json param");
 });

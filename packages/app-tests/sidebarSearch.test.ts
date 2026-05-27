@@ -21,3 +21,14 @@ test("keeps one-character fuzzy matches disabled", () => {
   assert.equal(matchSidebarLabel("orders", "r")?.kind, "substring");
   assert.equal(matchSidebarLabel("orders", "x"), null);
 });
+
+test("does not match loose subsequences that object search would exclude", () => {
+  assert.equal(matchSidebarLabel("sys_role_data_scope", "roles"), null);
+  assert.equal(matchSidebarLabel("sys_role_data_scope", "role")?.kind, "word-prefix");
+});
+
+test("keeps fuzzy subsequence matching inside a single identifier word", () => {
+  assert.equal(matchSidebarLabel("orders", "odr")?.kind, "fuzzy");
+  assert.equal(matchSidebarLabel("user_profile", "up")?.kind, "abbreviation");
+  assert.equal(matchSidebarLabel("user_profile", "urf"), null);
+});

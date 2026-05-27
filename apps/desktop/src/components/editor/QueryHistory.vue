@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
+import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 import { Clock, Copy, Database, RotateCcw, Search, Sparkles, Trash2, X } from "lucide-vue-next";
 import { RecycleScroller } from "vue-virtual-scroller";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import * as api from "@/lib/api";
 
 const { t } = useI18n();
 const { toast } = useToast();
+const { highlight } = useSqlHighlighter();
 const store = useHistoryStore();
 
 const emit = defineEmits<{
@@ -297,7 +299,8 @@ onMounted(() => store.load());
             </div>
             <pre
               class="max-h-48 overflow-auto rounded border bg-muted/30 p-3 text-xs"
-            ><code>{{ selectedEntry.sql }}</code></pre>
+              v-html="highlight(selectedEntry.sql)"
+            ></pre>
           </div>
           <div v-if="selectedEntry.rollback_sql">
             <div class="mb-1 flex items-center justify-between">
@@ -309,7 +312,8 @@ onMounted(() => store.load());
             </div>
             <pre
               class="max-h-40 overflow-auto rounded border bg-muted/30 p-3 text-xs"
-            ><code>{{ selectedEntry.rollback_sql }}</code></pre>
+              v-html="highlight(selectedEntry.rollback_sql || '')"
+            ></pre>
           </div>
         </div>
         <DialogFooter>

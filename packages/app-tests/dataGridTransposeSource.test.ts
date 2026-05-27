@@ -27,3 +27,12 @@ test("transpose mode follows appended rows and survives rollback refresh", () =>
   );
   assert.match(source, /nextTransposeStateForRecordCount/);
 });
+
+test("closing transpose scrolls the normal grid to the active record", () => {
+  assert.match(source, /function currentTransposeViewportRowIndex\(\)/);
+  assert.match(source, /transposeRowIndex\.value \?\? transposeRecordWindow\.value\.start/);
+  assert.match(source, /function scrollGridRowIntoView\(rowIndex: number\)/);
+  assert.match(source, /scrollToItem\?\.\(target\)/);
+  assert.match(source, /function closeTranspose\(scrollToCurrentRecord = true\)/);
+  assert.match(source, /closeTranspose\(false\)/);
+});

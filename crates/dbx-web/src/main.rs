@@ -86,6 +86,15 @@ async fn main() {
         .route("/connection/save", post(routes::connection::save_connections))
         .route("/connection/list", get(routes::connection::load_connections))
         .route("/plugins", get(routes::plugins::list_plugins))
+        // JDBC
+        .route("/jdbc/drivers", get(routes::jdbc::list_jdbc_drivers).post(routes::jdbc::import_jdbc_drivers))
+        .route("/jdbc/drivers/{name}", delete(routes::jdbc::delete_jdbc_driver))
+        .route("/jdbc/plugin/status", get(routes::jdbc::get_jdbc_plugin_status))
+        .route("/jdbc/plugin/install", post(routes::jdbc::install_jdbc_plugin))
+        .route("/jdbc/plugin/install-local", post(routes::jdbc::install_jdbc_plugin_local))
+        .route("/jdbc/plugin/uninstall", post(routes::jdbc::uninstall_jdbc_plugin))
+        // System
+        .route("/system/fonts", get(routes::jdbc::list_system_fonts))
         // Agent drivers
         .route("/agents/installed-local", get(routes::agents::list_installed_agents_local))
         .route("/agents/installed", get(routes::agents::list_installed_agents))
@@ -94,6 +103,7 @@ async fn main() {
         .route("/agents/upgrade-all", post(routes::agents::upgrade_all_agents))
         .route("/agents/uninstall", post(routes::agents::uninstall_agent))
         .route("/agents/import-offline", post(routes::agents::import_agents_from_zip))
+        .route("/agents/import-jar", post(routes::agents::import_agent_jar))
         .route(
             "/agents/java-runtime",
             get(routes::agents::get_agent_java_runtime_config).post(routes::agents::set_agent_java_runtime_config),
@@ -185,6 +195,7 @@ async fn main() {
         .route("/data-compare/prepare-from-tables", post(routes::data_compare::prepare_data_compare_from_tables))
         .route("/query/cancel", post(routes::query::cancel_query))
         .route("/query/close-session", post(routes::query::close_query_session))
+        .route("/query/close-client-session", post(routes::query::close_client_connection_session))
         .route("/export/query-result-json", post(routes::text_export::export_query_result_json))
         .route("/export/query-result-markdown", post(routes::text_export::export_query_result_markdown))
         // Redis

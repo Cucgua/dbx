@@ -8,6 +8,16 @@ export function shouldOpenUpdateDialog(options: { silent?: boolean }) {
   return options.silent !== true;
 }
 
+export async function resolveUpdaterProxy(): Promise<string | undefined> {
+  if (!isTauriRuntime()) return undefined;
+  try {
+    const proxy = await api.getSystemProxyUrl();
+    return proxy || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function useAppUpdater() {
   const { t } = useI18n();
   const { toast } = useToast();
@@ -74,7 +84,8 @@ export function useAppUpdater() {
     downloadProgress.value = 0;
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
+      const proxy = await resolveUpdaterProxy();
+      const update = await check(proxy ? { proxy } : undefined);
       if (!update) return;
       let totalBytes = 0;
       let downloadedBytes = 0;

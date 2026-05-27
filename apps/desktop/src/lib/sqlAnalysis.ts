@@ -14,7 +14,10 @@ export const BINARY_TYPES = new Set([
 ]);
 
 export function isBinaryType(dataType: string): boolean {
-  const lower = dataType.toLowerCase();
+  const lower = dataType
+    .toLowerCase()
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .trim();
   return BINARY_TYPES.has(lower);
 }
 
@@ -37,6 +40,7 @@ export type QueryEditabilityReason =
   | "cte"
   | "set-operation"
   | "aggregation"
+  | "external-source"
   | "complex-source"
   | "computed-columns"
   | "no-table"
@@ -85,6 +89,7 @@ export function analyzeEditableQueryEditability(sql: string): QueryEditability {
 
   const fromEnd = firstTopLevelKeywordIndex(normalized, ["WHERE", "ORDER", "LIMIT", "OFFSET", "FETCH"], fromIndex + 4);
   const fromBody = normalized.slice(fromIndex + 4, fromEnd < 0 ? normalized.length : fromEnd).trim();
+  if (isExternalFromSource(fromBody)) return { editable: false, reason: "external-source" };
   const source = parseFromSource(fromBody);
   if (!source) return { editable: false, reason: "complex-source" };
 
@@ -110,6 +115,7 @@ export function queryEditabilityMessageKey(reason: QueryEditabilityReason): stri
     cte: "grid.queryEditUnsupportedCte",
     "set-operation": "grid.queryEditUnsupportedSetOperation",
     aggregation: "grid.queryEditUnsupportedAggregation",
+    "external-source": "grid.queryEditUnsupportedExternalSource",
     "complex-source": "grid.queryEditUnsupportedComplexSource",
     "computed-columns": "grid.queryEditUnsupportedComputedColumns",
     "no-table": "grid.queryEditUnsupportedNoTable",
@@ -216,6 +222,11 @@ function parseFromSource(body: string): { schema?: string; tableName: string; al
   const tableName = ident.parts[ident.parts.length - 1];
   const schema = ident.parts.length === 2 ? ident.parts[0] : undefined;
   return { schema, tableName, alias };
+}
+
+function isExternalFromSource(body: string): boolean {
+  const trimmed = body.trim();
+  return /^'(?:''|[^'])*'(?:\s+(?:AS\s+)?[A-Za-z_][\w$]*)?$/i.test(trimmed) || /^[A-Za-z_][\w$]*\s*\(/.test(trimmed);
 }
 
 function parseQualifiedIdentifier(text: string): { parts: string[]; end: number; rest: string; done: boolean } | null {

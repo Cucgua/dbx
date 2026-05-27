@@ -82,12 +82,19 @@ export interface ConnectionConfig {
   proxy_username?: string;
   proxy_password?: string;
   ssl?: boolean;
+  ca_cert_path?: string;
   sysdba?: boolean;
   oracle_connect_method?: "service_name" | "sid" | "connect_string";
   oracle_connection_type?: "service_name" | "sid";
   connection_string?: string;
   jdbc_driver_class?: string;
   jdbc_driver_paths?: string[];
+  redis_connection_mode?: "standalone" | "sentinel";
+  redis_sentinel_master?: string;
+  redis_sentinel_nodes?: string;
+  redis_sentinel_username?: string;
+  redis_sentinel_password?: string;
+  redis_sentinel_tls?: boolean;
   one_time?: boolean;
 }
 
@@ -293,6 +300,7 @@ export interface TreeNode {
   database?: string;
   schema?: string;
   tableName?: string;
+  comment?: string | null;
   objectCount?: number;
   loadedKeyCount?: number;
   totalKeyCount?: number;
@@ -365,6 +373,7 @@ export interface QueryTab {
     | "cte"
     | "set-operation"
     | "aggregation"
+    | "external-source"
     | "complex-source"
     | "computed-columns"
     | "no-table"

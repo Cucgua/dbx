@@ -382,61 +382,76 @@ impl AgentDriverClient {
         self.call_method(AgentMethod::ListSchemas, serde_json::json!({ "database": database })).await
     }
 
-    pub async fn list_tables<T: DeserializeOwned + Send + 'static>(&mut self, schema: &str) -> Result<T, String> {
-        self.call_method(AgentMethod::ListTables, agent_schema_params(schema)).await
+    pub async fn list_tables<T: DeserializeOwned + Send + 'static>(
+        &mut self,
+        database: &str,
+        schema: &str,
+    ) -> Result<T, String> {
+        self.call_method(AgentMethod::ListTables, agent_schema_params(database, schema)).await
     }
 
-    pub async fn list_objects<T: DeserializeOwned + Send + 'static>(&mut self, schema: &str) -> Result<T, String> {
-        self.call_method(AgentMethod::ListObjects, agent_schema_params(schema)).await
+    pub async fn list_objects<T: DeserializeOwned + Send + 'static>(
+        &mut self,
+        database: &str,
+        schema: &str,
+    ) -> Result<T, String> {
+        self.call_method(AgentMethod::ListObjects, agent_schema_params(database, schema)).await
     }
 
     pub async fn get_object_source<T: DeserializeOwned + Send + 'static, K: Serialize>(
         &mut self,
+        database: &str,
         schema: &str,
         name: &str,
         object_type: &K,
     ) -> Result<T, String> {
-        self.call_method(AgentMethod::GetObjectSource, agent_object_source_params(schema, name, object_type)).await
+        self.call_method(AgentMethod::GetObjectSource, agent_object_source_params(database, schema, name, object_type))
+            .await
     }
 
     pub async fn get_columns<T: DeserializeOwned + Send + 'static>(
         &mut self,
+        database: &str,
         schema: &str,
         table: &str,
     ) -> Result<T, String> {
-        self.call_method(AgentMethod::GetColumns, agent_schema_table_params(schema, table)).await
+        self.call_method(AgentMethod::GetColumns, agent_schema_table_params(database, schema, table)).await
     }
 
     pub async fn list_indexes<T: DeserializeOwned + Send + 'static>(
         &mut self,
+        database: &str,
         schema: &str,
         table: &str,
     ) -> Result<T, String> {
-        self.call_method(AgentMethod::ListIndexes, agent_schema_table_params(schema, table)).await
+        self.call_method(AgentMethod::ListIndexes, agent_schema_table_params(database, schema, table)).await
     }
 
     pub async fn list_foreign_keys<T: DeserializeOwned + Send + 'static>(
         &mut self,
+        database: &str,
         schema: &str,
         table: &str,
     ) -> Result<T, String> {
-        self.call_method(AgentMethod::ListForeignKeys, agent_schema_table_params(schema, table)).await
+        self.call_method(AgentMethod::ListForeignKeys, agent_schema_table_params(database, schema, table)).await
     }
 
     pub async fn list_triggers<T: DeserializeOwned + Send + 'static>(
         &mut self,
+        database: &str,
         schema: &str,
         table: &str,
     ) -> Result<T, String> {
-        self.call_method(AgentMethod::ListTriggers, agent_schema_table_params(schema, table)).await
+        self.call_method(AgentMethod::ListTriggers, agent_schema_table_params(database, schema, table)).await
     }
 
     pub async fn get_table_ddl<T: DeserializeOwned + Send + 'static>(
         &mut self,
+        database: &str,
         schema: &str,
         table: &str,
     ) -> Result<T, String> {
-        self.call_method(AgentMethod::GetTableDdl, agent_schema_table_params(schema, table)).await
+        self.call_method(AgentMethod::GetTableDdl, agent_schema_table_params(database, schema, table)).await
     }
 
     pub async fn execute_query<T: DeserializeOwned + Send + 'static>(&mut self, params: Value) -> Result<T, String> {
@@ -463,10 +478,11 @@ impl AgentDriverClient {
 
     pub async fn execute_transaction<T: DeserializeOwned + Send + 'static>(
         &mut self,
+        database: Option<&str>,
         statements: &[String],
         schema: Option<&str>,
     ) -> Result<T, String> {
-        self.call_method(AgentMethod::ExecuteTransaction, agent_transaction_params(statements, schema)).await
+        self.call_method(AgentMethod::ExecuteTransaction, agent_transaction_params(database, statements, schema)).await
     }
 
     pub async fn call_mongo_method<T: DeserializeOwned + Send + 'static>(
@@ -594,24 +610,26 @@ pub fn agent_supports_capability(handshake: Option<&AgentHandshake>, capability:
     handshake.map(|value| value.supports(capability)).unwrap_or(true)
 }
 
-pub fn agent_schema_params(schema: &str) -> Value {
-    serde_json::json!({ "schema": schema })
+pub fn agent_schema_params(database: &str, schema: &str) -> Value {
+    serde_json::json!({ "database": database, "schema": schema })
 }
 
-pub fn agent_schema_table_params(schema: &str, table: &str) -> Value {
-    serde_json::json!({ "schema": schema, "table": table })
+pub fn agent_schema_table_params(database: &str, schema: &str, table: &str) -> Value {
+    serde_json::json!({ "database": database, "schema": schema, "table": table })
 }
 
-pub fn agent_object_source_params<K: Serialize>(schema: &str, name: &str, object_type: &K) -> Value {
-    serde_json::json!({ "schema": schema, "name": name, "object_type": object_type })
+pub fn agent_object_source_params<K: Serialize>(database: &str, schema: &str, name: &str, object_type: &K) -> Value {
+    serde_json::json!({ "database": database, "schema": schema, "name": name, "object_type": object_type })
 }
 
 pub fn agent_close_query_session_params(session_id: &str) -> Value {
     serde_json::json!({ "sessionId": session_id })
 }
 
-pub fn agent_transaction_params(statements: &[String], schema: Option<&str>) -> Value {
+pub fn agent_transaction_params(database: Option<&str>, statements: &[String], schema: Option<&str>) -> Value {
+    let database = database.map(str::trim).filter(|database| !database.is_empty());
     serde_json::json!({
+        "database": database,
         "statements": statements,
         "schema": schema,
     })
@@ -964,19 +982,27 @@ mod tests {
 
     #[test]
     fn builds_schema_table_and_transaction_params() {
-        assert_eq!(agent_schema_params("public"), serde_json::json!({ "schema": "public" }));
         assert_eq!(
-            agent_schema_table_params("public", "orders"),
-            serde_json::json!({ "schema": "public", "table": "orders" })
+            agent_schema_params("sales", "public"),
+            serde_json::json!({ "database": "sales", "schema": "public" })
         );
         assert_eq!(
-            agent_object_source_params("public", "active_users", &"VIEW"),
-            serde_json::json!({ "schema": "public", "name": "active_users", "object_type": "VIEW" })
+            agent_schema_table_params("sales", "public", "orders"),
+            serde_json::json!({ "database": "sales", "schema": "public", "table": "orders" })
+        );
+        assert_eq!(
+            agent_object_source_params("sales", "public", "active_users", &"VIEW"),
+            serde_json::json!({
+                "database": "sales",
+                "schema": "public",
+                "name": "active_users",
+                "object_type": "VIEW",
+            })
         );
         assert_eq!(agent_close_query_session_params("session-1"), serde_json::json!({ "sessionId": "session-1" }));
         assert_eq!(
-            agent_transaction_params(&["BEGIN".to_string(), "COMMIT".to_string()], Some("public")),
-            serde_json::json!({ "statements": ["BEGIN", "COMMIT"], "schema": "public" })
+            agent_transaction_params(Some("sales"), &["BEGIN".to_string(), "COMMIT".to_string()], Some("public")),
+            serde_json::json!({ "database": "sales", "statements": ["BEGIN", "COMMIT"], "schema": "public" })
         );
     }
 

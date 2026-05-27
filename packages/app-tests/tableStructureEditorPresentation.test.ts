@@ -62,3 +62,21 @@ test("structure editor uses a dense wide layout for large tables", () => {
   assert.match(source, /w-36/);
   assert.match(source, /w-24/);
 });
+
+test("structure editor keeps the table body vertically scrollable", () => {
+  assert.match(source, /class="flex h-full min-h-0 flex-col gap-2 overflow-hidden p-3 text-\[11px\]"/);
+  assert.match(source, /class="grid min-h-0 flex-1 grid-cols-\[minmax\(0,1fr\)_300px\] gap-2 overflow-hidden"/);
+  assert.match(source, /class="min-h-0 min-w-0 overflow-hidden rounded-md border"/);
+  assert.match(source, /class="flex h-full min-h-0 flex-col"/);
+  assert.match(source, /<TabsContent value="columns" class="m-0 min-h-0 flex-1 overflow-auto p-0">/);
+});
+
+test("new column input is focused after adding a field", () => {
+  assert.match(source, /import \{ computed, nextTick, onMounted, ref, watch \} from "vue"/);
+  assert.match(source, /async function addColumn/);
+  assert.match(source, /activeTab\.value = "columns"/);
+  assert.match(source, /await nextTick\(\)/);
+  assert.match(source, /data-new-column-row="true"/);
+  assert.match(source, /data-column-name-input/);
+  assert.match(source, /input\?\.focus\(\)/);
+});

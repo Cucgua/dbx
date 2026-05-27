@@ -92,11 +92,54 @@ test("Redis command workspace uses a terminal-like surface", () => {
   assert.match(source, /{{ commandPrompt }}/);
   assert.match(source, /{{ entry\.prompt }}/);
   assert.match(source, /{{ entry\.command }}/);
-  assert.match(source, /class="relative flex min-h-0 flex-1 flex-col bg-\[#090c10\] font-mono text-\[13px\] leading-5 text-slate-100"/);
+  assert.match(
+    source,
+    /class="dbx-editor-font-family relative flex min-h-0 flex-1 flex-col bg-\[#090c10\] text-\[13px\] leading-5 text-slate-100"/,
+  );
   assert.match(source, /class="flex shrink-0 items-center gap-2 border-t border-white\/10 bg-\[#090c10\] px-4 py-2"/);
-  assert.match(source, /class="min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-\[13px\] text-slate-100 caret-\[#d7ba7d\] outline-none/);
+  assert.match(
+    source,
+    /class="dbx-editor-font-family min-w-0 flex-1 border-0 bg-transparent p-0 text-\[13px\] text-slate-100 caret-\[#d7ba7d\] outline-none/,
+  );
   assert.doesNotMatch(source, /class="border-b border-slate-800 bg-slate-950 px-4 py-3 text-slate-100"/);
-  assert.doesNotMatch(source, /class="min-h-full whitespace-pre-wrap break-words rounded-md border border-slate-800 bg-slate-950/);
+  assert.doesNotMatch(
+    source,
+    /class="min-h-full whitespace-pre-wrap break-words rounded-md border border-slate-800 bg-slate-950/,
+  );
+});
+
+test("Redis text surfaces inherit the configured editor font family without changing sizing classes", () => {
+  const keyBrowserSource = readFileSync("apps/desktop/src/components/redis/RedisKeyBrowser.vue", "utf8");
+  const valueViewerSource = readFileSync("apps/desktop/src/components/redis/RedisValueViewer.vue", "utf8");
+  const fontComposableSource = readFileSync("apps/desktop/src/composables/useEditorFontFamilyStyle.ts", "utf8");
+  const globalStylesSource = readFileSync("apps/desktop/src/styles/globals.css", "utf8");
+
+  assert.match(fontComposableSource, /EDITOR_FONT_FAMILY_CSS_VAR/);
+  assert.match(fontComposableSource, /\[EDITOR_FONT_FAMILY_CSS_VAR\]: settingsStore\.editorSettings\.fontFamily/);
+  assert.match(globalStylesSource, /\.dbx-editor-font-family/);
+  assert.match(globalStylesSource, /font-family: var\(--dbx-editor-font-family, var\(--font-mono, monospace\)\)/);
+
+  assert.match(keyBrowserSource, /const editorFontFamilyStyle = useEditorFontFamilyStyle\(\)/);
+  assert.match(keyBrowserSource, /<div ref="rootRef" class="h-full" :style="editorFontFamilyStyle">/);
+  assert.match(keyBrowserSource, /<DialogContent class="sm:max-w-md" :style="editorFontFamilyStyle">/);
+  assert.match(keyBrowserSource, /class="dbx-editor-font-family truncate"/);
+  assert.match(keyBrowserSource, /class="dbx-editor-font-family h-8 text-xs"/);
+  assert.match(keyBrowserSource, /class="dbx-editor-font-family .* text-\[13px\] leading-5/);
+
+  assert.match(valueViewerSource, /const editorFontFamilyStyle = useEditorFontFamilyStyle\(\)/);
+  assert.match(valueViewerSource, /<div class="h-full flex flex-col overflow-hidden" :style="editorFontFamilyStyle">/);
+  assert.match(
+    valueViewerSource,
+    /:style="\[editorFontFamilyStyle, \{ width: `\$\{memberDetailSheetWidth\}px`, maxWidth: 'calc\(100vw - 2rem\)' \}\]"/,
+  );
+  assert.match(
+    valueViewerSource,
+    /class="dbx-editor-font-family min-h-0 flex-1 overflow-auto bg-background p-4 text-sm leading-6"/,
+  );
+  assert.match(
+    valueViewerSource,
+    /class="dbx-editor-font-family min-h-0 flex-1 resize-none bg-background p-5 text-\[13px\] leading-6 outline-none"/,
+  );
 });
 
 test("Redis browser uses a single thin shared splitter between panes", () => {

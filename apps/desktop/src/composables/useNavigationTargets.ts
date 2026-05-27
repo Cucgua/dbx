@@ -123,6 +123,7 @@ export function useNavigationTargets(dialogs: {
     reloadData: () => Promise<void>,
     toast: (msg: string, duration?: number) => void,
     context: { connectionId: string; database: string; schema?: string; tableName: string },
+    commentChanged?: boolean,
   ) {
     if (!context.tableName) {
       try {
@@ -133,6 +134,15 @@ export function useNavigationTargets(dialogs: {
         );
       } catch {}
       return;
+    }
+    if (commentChanged) {
+      try {
+        await connectionStore.refreshObjectListTreeNode(
+          context.connectionId,
+          context.database,
+          context.schema || undefined,
+        );
+      } catch {}
     }
     const activeTab = queryStore.tabs.find((t) => t.id === queryStore.activeTabId);
     if (activeTab?.mode === "data" && activeTab.tableMeta?.tableName === context.tableName) {
@@ -148,11 +158,6 @@ export function useNavigationTargets(dialogs: {
           columns,
           primaryKeys: editablePrimaryKeys(connectionStore.getConfig(activeTab.connectionId)?.db_type, columns),
         });
-        await connectionStore.refreshObjectListTreeNode(
-          activeTab.connectionId,
-          activeTab.database,
-          activeTab.tableMeta.schema,
-        );
         await reloadData();
       } catch (e: any) {
         toast(e?.message || String(e), 5000);

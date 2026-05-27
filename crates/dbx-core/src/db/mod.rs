@@ -46,17 +46,55 @@ pub fn safe_u64_to_json(v: u64) -> serde_json::Value {
     }
 }
 
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+pub(crate) fn binary_value_to_json(bytes: &[u8]) -> serde_json::Value {
+    serde_json::Value::String(format!("0x{}", hex_encode(bytes)))
+}
+
 pub fn tcp_probe_timeout() -> Duration {
     Duration::from_secs(TCP_PROBE_TIMEOUT_SECS)
 }
 
-pub async fn with_connection_timeout<T, F>(label: &str, future: F) -> Result<T, String>
+pub fn parse_connect_timeout(url: &str) -> Duration {
+    let Some(query) = url.split('?').nth(1) else {
+        return connection_timeout();
+    };
+    for param in query.split('&') {
+        let trimmed = param.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (key, value) = match trimmed.split_once('=') {
+            Some(pair) => pair,
+            None => continue,
+        };
+        if key.eq_ignore_ascii_case("connect_timeout") || key.eq_ignore_ascii_case("connectTimeout") {
+            if let Ok(v) = value.parse::<u64>() {
+                if v >= 1 && v <= 300 {
+                    return Duration::from_secs(v);
+                }
+            }
+        }
+    }
+    connection_timeout()
+}
+
+pub async fn with_connection_timeout<T, F>(label: &str, timeout: Duration, future: F) -> Result<T, String>
 where
     F: Future<Output = Result<T, String>>,
 {
-    tokio::time::timeout(connection_timeout(), future)
+    tokio::time::timeout(timeout, future)
         .await
-        .map_err(|_| format!("{label} connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map_err(|_| format!("{label} connection timed out ({}s)", timeout.as_secs()))?
 }
 
 pub async fn probe_tcp_endpoint(label: &str, host: &str, port: u16) -> Result<(), String> {
@@ -65,4 +103,14 @@ pub async fn probe_tcp_endpoint(label: &str, host: &str, port: u16) -> Result<()
         .map_err(|_| format!("{label} TCP connection timed out ({TCP_PROBE_TIMEOUT_SECS}s)"))?
         .map(|_| ())
         .map_err(|e| format!("{label} TCP connection failed: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_values_are_displayed_as_prefixed_hex() {
+        assert_eq!(binary_value_to_json(&[0x00, 0x01, 0xab, 0xff]), serde_json::json!("0x0001abff"));
+    }
 }

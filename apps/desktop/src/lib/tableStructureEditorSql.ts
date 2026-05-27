@@ -33,6 +33,8 @@ export interface BuildTableStructureChangeSqlOptions {
   tableName: string;
   columns: EditableStructureColumn[];
   indexes: EditableStructureIndex[];
+  tableComment?: string;
+  originalTableComment?: string;
 }
 
 export interface TableStructureChangeSql {

@@ -71,6 +71,23 @@ test("defaults active tab sidebar selection to off", () => {
   assert.equal(normalizeEditorSettings({}).autoSelectActiveSidebarNode, false);
 });
 
+test("defaults data grid header display settings", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader, false);
+  assert.equal(DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions, true);
+  assert.equal(normalizeEditorSettings({}).showColumnCommentsInHeader, false);
+  assert.equal(normalizeEditorSettings({}).compactColumnHeaderActions, true);
+});
+
+test("keeps saved data grid header display settings", () => {
+  const settings = normalizeEditorSettings({
+    showColumnCommentsInHeader: true,
+    compactColumnHeaderActions: false,
+  } as any);
+
+  assert.equal(settings.showColumnCommentsInHeader, true);
+  assert.equal(settings.compactColumnHeaderActions, false);
+});
+
 test("keeps saved active tab sidebar selection", () => {
   assert.equal(normalizeEditorSettings({ autoSelectActiveSidebarNode: true } as any).autoSelectActiveSidebarNode, true);
 });

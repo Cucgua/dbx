@@ -22,11 +22,15 @@ import * as api from "@/lib/api";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isSchemaAware, usesTreeSchemaMode } from "@/lib/databaseCapabilities";
 import { isDefaultDatabase as isConfigDefaultDatabase } from "@/lib/defaultDatabase";
-import { buildDatabaseTreeNodes } from "@/lib/databaseTree";
+import { buildDatabaseTreeNodes, buildDuckDbConnectionTreeNodes } from "@/lib/databaseTree";
 import { buildSqlServerDatabaseTreeNodes, SQLSERVER_DEFAULT_SCHEMA } from "@/lib/sqlServerTree";
 import { findDatabaseTreeNode } from "@/lib/treeRefreshTarget";
 import { shouldMarkDisconnected } from "@/lib/connectionHealth";
-import { filterVisibleDatabaseNames, normalizeVisibleDatabaseSelection } from "@/lib/visibleDatabases";
+import {
+  filterDatabaseNamesForConnection,
+  filterVisibleDatabaseNames,
+  normalizeVisibleDatabaseSelection,
+} from "@/lib/visibleDatabases";
 import {
   buildGroupedObjectTreeNodes,
   buildTableTreeNodes,
@@ -119,6 +123,7 @@ export const useConnectionStore = defineStore("connection", () => {
     database: string;
     schema?: string;
     tableName?: string;
+    tableNames?: string[];
   } | null>(null);
   const sidebarLayout = ref<SidebarLayout>(emptyLayout());
   let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -689,7 +694,27 @@ export const useConnectionStore = defineStore("connection", () => {
       if (useCachedChildren(node, options)) return;
 
       const config = getConfig(connectionId);
-      if (config?.db_type === "dameng" || config?.db_type === "oracle") {
+      if (config?.db_type === "duckdb") {
+        const cacheKey = schemaCacheKey(connectionId, "duckdb-root");
+        if (!options?.force) {
+          const cached = await loadPersistedTreeChildren(node, cacheKey);
+          if (cached.hit) {
+            if (cached.isStale) refreshStaleTreeNode(node);
+            return;
+          }
+        }
+        const [databases, schemas] = await Promise.all([
+          api.listDatabases(connectionId),
+          api.listSchemas(connectionId, "main"),
+        ]);
+        const children = withSavedSqlRoot(
+          connectionId,
+          buildDuckDbConnectionTreeNodes(connectionId, databases, schemas),
+          node,
+        );
+        setChildren(node, children);
+        await savePersistedTreeChildren(cacheKey, children);
+      } else if (config?.db_type === "dameng" || config?.db_type === "oracle") {
         const effectiveDb = config.database || "";
         const cacheKey = schemaCacheKey(connectionId, effectiveDb, "schemas");
         if (!options?.force) {
@@ -700,7 +725,7 @@ export const useConnectionStore = defineStore("connection", () => {
           }
         }
         const schemas = await api.listSchemas(connectionId, effectiveDb);
-        const visibleSchemas = filterVisibleDatabaseNames(schemas, config?.visible_databases);
+        const visibleSchemas = filterDatabaseNamesForConnection(schemas, config);
         const schemaNodes: TreeNode[] = visibleSchemas.map((s) => ({
           id: `${connectionId}:${s}:${s}`,
           label: s,
@@ -723,9 +748,9 @@ export const useConnectionStore = defineStore("connection", () => {
           }
         }
         const databases = await api.listDatabases(connectionId);
-        const visibleNames = filterVisibleDatabaseNames(
+        const visibleNames = filterDatabaseNamesForConnection(
           databases.map((database) => database.name),
-          config?.visible_databases,
+          config,
         );
         const visibleNameSet = new Set(visibleNames);
         const visibleDatabases = databases.filter((database) => visibleNameSet.has(database.name));
@@ -815,7 +840,7 @@ export const useConnectionStore = defineStore("connection", () => {
       await ensureConnected(connectionId);
       const dbs = await api.mongoListDatabases(connectionId);
       const config = getConfig(connectionId);
-      const visibleDbs = filterVisibleDatabaseNames(dbs, config?.visible_databases);
+      const visibleDbs = filterDatabaseNamesForConnection(dbs, config);
       setChildren(
         node,
         withSavedSqlRoot(
@@ -1278,6 +1303,7 @@ export const useConnectionStore = defineStore("connection", () => {
       return;
     }
 
+    if (node.connectionId && !connectedIds.value.has(node.connectionId)) return;
     const expandedIds = collectExpandedNodeIds([node]);
     expandedIds.add(node.id);
     await clearPersistedTreeCacheForNode(node);
@@ -1485,6 +1511,7 @@ export const useConnectionStore = defineStore("connection", () => {
           continue;
         }
         if (!expandedIds.has(node.id)) continue;
+        if (node.connectionId && !connectedIds.value.has(node.connectionId)) continue;
         clearLoadedChildrenCache(node.id);
         node.children = [];
         await loadTreeNodeChildren(node, { force: true });

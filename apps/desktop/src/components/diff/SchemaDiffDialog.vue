@@ -16,6 +16,7 @@ import type { TableInfo } from "@/types/database";
 import { sqlMetadataRefreshTarget } from "@/lib/sqlMetadataRefresh";
 import { useToast } from "@/composables/useToast";
 import { Loader2, Copy, Play, GitCompareArrows, ArrowLeftRight } from "lucide-vue-next";
+import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 
 interface SelectableTableDiff extends TableDiff {
   selected: boolean;
@@ -23,6 +24,7 @@ interface SelectableTableDiff extends TableDiff {
 
 const { t } = useI18n();
 const { toast } = useToast();
+const { highlight } = useSqlHighlighter();
 const open = defineModel<boolean>("open", { default: false });
 const store = useConnectionStore();
 
@@ -52,6 +54,7 @@ const executedCount = ref(0);
 const executeTotal = ref(0);
 const syncErrors = ref<{ sql: string; error: string }[]>([]);
 const syncSql = ref("");
+const highlightedSyncSql = computed(() => highlight(syncSql.value));
 
 const allSelected = computed(() => diffs.value.length > 0 && diffs.value.every((d) => d.selected));
 const someSelected = computed(() => diffs.value.some((d) => d.selected) && !allSelected.value);
@@ -369,7 +372,7 @@ watch(
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
+    <DialogContent class="sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" @interact-outside.prevent>
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <GitCompareArrows class="w-4 h-4" />
@@ -488,12 +491,6 @@ watch(
             </Select>
           </div>
         </div>
-
-        <Button v-if="step === 'select'" size="sm" :disabled="!canCompare || loadingMeta" @click="startCompare">
-          <Loader2 v-if="loadingMeta" class="w-3.5 h-3.5 mr-1 animate-spin" />
-          <GitCompareArrows v-else class="w-3.5 h-3.5 mr-1" />
-          {{ loadingMeta ? t("common.loading") : t("diff.compare") }}
-        </Button>
 
         <!-- Comparing -->
         <div v-if="step === 'comparing'" class="flex items-center justify-center py-8 text-sm text-muted-foreground">
@@ -616,11 +613,10 @@ watch(
             <!-- SQL Preview -->
             <div class="space-y-1">
               <Label class="text-xs font-medium">{{ t("diff.generatedSql") }}</Label>
-              <textarea
-                :value="syncSql"
-                readonly
-                class="w-full h-48 rounded-lg border bg-muted/20 p-3 font-mono text-xs resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-              />
+              <pre
+                class="w-full h-48 overflow-auto rounded-lg border bg-muted/20 p-3 font-mono text-xs whitespace-pre"
+                v-html="highlightedSyncSql"
+              ></pre>
             </div>
 
             <!-- Sync Errors -->
@@ -640,6 +636,15 @@ watch(
           </template>
         </template>
       </div>
+
+      <DialogFooter v-if="!(step === 'result' && diffs.length > 0)" class="flex items-center gap-2">
+        <Button variant="outline" @click="open = false">{{ t("common.close") }}</Button>
+        <Button v-if="step === 'select'" size="sm" :disabled="!canCompare || loadingMeta" @click="startCompare">
+          <Loader2 v-if="loadingMeta" class="w-3.5 h-3.5 mr-1 animate-spin" />
+          <GitCompareArrows v-else class="w-3.5 h-3.5 mr-1" />
+          {{ loadingMeta ? t("common.loading") : t("diff.compare") }}
+        </Button>
+      </DialogFooter>
 
       <DialogFooter v-if="step === 'result' && diffs.length > 0" class="flex items-center gap-2">
         <span v-if="executing" class="text-xs text-muted-foreground mr-auto">

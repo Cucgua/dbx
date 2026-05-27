@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 import {
   ArrowUpRight,
   Check,
@@ -58,6 +59,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const { toast } = useToast();
+const { highlight } = useSqlHighlighter();
 const connectionStore = useConnectionStore();
 const dialogOpen = computed({
   get: () => props.open,
@@ -452,8 +454,8 @@ function openItemTarget(item: FieldLineageItem) {
                     <pre
                       v-if="item.sqlSnippet"
                       class="mt-2 max-h-20 overflow-auto rounded-md bg-muted/40 p-2 text-xs whitespace-pre-wrap"
-                      >{{ item.sqlSnippet }}</pre
-                    >
+                      v-html="highlight(item.sqlSnippet)"
+                    />
                   </div>
                   <Button
                     variant="ghost"

@@ -151,6 +151,10 @@ html.disable-transitions *::after {
   }
 }
 
+.dbx-editor-font-family {
+  font-family: var(--dbx-editor-font-family, var(--font-mono, monospace));
+}
+
 /* Splitpanes */
 .splitpanes--horizontal .splitpanes__pane {
   transition: none !important;

@@ -39,6 +39,7 @@ import type { SqlFormatDialect } from "@/lib/sqlFormatter";
 type DataGridHandle = {
   onToolbarRefresh: () => Promise<void> | void;
   focusSearch: () => boolean;
+  openCellDetailSearch: () => boolean;
   visibleColumnCount: number;
   displayableColumnCount: number;
   hiddenColumnCount: number;
@@ -83,7 +84,7 @@ const emit = defineEmits<{
   clickTable: [tableName: string];
   openObjectTable: [target: { tableName: string; schema?: string }];
   objectSchemaChange: [schema: string | undefined];
-  structureEditorSaved: [];
+  structureEditorSaved: [commentChanged: boolean];
   structureEditorClose: [];
 }>();
 
@@ -256,7 +257,14 @@ function refreshData(): boolean {
   return true;
 }
 
-defineExpose({ focusSearch, refreshData });
+function handleModRTarget(target: Element): boolean {
+  if (target.closest("[data-query-editor-root]")) return queryEditorRef.value?.openReplace() ?? false;
+  if (target.closest("[data-cell-detail-editor-root]")) return dataGridRef.value?.openCellDetailSearch() ?? false;
+  if (target.closest("[data-grid-root]")) return refreshData();
+  return false;
+}
+
+defineExpose({ focusSearch, refreshData, handleModRTarget });
 </script>
 
 <template>
@@ -385,6 +393,7 @@ defineExpose({ focusSearch, refreshData });
             <template v-else>
               <DataGrid
                 v-if="activeTab.result"
+                ref="dataGridRef"
                 :key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`"
                 :cache-key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`"
                 class="flex-1 min-h-0"
@@ -691,7 +700,7 @@ defineExpose({ focusSearch, refreshData });
         :database="activeTab.database"
         :schema="activeTab.schema"
         :table-name="activeTab.structureTableName || ''"
-        @saved="emit('structureEditorSaved')"
+        @saved="(commentChanged) => emit('structureEditorSaved', commentChanged)"
         @close="emit('structureEditorClose')"
       />
     </template>

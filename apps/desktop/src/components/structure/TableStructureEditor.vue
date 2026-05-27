@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,7 @@ import { type EditableStructureColumn, type EditableStructureIndex } from "@/lib
 import { getTableStructureCapabilities } from "@/lib/tableStructureCapabilities";
 import {
   buildStructureTargetLabel,
-  combineDataType,
+  combineDataTypeForDatabase,
   createColumnDrafts,
   createIndexDrafts,
   DATA_TYPE_OPTIONS,
@@ -52,6 +52,7 @@ const { t } = useI18n();
 const { isDark } = useTheme();
 const store = useConnectionStore();
 const { toast } = useToast();
+const rootRef = ref<HTMLElement>();
 
 const sqlHighlighter = ref<SqlHighlighter>();
 onMounted(async () => {
@@ -74,7 +75,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  saved: [];
+  saved: [commentChanged: boolean];
   close: [];
 }>();
 
@@ -139,6 +140,8 @@ const indexColLabels = computed(() => [
 const targetSchema = computed(() => props.schema || props.database || "");
 const isCreateMode = computed(() => !props.tableName);
 const newTableName = ref("");
+const tableComment = ref("");
+const originalTableComment = ref("");
 const targetLabel = computed(() =>
   buildStructureTargetLabel(
     connection.value?.name,
@@ -159,6 +162,8 @@ async function refreshSqlPreview() {
     tableName: isCreateMode.value ? newTableName.value : props.tableName || "",
     columns: columns.value,
     indexes: indexes.value,
+    tableComment: tableComment.value,
+    originalTableComment: isCreateMode.value ? undefined : originalTableComment.value,
   };
   try {
     const result = isCreateMode.value
@@ -200,6 +205,8 @@ function resetState() {
   foreignKeys.value = [];
   triggers.value = [];
   newTableName.value = "";
+  tableComment.value = "";
+  originalTableComment.value = "";
 }
 
 async function loadStructure(silent = false) {
@@ -218,6 +225,16 @@ async function loadStructure(silent = false) {
     indexes.value = createIndexDrafts(nextIndexes);
     foreignKeys.value = nextForeignKeys;
     triggers.value = nextTriggers;
+    try {
+      const tables = await api.listTables(props.connectionId, props.database, targetSchema.value);
+      const table = tables.find(
+        (t) => t.name.toLowerCase() === props.tableName!.toLowerCase() && t.table_type !== "VIEW",
+      );
+      originalTableComment.value = table?.comment || "";
+      tableComment.value = table?.comment || "";
+    } catch {
+      /* ignore — table comment is optional */
+    }
   } catch (e: any) {
     errorMessage.value = e?.message || String(e);
   } finally {
@@ -225,8 +242,9 @@ async function loadStructure(silent = false) {
   }
 }
 
-function addColumn() {
+async function addColumn() {
   if (!structureCapabilities.value.addColumn) return;
+  activeTab.value = "columns";
   columns.value.push({
     id: `new:${uuid()}`,
     name: "",
@@ -237,6 +255,13 @@ function addColumn() {
     isPrimaryKey: false,
     markedForDrop: false,
   });
+  await nextTick();
+  const newRows = rootRef.value?.querySelectorAll<HTMLElement>('[data-new-column-row="true"]');
+  const row = newRows?.[newRows.length - 1];
+  const input = row?.querySelector<HTMLInputElement>("[data-column-name-input]");
+  row?.scrollIntoView({ block: "nearest" });
+  input?.focus();
+  input?.select();
 }
 
 function removeNewColumn(column: EditableStructureColumn) {
@@ -376,7 +401,7 @@ async function applyChanges() {
   try {
     await api.executeBatch(props.connectionId, props.database, pendingStatements.value);
     toast(t("structureEditor.saved"), 2500);
-    emit("saved");
+    emit("saved", tableComment.value !== originalTableComment.value);
     if (isCreateMode.value) {
       emit("close");
     } else {
@@ -395,7 +420,7 @@ onMounted(() => {
 });
 
 watch(
-  [isCreateMode, databaseType, () => props.schema, () => props.tableName, newTableName, columns, indexes],
+  [isCreateMode, databaseType, () => props.schema, () => props.tableName, newTableName, tableComment, columns, indexes],
   () => {
     void refreshSqlPreview();
   },
@@ -404,8 +429,12 @@ watch(
 </script>
 
 <template>
-  <div class="flex h-full flex-col space-y-2 p-3 text-[11px]" data-structure-density="compact">
-    <div class="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-[11px]">
+  <div
+    ref="rootRef"
+    class="flex h-full min-h-0 flex-col gap-2 overflow-hidden p-3 text-[11px]"
+    data-structure-density="compact"
+  >
+    <div class="flex shrink-0 items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-[11px]">
       <Database class="h-3.5 w-3.5 text-muted-foreground" />
       <span class="min-w-0 flex-1 truncate font-medium">{{ targetLabel || t("editor.noDatabase") }}</span>
       <Badge variant="outline">{{ connection?.driver_label || databaseType }}</Badge>
@@ -422,7 +451,7 @@ watch(
       </Button>
     </div>
 
-    <div v-if="isCreateMode" class="flex items-center gap-2">
+    <div v-if="isCreateMode" class="flex shrink-0 items-center gap-2">
       <label class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t("structureEditor.tableName") }}</label>
       <Input
         v-model="newTableName"
@@ -431,15 +460,24 @@ watch(
       />
     </div>
 
-    <div v-if="loading" class="flex h-[420px] items-center justify-center gap-2 text-sm text-muted-foreground">
+    <div class="flex shrink-0 items-center gap-2">
+      <label class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t("structureEditor.comment") }}</label>
+      <Input
+        v-model="tableComment"
+        :placeholder="t('structureEditor.commentPlaceholder')"
+        class="h-6 max-w-[320px] text-[11px]"
+      />
+    </div>
+
+    <div v-if="loading" class="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
       <Loader2 class="h-4 w-4 animate-spin" />
       {{ t("common.loading") }}
     </div>
 
-    <div v-else class="grid flex-1 min-h-0 grid-cols-[minmax(0,1fr)_300px] gap-2">
-      <div class="min-w-0 rounded-md border">
-        <Tabs v-model="activeTab" class="flex h-full flex-col">
-          <div class="flex items-center justify-between border-b px-2 py-1.5">
+    <div v-else class="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_300px] gap-2 overflow-hidden">
+      <div class="min-h-0 min-w-0 overflow-hidden rounded-md border">
+        <Tabs v-model="activeTab" class="flex h-full min-h-0 flex-col">
+          <div class="flex shrink-0 items-center justify-between border-b px-2 py-1.5">
             <TabsList>
               <TabsTrigger value="columns">{{ t("structureEditor.columns") }}</TabsTrigger>
               <TabsTrigger value="indexes">{{ t("structureEditor.indexes") }}</TabsTrigger>
@@ -504,6 +542,7 @@ watch(
                   v-for="(column, index) in columns"
                   :key="column.id"
                   :class="column.markedForDrop ? 'bg-destructive/5 opacity-60' : ''"
+                  :data-new-column-row="!column.original ? 'true' : undefined"
                 >
                   <td class="border-b border-r px-1.5 py-1 text-muted-foreground">
                     <div class="flex items-center gap-1">
@@ -516,6 +555,7 @@ watch(
                       v-model="column.name"
                       class="h-6 min-w-28 text-[11px]"
                       :disabled="isColumnNameDisabled(column)"
+                      data-column-name-input
                     />
                   </td>
                   <td class="border-b border-r px-1.5 py-1">
@@ -530,7 +570,12 @@ watch(
                       :allow-custom="true"
                       trigger-class="h-6 w-full font-mono text-[11px]"
                       @update:model-value="
-                        (v: string) => (column.dataType = combineDataType(v, splitDataType(column.dataType).params))
+                        (v: string) =>
+                          (column.dataType = combineDataTypeForDatabase(
+                            databaseType,
+                            v,
+                            splitDataType(column.dataType).params,
+                          ))
                       "
                     />
                     <Input
@@ -546,7 +591,11 @@ watch(
                       class="h-6 min-w-16 font-mono text-[11px]"
                       :disabled="isColumnTypeDisabled(column)"
                       @update:model-value="
-                        column.dataType = combineDataType(splitDataType(column.dataType).baseType, String($event))
+                        column.dataType = combineDataTypeForDatabase(
+                          databaseType,
+                          splitDataType(column.dataType).baseType,
+                          String($event),
+                        )
                       "
                     />
                   </td>
@@ -885,8 +934,8 @@ watch(
         </Tabs>
       </div>
 
-      <div class="flex min-w-0 flex-col rounded-md border">
-        <div class="flex items-center justify-between border-b px-2 py-1.5 text-[11px] font-medium">
+      <div class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border">
+        <div class="flex shrink-0 items-center justify-between border-b px-2 py-1.5 text-[11px] font-medium">
           <div class="flex items-center gap-1.5">
             <span>{{ t("structureEditor.sqlPreview") }}</span>
             <Badge
@@ -928,12 +977,12 @@ watch(
 
     <div
       v-if="errorMessage"
-      class="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive"
+      class="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive"
     >
       {{ errorMessage }}
     </div>
 
-    <div class="flex items-center justify-end gap-2">
+    <div class="flex shrink-0 items-center justify-end gap-2">
       <Button :disabled="!canApply" @click="applyChanges">
         <Loader2 v-if="saving" class="mr-1.5 h-3.5 w-3.5 animate-spin" />
         <Save v-else class="mr-1.5 h-3.5 w-3.5" />

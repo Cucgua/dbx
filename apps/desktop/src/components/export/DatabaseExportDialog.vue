@@ -27,6 +27,7 @@ const props = defineProps<{
   prefillDatabase?: string;
   prefillSchema?: string;
   prefillTable?: string;
+  prefillTables?: string[];
 }>();
 
 // Connection / Database / Schema selectors
@@ -61,6 +62,7 @@ const exportDone = ref(false);
 const exportError = ref<string | null>(null);
 const exportCancelled = ref(false);
 const pendingPrefillTable = ref("");
+const pendingPrefillTables = ref<string[]>([]);
 
 const sqlConnections = computed(() =>
   store.connections.filter((c) => !["redis", "mongodb", "elasticsearch"].includes(c.db_type)),
@@ -125,7 +127,7 @@ async function loadSchemas(preferredSchema = "") {
   schema.value = selected;
 }
 
-async function loadTables(preferredTable = "") {
+async function loadTables(preferredTable = "", preferredTables: string[] = []) {
   if (!connectionId.value || !database.value || !schema.value) return;
   loadingTables.value = true;
   tableError.value = null;
@@ -135,7 +137,13 @@ async function loadTables(preferredTable = "") {
     const tableInfos = await api.listTables(connectionId.value, database.value, schema.value);
     const names = tableInfos.map((table) => table.name);
     tables.value = names;
-    selectedTables.value = preferredTable && names.includes(preferredTable) ? [preferredTable] : [...names];
+    const preferredSet = new Set(preferredTables.filter((name) => names.includes(name)));
+    selectedTables.value =
+      preferredSet.size > 0
+        ? names.filter((name) => preferredSet.has(name))
+        : preferredTable && names.includes(preferredTable)
+          ? [preferredTable]
+          : [...names];
   } catch (e: any) {
     tableError.value = e?.message || String(e);
   } finally {
@@ -250,6 +258,7 @@ function resetState() {
   selectedTables.value = [];
   tableError.value = null;
   pendingPrefillTable.value = "";
+  pendingPrefillTables.value = [];
   includeStructure.value = true;
   includeData.value = true;
   includeObjects.value = true;
@@ -299,8 +308,10 @@ watch(schema, (value) => {
   selectedTables.value = [];
   tableError.value = null;
   const preferredTable = pendingPrefillTable.value;
+  const preferredTables = pendingPrefillTables.value;
   pendingPrefillTable.value = "";
-  if (value) loadTables(preferredTable).catch((e) => toast(String(e), 5000));
+  pendingPrefillTables.value = [];
+  if (value) loadTables(preferredTable, preferredTables).catch((e) => toast(String(e), 5000));
 });
 
 watch(
@@ -309,6 +320,7 @@ watch(
     if (val) {
       resetState();
       pendingPrefillTable.value = props.prefillTable ?? "";
+      pendingPrefillTables.value = props.prefillTables ?? [];
       if (props.prefillConnectionId) {
         skipConnectionWatch.value = true;
         connectionId.value = props.prefillConnectionId;

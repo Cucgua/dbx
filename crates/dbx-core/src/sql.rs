@@ -73,6 +73,39 @@ pub struct SqlFileProgress {
     pub error: Option<String>,
 }
 
+pub fn decode_sql_file_bytes(bytes: &[u8]) -> Result<String, String> {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return std::str::from_utf8(&bytes[3..]).map(|text| text.to_string()).map_err(|_| sql_file_encoding_error());
+    }
+
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return decode_sql_file_with_encoding(&bytes[2..], encoding_rs::UTF_16LE);
+    }
+
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return decode_sql_file_with_encoding(&bytes[2..], encoding_rs::UTF_16BE);
+    }
+
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return Ok(text.strip_prefix('\u{feff}').unwrap_or(text).to_string());
+    }
+
+    decode_sql_file_with_encoding(bytes, encoding_rs::GBK)
+}
+
+fn decode_sql_file_with_encoding(bytes: &[u8], encoding: &'static encoding_rs::Encoding) -> Result<String, String> {
+    let (text, had_errors) = encoding.decode_without_bom_handling(bytes);
+    if had_errors {
+        return Err(sql_file_encoding_error());
+    }
+    Ok(text.into_owned())
+}
+
+fn sql_file_encoding_error() -> String {
+    "Unsupported SQL file encoding. Save the file as UTF-8, UTF-8 with BOM, UTF-16 with BOM, or GBK, then try again."
+        .to_string()
+}
+
 #[derive(Default)]
 pub struct SqlStatementSplitter {
     buffer: String,
@@ -1003,7 +1036,7 @@ mod tests {
     use crate::models::connection::DatabaseType;
 
     use super::{
-        find_statement_at_cursor_for_database, prepare_sql_file_statement, split_sql_script,
+        decode_sql_file_bytes, find_statement_at_cursor_for_database, prepare_sql_file_statement, split_sql_script,
         split_sql_statements_for_database, starts_with_executable_sql_keyword,
         starts_with_executable_sql_keyword_for_database, SqlFileStatementAction, SqlStatementSplitter,
     };
@@ -1014,6 +1047,32 @@ mod tests {
             split_sql_script("CREATE TABLE a(id int); INSERT INTO a VALUES (1);").unwrap(),
             vec!["CREATE TABLE a(id int)", "INSERT INTO a VALUES (1)"]
         );
+    }
+
+    #[test]
+    fn decodes_utf8_bom_sql_file_bytes_without_bom_statement_prefix() {
+        let sql = decode_sql_file_bytes(b"\xEF\xBB\xBFCREATE TABLE t(id int);").unwrap();
+
+        assert_eq!(sql, "CREATE TABLE t(id int);");
+    }
+
+    #[test]
+    fn decodes_gbk_sql_file_bytes_before_execution() {
+        let bytes = b"INSERT INTO t VALUES ('\xD6\xD0\xCE\xC4');";
+        let sql = decode_sql_file_bytes(bytes).unwrap();
+
+        assert_eq!(sql, "INSERT INTO t VALUES ('中文');");
+    }
+
+    #[test]
+    fn decodes_utf16le_bom_sql_file_bytes() {
+        let bytes = [
+            0xFF, 0xFE, b'S', 0x00, b'E', 0x00, b'L', 0x00, b'E', 0x00, b'C', 0x00, b'T', 0x00, b' ', 0x00, b'1', 0x00,
+            b';', 0x00,
+        ];
+        let sql = decode_sql_file_bytes(&bytes).unwrap();
+
+        assert_eq!(sql, "SELECT 1;");
     }
 
     #[test]

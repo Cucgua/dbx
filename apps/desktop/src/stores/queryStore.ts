@@ -62,12 +62,21 @@ export const useQueryStore = defineStore("query", () => {
     const sessionId = tab?.resultSessionId ?? tab?.result?.session_id;
     if (!tab || !sessionId || sessionId === preserveSessionId) return;
     try {
-      await api.closeQuerySession(tab.connectionId, tab.database, sessionId);
+      await api.closeQuerySession(tab.connectionId, tab.database, sessionId, tab.id);
     } catch (error) {
       console.warn("[DBX][query-session:close:error]", { tabId: tab.id, sessionId, error });
     } finally {
       if (tab.resultSessionId === sessionId) tab.resultSessionId = undefined;
       if (tab.result?.session_id === sessionId) tab.result.session_id = undefined;
+    }
+  }
+
+  async function closeClientConnectionSession(tab: QueryTab | undefined) {
+    if (!tab?.connectionId) return;
+    try {
+      await api.closeClientConnectionSession(tab.connectionId, tab.database, tab.id);
+    } catch (error) {
+      console.warn("[DBX][client-session:close:error]", { tabId: tab.id, error });
     }
   }
 
@@ -245,6 +254,7 @@ export const useQueryStore = defineStore("query", () => {
     if (tabs.value[idx].isExecuting) void cancelTabExecution(id);
     if (tabs.value[idx].isExplaining) void cancelTabExplain(id);
     void closeResultSession(tabs.value[idx]);
+    void closeClientConnectionSession(tabs.value[idx]);
     clearResultPayload(tabs.value[idx]);
     tabs.value.splice(idx, 1);
     if (activeTabId.value === id) {
@@ -256,6 +266,7 @@ export const useQueryStore = defineStore("query", () => {
     tabs.value.filter((tab) => tab.id !== id && tab.isExecuting).forEach((tab) => void cancelTabExecution(tab.id));
     tabs.value.filter((tab) => tab.id !== id && tab.isExplaining).forEach((tab) => void cancelTabExplain(tab.id));
     tabs.value.filter((tab) => tab.id !== id).forEach((tab) => void closeResultSession(tab));
+    tabs.value.filter((tab) => tab.id !== id).forEach((tab) => void closeClientConnectionSession(tab));
     const next = closeOtherTabsState(tabs.value, activeTabId.value, id);
     tabs.value = next.tabs;
     activeTabId.value = next.activeTabId;
@@ -265,6 +276,7 @@ export const useQueryStore = defineStore("query", () => {
     tabs.value.filter((tab) => tab.isExecuting).forEach((tab) => void cancelTabExecution(tab.id));
     tabs.value.filter((tab) => tab.isExplaining).forEach((tab) => void cancelTabExplain(tab.id));
     tabs.value.forEach((tab) => void closeResultSession(tab));
+    tabs.value.forEach((tab) => void closeClientConnectionSession(tab));
     const next = closeAllTabsState(tabs.value, activeTabId.value);
     tabs.value = next.tabs;
     activeTabId.value = next.activeTabId;
@@ -325,10 +337,11 @@ export const useQueryStore = defineStore("query", () => {
   function updateDatabase(id: string, database: string) {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || tab.database === database) return;
+    void closeResultSession(tab);
+    void closeClientConnectionSession(tab);
     tab.database = database;
     tab.schema = undefined;
     tab.objectBrowser = undefined;
-    void closeResultSession(tab);
     clearResultPayload(tab);
     tab.lastExecutedSql = undefined;
     tab.resultBaseSql = undefined;
@@ -347,10 +360,11 @@ export const useQueryStore = defineStore("query", () => {
   function updateConnection(id: string, connectionId: string, database = "") {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab || tab.connectionId === connectionId) return;
+    void closeResultSession(tab);
+    void closeClientConnectionSession(tab);
     tab.connectionId = connectionId;
     tab.database = database;
     tab.schema = undefined;
-    void closeResultSession(tab);
     clearResultPayload(tab);
     tab.lastExecutedSql = undefined;
     tab.resultBaseSql = undefined;
@@ -389,9 +403,10 @@ export const useQueryStore = defineStore("query", () => {
   }
 
   function toErrorResult(e: any): NonNullable<QueryTab["result"]> {
+    const message = e instanceof Error ? e.message : String(e);
     return {
       columns: ["Error"],
-      rows: [[String(e)]],
+      rows: [[message]],
       affected_rows: 0,
       execution_time_ms: 0,
     };
@@ -629,8 +644,8 @@ export const useQueryStore = defineStore("query", () => {
       }
 
       console.info("[DBX][executeTabSql:execute-multi:start]", { traceId, elapsed: elapsed() });
-      const executionOptions =
-        typeof pageLimit === "number"
+      const executionOptions = {
+        ...(typeof pageLimit === "number"
           ? useAgentResultSession
             ? {
                 maxRows: pageLimit,
@@ -639,7 +654,10 @@ export const useQueryStore = defineStore("query", () => {
                 resultSessionId: options?.pagination?.sessionId,
               }
             : { maxRows: pageLimit, fetchSize: pageLimit }
-          : undefined;
+          : {}),
+        clientSessionId: tab.id,
+        timeoutSecs: settingsStore.editorSettings.queryTimeoutSecs,
+      };
       const results = await api.executeMulti(
         tab.connectionId,
         tab.database,
@@ -738,7 +756,10 @@ export const useQueryStore = defineStore("query", () => {
     tab.explainSql = built.sql;
     tab.lastExplainedSql = sql;
     try {
-      const result = await api.executeQuery(tab.connectionId, tab.database, built.sql, tab.schema, executionId);
+      const result = await api.executeQuery(tab.connectionId, tab.database, built.sql, tab.schema, executionId, {
+        clientSessionId: tab.id,
+        timeoutSecs: useSettingsStore().editorSettings.queryTimeoutSecs,
+      });
       const current = tabs.value.find((t) => t.id === id);
       if (current?.explainExecutionId === executionId) {
         current.explainPlan = parseExplainResult(databaseType as "mysql" | "postgres", result);

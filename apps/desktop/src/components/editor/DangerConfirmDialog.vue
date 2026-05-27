@@ -1,14 +1,17 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { AlertTriangle } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 
 const { t } = useI18n();
+const { highlight } = useSqlHighlighter();
 
 const open = defineModel<boolean>("open", { default: false });
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     sql?: string;
     title?: string;
@@ -29,6 +32,9 @@ const emit = defineEmits<{
   confirm: [];
 }>();
 
+const code = computed(() => props.details || props.sql);
+const highlightedCode = computed(() => highlight(code.value));
+
 function onConfirm() {
   open.value = false;
   emit("confirm");
@@ -45,13 +51,13 @@ function onConfirm() {
         </DialogTitle>
       </DialogHeader>
 
-      <div class="py-4">
+      <div class="py-4 min-w-0">
         <p class="text-sm text-muted-foreground mb-3">{{ message || t("dangerDialog.message") }}</p>
         <pre
-          v-if="details || sql"
-          class="text-xs bg-muted p-3 rounded overflow-auto max-h-40 min-w-0 font-mono whitespace-pre-wrap"
-          >{{ details || sql }}</pre
-        >
+          v-if="code"
+          class="text-xs bg-muted p-3 rounded overflow-auto max-h-40 min-w-0 font-mono whitespace-pre"
+          v-html="highlightedCode"
+        />
       </div>
 
       <DialogFooter>

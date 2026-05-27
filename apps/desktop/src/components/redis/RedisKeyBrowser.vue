@@ -41,10 +41,12 @@ import { classifyRedisCommandSafety } from "@/lib/redisCommandSafety";
 import { isRedisClearScreenCommand, nextRedisCommandDb, redisKeyTextToRaw } from "@/lib/redisCommandSession";
 import { formatRedisCommandResult, formatRedisStringValue } from "@/lib/redisValuePresentation";
 import { isCancelSearchShortcut } from "@/lib/keyboardShortcuts";
+import { useEditorFontFamilyStyle } from "@/composables/useEditorFontFamilyStyle";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
 const settingsStore = useSettingsStore();
+const editorFontFamilyStyle = useEditorFontFamilyStyle();
 
 type RedisSearchMode = "key" | "value";
 type RedisCreateKeyType = "string" | "hash" | "list" | "set" | "zset";
@@ -577,7 +579,7 @@ defineExpose({ focusSearch });
 </script>
 
 <template>
-  <div ref="rootRef" class="h-full">
+  <div ref="rootRef" class="h-full" :style="editorFontFamilyStyle">
     <Splitpanes class="redis-workspace-splitpanes h-full">
       <!-- Key tree (left) -->
       <Pane :size="36" :min-size="24">
@@ -688,7 +690,7 @@ defineExpose({ focusSearch });
                       :is="expandedGroupIds.has(row.node.id) ? FolderOpen : FolderClosed"
                       class="w-3 h-3 shrink-0 text-amber-500"
                     />
-                    <span class="truncate font-mono">{{ row.node.label }}</span>
+                    <span class="dbx-editor-font-family truncate">{{ row.node.label }}</span>
                     <span class="text-muted-foreground ml-1">({{ countLeaves(row.node) }})</span>
                   </template>
                   <template v-else>
@@ -705,7 +707,7 @@ defineExpose({ focusSearch });
                         @click="toggleCheck(row.node.keyRaw, $event)"
                       />
                     </span>
-                    <span class="truncate font-mono">{{ row.node.label }}</span>
+                    <span class="dbx-editor-font-family truncate">{{ row.node.label }}</span>
                   </template>
                 </div>
 
@@ -785,7 +787,7 @@ defineExpose({ focusSearch });
 
             <TabsContent value="command" class="m-0 min-h-0 flex-1 flex flex-col">
               <div
-                class="relative flex min-h-0 flex-1 flex-col bg-[#090c10] font-mono text-[13px] leading-5 text-slate-100"
+                class="dbx-editor-font-family relative flex min-h-0 flex-1 flex-col bg-[#090c10] text-[13px] leading-5 text-slate-100"
                 @click="getCommandInput()?.focus()"
               >
                 <div ref="commandTerminalRef" class="min-h-0 flex-1 overflow-auto px-4 pb-3 pt-4">
@@ -815,7 +817,7 @@ defineExpose({ focusSearch });
                   <input
                     v-model="commandText"
                     data-redis-command-input
-                    class="min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-[13px] text-slate-100 caret-[#d7ba7d] outline-none placeholder:text-slate-600"
+                    class="dbx-editor-font-family min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] text-slate-100 caret-[#d7ba7d] outline-none placeholder:text-slate-600"
                     :disabled="commandRunning"
                     autocomplete="off"
                     autocapitalize="off"
@@ -840,7 +842,7 @@ defineExpose({ focusSearch });
     />
 
     <Dialog v-model:open="showCreateKeyDialog">
-      <DialogContent class="sm:max-w-md">
+      <DialogContent class="sm:max-w-md" :style="editorFontFamilyStyle">
         <DialogHeader>
           <DialogTitle>{{ t("redis.createKey") }}</DialogTitle>
         </DialogHeader>
@@ -850,7 +852,7 @@ defineExpose({ focusSearch });
             <span>{{ t("redis.createKeyName") }}</span>
             <Input
               v-model="createKeyName"
-              class="h-8 font-mono text-xs"
+              class="dbx-editor-font-family h-8 text-xs"
               :placeholder="t('redis.createKeyNamePlaceholder')"
               @keydown.enter="createRedisKey"
             />
@@ -877,7 +879,7 @@ defineExpose({ focusSearch });
             <span>{{ t("redis.createField") }}</span>
             <Input
               v-model="createKeyField"
-              class="h-8 font-mono text-xs"
+              class="dbx-editor-font-family h-8 text-xs"
               :placeholder="t('redis.createFieldPlaceholder')"
               @keydown.enter="createRedisKey"
             />
@@ -887,7 +889,7 @@ defineExpose({ focusSearch });
             <span>{{ t("redis.createScore") }}</span>
             <Input
               v-model="createKeyScore"
-              class="h-8 font-mono text-xs"
+              class="dbx-editor-font-family h-8 text-xs"
               placeholder="0"
               @keydown.enter="createRedisKey"
             />
@@ -899,7 +901,7 @@ defineExpose({ focusSearch });
             }}</span>
             <textarea
               v-model="createKeyValue"
-              class="min-h-28 resize-y rounded-md border bg-background p-2 font-mono text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              class="dbx-editor-font-family min-h-28 resize-y rounded-md border bg-background p-2 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
               spellcheck="false"
               :placeholder="t('redis.createValuePlaceholder')"
             />

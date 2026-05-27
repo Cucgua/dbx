@@ -2,9 +2,11 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use futures::StreamExt;
 use mysql_async::consts::ColumnType;
 use mysql_async::prelude::*;
+use percent_encoding::percent_decode_str;
 use rust_decimal::Decimal;
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -12,6 +14,8 @@ use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{
     ColumnInfo, DatabaseInfo, ForeignKeyInfo, IndexInfo, ObjectInfo, QueryResult, TableInfo, TriggerInfo,
 };
+
+use super::file_validator::validate_file_path;
 
 pub type MySqlPool = mysql_async::Pool;
 
@@ -83,6 +87,76 @@ fn is_lossless_integer_column(column: &mysql_async::Column) -> bool {
     matches!(column.column_type(), ColumnType::MYSQL_TYPE_LONGLONG | ColumnType::MYSQL_TYPE_NEWDECIMAL)
 }
 
+fn is_mysql_binary_charset(column: &mysql_async::Column) -> bool {
+    column.character_set() == 63
+}
+
+fn is_mysql_blob_column(column: &mysql_async::Column) -> bool {
+    is_mysql_binary_charset(column)
+        && matches!(
+            column.column_type(),
+            ColumnType::MYSQL_TYPE_BLOB
+                | ColumnType::MYSQL_TYPE_LONG_BLOB
+                | ColumnType::MYSQL_TYPE_MEDIUM_BLOB
+                | ColumnType::MYSQL_TYPE_TINY_BLOB
+        )
+}
+
+fn is_mysql_binary_string_column(column: &mysql_async::Column) -> bool {
+    is_mysql_binary_charset(column)
+        && matches!(
+            column.column_type(),
+            ColumnType::MYSQL_TYPE_STRING | ColumnType::MYSQL_TYPE_VAR_STRING | ColumnType::MYSQL_TYPE_VARCHAR
+        )
+}
+
+fn mysql_printable_binary_preview(bytes: &[u8]) -> Option<String> {
+    let trimmed = bytes.strip_suffix(&[0]).map_or(bytes, |mut value| {
+        while let Some(rest) = value.strip_suffix(&[0]) {
+            value = rest;
+        }
+        value
+    });
+    if trimmed.is_empty() {
+        return Some(String::new());
+    }
+
+    let text = std::str::from_utf8(trimmed).ok()?;
+    text.chars().all(|ch| !ch.is_control() || matches!(ch, '\t' | '\n' | '\r')).then(|| text.to_string())
+}
+
+fn mysql_blob_preview(bytes: &[u8], label: &str) -> serde_json::Value {
+    serde_json::Value::String(format!("({label}) {} bytes", bytes.len()))
+}
+
+fn mysql_bit_value_to_string(bytes: &[u8], column: &mysql_async::Column) -> String {
+    let bit_len = column.column_length();
+    if bit_len > 1 {
+        let total_bits = bytes.len() * 8;
+        let mut bits = String::with_capacity(total_bits);
+        for byte in bytes {
+            bits.push_str(&format!("{byte:08b}"));
+        }
+        let start = bits.len().saturating_sub(bit_len as usize);
+        return bits[start..].to_string();
+    }
+
+    let val = bytes.iter().fold(0u64, |acc, &b| (acc << 8) | b as u64);
+    val.to_string()
+}
+
+fn mysql_bytes_to_json(bytes: Vec<u8>, column: &mysql_async::Column) -> serde_json::Value {
+    if is_mysql_blob_column(column) {
+        return mysql_blob_preview(&bytes, "BLOB");
+    }
+    if is_mysql_binary_string_column(column) {
+        return mysql_printable_binary_preview(&bytes)
+            .map(serde_json::Value::String)
+            .unwrap_or_else(|| super::binary_value_to_json(&bytes));
+    }
+    serde_json::Value::String(String::from_utf8_lossy(&bytes).to_string())
+}
+
 fn mysql_value_to_json(row: &mysql_async::Row, idx: usize) -> serde_json::Value {
     let Some(column) = row.columns_ref().get(idx) else {
         return serde_json::Value::Null;
@@ -93,6 +167,12 @@ fn mysql_value_to_json(row: &mysql_async::Row, idx: usize) -> serde_json::Value 
     };
     if matches!(value, mysql_async::Value::NULL) {
         return serde_json::Value::Null;
+    }
+
+    if is_mysql_binary_string_column(column) {
+        return row_get::<Vec<u8>, _>(row, idx)
+            .map(|bytes| mysql_bytes_to_json(bytes, column))
+            .unwrap_or(serde_json::Value::Null);
     }
 
     match column.column_type() {
@@ -112,16 +192,33 @@ fn mysql_value_to_json(row: &mysql_async::Row, idx: usize) -> serde_json::Value 
                     })
                     .or_else(|| row_get::<i64, _>(row, idx).map(|v| serde_json::Value::String(v.to_string())))
                     .or_else(|| row_get::<u64, _>(row, idx).map(|v| serde_json::Value::String(v.to_string())))
-                    .or_else(|| {
-                        row_get::<Vec<u8>, _>(row, idx)
-                            .map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
-                    })
+                    .or_else(|| row_get::<Vec<u8>, _>(row, idx).map(|bytes| mysql_bytes_to_json(bytes, column)))
                     .unwrap_or(serde_json::Value::Null);
             }
             return row
                 .get_opt::<Decimal, usize>(idx)
                 .and_then(|result| result.ok())
                 .map(|v: Decimal| serde_json::Value::String(v.to_string()))
+                .unwrap_or(serde_json::Value::Null);
+        }
+        ColumnType::MYSQL_TYPE_BIT => {
+            return row_get::<Vec<u8>, _>(row, idx)
+                .map(|bytes| serde_json::Value::String(mysql_bit_value_to_string(&bytes, column)))
+                .unwrap_or(serde_json::Value::Null);
+        }
+        ColumnType::MYSQL_TYPE_BLOB
+        | ColumnType::MYSQL_TYPE_LONG_BLOB
+        | ColumnType::MYSQL_TYPE_MEDIUM_BLOB
+        | ColumnType::MYSQL_TYPE_TINY_BLOB
+        | ColumnType::MYSQL_TYPE_GEOMETRY => {
+            return row_get::<Vec<u8>, _>(row, idx)
+                .map(|bytes| {
+                    if matches!(column.column_type(), ColumnType::MYSQL_TYPE_GEOMETRY) {
+                        mysql_blob_preview(&bytes, "GEOMETRY")
+                    } else {
+                        mysql_bytes_to_json(bytes, column)
+                    }
+                })
                 .unwrap_or(serde_json::Value::Null);
         }
         ColumnType::MYSQL_TYPE_TIMESTAMP
@@ -157,22 +254,25 @@ fn mysql_value_to_json(row: &mysql_async::Row, idx: usize) -> serde_json::Value 
             })
         })
         .or_else(|| row_get::<bool, _>(row, idx).map(serde_json::Value::Bool))
-        .or_else(|| {
-            row_get::<Vec<u8>, _>(row, idx).map(|b| serde_json::Value::String(String::from_utf8_lossy(&b).to_string()))
-        })
+        .or_else(|| row_get::<Vec<u8>, _>(row, idx).map(|bytes| mysql_bytes_to_json(bytes, column)))
         .unwrap_or(serde_json::Value::Null)
 }
 
 pub async fn connect(url: &str) -> Result<MySqlPool, String> {
-    let pool = create_pool(url)?;
-    let result = verify_pool_connection(&pool).await;
+    connect_with_ca_cert(url, None).await
+}
+
+pub async fn connect_with_ca_cert(url: &str, ca_cert_path: Option<&str>) -> Result<MySqlPool, String> {
+    let timeout = super::parse_connect_timeout(url);
+    let pool = create_pool(url, ca_cert_path)?;
+    let result = verify_pool_connection(&pool, timeout).await;
 
     if let Err(ref e) = result {
         if mysql_error_should_retry_without_ssl(e) {
             if let Some(fallback_url) = ssl_fallback_url(url) {
                 log::info!("SSL handshake failed, retrying with ssl-mode=disabled");
-                let fallback_pool = create_pool(&fallback_url)?;
-                return match verify_pool_connection(&fallback_pool).await {
+                let fallback_pool = create_pool(&fallback_url, None)?;
+                return match verify_pool_connection(&fallback_pool, timeout).await {
                     Ok(()) => Ok(fallback_pool),
                     Err(e) => Err(e),
                 };
@@ -183,18 +283,204 @@ pub async fn connect(url: &str) -> Result<MySqlPool, String> {
     result.map(|_| pool)
 }
 
-fn create_pool(url: &str) -> Result<MySqlPool, String> {
-    let opts = mysql_async::Opts::from_url(&mysql_async_url(url)).map_err(|e| format!("Invalid MySQL URL: {e}"))?;
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct MySqlTlsFiles {
+    sslcert: Option<String>,
+    sslkey: Option<String>,
+}
+
+fn create_pool(url: &str, ca_cert_path: Option<&str>) -> Result<MySqlPool, String> {
+    let tls_url = mysql_tls_url(url)?;
+    let opts =
+        mysql_async::Opts::from_url(&mysql_async_url(&tls_url.url)).map_err(|e| format!("Invalid MySQL URL: {e}"))?;
+    let base_ssl_opts = opts.ssl_opts().cloned();
     let pool_opts = mysql_async::PoolOpts::new()
-        .with_constraints(mysql_async::PoolConstraints::new(1, 5).unwrap())
+        .with_constraints(mysql_async::PoolConstraints::new(1, 1).unwrap())
         .with_inactive_connection_ttl(Duration::from_secs(300));
-    let builder =
-        mysql_async::OptsBuilder::from_opts(opts).stmt_cache_size(0).prefer_socket(false).pool_opts(Some(pool_opts));
+    let mut builder = mysql_async::OptsBuilder::from_opts(opts)
+        .stmt_cache_size(0)
+        .prefer_socket(false)
+        .pool_opts(Some(pool_opts))
+        .setup(mysql_setup_queries(url));
+    if let Some(ssl_opts) = mysql_ssl_opts(base_ssl_opts, url, ca_cert_path, &tls_url.files)? {
+        builder = builder.ssl_opts(ssl_opts);
+    }
     Ok(MySqlPool::new(builder))
 }
 
-async fn verify_pool_connection(pool: &MySqlPool) -> Result<(), String> {
-    super::with_connection_timeout("MySQL", async {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MySqlTlsUrl {
+    url: String,
+    files: MySqlTlsFiles,
+}
+
+fn mysql_tls_url(url: &str) -> Result<MySqlTlsUrl, String> {
+    let Some(query_start) = url.find('?') else {
+        return Ok(MySqlTlsUrl { url: url.to_string(), files: MySqlTlsFiles::default() });
+    };
+
+    let prefix = &url[..query_start];
+    let suffix = &url[query_start + 1..];
+    let (query_string, fragment) = suffix.split_once('#').map_or((suffix, ""), |(query, fragment)| (query, fragment));
+    let mut files = MySqlTlsFiles::default();
+    let mut kept_params = Vec::new();
+
+    for param in query_string.split('&') {
+        if param.is_empty() {
+            continue;
+        }
+
+        let Some((key, value)) = param.split_once('=') else {
+            kept_params.push(param.to_string());
+            continue;
+        };
+
+        if mysql_tls_file_param_is(key, "cert") || mysql_tls_file_param_is(key, "key") {
+            let decoded = percent_decode_str(value)
+                .decode_utf8()
+                .map_err(|_| format!("Invalid URL encoding in {key}"))?
+                .into_owned();
+            validate_file_path(&decoded, |_| false).map_err(|e| format!("{key}: {e}"))?;
+
+            if mysql_tls_file_param_is(key, "cert") {
+                files.sslcert = Some(decoded);
+            } else {
+                files.sslkey = Some(decoded);
+            }
+        } else {
+            kept_params.push(param.to_string());
+        }
+    }
+
+    let mut sanitized_url = prefix.to_string();
+    if !kept_params.is_empty() {
+        sanitized_url.push('?');
+        sanitized_url.push_str(&kept_params.join("&"));
+    }
+    if !fragment.is_empty() {
+        sanitized_url.push('#');
+        sanitized_url.push_str(fragment);
+    }
+
+    Ok(MySqlTlsUrl { url: sanitized_url, files })
+}
+
+fn mysql_tls_file_param_is(key: &str, target: &str) -> bool {
+    let normalized = key.to_ascii_lowercase().replace(['-', '_'], "");
+    normalized == format!("ssl{target}")
+}
+
+fn mysql_ssl_opts(
+    base_ssl_opts: Option<mysql_async::SslOpts>,
+    url: &str,
+    ca_cert_path: Option<&str>,
+    files: &MySqlTlsFiles,
+) -> Result<Option<mysql_async::SslOpts>, String> {
+    let ca_cert_path = ca_cert_path.map(str::trim).filter(|path| !path.is_empty());
+    let has_client_identity = files.sslcert.as_deref().is_some() || files.sslkey.as_deref().is_some();
+    if !mysql_url_requires_ssl(url) && !has_client_identity {
+        return Ok(None);
+    }
+
+    let mut ssl_opts = base_ssl_opts.unwrap_or_default();
+    if let Some(ca_cert_path) = ca_cert_path.filter(|_| mysql_url_requires_ssl(url) || has_client_identity) {
+        ssl_opts = ssl_opts.with_root_certs(vec![PathBuf::from(ca_cert_path).into()]);
+        if !mysql_url_verifies_identity(url) {
+            ssl_opts = ssl_opts.with_danger_skip_domain_validation(true);
+        }
+    }
+
+    match (files.sslcert.as_deref(), files.sslkey.as_deref()) {
+        (Some(cert_path), Some(key_path)) => {
+            ssl_opts = ssl_opts.with_client_identity(Some(mysql_async::ClientIdentity::new(
+                PathBuf::from(cert_path).into(),
+                PathBuf::from(key_path).into(),
+            )));
+        }
+        (Some(_), None) => return Err("MySQL ssl-cert requires ssl-key".to_string()),
+        (None, Some(_)) => return Err("MySQL ssl-key requires ssl-cert".to_string()),
+        (None, None) => {}
+    }
+
+    Ok(Some(ssl_opts))
+}
+
+fn mysql_setup_queries(url: &str) -> Vec<String> {
+    let charset = mysql_connection_charset(url).unwrap_or("utf8mb4");
+    vec![format!("SET NAMES {charset}")]
+}
+
+fn should_enable_explicit_timestamp_defaults(sql: &str) -> bool {
+    if !starts_with_executable_sql_keyword(sql, &["CREATE", "ALTER"]) {
+        return false;
+    }
+    let lower = sql.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+    lower.contains("timestamp") && lower.contains("default null")
+}
+
+fn explicit_timestamp_defaults_sql(enabled: bool) -> &'static str {
+    if enabled {
+        "SET SESSION explicit_defaults_for_timestamp = ON"
+    } else {
+        "SET SESSION explicit_defaults_for_timestamp = OFF"
+    }
+}
+
+async fn enable_explicit_timestamp_defaults_for_query(conn: &mut mysql_async::Conn, sql: &str) -> Option<bool> {
+    if !should_enable_explicit_timestamp_defaults(sql) {
+        return None;
+    }
+
+    let previous = match conn.query_first::<u8, _>("SELECT @@SESSION.explicit_defaults_for_timestamp").await {
+        Ok(Some(value)) => value != 0,
+        Ok(None) => {
+            log::debug!("Skipping MySQL explicit timestamp defaults compatibility setting: variable was empty");
+            return None;
+        }
+        Err(err) => {
+            log::debug!("Skipping MySQL explicit timestamp defaults compatibility setting: {err}");
+            return None;
+        }
+    };
+
+    if previous {
+        return None;
+    }
+
+    if let Err(err) = conn.query_drop(explicit_timestamp_defaults_sql(true)).await {
+        log::debug!("Skipping MySQL explicit timestamp defaults compatibility setting: {err}");
+        return None;
+    }
+
+    Some(previous)
+}
+
+async fn restore_explicit_timestamp_defaults_for_query(conn: &mut mysql_async::Conn, previous: Option<bool>) {
+    if let Some(previous) = previous {
+        if let Err(err) = conn.query_drop(explicit_timestamp_defaults_sql(previous)).await {
+            log::warn!("Failed to restore MySQL explicit timestamp defaults session setting: {err}");
+        }
+    }
+}
+
+fn mysql_connection_charset(url: &str) -> Option<&str> {
+    let (_, query) = url.split_once('?')?;
+    query.split('&').find_map(|segment| {
+        let (key, value) = segment.split_once('=')?;
+        if !key.eq_ignore_ascii_case("charset") {
+            return None;
+        }
+        let value = value.trim();
+        is_safe_mysql_charset_name(value).then_some(value)
+    })
+}
+
+fn is_safe_mysql_charset_name(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+async fn verify_pool_connection(pool: &MySqlPool, timeout: Duration) -> Result<(), String> {
+    super::with_connection_timeout("MySQL", timeout, async {
         let mut conn = pool.get_conn().await.map_err(|e| format!("MySQL connection failed: {e}"))?;
         conn.ping().await.map_err(|e| format!("MySQL ping failed: {e}"))?;
         Ok(())
@@ -218,6 +504,9 @@ fn mysql_error_should_retry_with_text_protocol(error: &str) -> bool {
 }
 
 fn ssl_fallback_url(url: &str) -> Option<String> {
+    if mysql_url_requires_ssl(url) {
+        return None;
+    }
     if url.contains("ssl-mode=preferred") {
         Some(url.replace("ssl-mode=preferred", "ssl-mode=disabled"))
     } else if !url.contains("ssl-mode=") {
@@ -228,24 +517,87 @@ fn ssl_fallback_url(url: &str) -> Option<String> {
     }
 }
 
+fn mysql_url_requires_ssl(url: &str) -> bool {
+    let Some((_, query)) = url.split_once('?') else {
+        return false;
+    };
+    query.split('&').any(|segment| {
+        let Some((key, value)) = segment.split_once('=') else {
+            return false;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        (key.eq_ignore_ascii_case("require_ssl") && value.eq_ignore_ascii_case("true"))
+            || mysql_tls_file_param_is(key, "cert")
+            || mysql_tls_file_param_is(key, "key")
+            || ((key.eq_ignore_ascii_case("ssl-mode") || key.eq_ignore_ascii_case("sslmode"))
+                && matches!(
+                    value.to_ascii_lowercase().replace('-', "_").as_str(),
+                    "required" | "require" | "verify_ca" | "verify_identity"
+                ))
+    })
+}
+
+fn mysql_url_verifies_identity(url: &str) -> bool {
+    let Some((_, query)) = url.split_once('?') else {
+        return false;
+    };
+    query.split('&').any(|segment| {
+        let Some((key, value)) = segment.split_once('=') else {
+            return false;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        (key.eq_ignore_ascii_case("verify_identity") && value.eq_ignore_ascii_case("true"))
+            || ((key.eq_ignore_ascii_case("ssl-mode") || key.eq_ignore_ascii_case("sslmode"))
+                && matches!(value.to_ascii_lowercase().replace('-', "_").as_str(), "verify_identity"))
+    })
+}
+
 fn mysql_async_url(url: &str) -> Cow<'_, str> {
     let Some((base, query)) = url.split_once('?') else {
         return Cow::Borrowed(url);
     };
 
-    let filtered: Vec<&str> = query
-        .split('&')
-        .filter(|segment| {
-            let segment = segment.trim();
-            !segment.is_empty()
-                && !segment.starts_with("ssl-mode=")
-                && !segment.starts_with("charset=")
-                && !segment.starts_with("time_zone=")
-                && !segment.starts_with("time-zone=")
-        })
-        .collect();
+    let original_count = query.split('&').filter(|segment| !segment.trim().is_empty()).count();
+    let mut filtered: Vec<String> = Vec::new();
+    for segment in query.split('&') {
+        let segment = segment.trim();
+        if segment.is_empty()
+            || segment.starts_with("charset=")
+            || segment.starts_with("time_zone=")
+            || segment.starts_with("time-zone=")
+            || segment.to_ascii_lowercase().starts_with("connect_timeout=")
+            || segment.to_ascii_lowercase().starts_with("connecttimeout=")
+        {
+            continue;
+        }
 
-    if filtered.len() == query.split('&').filter(|segment| !segment.trim().is_empty()).count() {
+        let Some((key, value)) = segment.split_once('=') else {
+            filtered.push(segment.to_string());
+            continue;
+        };
+        if key.eq_ignore_ascii_case("ssl-mode") || key.eq_ignore_ascii_case("sslmode") {
+            match value.to_ascii_lowercase().replace('-', "_").as_str() {
+                "disabled" | "disable" => filtered.push("require_ssl=false".to_string()),
+                "required" | "require" => {
+                    filtered.push("require_ssl=true".to_string());
+                    filtered.push("verify_ca=false".to_string());
+                    filtered.push("verify_identity=false".to_string());
+                }
+                "verify_ca" => {
+                    filtered.push("require_ssl=true".to_string());
+                    filtered.push("verify_identity=false".to_string());
+                }
+                "verify_identity" => filtered.push("require_ssl=true".to_string()),
+                _ => {}
+            }
+            continue;
+        }
+        filtered.push(segment.to_string());
+    }
+
+    if filtered.len() == original_count {
         Cow::Borrowed(url)
     } else if filtered.is_empty() {
         Cow::Owned(base.to_string())
@@ -255,18 +607,15 @@ fn mysql_async_url(url: &str) -> Cow<'_, str> {
 }
 
 pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
-    let pool = create_pool(url)?;
-    verify_pool_connection(&pool).await.map(|_| pool)
+    let timeout = super::parse_connect_timeout(url);
+    let pool = create_pool(url, None)?;
+    verify_pool_connection(&pool, timeout).await.map(|_| pool)
 }
 
 pub async fn list_databases(pool: &MySqlPool) -> Result<Vec<DatabaseInfo>, String> {
     let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
     let result = conn
-        .query_iter(
-            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA \
-             WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') \
-             ORDER BY SCHEMA_NAME",
-        )
+        .query_iter("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME")
         .await
         .map_err(|e| e.to_string())?;
     let rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
@@ -536,9 +885,18 @@ pub async fn execute_query_with_max_rows(
         }
     } else {
         let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
-        let result = conn.query_iter(sql).await.map_err(|e| e.to_string())?;
+        let previous_explicit_timestamp_defaults = enable_explicit_timestamp_defaults_for_query(&mut conn, sql).await;
+        let result = match conn.query_iter(sql).await {
+            Ok(result) => result,
+            Err(err) => {
+                restore_explicit_timestamp_defaults_for_query(&mut conn, previous_explicit_timestamp_defaults).await;
+                return Err(err.to_string());
+            }
+        };
         let affected_rows = result.affected_rows();
-        result.drop_result().await.map_err(|e| e.to_string())?;
+        let drop_result = result.drop_result().await;
+        restore_explicit_timestamp_defaults_for_query(&mut conn, previous_explicit_timestamp_defaults).await;
+        drop_result.map_err(|e| e.to_string())?;
 
         Ok(QueryResult {
             columns: vec![],
@@ -662,6 +1020,7 @@ pub async fn list_triggers(pool: &MySqlPool, database: &str, table: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mysql_async::consts::ColumnFlags;
 
     #[test]
     fn mysql_with_queries_are_treated_as_result_sets() {
@@ -734,6 +1093,67 @@ mod tests {
         assert!(is_mysql_lossless_integer_type("LARGEINT"));
     }
 
+    fn mysql_test_column(
+        column_type: ColumnType,
+        character_set: u16,
+        flags: ColumnFlags,
+        column_length: u32,
+    ) -> mysql_async::Column {
+        mysql_async::Column::new(column_type)
+            .with_character_set(character_set)
+            .with_flags(flags)
+            .with_column_length(column_length)
+    }
+
+    #[test]
+    fn mysql_binary_preview_keeps_binary_collation_varchar_as_text() {
+        let column = mysql_test_column(ColumnType::MYSQL_TYPE_VAR_STRING, 45, ColumnFlags::BINARY_FLAG, 64);
+
+        assert_eq!(mysql_bytes_to_json(b"SN-A0001".to_vec(), &column), serde_json::json!("SN-A0001"));
+    }
+
+    #[test]
+    fn mysql_binary_preview_renders_binary_and_varbinary_like_navicat_text_preview() {
+        let binary_column = mysql_test_column(ColumnType::MYSQL_TYPE_STRING, 63, ColumnFlags::BINARY_FLAG, 8);
+        let varbinary_column = mysql_test_column(ColumnType::MYSQL_TYPE_VAR_STRING, 63, ColumnFlags::BINARY_FLAG, 8);
+
+        assert_eq!(mysql_bytes_to_json(b"150010\0\0".to_vec(), &binary_column), serde_json::json!("150010"));
+        assert_eq!(mysql_bytes_to_json(b"150010".to_vec(), &varbinary_column), serde_json::json!("150010"));
+    }
+
+    #[test]
+    fn mysql_binary_preview_falls_back_to_hex_for_unprintable_bytes() {
+        let binary_column = mysql_test_column(ColumnType::MYSQL_TYPE_STRING, 63, ColumnFlags::BINARY_FLAG, 8);
+        let varbinary_column = mysql_test_column(ColumnType::MYSQL_TYPE_VAR_STRING, 63, ColumnFlags::BINARY_FLAG, 8);
+
+        assert_eq!(mysql_bytes_to_json(vec![0x01, 0x02, 0x03, 0x04], &binary_column), serde_json::json!("0x01020304"));
+        assert_eq!(
+            mysql_bytes_to_json(vec![0xde, 0xad, 0xbe, 0xef], &varbinary_column),
+            serde_json::json!("0xdeadbeef")
+        );
+    }
+
+    #[test]
+    fn mysql_binary_preview_uses_charset_to_separate_blob_from_text() {
+        let text_column = mysql_test_column(ColumnType::MYSQL_TYPE_BLOB, 45, ColumnFlags::empty(), 65_535);
+        let blob_column = mysql_test_column(ColumnType::MYSQL_TYPE_BLOB, 63, ColumnFlags::BLOB_FLAG, 65_535);
+
+        assert_eq!(mysql_bytes_to_json(b"hello".to_vec(), &text_column), serde_json::json!("hello"));
+        assert_eq!(
+            mysql_bytes_to_json(vec![0x00, 0x01, 0xab, 0xff], &blob_column),
+            serde_json::json!("(BLOB) 4 bytes")
+        );
+    }
+
+    #[test]
+    fn mysql_bit_preview_uses_boolean_or_bit_string_text() {
+        let bit_one = mysql_test_column(ColumnType::MYSQL_TYPE_BIT, 63, ColumnFlags::UNSIGNED_FLAG, 1);
+        let bit_eight = mysql_test_column(ColumnType::MYSQL_TYPE_BIT, 63, ColumnFlags::UNSIGNED_FLAG, 8);
+
+        assert_eq!(mysql_bit_value_to_string(&[1], &bit_one), "1");
+        assert_eq!(mysql_bit_value_to_string(&[0b1010_1010], &bit_eight), "10101010");
+    }
+
     #[test]
     fn mysql_column_key_marks_primary_when_key_column_usage_is_unavailable() {
         let primary_key_columns = HashSet::new();
@@ -754,12 +1174,71 @@ mod tests {
     }
 
     #[test]
+    fn mysql_timestamp_default_null_ddl_enables_explicit_defaults() {
+        let create_sql = r#"
+            CREATE TABLE `referral_record` (
+                `id` BINARY(16) NOT NULL,
+                `created_at` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                `updated_at` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+                `deleted_at` TIMESTAMP(6) DEFAULT NULL,
+                PRIMARY KEY (`id`)
+            ) ENGINE = InnoDB
+        "#;
+
+        assert!(should_enable_explicit_timestamp_defaults(create_sql));
+        assert!(should_enable_explicit_timestamp_defaults(
+            "ALTER TABLE referral_record ADD deleted_at TIMESTAMP DEFAULT NULL"
+        ));
+        assert!(!should_enable_explicit_timestamp_defaults("CREATE TABLE t (deleted_at DATETIME(6) DEFAULT NULL)"));
+        assert!(!should_enable_explicit_timestamp_defaults("SELECT 'TIMESTAMP DEFAULT NULL'"));
+        assert_eq!(explicit_timestamp_defaults_sql(true), "SET SESSION explicit_defaults_for_timestamp = ON");
+        assert_eq!(explicit_timestamp_defaults_sql(false), "SET SESSION explicit_defaults_for_timestamp = OFF");
+    }
+
+    #[test]
     fn mysql_tls_session_close_errors_retry_without_ssl() {
         let error = "MySQL connection failed: error communicating with database: \
             encountered error while attempting to establish a TLS connection: \
             server closed session with no notification";
 
         assert!(mysql_error_should_retry_without_ssl(error));
+    }
+
+    #[test]
+    fn mysql_tls_url_strips_client_identity_params_before_driver_parse() {
+        let dir = std::env::temp_dir();
+        let cert = dir.join(format!("dbx-mysql-client-cert-{}.pem", std::process::id()));
+        let key = dir.join(format!("dbx-mysql-client-key-{}.pem", std::process::id()));
+        std::fs::write(&cert, "not a real cert").unwrap();
+        std::fs::write(&key, "not a real key").unwrap();
+
+        let url = format!(
+            "mysql://root:secret@localhost/test?require_ssl=true&ssl-cert={}&ssl-key={}&charset=utf8mb4",
+            cert.display(),
+            key.display()
+        );
+        let parsed = mysql_tls_url(&url).unwrap();
+
+        assert_eq!(parsed.url, "mysql://root:secret@localhost/test?require_ssl=true&charset=utf8mb4");
+        assert_eq!(parsed.files.sslcert.as_deref(), Some(cert.to_str().unwrap()));
+        assert_eq!(parsed.files.sslkey.as_deref(), Some(key.to_str().unwrap()));
+        mysql_async::Opts::from_url(&mysql_async_url(&parsed.url)).unwrap();
+
+        let _ = std::fs::remove_file(cert);
+        let _ = std::fs::remove_file(key);
+    }
+
+    #[test]
+    fn mysql_tls_rejects_unpaired_client_cert_and_key() {
+        let files = MySqlTlsFiles { sslcert: Some("/tmp/client.crt".to_string()), sslkey: None };
+
+        let error = mysql_ssl_opts(None, "mysql://root@localhost/db?require_ssl=true", None, &files).unwrap_err();
+        assert!(error.contains("ssl-key"));
+    }
+
+    #[test]
+    fn mysql_tls_client_identity_requires_ssl() {
+        assert!(mysql_url_requires_ssl("mysql://root@localhost/db?ssl-cert=/tmp/client.crt&ssl-key=/tmp/client.key"));
     }
 
     #[test]
@@ -788,5 +1267,70 @@ mod tests {
         conn.ping().await.expect("ping");
         let _ = conn.disconnect().await;
         let _ = pool.disconnect().await;
+    }
+
+    #[test]
+    fn parse_connect_timeout_extracts_underscore_form() {
+        let url = "mysql://host:3306/db?connect_timeout=30";
+        assert_eq!(crate::db::parse_connect_timeout(url), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn parse_connect_timeout_extracts_camelcase_form() {
+        let url = "mysql://host:3306/db?connectTimeout=60";
+        assert_eq!(crate::db::parse_connect_timeout(url), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn parse_connect_timeout_ignores_out_of_range() {
+        let default = crate::db::connection_timeout();
+        let url = "mysql://host:3306/db?connect_timeout=999";
+        assert_eq!(crate::db::parse_connect_timeout(url), default);
+        let url2 = "mysql://host:3306/db?connect_timeout=0";
+        assert_eq!(crate::db::parse_connect_timeout(url2), default);
+    }
+
+    #[test]
+    fn parse_connect_timeout_returns_default_when_missing() {
+        let default = crate::db::connection_timeout();
+        let url = "mysql://host:3306/db?ssl-mode=preferred&charset=utf8mb4";
+        assert_eq!(crate::db::parse_connect_timeout(url), default);
+    }
+
+    #[test]
+    fn parse_connect_timeout_returns_default_when_no_query() {
+        let default = crate::db::connection_timeout();
+        let url = "mysql://host:3306/db";
+        assert_eq!(crate::db::parse_connect_timeout(url), default);
+    }
+
+    #[test]
+    fn mysql_async_url_translates_standard_required_ssl_mode() {
+        let url = "mysql://host:3306/db?ssl-mode=required&charset=utf8mb4";
+
+        assert_eq!(
+            mysql_async_url(url).as_ref(),
+            "mysql://host:3306/db?require_ssl=true&verify_ca=false&verify_identity=false"
+        );
+    }
+
+    #[test]
+    fn ssl_fallback_does_not_disable_required_tls() {
+        assert_eq!(ssl_fallback_url("mysql://host:3306/db?require_ssl=true&charset=utf8mb4"), None);
+        assert_eq!(ssl_fallback_url("mysql://host:3306/db?ssl-mode=verify_ca&charset=utf8mb4"), None);
+    }
+
+    #[test]
+    fn mysql_setup_queries_default_to_utf8mb4() {
+        assert_eq!(mysql_setup_queries("mysql://host:3306/db"), vec!["SET NAMES utf8mb4"]);
+    }
+
+    #[test]
+    fn mysql_setup_queries_use_safe_custom_charset() {
+        assert_eq!(mysql_setup_queries("mysql://host:3306/db?ssl-mode=preferred&charset=gbk"), vec!["SET NAMES gbk"]);
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?charset=utf8mb4;DROP TABLE users"),
+            vec!["SET NAMES utf8mb4"]
+        );
     }
 }

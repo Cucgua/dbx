@@ -93,6 +93,34 @@ export interface DesktopSettings {
   show_tray_icon: boolean;
 }
 
+export interface WebDavConfig {
+  endpoint: string;
+  username?: string;
+  password?: string;
+  remotePath?: string;
+}
+
+export interface WebDavSyncSummary {
+  remotePath: string;
+  bytes: number;
+  exportedAt?: string;
+  appVersion?: string;
+}
+
+export interface WebDavDownloadResult {
+  summary: WebDavSyncSummary;
+  editorSettings?: unknown;
+  desktopSettings: DesktopSettings;
+  applySummary: {
+    encryptedSecretsPresent: boolean;
+    secretsApplied: boolean;
+  };
+}
+
+export interface WebDavPasswordStatus {
+  hasSavedPassword: boolean;
+}
+
 export interface QueryPagination {
   limit: number;
   offset: number;
@@ -257,6 +285,37 @@ export async function saveDesktopSettings(settings: DesktopSettings): Promise<vo
   return invoke("save_desktop_settings", { settings });
 }
 
+export async function webdavSyncTest(config: WebDavConfig): Promise<void> {
+  return invoke("webdav_sync_test", { config });
+}
+
+export async function webdavPasswordStatus(config: WebDavConfig): Promise<WebDavPasswordStatus> {
+  return invoke("webdav_password_status", { config });
+}
+
+export async function saveWebdavSavedPassword(config: WebDavConfig, password: string): Promise<void> {
+  return invoke("save_webdav_saved_password", { config, password });
+}
+
+export async function forgetWebdavSavedPassword(config: WebDavConfig): Promise<void> {
+  return invoke("forget_webdav_saved_password", { config });
+}
+
+export async function webdavSyncUpload(
+  config: WebDavConfig,
+  editorSettings?: unknown,
+  secretsPassphrase?: string,
+): Promise<WebDavSyncSummary> {
+  return invoke("webdav_sync_upload", { config, editorSettings, secretsPassphrase });
+}
+
+export async function webdavSyncDownload(
+  config: WebDavConfig,
+  secretsPassphrase?: string,
+): Promise<WebDavDownloadResult> {
+  return invoke("webdav_sync_download", { config, secretsPassphrase });
+}
+
 export async function loadPinnedTreeNodeIds(): Promise<string[]> {
   return invoke("load_pinned_tree_node_ids");
 }
@@ -382,7 +441,14 @@ export async function executeQuery(
   sql: string,
   schema?: string,
   executionId?: string,
-  options?: { maxRows?: number; fetchSize?: number; pageSize?: number; resultSessionId?: string },
+  options?: {
+    maxRows?: number;
+    fetchSize?: number;
+    pageSize?: number;
+    resultSessionId?: string;
+    clientSessionId?: string;
+    timeoutSecs?: number;
+  },
 ): Promise<QueryResult> {
   return invoke("execute_query", { connectionId, database, sql, schema, executionId, ...options });
 }
@@ -393,7 +459,14 @@ export async function executeMulti(
   sql: string,
   schema?: string,
   executionId?: string,
-  options?: { maxRows?: number; fetchSize?: number; pageSize?: number; resultSessionId?: string },
+  options?: {
+    maxRows?: number;
+    fetchSize?: number;
+    pageSize?: number;
+    resultSessionId?: string;
+    clientSessionId?: string;
+    timeoutSecs?: number;
+  },
 ): Promise<QueryResult[]> {
   return invoke("execute_multi", { connectionId, database, sql, schema, executionId, ...options });
 }
@@ -402,8 +475,21 @@ export async function cancelQuery(executionId: string): Promise<boolean> {
   return invoke("cancel_query", { executionId });
 }
 
-export async function closeQuerySession(connectionId: string, database: string, sessionId: string): Promise<boolean> {
-  return invoke("close_query_session", { connectionId, database, sessionId });
+export async function closeQuerySession(
+  connectionId: string,
+  database: string,
+  sessionId: string,
+  clientSessionId?: string,
+): Promise<boolean> {
+  return invoke("close_query_session", { connectionId, database, sessionId, clientSessionId });
+}
+
+export async function closeClientConnectionSession(
+  connectionId: string,
+  database: string,
+  clientSessionId: string,
+): Promise<boolean> {
+  return invoke("close_client_connection_session", { connectionId, database, clientSessionId });
 }
 
 export async function executeBatch(
@@ -688,7 +774,10 @@ export async function listJdbcDrivers(): Promise<JdbcDriverInfo[]> {
   return invoke("list_jdbc_drivers");
 }
 
-export async function importJdbcDrivers(paths: string[]): Promise<JdbcDriverInfo[]> {
+export async function importJdbcDrivers(paths: (string | File)[]): Promise<JdbcDriverInfo[]> {
+  if (paths.some((path) => typeof path !== "string")) {
+    throw new Error("Desktop JDBC driver import requires local file paths");
+  }
   return invoke("import_jdbc_drivers", { paths });
 }
 
@@ -704,7 +793,10 @@ export async function installJdbcPlugin(): Promise<JdbcPluginStatus> {
   return invoke("install_jdbc_plugin");
 }
 
-export async function installJdbcPluginLocal(path: string): Promise<JdbcPluginStatus> {
+export async function installJdbcPluginLocal(path: string | File): Promise<JdbcPluginStatus> {
+  if (typeof path !== "string") {
+    throw new Error("Desktop JDBC plugin install requires a local file path");
+  }
   return invoke("install_jdbc_plugin_local", { path });
 }
 
@@ -755,7 +847,10 @@ export async function importAgentsFromZip(path: string | File): Promise<number> 
   return invoke("import_agents_from_zip", { path });
 }
 
-export async function importAgentJar(dbType: string, path: string): Promise<void> {
+export async function importAgentJar(dbType: string, path: string | File): Promise<void> {
+  if (typeof path !== "string") {
+    throw new Error("Desktop driver JAR import requires a local file path");
+  }
   return invoke("import_agent_jar_cmd", { dbType, path });
 }
 
@@ -813,6 +908,10 @@ export interface UpdateInfo {
 
 export async function checkForUpdates(): Promise<UpdateInfo> {
   return invoke("check_for_updates");
+}
+
+export async function getSystemProxyUrl(): Promise<string | null> {
+  return invoke("get_system_proxy_url");
 }
 
 export async function getAppVersion(): Promise<string> {

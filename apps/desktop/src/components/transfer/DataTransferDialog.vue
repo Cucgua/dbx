@@ -32,6 +32,7 @@ const sqlConnections = computed(() => store.connections.filter((c) => supportsTr
 const sourceConnectionId = ref("");
 const sourceDatabase = ref("");
 const sourceDatabases = ref<string[]>([]);
+const sourceSchemas = ref<string[]>([]);
 const sourceSchema = ref("");
 const sourceTables = ref<string[]>([]);
 const selectedTables = ref<Set<string>>(new Set());
@@ -42,6 +43,7 @@ const loadingTables = ref(false);
 const targetConnectionId = ref("");
 const targetDatabase = ref("");
 const targetDatabases = ref<string[]>([]);
+const targetSchemas = ref<string[]>([]);
 const targetSchema = ref("");
 
 // Options
@@ -112,6 +114,34 @@ async function loadDatabases(connectionId: string, target: "source" | "target") 
   }
 }
 
+async function loadSchemas(connectionId: string, database: string, side: "source" | "target", preferredSchema = "") {
+  if (!connectionId || !database) return;
+  try {
+    const schemas = await api.listSchemas(connectionId, database);
+    const selected =
+      preferredSchema && schemas.includes(preferredSchema)
+        ? preferredSchema
+        : schemas.includes("public")
+          ? "public"
+          : (schemas[0] ?? "");
+    if (side === "source") {
+      sourceSchemas.value = schemas;
+      sourceSchema.value = selected;
+    } else {
+      targetSchemas.value = schemas;
+      targetSchema.value = selected;
+    }
+  } catch {
+    if (side === "source") {
+      sourceSchemas.value = [];
+      sourceSchema.value = "";
+    } else {
+      targetSchemas.value = [];
+      targetSchema.value = "";
+    }
+  }
+}
+
 async function loadTables() {
   if (!sourceConnectionId.value || !sourceDatabase.value) {
     sourceTables.value = [];
@@ -121,13 +151,8 @@ async function loadTables() {
   try {
     const config = store.getConfig(sourceConnectionId.value);
     const needsSchema = isSchemaAware(config?.db_type);
-    if (needsSchema) {
-      const schemas = await api.listSchemas(sourceConnectionId.value, sourceDatabase.value);
-      sourceSchema.value = schemas.includes("public") ? "public" : (schemas[0] ?? "");
-    } else {
-      sourceSchema.value = sourceDatabase.value;
-    }
-    const tables = await api.listTables(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value);
+    const schema = needsSchema && sourceSchema.value ? sourceSchema.value : sourceDatabase.value;
+    const tables = await api.listTables(sourceConnectionId.value, sourceDatabase.value, schema);
     sourceTables.value = tables
       .filter((t) => t.table_type === "TABLE" || t.table_type === "BASE TABLE")
       .map((t) => t.name);
@@ -152,11 +177,35 @@ watch(sourceConnectionId, (id) => {
   loadDatabases(id, "source");
 });
 
-watch(sourceDatabase, () => loadTables());
+watch(sourceDatabase, async (db) => {
+  if (db) {
+    const config = store.getConfig(sourceConnectionId.value);
+    if (isSchemaAware(config?.db_type)) {
+      await loadSchemas(sourceConnectionId.value, db, "source");
+    } else {
+      sourceSchema.value = db;
+    }
+  }
+});
+
+watch(sourceSchema, () => loadTables());
 
 watch(targetConnectionId, (id) => {
   targetDatabase.value = "";
+  targetSchemas.value = [];
+  targetSchema.value = "";
   loadDatabases(id, "target");
+});
+
+watch(targetDatabase, async (db) => {
+  if (db) {
+    const config = store.getConfig(targetConnectionId.value);
+    if (isSchemaAware(config?.db_type)) {
+      await loadSchemas(targetConnectionId.value, db, "target");
+    } else {
+      targetSchema.value = db;
+    }
+  }
 });
 
 watch(
@@ -181,6 +230,7 @@ function resetState() {
   sourceConnectionId.value = "";
   sourceDatabase.value = "";
   sourceDatabases.value = [];
+  sourceSchemas.value = [];
   sourceSchema.value = "";
   sourceTables.value = [];
   selectedTables.value.clear();
@@ -188,6 +238,7 @@ function resetState() {
   targetConnectionId.value = "";
   targetDatabase.value = "";
   targetDatabases.value = [];
+  targetSchemas.value = [];
   targetSchema.value = "";
   createTable.value = true;
   transferMode.value = "append";
@@ -209,21 +260,8 @@ async function startTransfer() {
 
   transferId.value = uuid();
 
-  // Auto-detect target schema
-  const targetConfig = store.getConfig(targetConnectionId.value);
-  const targetNeedsSchema = isSchemaAware(targetConfig?.db_type);
-  const sourceConfig = store.getConfig(sourceConnectionId.value);
-  const sourceNeedsSchema = isSchemaAware(sourceConfig?.db_type);
-  if (targetNeedsSchema && !targetSchema.value) {
-    try {
-      const schemas = await api.listSchemas(targetConnectionId.value, targetDatabase.value);
-      targetSchema.value = schemas.includes("public") ? "public" : (schemas[0] ?? "");
-    } catch {
-      /* use empty */
-    }
-  }
-  const effectiveSourceSchema = sourceNeedsSchema ? sourceSchema.value : sourceDatabase.value;
-  const effectiveTargetSchema = targetNeedsSchema ? targetSchema.value : targetDatabase.value;
+  const effectiveSourceSchema = sourceSchema.value || sourceDatabase.value;
+  const effectiveTargetSchema = targetSchema.value || targetDatabase.value;
 
   const request: api.TransferRequest = {
     transferId: transferId.value,
@@ -340,6 +378,18 @@ const totalTransferred = computed(() =>
               </Select>
             </div>
           </div>
+
+          <div v-if="sourceSchemas.length" class="space-y-1.5">
+            <Label class="text-xs">{{ t("transfer.sourceSchema") }}</Label>
+            <Select v-model="sourceSchema">
+              <SelectTrigger class="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="schema in sourceSchemas" :key="schema" :value="schema">{{ schema }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <!-- Target Section -->
@@ -381,6 +431,18 @@ const totalTransferred = computed(() =>
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div v-if="targetSchemas.length" class="space-y-1.5">
+            <Label class="text-xs">{{ t("transfer.targetSchema") }}</Label>
+            <Select v-model="targetSchema">
+              <SelectTrigger class="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="schema in targetSchemas" :key="schema" :value="schema">{{ schema }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 

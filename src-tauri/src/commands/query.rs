@@ -21,6 +21,8 @@ pub async fn execute_query(
     fetch_size: Option<usize>,
     page_size: Option<usize>,
     result_session_id: Option<String>,
+    client_session_id: Option<String>,
+    timeout_secs: Option<u64>,
 ) -> Result<db::QueryResult, String> {
     let registered_query =
         execution_id.as_ref().filter(|id| !id.trim().is_empty()).map(|id| state.running_queries.register(id.clone()));
@@ -33,7 +35,14 @@ pub async fn execute_query(
         &sql,
         schema.as_deref(),
         cancel_token,
-        dbx_core::query::QueryExecutionOptions { max_rows, fetch_size, page_size, result_session_id },
+        dbx_core::query::QueryExecutionOptions {
+            max_rows,
+            fetch_size,
+            page_size,
+            result_session_id,
+            client_session_id,
+            timeout_secs,
+        },
     )
     .await
 }
@@ -50,6 +59,8 @@ pub async fn execute_multi(
     fetch_size: Option<usize>,
     page_size: Option<usize>,
     result_session_id: Option<String>,
+    client_session_id: Option<String>,
+    timeout_secs: Option<u64>,
 ) -> Result<Vec<db::QueryResult>, String> {
     let registered_query =
         execution_id.as_ref().filter(|id| !id.trim().is_empty()).map(|id| state.running_queries.register(id.clone()));
@@ -71,7 +82,14 @@ pub async fn execute_multi(
         &sql,
         schema.as_deref(),
         cancel_token,
-        dbx_core::query::QueryExecutionOptions { max_rows, fetch_size, page_size, result_session_id },
+        dbx_core::query::QueryExecutionOptions {
+            max_rows,
+            fetch_size,
+            page_size,
+            result_session_id,
+            client_session_id,
+            timeout_secs,
+        },
     )
     .await;
     match &result {
@@ -97,8 +115,21 @@ pub async fn close_query_session(
     connection_id: String,
     database: String,
     session_id: String,
+    client_session_id: Option<String>,
 ) -> Result<bool, String> {
-    dbx_core::query::close_query_session(&state, &connection_id, &database, &session_id).await
+    dbx_core::query::close_query_session(&state, &connection_id, &database, &session_id, client_session_id.as_deref())
+        .await
+}
+
+#[tauri::command]
+pub async fn close_client_connection_session(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    database: String,
+    client_session_id: String,
+) -> Result<bool, String> {
+    let database = if database.trim().is_empty() { None } else { Some(database.as_str()) };
+    state.close_client_session_pool(&connection_id, database, &client_session_id).await
 }
 
 #[tauri::command]

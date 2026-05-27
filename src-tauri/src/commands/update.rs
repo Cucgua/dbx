@@ -6,3 +6,8 @@ pub async fn check_for_updates() -> Result<UpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION");
     Ok(dbx_core::update::build_update_info(release, current_version))
 }
+
+#[tauri::command]
+pub fn get_system_proxy_url() -> Option<String> {
+    dbx_core::update::system_proxy_url()
+}

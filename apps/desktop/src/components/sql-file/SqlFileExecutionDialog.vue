@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
+import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { Dialog, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import { Check, CheckSquare, FileCode, FolderOpen, Loader2, Play, Square, X } fr
 
 const { t } = useI18n();
 const { toast } = useToast();
+const { highlight } = useSqlHighlighter();
 const open = defineModel<boolean>("open", { default: false });
 
 const props = defineProps<{
@@ -434,9 +436,10 @@ watch(
               </div>
               <span class="text-muted-foreground shrink-0">{{ formatBytes(preview.sizeBytes) }}</span>
             </div>
-            <pre class="max-h-40 max-w-full overflow-auto p-3 text-xs font-mono whitespace-pre bg-muted/15">{{
-              preview.preview
-            }}</pre>
+            <pre
+              class="max-h-40 max-w-full overflow-auto p-3 text-xs font-mono whitespace-pre bg-muted/15"
+              v-html="highlight(preview.preview)"
+            ></pre>
           </div>
         </div>
 

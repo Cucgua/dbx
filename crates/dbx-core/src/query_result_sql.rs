@@ -164,16 +164,15 @@ pub fn build_paginated_query_sql(options: PaginatedQuerySqlOptions) -> QuerySqlB
         return ok(add_sql_server_top(&statement, safe_limit));
     }
 
-    let alias = quote_table_identifier(options.database_type, "dbx_page");
-    let base = format!("SELECT * FROM ({statement}) {alias}");
-
-    if options.database_type.is_some_and(uses_fetch_first) {
-        let offset_sql = if safe_offset > 0 { format!(" OFFSET {safe_offset} ROWS") } else { String::new() };
-        return ok(format!("{base}{offset_sql} FETCH FIRST {safe_limit} ROWS ONLY"));
+    if options.database_type == Some(DatabaseType::Mysql) {
+        return ok(add_mysql_limit(&statement, safe_limit, safe_offset));
     }
 
-    let offset_sql = if safe_offset > 0 { format!(" OFFSET {safe_offset}") } else { String::new() };
-    ok(format!("{base} LIMIT {safe_limit}{offset_sql};"))
+    if options.database_type.is_some_and(uses_fetch_first) {
+        return ok(add_fetch_first_limit(&statement, safe_limit, safe_offset));
+    }
+
+    ok(add_standard_limit(&statement, safe_limit, safe_offset))
 }
 
 pub fn build_count_query_sql(options: CountQuerySqlOptions) -> QuerySqlBuildResult {
@@ -321,6 +320,9 @@ fn has_top_level_select_into(sql: &str) -> bool {
 }
 
 fn add_sql_server_top(sql: &str, limit: usize) -> String {
+    if has_top_level_select_top(sql) {
+        return sql.to_string();
+    }
     if sql.len() >= 6 && sql[..6].to_ascii_uppercase() == "SELECT" {
         format!("SELECT TOP ({limit}){}", &sql[6..])
     } else {
@@ -336,6 +338,39 @@ fn sql_server_statement_for_derived_table(statement: &str) -> String {
         return statement.to_string();
     }
     statement[..order_by].trim_end().to_string()
+}
+
+fn add_mysql_limit(statement: &str, limit: usize, offset: usize) -> String {
+    if has_top_level_limit(statement) {
+        return format!("{statement};");
+    }
+    let offset_sql = if offset > 0 { format!(" OFFSET {offset}") } else { String::new() };
+    format!("{statement} LIMIT {limit}{offset_sql};")
+}
+
+fn has_top_level_limit(sql: &str) -> bool {
+    top_level_sql_tokens(sql).iter().any(|token| token.text == "LIMIT")
+}
+
+fn has_top_level_fetch_first(sql: &str) -> bool {
+    let tokens = top_level_sql_tokens(sql);
+    tokens.windows(2).any(|w| w[0].text == "FETCH" && w[1].text == "FIRST")
+}
+
+fn add_fetch_first_limit(statement: &str, limit: usize, offset: usize) -> String {
+    if has_top_level_fetch_first(statement) {
+        return format!("{statement};");
+    }
+    let offset_sql = if offset > 0 { format!(" OFFSET {offset} ROWS") } else { String::new() };
+    format!("{statement}{offset_sql} FETCH FIRST {limit} ROWS ONLY;")
+}
+
+fn add_standard_limit(statement: &str, limit: usize, offset: usize) -> String {
+    if has_top_level_limit(statement) {
+        return format!("{statement};");
+    }
+    let offset_sql = if offset > 0 { format!(" OFFSET {offset}") } else { String::new() };
+    format!("{statement} LIMIT {limit}{offset_sql};")
 }
 
 fn find_top_level_trailing_order_by(sql: &str) -> Option<usize> {
@@ -556,10 +591,7 @@ mod tests {
         });
 
         assert_eq!(result.ok, true);
-        assert_eq!(
-            result.sql.unwrap(),
-            "SELECT * FROM (SELECT id, name FROM users) \"dbx_page\" LIMIT 100 OFFSET 200;"
-        );
+        assert_eq!(result.sql.unwrap(), "SELECT id, name FROM users LIMIT 100 OFFSET 200;");
     }
 
     #[test]
@@ -586,6 +618,19 @@ mod tests {
 
         assert_eq!(result.ok, true);
         assert_eq!(result.sql.unwrap(), "SELECT TOP (100) COUNT(*) FROM TicketInfo");
+    }
+
+    #[test]
+    fn keeps_existing_sqlserver_top_clause() {
+        let result = build_paginated_query_sql(PaginatedQuerySqlOptions {
+            original_sql: "SELECT TOP 1000 * FROM TicketInfo".to_string(),
+            database_type: Some(DatabaseType::SqlServer),
+            limit: 100,
+            offset: 0,
+        });
+
+        assert_eq!(result.ok, true);
+        assert_eq!(result.sql.unwrap(), "SELECT TOP 1000 * FROM TicketInfo");
     }
 
     #[test]
@@ -622,7 +667,7 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.sql.unwrap(), "SELECT * FROM (SELECT id FROM users) \"dbx_page\" FETCH FIRST 100 ROWS ONLY");
+        assert_eq!(result.sql.unwrap(), "SELECT id FROM users FETCH FIRST 100 ROWS ONLY;");
     }
 
     #[test]
@@ -634,7 +679,34 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.sql.unwrap(), "SELECT * FROM (SELECT id FROM users WHERE active = 1) `dbx_page` LIMIT 50;");
+        assert_eq!(result.sql.unwrap(), "SELECT id FROM users WHERE active = 1 LIMIT 50;");
+    }
+
+    #[test]
+    fn mysql_pagination_does_not_wrap_duplicate_result_columns() {
+        let result = build_paginated_query_sql(PaginatedQuerySqlOptions {
+            original_sql: "SELECT p.id, t.id FROM table1 p LEFT JOIN table2 t ON p.f = t.f".to_string(),
+            database_type: Some(DatabaseType::Mysql),
+            limit: 50,
+            offset: 100,
+        });
+
+        assert_eq!(
+            result.sql.unwrap(),
+            "SELECT p.id, t.id FROM table1 p LEFT JOIN table2 t ON p.f = t.f LIMIT 50 OFFSET 100;"
+        );
+    }
+
+    #[test]
+    fn mysql_pagination_keeps_existing_top_level_limit() {
+        let result = build_paginated_query_sql(PaginatedQuerySqlOptions {
+            original_sql: "SELECT id FROM users LIMIT 20;".to_string(),
+            database_type: Some(DatabaseType::Mysql),
+            limit: 50,
+            offset: 0,
+        });
+
+        assert_eq!(result.sql.unwrap(), "SELECT id FROM users LIMIT 20;");
     }
 
     #[test]

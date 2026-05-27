@@ -106,6 +106,9 @@ function updateAgentDrivers(nextDrivers: AgentDriverInfo[]) {
   emitDriverUpdateCount();
 }
 
+const agentTabUpdateCount = computed(() => drivers.value.filter((d) => d.update_available).length);
+const jdbcTabUpdateCount = computed(() => (jdbcPluginStatus.value?.update_available ? 1 : 0));
+
 function emitDriverUpdateCount() {
   emit("update-count-change", countAvailableDriverUpdates(drivers.value, jdbcPluginStatus.value));
 }
@@ -273,6 +276,34 @@ function chooseWebOfflineZip(): Promise<File | null> {
   });
 }
 
+function chooseWebFiles(accept: string, multiple: boolean): Promise<File[] | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.multiple = multiple;
+    input.onchange = () => {
+      const files = input.files;
+      if (!files || files.length === 0) {
+        resolve(null);
+        return;
+      }
+      resolve(Array.from(files));
+    };
+    input.click();
+  });
+}
+
+function chooseWebFile(accept: string): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.onchange = () => resolve(input.files?.[0] ?? null);
+    input.click();
+  });
+}
+
 async function importOfflineZip() {
   if (importingZip.value) return;
   let selected: string | File | null = null;
@@ -303,7 +334,19 @@ async function importOfflineZip() {
 }
 
 async function importDriverJar(dbType: string) {
-  if (isWeb) return;
+  const label = drivers.value.find((d) => d.db_type === dbType)?.label ?? dbType;
+  if (isWeb) {
+    const file = await chooseWebFile(".jar");
+    if (!file) return;
+    try {
+      await api.importAgentJar(dbType, file);
+      await refreshAgents();
+      toast(`${label} 驱动导入成功`);
+    } catch (e: any) {
+      toast(`${label} 驱动导入失败: ${e}`);
+    }
+    return;
+  }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
     title: "选择驱动 JAR 文件",
@@ -311,7 +354,6 @@ async function importDriverJar(dbType: string) {
     filters: [{ name: "JAR", extensions: ["jar"] }],
   });
   if (typeof selected !== "string") return;
-  const label = drivers.value.find((d) => d.db_type === dbType)?.label ?? dbType;
   try {
     await api.importAgentJar(dbType, selected);
     await refreshAgents();
@@ -373,7 +415,6 @@ function jreUsageLabel(key: string) {
 }
 
 async function loadJdbcDrivers() {
-  if (isWeb) return;
   isLoadingJdbcDrivers.value = true;
   try {
     jdbcDrivers.value = await api.listJdbcDrivers();
@@ -394,7 +435,6 @@ async function loadDriverStoreUsage() {
 }
 
 async function loadJdbcPluginStatus() {
-  if (isWeb) return;
   try {
     jdbcPluginStatus.value = await api.jdbcPluginStatus();
     emitDriverUpdateCount();
@@ -404,7 +444,7 @@ async function loadJdbcPluginStatus() {
 }
 
 async function installJdbcPlugin() {
-  if (isWeb || isInstallingJdbcPlugin.value) return;
+  if (isInstallingJdbcPlugin.value) return;
   isInstallingJdbcPlugin.value = true;
   try {
     jdbcPluginStatus.value = await api.installJdbcPlugin();
@@ -419,14 +459,20 @@ async function installJdbcPlugin() {
 }
 
 async function installJdbcPluginLocal() {
-  if (isWeb || isInstallingJdbcPlugin.value) return;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({
-    title: "选择 JDBC 插件 zip 文件",
-    multiple: false,
-    filters: [{ name: "ZIP", extensions: ["zip"] }],
-  });
-  if (typeof selected !== "string") return;
+  if (isInstallingJdbcPlugin.value) return;
+  let selected: string | File | null = null;
+  if (isWeb) {
+    selected = await chooseWebFile(".zip");
+  } else {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const result = await open({
+      title: "选择 JDBC 插件 zip 文件",
+      multiple: false,
+      filters: [{ name: "ZIP", extensions: ["zip"] }],
+    });
+    selected = typeof result === "string" ? result : null;
+  }
+  if (!selected) return;
   isInstallingJdbcPlugin.value = true;
   try {
     jdbcPluginStatus.value = await api.installJdbcPluginLocal(selected);
@@ -441,7 +487,7 @@ async function installJdbcPluginLocal() {
 }
 
 async function uninstallJdbcPlugin() {
-  if (isWeb || isUninstallingJdbcPlugin.value) return;
+  if (isUninstallingJdbcPlugin.value) return;
   isUninstallingJdbcPlugin.value = true;
   try {
     jdbcPluginStatus.value = await api.uninstallJdbcPlugin();
@@ -468,7 +514,18 @@ async function importJdbcDriverPaths(paths: string[]) {
 }
 
 async function importJdbcDrivers() {
-  if (isWeb) return;
+  if (isWeb) {
+    const files = await chooseWebFiles(".jar", true);
+    if (!files || !files.length) return;
+    try {
+      jdbcDrivers.value = await api.importJdbcDrivers(files);
+      void loadDriverStoreUsage();
+      toast(t("settings.jdbcImportSuccess", { count: files.length }));
+    } catch (e: any) {
+      toast(String(e?.message || e), 5000);
+    }
+    return;
+  }
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({
     title: t("settings.jdbcImport"),
@@ -559,8 +616,14 @@ onUnmounted(() => {
 
           <div class="flex items-center justify-between">
             <TabsList class="w-fit">
-              <TabsTrigger value="agent">内置驱动</TabsTrigger>
-              <TabsTrigger value="jdbc">JDBC 驱动</TabsTrigger>
+              <TabsTrigger value="agent" class="gap-1.5 relative">
+                内置驱动
+                <span v-if="agentTabUpdateCount > 0" class="inline-block h-2 w-2 rounded-full bg-red-500" />
+              </TabsTrigger>
+              <TabsTrigger value="jdbc" class="gap-1.5 relative">
+                JDBC 驱动
+                <span v-if="jdbcTabUpdateCount > 0" class="inline-block h-2 w-2 rounded-full bg-red-500" />
+              </TabsTrigger>
             </TabsList>
             <div class="flex items-center gap-2">
               <Button

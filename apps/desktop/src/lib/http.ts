@@ -181,7 +181,7 @@ export async function loadMcpHttpStatus(): Promise<null> {
 }
 
 export async function listSystemFonts(): Promise<string[]> {
-  return [];
+  return get("/api/system/fonts");
 }
 
 export async function listPlugins(): Promise<InstalledPlugin[]> {
@@ -189,40 +189,57 @@ export async function listPlugins(): Promise<InstalledPlugin[]> {
 }
 
 export async function listJdbcDrivers(): Promise<JdbcDriverInfo[]> {
-  return [];
+  return get("/api/jdbc/drivers");
 }
 
-export async function importJdbcDrivers(_paths: string[]): Promise<JdbcDriverInfo[]> {
-  return [];
+export async function importJdbcDrivers(pathsOrFiles: (string | File)[]): Promise<JdbcDriverInfo[]> {
+  const formData = new FormData();
+  for (const item of pathsOrFiles) {
+    if (item instanceof File) {
+      formData.append("files", item, item.name);
+    } else {
+      const fileName = item.split("/").pop() || "driver.jar";
+      const blob = await (await fetch(item)).blob();
+      formData.append("files", blob, fileName);
+    }
+  }
+  const res = await fetch("/api/jdbc/drivers", { method: "POST", body: formData });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
-export async function deleteJdbcDriver(_path: string): Promise<JdbcDriverInfo[]> {
-  return [];
+export async function deleteJdbcDriver(path: string): Promise<JdbcDriverInfo[]> {
+  const fileName = path.split("/").pop() || path;
+  return del(`/api/jdbc/drivers/${encodeURIComponent(fileName)}`);
 }
 
 export async function jdbcPluginStatus(): Promise<JdbcPluginStatus> {
-  return {
-    installed: false,
-    version: null,
-    protocol_version: null,
-    compatible: true,
-    latest_version: null,
-    latest_protocol_version: null,
-    update_available: false,
-    path: "",
-  };
+  return get("/api/jdbc/plugin/status");
 }
 
 export async function installJdbcPlugin(): Promise<JdbcPluginStatus> {
-  return jdbcPluginStatus();
+  return post("/api/jdbc/plugin/install", {});
 }
 
-export async function installJdbcPluginLocal(_path: string): Promise<JdbcPluginStatus> {
-  return jdbcPluginStatus();
+export async function installJdbcPluginLocal(pathOrFile: string | File): Promise<JdbcPluginStatus> {
+  let blob: Blob;
+  let fileName: string;
+  if (pathOrFile instanceof File) {
+    blob = pathOrFile;
+    fileName = pathOrFile.name;
+  } else {
+    fileName = pathOrFile.split("/").pop() || "plugin.zip";
+    blob = await (await fetch(pathOrFile)).blob();
+  }
+  const formData = new FormData();
+  formData.append("file", blob, fileName);
+  const uploadRes = await fetch("/api/jdbc/plugin/install-local", { method: "POST", body: formData });
+  if (!uploadRes.ok) throw new Error(await uploadRes.text());
+  return uploadRes.json();
 }
 
 export async function uninstallJdbcPlugin(): Promise<JdbcPluginStatus> {
-  return jdbcPluginStatus();
+  return post("/api/jdbc/plugin/uninstall", {});
 }
 
 export async function listInstalledAgentsLocal(): Promise<AgentDriverInfo[]> {
@@ -274,8 +291,21 @@ export async function importAgentsFromZip(fileOrPath: string | File): Promise<nu
   return result.count;
 }
 
-export async function importAgentJar(_dbType: string, _path: string): Promise<void> {
-  throw new Error("Local JAR import is only available in the desktop app");
+export async function importAgentJar(dbType: string, pathOrFile: string | File): Promise<void> {
+  let blob: Blob;
+  let fileName: string;
+  if (pathOrFile instanceof File) {
+    blob = pathOrFile;
+    fileName = pathOrFile.name;
+  } else {
+    fileName = pathOrFile.split("/").pop() || "driver.jar";
+    blob = await (await fetch(pathOrFile)).blob();
+  }
+  const formData = new FormData();
+  formData.append("dbType", dbType);
+  formData.append("file", blob, fileName);
+  const uploadRes = await fetch("/api/agents/import-jar", { method: "POST", body: formData });
+  if (!uploadRes.ok) throw new Error(await uploadRes.text());
 }
 
 export async function reinstallJre(jreKey?: string): Promise<void> {
@@ -437,7 +467,14 @@ export async function executeQuery(
   sql: string,
   schema?: string,
   executionId?: string,
-  options?: { maxRows?: number; fetchSize?: number; pageSize?: number; resultSessionId?: string },
+  options?: {
+    maxRows?: number;
+    fetchSize?: number;
+    pageSize?: number;
+    resultSessionId?: string;
+    clientSessionId?: string;
+    timeoutSecs?: number;
+  },
 ): Promise<QueryResult> {
   return post("/api/query/execute", { connectionId, database, sql, schema, executionId, ...options });
 }
@@ -448,13 +485,33 @@ export async function executeMulti(
   sql: string,
   schema?: string,
   executionId?: string,
-  options?: { maxRows?: number; fetchSize?: number; pageSize?: number; resultSessionId?: string },
+  options?: {
+    maxRows?: number;
+    fetchSize?: number;
+    pageSize?: number;
+    resultSessionId?: string;
+    clientSessionId?: string;
+    timeoutSecs?: number;
+  },
 ): Promise<QueryResult[]> {
   return post("/api/query/execute-multi", { connectionId, database, sql, schema, executionId, ...options });
 }
 
-export async function closeQuerySession(connectionId: string, database: string, sessionId: string): Promise<boolean> {
-  return post("/api/query/close-session", { connectionId, database, sessionId });
+export async function closeQuerySession(
+  connectionId: string,
+  database: string,
+  sessionId: string,
+  clientSessionId?: string,
+): Promise<boolean> {
+  return post("/api/query/close-session", { connectionId, database, sessionId, clientSessionId });
+}
+
+export async function closeClientConnectionSession(
+  connectionId: string,
+  database: string,
+  clientSessionId: string,
+): Promise<boolean> {
+  return post("/api/query/close-client-session", { connectionId, database, clientSessionId });
 }
 
 export async function executeBatch(
@@ -747,6 +804,65 @@ export async function loadDesktopSettings(): Promise<DesktopSettings> {
 
 export async function saveDesktopSettings(_settings: DesktopSettings): Promise<void> {
   return;
+}
+
+export interface WebDavConfig {
+  endpoint: string;
+  username?: string;
+  password?: string;
+  remotePath?: string;
+}
+
+export interface WebDavSyncSummary {
+  remotePath: string;
+  bytes: number;
+  exportedAt?: string;
+  appVersion?: string;
+}
+
+export interface WebDavDownloadResult {
+  summary: WebDavSyncSummary;
+  editorSettings?: unknown;
+  desktopSettings: DesktopSettings;
+  applySummary: {
+    encryptedSecretsPresent: boolean;
+    secretsApplied: boolean;
+  };
+}
+
+export interface WebDavPasswordStatus {
+  hasSavedPassword: boolean;
+}
+
+export async function webdavSyncTest(_config: WebDavConfig): Promise<void> {
+  throw new Error("WebDAV sync is only available in the desktop app.");
+}
+
+export async function webdavPasswordStatus(_config: WebDavConfig): Promise<WebDavPasswordStatus> {
+  return { hasSavedPassword: false };
+}
+
+export async function saveWebdavSavedPassword(_config: WebDavConfig, _password: string): Promise<void> {
+  throw new Error("WebDAV sync is only available in the desktop app.");
+}
+
+export async function forgetWebdavSavedPassword(_config: WebDavConfig): Promise<void> {
+  throw new Error("WebDAV sync is only available in the desktop app.");
+}
+
+export async function webdavSyncUpload(
+  _config: WebDavConfig,
+  _editorSettings?: unknown,
+  _secretsPassphrase?: string,
+): Promise<WebDavSyncSummary> {
+  throw new Error("WebDAV sync is only available in the desktop app.");
+}
+
+export async function webdavSyncDownload(
+  _config: WebDavConfig,
+  _secretsPassphrase?: string,
+): Promise<WebDavDownloadResult> {
+  throw new Error("WebDAV sync is only available in the desktop app.");
 }
 
 export async function loadPinnedTreeNodeIds(): Promise<string[]> {
@@ -1229,6 +1345,10 @@ export async function deleteHistoryEntry(id: string): Promise<void> {
 
 export async function checkForUpdates(): Promise<UpdateInfo> {
   return get("/api/update/check");
+}
+
+export async function getSystemProxyUrl(): Promise<string | null> {
+  return null;
 }
 
 export async function getAppVersion(): Promise<string> {

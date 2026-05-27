@@ -26,6 +26,39 @@ export function normalizeSelectionRange(anchor: CellPosition, focus: CellPositio
   };
 }
 
+export function rowSelectionRange(
+  rowIndex: number,
+  columnCount: number,
+  endRowIndex = rowIndex,
+): CellSelectionRange | null {
+  if (rowIndex < 0 || endRowIndex < 0 || columnCount <= 0) return null;
+  return {
+    startRow: Math.min(rowIndex, endRowIndex),
+    endRow: Math.max(rowIndex, endRowIndex),
+    startCol: 0,
+    endCol: columnCount - 1,
+  };
+}
+
+export function columnSelectionRange(
+  rowCount: number,
+  colIndex: number,
+  endColIndex = colIndex,
+): CellSelectionRange | null {
+  if (rowCount <= 0 || colIndex < 0 || endColIndex < 0) return null;
+  return {
+    startRow: 0,
+    endRow: rowCount - 1,
+    startCol: Math.min(colIndex, endColIndex),
+    endCol: Math.max(colIndex, endColIndex),
+  };
+}
+
+export function allCellsSelectionRange(rowCount: number, columnCount: number): CellSelectionRange | null {
+  if (rowCount <= 0 || columnCount <= 0) return null;
+  return { startRow: 0, endRow: rowCount - 1, startCol: 0, endCol: columnCount - 1 };
+}
+
 export function isCellInSelection(rowIndex: number, colIndex: number, range: CellSelectionRange | null): boolean {
   if (!range) return false;
   return (

@@ -1,18 +1,10 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted, onBeforeUnmount, watch, shallowRef, computed } from "vue";
+import { ref, onMounted, onBeforeUnmount, watch, shallowRef, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import type { CompletionContext } from "@codemirror/autocomplete";
 import type { EditorView as EditorViewType } from "@codemirror/view";
-import {
-  SearchQuery,
-  setSearchQuery,
-  findNext as cmFindNext,
-  findPrevious as cmFindPrevious,
-  replaceNext as cmReplaceNext,
-  replaceAll as cmReplaceAll,
-  search as cmSearch,
-} from "@codemirror/search";
-import { ChevronUp, ChevronDown, ChevronRight, X } from "lucide-vue-next";
+import { search as cmSearch } from "@codemirror/search";
+import EditorSearchPanel from "./EditorSearchPanel.vue";
 import { resolveExecutableSql } from "@/lib/sqlExecutionTarget";
 import { formatSqlText, type SqlFormatDialect } from "@/lib/sqlFormatter";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -52,6 +44,7 @@ import {
 } from "@/lib/sqlSemanticDiagnostics";
 import type { SqlCompletionColumn } from "@/lib/sqlCompletion";
 import type { SqlReferenceAnalysis, SqlTableReference, SqlTextSpan } from "@/types/database";
+import { vscodeSelectionLayer } from "@/lib/codemirrorVscodeSelectionLayer";
 
 const props = defineProps<{
   modelValue: string;
@@ -140,32 +133,30 @@ const liveFontSize = ref(settingsStore.editorSettings.fontSize);
 const gestureStartFontSize = ref(settingsStore.editorSettings.fontSize);
 const isGestureZooming = ref(false);
 
-const searchVisible = ref(false);
-const searchText = ref("");
-const replaceText = ref("");
-const showReplace = ref(false);
-const caseSensitive = ref(false);
-const useRegex = ref(false);
-const matchCount = ref(0);
-const currentMatchIndex = ref(0);
-const searchInputRef = ref<HTMLInputElement>();
+const searchPanelRef = ref<InstanceType<typeof EditorSearchPanel>>();
 
 interface EditorGestureEvent extends Event {
   scale?: number;
 }
 
 let editorViewModule: typeof import("@codemirror/view") | null = null;
+let codeMirrorPrec: typeof import("@codemirror/state").Prec | null = null;
 let fontThemeComp: import("@codemirror/state").Compartment | null = null;
 let codeMirrorTheme: import("@codemirror/state").Compartment | null = null;
 let wordWrapComp: import("@codemirror/state").Compartment | null = null;
 let readOnlyComp: import("@codemirror/state").Compartment | null = null;
 let runKeymapComp: import("@codemirror/state").Compartment | null = null;
+let completionComp: import("@codemirror/state").Compartment | null = null;
 let diagnosticComp: import("@codemirror/state").Compartment | null = null;
-let editorPrec: typeof import("@codemirror/state").Prec | null = null;
 let buildSqlDiagnosticExtension: (() => import("@codemirror/state").Extension) | null = null;
 let buildSqlSignatureExtension: (() => import("@codemirror/state").Extension) | null = null;
+let buildSqlCompletionExtension: (() => import("@codemirror/state").Extension) | null = null;
 let codeMirrorSnippetCompletion: typeof import("@codemirror/autocomplete").snippetCompletion;
 let codeMirrorCompletionStatus: typeof import("@codemirror/autocomplete").completionStatus | null = null;
+let codeMirrorAcceptCompletion: typeof import("@codemirror/autocomplete").acceptCompletion | null = null;
+let codeMirrorStartCompletion: typeof import("@codemirror/autocomplete").startCompletion | null = null;
+let codeMirrorIndentMore: typeof import("@codemirror/commands").indentMore | null = null;
+let codeMirrorInsertNewlineKeepIndent: typeof import("@codemirror/commands").insertNewlineKeepIndent | null = null;
 let setSqlDiagnosticsEffect: import("@codemirror/state").StateEffectType<SqlSemanticDiagnostic[]> | null = null;
 let semanticDiagnostics: SqlSemanticDiagnostic[] = [];
 let semanticDiagnosticTimer: ReturnType<typeof setTimeout> | null = null;
@@ -189,8 +180,6 @@ function syncEditorFontCssVars(fontSize = liveFontSize.value, fontFamily = setti
   if (!editorRef.value) return;
   editorRef.value.style.setProperty(EDITOR_FONT_SIZE_CSS_VAR, `${clampEditorFontSize(fontSize)}px`);
   editorRef.value.style.setProperty(EDITOR_FONT_FAMILY_CSS_VAR, fontFamily);
-  const cm = editorRef.value.querySelector(".cm-editor") as HTMLElement | null;
-  if (cm) cm.style.lineHeight = "1.6";
 }
 
 let pendingFontReconfig: { size: number; family: string } | null = null;
@@ -274,58 +263,94 @@ function onEditorGestureEnd(event: Event) {
   zoomCommitScheduler.flush(liveFontSize.value);
 }
 
+function handleTab(view: EditorViewType): boolean {
+  if (codeMirrorCompletionStatus?.(view.state) === "active") return false;
+  const { state, dispatch } = view;
+  const sel = state.selection.main;
+  if (!sel.empty) return codeMirrorIndentMore?.(view) ?? false;
+  const line = state.doc.lineAt(sel.from);
+  const before = line.text.slice(0, sel.from - line.from);
+  if (/^\s*$/.test(before)) return codeMirrorIndentMore?.(view) ?? false;
+  dispatch(state.update(state.replaceSelection("  "), { userEvent: "input.type" }));
+  return true;
+}
+
+function executeCurrentSql() {
+  if (view.value) emit("execute", executableSqlFromView(view.value));
+  return true;
+}
+
 function runKeymapExtension(codeMirrorKeymap: (typeof import("@codemirror/view"))["keymap"]) {
   const shortcuts = settingsStore.editorSettings.shortcuts;
-  return codeMirrorKeymap.of([
-    {
-      key: "Mod-=",
-      run: () => {
-        zoomIn();
-        return true;
+  const Prec = codeMirrorPrec;
+  return [
+    Prec?.high(
+      codeMirrorKeymap.of([
+        {
+          key: "Enter",
+          run: codeMirrorInsertNewlineKeepIndent ?? undefined,
+          shift: codeMirrorInsertNewlineKeepIndent ?? undefined,
+        },
+        {
+          key: shortcutToCodeMirrorKey(shortcuts.find),
+          preventDefault: true,
+          run: openSearch,
+        },
+        {
+          key: shortcutToCodeMirrorKey(shortcuts.replace),
+          preventDefault: true,
+          run: openReplace,
+        },
+        {
+          key: shortcutToCodeMirrorKey(shortcuts.executeSql),
+          preventDefault: true,
+          run: executeCurrentSql,
+        },
+        {
+          key: shortcutToCodeMirrorKey(shortcuts.saveSql),
+          preventDefault: true,
+          run: () => {
+            emit("save");
+            return true;
+          },
+        },
+      ]),
+    ) ?? [],
+    codeMirrorKeymap.of([
+      {
+        key: "Mod-=",
+        run: () => {
+          zoomIn();
+          return true;
+        },
       },
-    },
-    {
-      key: "Mod-+",
-      run: () => {
-        zoomIn();
-        return true;
+      {
+        key: "Mod-+",
+        run: () => {
+          zoomIn();
+          return true;
+        },
       },
-    },
-    {
-      key: "Mod--",
-      run: () => {
-        zoomOut();
-        return true;
+      {
+        key: "Mod--",
+        run: () => {
+          zoomOut();
+          return true;
+        },
       },
-    },
-    {
-      key: "Mod-0",
-      run: () => {
-        resetZoom();
-        return true;
+      {
+        key: "Mod-0",
+        run: () => {
+          resetZoom();
+          return true;
+        },
       },
-    },
-    {
-      key: shortcutToCodeMirrorKey(shortcuts.executeSql),
-      preventDefault: true,
-      run: () => {
-        if (view.value) emit("execute", executableSqlFromView(view.value));
-        return true;
+      {
+        key: shortcutToCodeMirrorKey(shortcuts.acceptCompletion),
+        run: (view) => codeMirrorAcceptCompletion?.(view) ?? false,
       },
-    },
-    {
-      key: shortcutToCodeMirrorKey(shortcuts.saveSql),
-      preventDefault: true,
-      run: () => {
-        emit("save");
-        return true;
-      },
-    },
-    {
-      key: shortcutToCodeMirrorKey(shortcuts.focusSearch),
-      run: () => openSearch(),
-    },
-  ]);
+    ]),
+  ];
 }
 
 function wordWrapExtension() {
@@ -368,7 +393,7 @@ function withActiveSchema<T extends { name: string; schema?: string | null }>(ta
 async function ensureColumnsForTable(table: { name: string; schema?: string | null }) {
   const scopedTable = withActiveSchema(table);
   const cacheKey = completionCacheKey(scopedTable);
-  if (cachedColumnsByTable.has(cacheKey) || !props.connectionId || !props.database) return;
+  if (cachedColumnsByTable.has(cacheKey) || !props.connectionId || props.database == null) return;
   const columns = await connectionStore.listCompletionColumns(
     props.connectionId,
     props.database,
@@ -439,7 +464,7 @@ function createSignatureDom(signature: ReturnType<typeof getSqlFunctionSignature
 }
 
 async function resolveSqlHoverTooltip(currentView: EditorViewType, pos: number) {
-  if (!props.connectionId || !props.database) return null;
+  if (!props.connectionId || props.database == null) return null;
 
   const sql = currentView.state.doc.toString();
   const range = identifierRangeAt(sql, pos);
@@ -570,7 +595,7 @@ function setSemanticDiagnostics(next: SqlSemanticDiagnostic[]) {
 }
 
 async function enrichSemanticDiagnosticTables(tables: SqlTableReference[]) {
-  if (!props.connectionId || !props.database) return tables;
+  if (!props.connectionId || props.database == null) return tables;
 
   const enriched: SqlTableReference[] = [];
   for (const table of tables) {
@@ -603,7 +628,7 @@ async function enrichSemanticDiagnosticTables(tables: SqlTableReference[]) {
 async function refreshSemanticDiagnostics() {
   const currentView = view.value;
   const runId = ++semanticDiagnosticRunId;
-  if (!currentView || !props.connectionId || !props.database) {
+  if (!currentView || !props.connectionId || props.database == null) {
     setSemanticDiagnostics([]);
     return;
   }
@@ -685,7 +710,8 @@ async function provideSqlCompletions(
   position: number,
   explicit: boolean,
 ) {
-  if (!props.connectionId || !props.database) return null;
+  if (!props.connectionId) return null;
+  const hasDatabase = props.database != null;
 
   const epoch = ++completionEpoch;
 
@@ -694,6 +720,37 @@ async function provideSqlCompletions(
     if (!explicit && !shouldAutoOpenSqlCompletion(fullDoc, position)) return null;
 
     const completionContext = getSqlCompletionContext(fullDoc, position);
+
+    if (!hasDatabase) {
+      const items = buildSqlCompletionItemsFromContext(completionContext, {
+        tables: [],
+        columnsByTable: new Map(),
+        schemas: [],
+        translations: completionTranslations.value,
+        snippets: settingsStore.editorSettings.snippets,
+      });
+      if (items.length === 0) return null;
+      return {
+        from: position - completionContext.prefix.length,
+        filter: false,
+        options: items.map((item) =>
+          (item.type === "snippet" || item.type === "function") && item.apply
+            ? codeMirrorSnippetCompletion(item.apply, {
+                label: item.label,
+                type: item.type,
+                detail: item.detail,
+                boost: item.boost,
+              })
+            : {
+                label: item.label,
+                type: item.type,
+                detail: item.detail,
+                boost: item.boost,
+              },
+        ),
+        validFor: getSqlCompletionResultValidFor(fullDoc, position),
+      };
+    }
 
     // Handle INSERT column list: fetch columns for the target table
     let insertColumnsByTable = new Map<string, SqlCompletionColumn[]>();
@@ -878,8 +935,9 @@ async function provideSqlCompletions(
 
     return {
       from: position - completionContext.prefix.length,
+      filter: false,
       options: items.map((item) =>
-        item.type === "snippet" && item.apply
+        (item.type === "snippet" || item.type === "function") && item.apply
           ? codeMirrorSnippetCompletion(item.apply, {
               label: item.label,
               type: item.type,
@@ -909,33 +967,62 @@ onMounted(async () => {
   if (!editorRef.value) return;
 
   const [
-    { EditorView, keymap, rectangularSelection, hoverTooltip, showTooltip, Decoration, tooltips },
+    {
+      EditorView,
+      keymap,
+      rectangularSelection,
+      hoverTooltip,
+      showTooltip,
+      Decoration,
+      tooltips,
+      lineNumbers,
+      highlightActiveLineGutter,
+      highlightSpecialChars,
+      drawSelection,
+      dropCursor,
+      crosshairCursor,
+      ViewPlugin,
+    },
     { EditorState, Compartment, Prec, StateEffect, StateField },
     { sql, MSSQL, MySQL, PostgreSQL, SQLDialect },
-    { basicSetup },
-    { autocompletion, startCompletion, closeBrackets, closeBracketsKeymap, snippetCompletion, completionStatus },
-    { indentWithTab },
-    { bracketMatching },
+    {
+      autocompletion,
+      startCompletion,
+      acceptCompletion,
+      closeBrackets,
+      closeBracketsKeymap,
+      snippetCompletion,
+      completionStatus,
+      completionKeymap,
+    },
+    { indentMore, insertNewlineKeepIndent, history, defaultKeymap, historyKeymap },
+    { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting, defaultHighlightStyle, foldKeymap },
+    { searchKeymap },
   ] = await Promise.all([
     import("@codemirror/view"),
     import("@codemirror/state"),
     import("@codemirror/lang-sql"),
-    import("codemirror"),
     import("@codemirror/autocomplete"),
     import("@codemirror/commands"),
     import("@codemirror/language"),
+    import("@codemirror/search"),
   ]);
   editorViewModule = { EditorView, keymap, rectangularSelection } as typeof import("@codemirror/view");
-  editorPrec = Prec;
+  codeMirrorPrec = Prec;
   codeMirrorSnippetCompletion = snippetCompletion;
   fontThemeComp = new Compartment();
   codeMirrorTheme = new Compartment();
   wordWrapComp = new Compartment();
   readOnlyComp = new Compartment();
   runKeymapComp = new Compartment();
+  completionComp = new Compartment();
   diagnosticComp = new Compartment();
   setSqlDiagnosticsEffect = StateEffect.define<SqlSemanticDiagnostic[]>();
   codeMirrorCompletionStatus = completionStatus;
+  codeMirrorAcceptCompletion = acceptCompletion;
+  codeMirrorStartCompletion = startCompletion;
+  codeMirrorIndentMore = indentMore;
+  codeMirrorInsertNewlineKeepIndent = insertNewlineKeepIndent;
 
   const diagnosticTheme = EditorView.baseTheme({
     ".cm-sql-error": {
@@ -991,6 +1078,14 @@ onMounted(async () => {
       };
     });
 
+  buildSqlCompletionExtension = () =>
+    autocompletion({
+      activateOnTyping: true,
+      override: [
+        async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos, context.explicit),
+      ],
+    });
+
   const ss = settingsStore.editorSettings;
 
   const baseDialect = props.dialect === "postgres" ? PostgreSQL : props.dialect === "sqlserver" ? MSSQL : MySQL;
@@ -1003,6 +1098,33 @@ onMounted(async () => {
 
   const theme = await loadEditorTheme(ss.theme, editorThemeAppearance());
 
+  const activeLineHighlighter = ViewPlugin.fromClass(
+    class {
+      decorations: import("@codemirror/view").DecorationSet;
+      constructor(view: import("@codemirror/view").EditorView) {
+        this.decorations = this.getDeco(view);
+      }
+      update(update: import("@codemirror/view").ViewUpdate) {
+        if (update.docChanged || update.selectionSet) this.decorations = this.getDeco(update.view);
+      }
+      getDeco(view: import("@codemirror/view").EditorView) {
+        if (!view.state.selection.main.empty) return Decoration.none;
+        let lastLineStart = -1;
+        const deco: any[] = [];
+        for (const r of view.state.selection.ranges) {
+          if (!r.empty) continue;
+          const line = view.lineBlockAt(r.head);
+          if (line.from > lastLineStart) {
+            deco.push(Decoration.line({ class: "cm-activeLine" }).range(line.from));
+            lastLineStart = line.from;
+          }
+        }
+        return Decoration.set(deco);
+      }
+    },
+    { decorations: (v) => v.decorations },
+  );
+
   const state = EditorState.create({
     doc: props.modelValue,
     extensions: [
@@ -1014,15 +1136,23 @@ onMounted(async () => {
           return { dom };
         },
       }),
-      basicSetup,
+      lineNumbers(),
+      highlightActiveLineGutter(),
+      highlightSpecialChars(),
+      history(),
+      foldGutter(),
+      drawSelection(),
+      vscodeSelectionLayer(),
+      dropCursor(),
+      EditorState.allowMultipleSelections.of(true),
+      indentOnInput(),
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      crosshairCursor(),
+      activeLineHighlighter,
+      keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, ...foldKeymap, ...completionKeymap]),
       sql({ dialect }),
       tooltips({ parent: document.body }),
-      autocompletion({
-        activateOnTyping: true,
-        override: [
-          async (context: CompletionContext) => provideSqlCompletions(context.state, context.pos, context.explicit),
-        ],
-      }),
+      completionComp.of(buildSqlCompletionExtension()),
       sqlCompletionTheme(EditorView),
       codeMirrorTheme.of(theme),
       closeBrackets(),
@@ -1030,7 +1160,18 @@ onMounted(async () => {
       hoverTooltip((currentView, pos) => resolveSqlHoverTooltip(currentView, pos)),
       buildSqlSignatureExtension(),
       diagnosticComp.of(buildSqlDiagnosticExtension()),
-      Prec.highest(keymap.of([...closeBracketsKeymap, indentWithTab])),
+      Prec.highest(
+        keymap.of([
+          ...closeBracketsKeymap,
+          { key: "Tab", run: handleTab },
+          {
+            key: "Escape",
+            run: () => {
+              return searchPanelRef.value?.closeSearch() ?? false;
+            },
+          },
+        ]),
+      ),
       runKeymapComp.of(Prec.highest(runKeymapExtension(keymap))),
       wordWrapComp.of(props.forceWordWrap || ss.wordWrap ? EditorView.lineWrapping : []),
       readOnlyComp.of([EditorState.readOnly.of(!!props.readOnly), EditorView.editable.of(!props.readOnly)]),
@@ -1050,7 +1191,6 @@ onMounted(async () => {
         if (update.selectionSet || update.docChanged) {
           emit("selectionChange", selectedSqlFromView(update.view));
           emit("cursorChange", update.state.selection.main.head);
-          if (searchVisible.value) updateMatchInfo();
         }
       }),
       fontThemeComp.of(
@@ -1080,7 +1220,7 @@ onMounted(async () => {
           if (event.button !== 0) return false;
 
           const currentView = view.value;
-          if (!currentView || !props.connectionId || !props.database) {
+          if (!currentView || !props.connectionId || props.database == null) {
             return false;
           }
 
@@ -1282,7 +1422,7 @@ watch(
       !wordWrapComp ||
       !runKeymapComp ||
       !editorViewModule ||
-      !editorPrec
+      !codeMirrorPrec
     ) {
       return;
     }
@@ -1295,9 +1435,24 @@ watch(
       effects: [
         codeMirrorTheme.reconfigure(themeExt),
         wordWrapComp.reconfigure(props.forceWordWrap || ss.wordWrap ? editorViewModule.EditorView.lineWrapping : []),
-        runKeymapComp.reconfigure(editorPrec.highest(runKeymapExtension(editorViewModule.keymap))),
+        runKeymapComp.reconfigure(codeMirrorPrec.highest(runKeymapExtension(editorViewModule.keymap))),
       ],
     });
+  },
+  { deep: true },
+);
+
+watch(
+  () => settingsStore.editorSettings.snippets,
+  () => {
+    completionEpoch++;
+    if (!view.value || !completionComp || !buildSqlCompletionExtension) return;
+    view.value.dispatch({
+      effects: completionComp.reconfigure(buildSqlCompletionExtension()),
+    });
+    if (codeMirrorCompletionStatus?.(view.value.state) === "active") {
+      codeMirrorStartCompletion?.(view.value);
+    }
   },
   { deep: true },
 );
@@ -1308,129 +1463,15 @@ onBeforeUnmount(() => {
   view.value?.destroy();
 });
 
-function dispatchSearchQuery() {
-  const v = view.value;
-  if (!v) return;
-  const q = new SearchQuery({
-    search: searchText.value,
-    caseSensitive: caseSensitive.value,
-    regexp: useRegex.value,
-    replace: replaceText.value,
-  });
-  v.dispatch({ effects: setSearchQuery.of(q) });
-  updateMatchInfo();
-}
-
-function updateMatchInfo() {
-  const v = view.value;
-  if (!v || !searchText.value) {
-    matchCount.value = 0;
-    currentMatchIndex.value = 0;
-    return;
-  }
-  try {
-    const q = new SearchQuery({
-      search: searchText.value,
-      caseSensitive: caseSensitive.value,
-      regexp: useRegex.value,
-    });
-    if (!q.valid) {
-      matchCount.value = 0;
-      currentMatchIndex.value = 0;
-      return;
-    }
-    const iter = q.getCursor(v.state);
-    let count = 0;
-    let curIdx = 0;
-    const selFrom = v.state.selection.main.from;
-    const selTo = v.state.selection.main.to;
-    let r = iter.next();
-    while (!r.done) {
-      count++;
-      if (r.value.from === selFrom && r.value.to === selTo) curIdx = count;
-      r = iter.next();
-    }
-    matchCount.value = count;
-    currentMatchIndex.value = curIdx || (count > 0 ? 1 : 0);
-  } catch {
-    matchCount.value = 0;
-    currentMatchIndex.value = 0;
-  }
-}
-
 function openSearch(): boolean {
-  searchVisible.value = true;
-  const v = view.value;
-  if (v) {
-    const sel = v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to);
-    if (sel && !sel.includes("\n")) searchText.value = sel;
-  }
-  nextTick(() => {
-    searchInputRef.value?.focus();
-    searchInputRef.value?.select();
-  });
-  if (searchText.value) dispatchSearchQuery();
-  return true;
+  return searchPanelRef.value?.openSearch() ?? false;
 }
 
-function closeSearch() {
-  searchVisible.value = false;
-  showReplace.value = false;
-  const v = view.value;
-  if (v) {
-    v.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "" })) });
-    v.focus();
-  }
-  matchCount.value = 0;
-  currentMatchIndex.value = 0;
+function openReplace(): boolean {
+  return searchPanelRef.value?.openReplace() ?? false;
 }
 
-function nextMatch() {
-  const v = view.value;
-  if (!v || !searchText.value) return;
-  cmFindNext(v);
-  updateMatchInfo();
-}
-
-function prevMatch() {
-  const v = view.value;
-  if (!v || !searchText.value) return;
-  cmFindPrevious(v);
-  updateMatchInfo();
-}
-
-function doReplace() {
-  const v = view.value;
-  if (!v || !searchText.value) return;
-  cmReplaceNext(v);
-  updateMatchInfo();
-}
-
-function doReplaceAll() {
-  const v = view.value;
-  if (!v || !searchText.value) return;
-  cmReplaceAll(v);
-  updateMatchInfo();
-}
-
-function onSearchKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") {
-    e.preventDefault();
-    closeSearch();
-  } else if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    nextMatch();
-  } else if (e.key === "Enter" && e.shiftKey) {
-    e.preventDefault();
-    prevMatch();
-  }
-}
-
-watch([searchText, caseSensitive, useRegex, replaceText], () => {
-  if (searchVisible.value) dispatchSearchQuery();
-});
-
-defineExpose({ openSearch });
+defineExpose({ openSearch, openReplace });
 </script>
 
 <template>
@@ -1441,101 +1482,6 @@ defineExpose({ openSearch });
     @gestureend="onEditorGestureEnd"
   >
     <div ref="editorRef" data-query-editor-root class="h-full w-full overflow-hidden" />
-    <Transition
-      enter-active-class="transition-all duration-150"
-      leave-active-class="transition-all duration-100"
-      enter-from-class="opacity-0 -translate-y-1"
-      leave-to-class="opacity-0 -translate-y-1"
-    >
-      <div
-        v-if="searchVisible"
-        class="absolute top-1 right-4 z-20 bg-background border rounded-md shadow-md p-1.5 flex flex-col gap-1"
-      >
-        <div class="flex items-center gap-0.5">
-          <input
-            ref="searchInputRef"
-            v-model="searchText"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            class="w-48 h-6 text-xs bg-input border rounded px-2 outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
-            :placeholder="t('editor.search.find')"
-            @keydown="onSearchKeydown"
-          />
-          <button
-            class="w-6 h-6 flex items-center justify-center rounded text-xs font-mono hover:bg-accent"
-            :class="caseSensitive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'"
-            :title="t('editor.search.caseSensitive')"
-            @click="caseSensitive = !caseSensitive"
-          >
-            Aa
-          </button>
-          <button
-            class="w-6 h-6 flex items-center justify-center rounded text-xs font-mono hover:bg-accent"
-            :class="useRegex ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'"
-            :title="t('editor.search.regex')"
-            @click="useRegex = !useRegex"
-          >
-            .*
-          </button>
-          <span v-if="searchText" class="text-xs text-muted-foreground min-w-[3rem] text-center shrink-0">
-            {{ matchCount > 0 ? `${currentMatchIndex}/${matchCount}` : t("editor.search.noResults") }}
-          </span>
-          <button
-            class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            :title="t('editor.search.prevMatch')"
-            @click="prevMatch"
-          >
-            <ChevronUp class="w-3.5 h-3.5" />
-          </button>
-          <button
-            class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            :title="t('editor.search.nextMatch')"
-            @click="nextMatch"
-          >
-            <ChevronDown class="w-3.5 h-3.5" />
-          </button>
-          <button
-            class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            :title="showReplace ? t('editor.search.collapseReplace') : t('editor.search.expandReplace')"
-            @click="showReplace = !showReplace"
-          >
-            <ChevronRight class="w-3 h-3 transition-transform" :class="showReplace && 'rotate-90'" />
-          </button>
-          <button
-            class="w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-            :title="t('editor.search.close')"
-            @click="closeSearch"
-          >
-            <X class="w-3.5 h-3.5" />
-          </button>
-        </div>
-        <div v-if="showReplace" class="flex items-center gap-0.5">
-          <input
-            v-model="replaceText"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            class="w-48 h-6 text-xs bg-input border rounded px-2 outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
-            :placeholder="t('editor.search.replace')"
-            @keydown.enter.prevent="doReplace"
-          />
-          <button
-            class="h-6 px-1.5 flex items-center justify-center rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground border"
-            :title="t('editor.search.replace')"
-            @click="doReplace"
-          >
-            {{ t("editor.search.replace") }}
-          </button>
-          <button
-            class="h-6 px-1.5 flex items-center justify-center rounded text-xs text-muted-foreground hover:bg-accent hover:text-foreground border"
-            :title="t('editor.search.replaceAll')"
-            @click="doReplaceAll"
-          >
-            全部
-          </button>
-        </div>
-      </div>
-    </Transition>
+    <EditorSearchPanel ref="searchPanelRef" :view="view" />
   </div>
 </template>

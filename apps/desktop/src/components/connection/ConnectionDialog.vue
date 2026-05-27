@@ -29,17 +29,19 @@ import {
   FilePlus2,
   FolderOpen,
   Grid3X3,
+  KeyRound,
   Link2,
   List,
   Pencil,
   Search,
+  ShieldCheck,
 } from "lucide-vue-next";
 
 type DbOption = { value: string; label: string };
 type DbCategory = { key: string; title: string; options: DbOption[] };
 type DialogStep = "select" | "config";
 type DbPickerView = "icon" | "list";
-type ConfigTab = "connection" | "ssh" | "proxy";
+type ConfigTab = "connection" | "tls" | "ssh" | "proxy";
 
 const { t } = useI18n();
 const { toast } = useToast();
@@ -96,10 +98,17 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   ssl: false,
   sysdba: false,
   oracle_connect_method: "service_name",
+  ca_cert_path: "",
   oracle_connection_type: "service_name",
   connection_string: undefined,
   jdbc_driver_class: undefined,
   jdbc_driver_paths: [],
+  redis_connection_mode: "standalone",
+  redis_sentinel_master: "",
+  redis_sentinel_nodes: "",
+  redis_sentinel_username: "",
+  redis_sentinel_password: "",
+  redis_sentinel_tls: false,
 });
 
 const form = ref(defaultForm());
@@ -359,9 +368,16 @@ watch(
           config.oracle_connect_method || (config.oracle_connection_type === "sid" ? "sid" : "service_name"),
         oracle_connection_type:
           config.oracle_connection_type || (config.oracle_connect_method === "sid" ? "sid" : "service_name"),
+        ca_cert_path: config.ca_cert_path || "",
         connection_string: config.connection_string,
         jdbc_driver_class: config.jdbc_driver_class,
         jdbc_driver_paths: config.jdbc_driver_paths || [],
+        redis_connection_mode: config.redis_connection_mode || "standalone",
+        redis_sentinel_master: config.redis_sentinel_master || "",
+        redis_sentinel_nodes: config.redis_sentinel_nodes || "",
+        redis_sentinel_username: config.redis_sentinel_username || "",
+        redis_sentinel_password: config.redis_sentinel_password || "",
+        redis_sentinel_tls: config.redis_sentinel_tls || false,
       };
       selectedType.value = profile;
       mongoUseUrl.value = config.db_type === "mongodb" && !!config.connection_string;
@@ -574,6 +590,74 @@ const filePathPlaceholder = computed(() => {
   return "/path/to/database.db or :memory:";
 });
 const supportsMemoryDatabasePath = computed(() => form.value.db_type === "sqlite" || form.value.db_type === "duckdb");
+const tlsCapableDatabaseTypes = new Set<DatabaseType>([
+  "mysql",
+  "postgres",
+  "redshift",
+  "gaussdb",
+  "opengauss",
+  "redis",
+  "clickhouse",
+  "elasticsearch",
+]);
+const supportsTlsToggle = computed(() => tlsCapableDatabaseTypes.has(form.value.db_type));
+const supportsCaCertificatePath = computed(() => form.value.db_type === "clickhouse");
+const bareMysqlProfiles = new Set(["doris", "starrocks", "selectdb", "oceanbase"]);
+const supportsMysqlTlsOptions = computed(
+  () => form.value.db_type === "mysql" && !bareMysqlProfiles.has(selectedType.value),
+);
+const mysqlTlsMode = computed({
+  get: () => mysqlTlsModeFromParams(form.value.url_params, form.value.ssl),
+  set: (value: string) => {
+    form.value.ssl = value !== "preferred" && value !== "disabled";
+    form.value.url_params = applyMysqlTlsMode(form.value.url_params, value);
+  },
+});
+const mysqlClientCertPath = computed({
+  get: () => getUrlParam(form.value.url_params, "ssl-cert") || getUrlParam(form.value.url_params, "sslcert"),
+  set: (value: string) => {
+    let next = setUrlParam(form.value.url_params, "sslcert", "");
+    form.value.url_params = setUrlParam(next, "ssl-cert", value);
+  },
+});
+const mysqlClientKeyPath = computed({
+  get: () => getUrlParam(form.value.url_params, "ssl-key") || getUrlParam(form.value.url_params, "sslkey"),
+  set: (value: string) => {
+    let next = setUrlParam(form.value.url_params, "sslkey", "");
+    form.value.url_params = setUrlParam(next, "ssl-key", value);
+  },
+});
+const nativePostgresTlsDatabaseTypes = new Set<DatabaseType>(["postgres", "redshift", "gaussdb", "opengauss"]);
+const supportsPostgresTlsOptions = computed(() => nativePostgresTlsDatabaseTypes.has(form.value.db_type));
+const postgresTlsMode = computed({
+  get: () => {
+    const value = normalizePostgresSslMode(getUrlParam(form.value.url_params, "sslmode"));
+    if (value) return value;
+    return form.value.ssl ? "require" : "disable";
+  },
+  set: (value: string) => {
+    form.value.ssl = value !== "disable";
+    form.value.url_params = setUrlParam(form.value.url_params, "sslmode", value === "prefer" ? "" : value);
+  },
+});
+const postgresRootCertPath = computed({
+  get: () => getUrlParam(form.value.url_params, "sslrootcert"),
+  set: (value: string) => {
+    form.value.url_params = setUrlParam(form.value.url_params, "sslrootcert", value);
+  },
+});
+const postgresClientCertPath = computed({
+  get: () => getUrlParam(form.value.url_params, "sslcert"),
+  set: (value: string) => {
+    form.value.url_params = setUrlParam(form.value.url_params, "sslcert", value);
+  },
+});
+const postgresClientKeyPath = computed({
+  get: () => getUrlParam(form.value.url_params, "sslkey"),
+  set: (value: string) => {
+    form.value.url_params = setUrlParam(form.value.url_params, "sslkey", value);
+  },
+});
 const canUseSsh = computed(() => form.value.db_type !== "sqlite" && form.value.db_type !== "access");
 const canUseProxy = computed(
   () => form.value.db_type !== "sqlite" && form.value.db_type !== "duckdb" && form.value.db_type !== "access",
@@ -676,6 +760,130 @@ function generateConnectionName(): string {
   return `${label}_${rand}`;
 }
 
+function getUrlParam(params: string | undefined, key: string): string {
+  const parsed = new URLSearchParams((params || "").trim().replace(/^\?/, ""));
+  return parsed.get(key) || "";
+}
+
+function setUrlParam(params: string | undefined, key: string, value: string): string {
+  const parsed = new URLSearchParams((params || "").trim().replace(/^\?/, ""));
+  const normalized = value.trim();
+  if (normalized) {
+    parsed.set(key, normalized);
+  } else {
+    parsed.delete(key);
+  }
+  return parsed.toString();
+}
+
+function deleteUrlParams(params: string | undefined, keys: string[]): string {
+  const parsed = new URLSearchParams((params || "").trim().replace(/^\?/, ""));
+  for (const key of keys) {
+    parsed.delete(key);
+  }
+  return parsed.toString();
+}
+
+function mysqlTlsModeFromParams(params: string | undefined, ssl: boolean | undefined): string {
+  const sslMode = getUrlParam(params, "ssl-mode") || getUrlParam(params, "sslmode");
+  switch (sslMode.trim().toLowerCase().replace("-", "_")) {
+    case "disabled":
+    case "disable":
+      return "disabled";
+    case "preferred":
+    case "prefer":
+      return "preferred";
+    case "required":
+    case "require":
+      return "required";
+    case "verify_ca":
+      return "verify_ca";
+    case "verify_identity":
+      return "verify_identity";
+  }
+
+  if (!ssl && getUrlParam(params, "require_ssl").toLowerCase() !== "true") return "preferred";
+  if (getUrlParam(params, "verify_identity").toLowerCase() === "true") return "verify_identity";
+  if (getUrlParam(params, "verify_ca").toLowerCase() === "true") return "verify_ca";
+  return "required";
+}
+
+function applyMysqlTlsMode(params: string | undefined, mode: string): string {
+  let next = deleteUrlParams(params, ["ssl-mode", "sslmode", "require_ssl", "verify_ca", "verify_identity"]);
+  if (mode === "disabled") {
+    return setUrlParam(next, "ssl-mode", "disabled");
+  }
+  if (mode === "preferred") {
+    return next;
+  }
+
+  next = setUrlParam(next, "require_ssl", "true");
+  if (mode === "required") {
+    next = setUrlParam(next, "verify_ca", "false");
+    return setUrlParam(next, "verify_identity", "false");
+  }
+  if (mode === "verify_ca") {
+    next = setUrlParam(next, "verify_ca", "true");
+    return setUrlParam(next, "verify_identity", "false");
+  }
+  next = setUrlParam(next, "verify_ca", "true");
+  return setUrlParam(next, "verify_identity", "true");
+}
+
+function normalizePostgresSslMode(value: string): string {
+  switch (value.trim().toLowerCase()) {
+    case "disable":
+    case "prefer":
+    case "require":
+    case "verify-ca":
+    case "verify-full":
+      return value.trim().toLowerCase();
+    case "verify_identity":
+    case "verify-identity":
+      return "verify-full";
+    default:
+      return "";
+  }
+}
+
+function normalizeRedisSentinelNodes(value: string): string {
+  return value
+    .split(/[\n,;]+/)
+    .map((node) => node.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function firstRedisSentinelEndpoint(value?: string): { host: string; port: number } | null {
+  const first = normalizeRedisSentinelNodes(value || "")
+    .split("\n")
+    .find(Boolean);
+  if (!first) return null;
+  return parseRedisEndpoint(first, 26379);
+}
+
+function parseRedisEndpoint(value: string, defaultPort: number): { host: string; port: number } {
+  const endpoint = value
+    .trim()
+    .replace(/^rediss?:\/\//, "")
+    .replace(/^.*@/, "")
+    .replace(/[/?#].*$/, "");
+  if (endpoint.startsWith("[")) {
+    const end = endpoint.indexOf("]");
+    if (end > 0) {
+      const host = endpoint.slice(1, end);
+      const portText = endpoint.slice(end + 1).replace(/^:/, "");
+      const port = Number(portText);
+      return { host, port: Number.isFinite(port) && port > 0 ? port : defaultPort };
+    }
+  }
+  const parts = endpoint.split(":");
+  if (parts.length === 2) {
+    const port = Number(parts[1]);
+    return { host: parts[0], port: Number.isFinite(port) && port > 0 ? port : defaultPort };
+  }
+  return { host: endpoint, port: defaultPort };
+}
 function resetTestState() {
   testRunId += 1;
   isTesting.value = false;
@@ -816,6 +1024,12 @@ watch(canUseProxy, (value) => {
   }
 });
 
+watch(supportsTlsToggle, (value) => {
+  if (!value && configTab.value === "tls") {
+    configTab.value = "connection";
+  }
+});
+
 async function save() {
   if (!ensureConnectionHostResolvedFromUrl()) return;
   if (isSaving.value) return;
@@ -864,6 +1078,7 @@ function buildSubmitConfig(id: string): ConnectionConfig {
   config.ssh_connect_timeout_secs = Number.isFinite(sshTimeout) && sshTimeout > 0 ? sshTimeout : 5;
   const proxyPort = Number(config.proxy_port);
   config.proxy_port = Number.isFinite(proxyPort) && proxyPort > 0 ? proxyPort : 1080;
+  if (!config.one_time) config.one_time = undefined;
   if (config.db_type === "mongodb") {
     if (!mongoUseUrl.value) config.connection_string = undefined;
   } else if (config.db_type !== "jdbc" && !(isOracleOci.value && oracleUseConnectString.value)) {
@@ -878,6 +1093,35 @@ function buildSubmitConfig(id: string): ConnectionConfig {
   } else {
     config.oracle_connection_type = undefined;
     config.oracle_connect_method = "service_name";
+  }
+  if (config.db_type !== "redis") {
+    config.redis_connection_mode = undefined;
+    config.redis_sentinel_master = undefined;
+    config.redis_sentinel_nodes = undefined;
+    config.redis_sentinel_username = undefined;
+    config.redis_sentinel_password = undefined;
+    config.redis_sentinel_tls = undefined;
+  } else if (config.redis_connection_mode === "sentinel") {
+    config.redis_sentinel_master = config.redis_sentinel_master?.trim() || "";
+    config.redis_sentinel_nodes = normalizeRedisSentinelNodes(config.redis_sentinel_nodes || "");
+    config.redis_sentinel_username = config.redis_sentinel_username?.trim() || "";
+    const firstNode = firstRedisSentinelEndpoint(config.redis_sentinel_nodes);
+    if (firstNode) {
+      config.host = firstNode.host;
+      config.port = firstNode.port;
+    }
+  } else {
+    config.redis_connection_mode = "standalone";
+    config.redis_sentinel_master = undefined;
+    config.redis_sentinel_nodes = undefined;
+    config.redis_sentinel_username = undefined;
+    config.redis_sentinel_password = undefined;
+    config.redis_sentinel_tls = undefined;
+  }
+  if (config.db_type !== "mysql" && config.db_type !== "clickhouse") {
+    config.ca_cert_path = undefined;
+  } else {
+    config.ca_cert_path = config.ca_cert_path?.trim() || "";
   }
   if (config.db_type === "jdbc") {
     config.host = "";
@@ -909,6 +1153,69 @@ async function browseSshKeyPath() {
     });
     if (selected && typeof selected === "string") {
       form.value.ssh_key_path = selected;
+    }
+  }
+}
+
+async function browseCaCertPath() {
+  if (isTauriRuntime()) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      title: "Select CA Certificate",
+      multiple: false,
+      filters: [{ name: "Certificate", extensions: ["crt", "cer", "pem"] }],
+    });
+    if (selected && typeof selected === "string") {
+      form.value.ca_cert_path = selected;
+    }
+  }
+}
+
+async function browseMysqlTlsFile(target: "cert" | "key") {
+  if (isTauriRuntime()) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      title: target === "cert" ? t("connection.mysqlClientCertBrowse") : t("connection.mysqlClientKeyBrowse"),
+      multiple: false,
+      filters: [
+        { name: "PEM", extensions: ["pem", "crt", "cer", "key"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+    if (selected && typeof selected === "string") {
+      if (target === "cert") {
+        mysqlClientCertPath.value = selected;
+      } else {
+        mysqlClientKeyPath.value = selected;
+      }
+    }
+  }
+}
+
+async function browsePostgresTlsFile(target: "root" | "cert" | "key") {
+  if (isTauriRuntime()) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      title:
+        target === "root"
+          ? t("connection.postgresRootCertBrowse")
+          : target === "cert"
+            ? t("connection.postgresClientCertBrowse")
+            : t("connection.postgresClientKeyBrowse"),
+      multiple: false,
+      filters: [
+        { name: "PEM", extensions: ["pem", "crt", "cer", "key"] },
+        { name: "All Files", extensions: ["*"] },
+      ],
+    });
+    if (selected && typeof selected === "string") {
+      if (target === "root") {
+        postgresRootCertPath.value = selected;
+      } else if (target === "cert") {
+        postgresClientCertPath.value = selected;
+      } else {
+        postgresClientKeyPath.value = selected;
+      }
     }
   }
 }
@@ -1138,9 +1445,13 @@ function openExternalUrl(url: string) {
       <template v-else>
         <div class="space-y-3">
           <Tabs v-model="configTab" class="min-h-0">
-            <div v-if="canUseSsh || canUseProxy" class="flex items-center justify-between border-b pb-2">
+            <div
+              v-if="supportsTlsToggle || canUseSsh || canUseProxy"
+              class="flex items-center justify-between border-b pb-2"
+            >
               <TabsList>
                 <TabsTrigger value="connection">{{ t("connection.basicTab") }}</TabsTrigger>
+                <TabsTrigger v-if="supportsTlsToggle" value="tls">{{ t("connection.tlsTab") }}</TabsTrigger>
                 <TabsTrigger v-if="canUseSsh" value="ssh">{{ t("connection.sshTunnel") }}</TabsTrigger>
                 <TabsTrigger v-if="canUseProxy" value="proxy">{{ t("connection.proxy") }}</TabsTrigger>
               </TabsList>
@@ -1343,10 +1654,63 @@ function openExternalUrl(url: string) {
                 <!-- Redis: host, port, user, password, ssl -->
                 <template v-else-if="form.db_type === 'redis'">
                   <div class="grid grid-cols-4 items-center gap-4">
-                    <Label class="text-right">{{ t("connection.host") }}</Label>
+                    <Label class="text-right text-xs">{{ t("connection.mode") }}</Label>
+                    <div class="col-span-3 flex gap-2">
+                      <Button
+                        size="sm"
+                        :variant="form.redis_connection_mode === 'sentinel' ? 'outline' : 'default'"
+                        @click="form.redis_connection_mode = 'standalone'"
+                      >
+                        {{ t("connection.redisStandaloneMode") }}
+                      </Button>
+                      <Button
+                        size="sm"
+                        :variant="form.redis_connection_mode === 'sentinel' ? 'default' : 'outline'"
+                        @click="form.redis_connection_mode = 'sentinel'"
+                      >
+                        {{ t("connection.redisSentinelMode") }}
+                      </Button>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right">{{
+                      form.redis_connection_mode === "sentinel"
+                        ? t("connection.redisFirstSentinel")
+                        : t("connection.host")
+                    }}</Label>
                     <Input v-model="form.host" class="col-span-2" />
                     <Input v-model.number="form.port" type="number" class="col-span-1" />
                   </div>
+                  <template v-if="form.redis_connection_mode === 'sentinel'">
+                    <div class="grid grid-cols-4 items-start gap-4">
+                      <Label class="text-right mt-2">{{ t("connection.redisSentinelNodes") }}</Label>
+                      <textarea
+                        v-model="form.redis_sentinel_nodes"
+                        class="col-span-3 flex min-h-[76px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        placeholder="sentinel-1:26379&#10;sentinel-2:26379"
+                        spellcheck="false"
+                      />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.redisSentinelMaster") }}</Label>
+                      <Input v-model="form.redis_sentinel_master" class="col-span-3" placeholder="mymaster" />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.redisSentinelUser") }}</Label>
+                      <Input v-model="form.redis_sentinel_username" class="col-span-3" />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right">{{ t("connection.redisSentinelPassword") }}</Label>
+                      <Input v-model="form.redis_sentinel_password" type="password" class="col-span-3" />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <Label class="text-right text-xs">{{ t("connection.redisSentinelTls") }}</Label>
+                      <label class="col-span-3 inline-flex items-center gap-2">
+                        <input type="checkbox" v-model="form.redis_sentinel_tls" class="mr-0" />
+                        <span class="text-xs text-muted-foreground">{{ t("connection.redisSentinelTlsHint") }}</span>
+                      </label>
+                    </div>
+                  </template>
                   <div class="grid grid-cols-4 items-center gap-4">
                     <Label class="text-right">{{ t("connection.user") }}</Label>
                     <Input v-model="form.username" class="col-span-3" placeholder="default" />
@@ -1359,13 +1723,6 @@ function openExternalUrl(url: string) {
                       class="col-span-3"
                       :placeholder="t('connection.databasePlaceholder')"
                     />
-                  </div>
-                  <div class="grid grid-cols-4 items-center gap-4">
-                    <Label class="text-right text-xs">SSL/TLS</Label>
-                    <div class="col-span-3">
-                      <input type="checkbox" v-model="form.ssl" class="mr-2" />
-                      <span class="text-xs text-muted-foreground">{{ t("connection.sshEnable") }}</span>
-                    </div>
                   </div>
                 </template>
 
@@ -1601,6 +1958,7 @@ function openExternalUrl(url: string) {
                       form.db_type === 'yashandb' ||
                       form.db_type === 'vastbase' ||
                       form.db_type === 'goldendb' ||
+                      form.db_type === 'clickhouse' ||
                       form.db_type === 'saphana' ||
                       form.db_type === 'bigquery'
                     "
@@ -1615,15 +1973,284 @@ function openExternalUrl(url: string) {
                           ? 'charset=utf8mb4'
                           : form.db_type === 'saphana'
                             ? 'databaseName=TENANT_DB'
-                            : form.db_type === 'bigquery'
-                              ? 'OAuthType=0;OAuthServiceAcctEmail=svc@project.iam.gserviceaccount.com;OAuthPvtKeyPath=/path/key.json'
-                              : form.db_type === 'informix'
-                                ? 'INFORMIXSERVER=informix;CLIENT_LOCALE=en_US.utf8;DB_LOCALE=en_US.utf8'
-                                : 'sslmode=disable'
+                            : form.db_type === 'clickhouse'
+                              ? 'secure=true'
+                              : form.db_type === 'bigquery'
+                                ? 'OAuthType=0;OAuthServiceAcctEmail=svc@project.iam.gserviceaccount.com;OAuthPvtKeyPath=/path/key.json'
+                                : form.db_type === 'informix'
+                                  ? 'INFORMIXSERVER=informix;CLIENT_LOCALE=en_US.utf8;DB_LOCALE=en_US.utf8'
+                                  : 'sslmode=disable'
                       "
                     />
                   </div>
                 </template>
+              </div>
+            </TabsContent>
+
+            <TabsContent v-if="supportsTlsToggle" value="tls" class="m-0">
+              <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
+                <div
+                  v-if="!supportsPostgresTlsOptions && !supportsMysqlTlsOptions"
+                  class="grid grid-cols-4 items-center gap-4"
+                >
+                  <Label class="text-right text-xs">SSL/TLS</Label>
+                  <label class="col-span-3 flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" v-model="form.ssl" class="mr-0" />
+                    <span class="text-xs text-muted-foreground">{{ t("connection.sslEnable") }}</span>
+                  </label>
+                </div>
+
+                <template v-if="supportsMysqlTlsOptions">
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right text-xs">{{ t("connection.mysqlTlsMode") }}</Label>
+                    <Select v-model="mysqlTlsMode">
+                      <SelectTrigger class="col-span-3 h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="preferred">{{ t("connection.mysqlTlsModePreferred") }}</SelectItem>
+                        <SelectItem value="disabled">{{ t("connection.mysqlTlsModeDisabled") }}</SelectItem>
+                        <SelectItem value="required">{{ t("connection.mysqlTlsModeRequired") }}</SelectItem>
+                        <SelectItem value="verify_ca">{{ t("connection.mysqlTlsModeVerifyCa") }}</SelectItem>
+                        <SelectItem value="verify_identity">{{
+                          t("connection.mysqlTlsModeVerifyIdentity")
+                        }}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div class="grid grid-cols-4 items-start gap-4">
+                    <Label class="pt-2 text-right text-xs">
+                      <span class="inline-flex items-center justify-end gap-1">
+                        <ShieldCheck class="h-3.5 w-3.5" />
+                        {{ t("connection.caCertPath") }}
+                      </span>
+                    </Label>
+                    <div class="col-span-3 space-y-2">
+                      <div class="flex items-center gap-1">
+                        <Input
+                          v-model="form.ca_cert_path"
+                          class="flex-1"
+                          :placeholder="t('connection.caCertPathPlaceholder')"
+                          :disabled="mysqlTlsMode === 'preferred' || mysqlTlsMode === 'disabled'"
+                        />
+                        <Tooltip v-if="isDesktop">
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              class="h-9 w-9 shrink-0"
+                              :disabled="mysqlTlsMode === 'preferred' || mysqlTlsMode === 'disabled'"
+                              @click="browseCaCertPath"
+                            >
+                              <FolderOpen class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.caCertPathBrowse") }}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <p class="text-[11px] leading-4 text-muted-foreground">
+                        {{ t("connection.mysqlCaCertHint") }}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-4 items-start gap-4">
+                    <Label class="pt-2 text-right text-xs">
+                      <span class="inline-flex items-center justify-end gap-1">
+                        <KeyRound class="h-3.5 w-3.5" />
+                        {{ t("connection.mysqlClientCert") }}
+                      </span>
+                    </Label>
+                    <div class="col-span-3 grid gap-2">
+                      <div class="flex items-center gap-1">
+                        <Input
+                          v-model="mysqlClientCertPath"
+                          class="flex-1"
+                          :placeholder="t('connection.mysqlClientCertPlaceholder')"
+                          :disabled="mysqlTlsMode === 'preferred' || mysqlTlsMode === 'disabled'"
+                        />
+                        <Tooltip v-if="isDesktop">
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              class="h-9 w-9 shrink-0"
+                              :disabled="mysqlTlsMode === 'preferred' || mysqlTlsMode === 'disabled'"
+                              @click="browseMysqlTlsFile('cert')"
+                            >
+                              <FolderOpen class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.mysqlClientCertBrowse") }}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <Input
+                          v-model="mysqlClientKeyPath"
+                          class="flex-1"
+                          :placeholder="t('connection.mysqlClientKeyPlaceholder')"
+                          :disabled="mysqlTlsMode === 'preferred' || mysqlTlsMode === 'disabled'"
+                        />
+                        <Tooltip v-if="isDesktop">
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              class="h-9 w-9 shrink-0"
+                              :disabled="mysqlTlsMode === 'preferred' || mysqlTlsMode === 'disabled'"
+                              @click="browseMysqlTlsFile('key')"
+                            >
+                              <FolderOpen class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.mysqlClientKeyBrowse") }}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <p class="text-[11px] leading-4 text-muted-foreground">
+                        {{ t("connection.mysqlClientCertHint") }}
+                      </p>
+                    </div>
+                  </div>
+                </template>
+
+                <template v-if="supportsPostgresTlsOptions">
+                  <div class="grid grid-cols-4 items-center gap-4">
+                    <Label class="text-right text-xs">{{ t("connection.postgresSslMode") }}</Label>
+                    <Select v-model="postgresTlsMode">
+                      <SelectTrigger class="col-span-3 h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="disable">{{ t("connection.postgresSslModeDisable") }}</SelectItem>
+                        <SelectItem value="prefer">{{ t("connection.postgresSslModePrefer") }}</SelectItem>
+                        <SelectItem value="require">{{ t("connection.postgresSslModeRequire") }}</SelectItem>
+                        <SelectItem value="verify-ca">{{ t("connection.postgresSslModeVerifyCa") }}</SelectItem>
+                        <SelectItem value="verify-full">{{ t("connection.postgresSslModeVerifyFull") }}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div class="grid grid-cols-4 items-start gap-4">
+                    <Label class="pt-2 text-right text-xs">
+                      <span class="inline-flex items-center justify-end gap-1">
+                        <ShieldCheck class="h-3.5 w-3.5" />
+                        {{ t("connection.postgresServerCert") }}
+                      </span>
+                    </Label>
+                    <div class="col-span-3 space-y-2">
+                      <div class="flex items-center gap-1">
+                        <Input
+                          v-model="postgresRootCertPath"
+                          class="flex-1"
+                          :placeholder="t('connection.postgresRootCertPlaceholder')"
+                          :disabled="postgresTlsMode === 'disable'"
+                        />
+                        <Tooltip v-if="isDesktop">
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              class="h-9 w-9 shrink-0"
+                              :disabled="postgresTlsMode === 'disable'"
+                              @click="browsePostgresTlsFile('root')"
+                            >
+                              <FolderOpen class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.postgresRootCertBrowse") }}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <p class="text-[11px] leading-4 text-muted-foreground">
+                        {{ t("connection.postgresRootCertHint") }}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-4 items-start gap-4">
+                    <Label class="pt-2 text-right text-xs">
+                      <span class="inline-flex items-center justify-end gap-1">
+                        <KeyRound class="h-3.5 w-3.5" />
+                        {{ t("connection.postgresClientCert") }}
+                      </span>
+                    </Label>
+                    <div class="col-span-3 grid gap-2">
+                      <div class="flex items-center gap-1">
+                        <Input
+                          v-model="postgresClientCertPath"
+                          class="flex-1"
+                          :placeholder="t('connection.postgresClientCertPlaceholder')"
+                          :disabled="postgresTlsMode === 'disable'"
+                        />
+                        <Tooltip v-if="isDesktop">
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              class="h-9 w-9 shrink-0"
+                              :disabled="postgresTlsMode === 'disable'"
+                              @click="browsePostgresTlsFile('cert')"
+                            >
+                              <FolderOpen class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.postgresClientCertBrowse") }}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <Input
+                          v-model="postgresClientKeyPath"
+                          class="flex-1"
+                          :placeholder="t('connection.postgresClientKeyPlaceholder')"
+                          :disabled="postgresTlsMode === 'disable'"
+                        />
+                        <Tooltip v-if="isDesktop">
+                          <TooltipTrigger as-child>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              class="h-9 w-9 shrink-0"
+                              :disabled="postgresTlsMode === 'disable'"
+                              @click="browsePostgresTlsFile('key')"
+                            >
+                              <FolderOpen class="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>{{ t("connection.postgresClientKeyBrowse") }}</TooltipContent>
+                        </Tooltip>
+                      </div>
+                      <p class="text-[11px] leading-4 text-muted-foreground">
+                        {{ t("connection.postgresClientCertHint") }}
+                      </p>
+                    </div>
+                  </div>
+                </template>
+
+                <div v-if="supportsCaCertificatePath" class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.caCertPath") }}</Label>
+                  <div class="col-span-3 flex items-center gap-1">
+                    <Input
+                      v-model="form.ca_cert_path"
+                      class="flex-1"
+                      :placeholder="t('connection.caCertPathPlaceholder')"
+                      :disabled="!form.ssl"
+                    />
+                    <Tooltip v-if="isDesktop">
+                      <TooltipTrigger as-child>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          class="h-9 w-9 shrink-0"
+                          :disabled="!form.ssl"
+                          @click="browseCaCertPath"
+                        >
+                          <FolderOpen class="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{{ t("connection.caCertPathBrowse") }}</TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
               </div>
             </TabsContent>
 

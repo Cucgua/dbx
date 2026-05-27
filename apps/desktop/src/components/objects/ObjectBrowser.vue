@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { RecycleScroller } from "vue-virtual-scroller";
+import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 import {
   ArrowDown,
   ArrowRightLeft,
   ArrowUp,
   Braces,
+  CheckSquare,
   Code2,
   Copy,
   CopyPlus,
@@ -23,6 +25,7 @@ import {
   Scissors,
   Search,
   ScrollText,
+  Square,
   Table2,
   TerminalSquare,
   Trash2,
@@ -105,6 +108,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const { toast } = useToast();
+const { highlight } = useSqlHighlighter();
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 
@@ -144,6 +148,9 @@ const emptyPreviewSql = ref("");
 const showDuplicateDialog = ref(false);
 const duplicateTarget = ref<ObjectBrowserRow | null>(null);
 const duplicateTableName = ref("");
+const selectedTableIds = ref<Set<string>>(new Set());
+const showBatchDropConfirm = ref(false);
+const batchDropPreviewSql = ref("");
 let loadId = 0;
 
 const needsSchema = computed(() => isSchemaAware(props.connection.db_type));
@@ -189,7 +196,7 @@ const hasComments = computed(() => rows.value.some((row) => row.comment?.trim())
 const hasCreatedAt = computed(() => rows.value.some((row) => row.created_at?.trim()));
 const hasUpdatedAt = computed(() => rows.value.some((row) => row.updated_at?.trim()));
 const gridTemplateColumns = computed(() => {
-  const columns = ["minmax(0,1fr)", "120px"];
+  const columns = ["34px", "minmax(0,1fr)", "120px"];
   if (hasCreatedAt.value) columns.push("150px");
   if (hasUpdatedAt.value) columns.push("150px");
   if (hasComments.value) columns.push("minmax(160px,0.7fr)");
@@ -206,6 +213,18 @@ const filteredRows = computed(() => {
   if (objectFilter.value === "functions") rows = rows.filter((row) => row.type === "FUNCTION");
   return sortObjectBrowserRows(rows, sortKey.value, sortDirection.value);
 });
+const selectableRows = computed(() => rows.value.filter((row) => row.type === "TABLE"));
+const visibleSelectableRows = computed(() => filteredRows.value.filter((row) => row.type === "TABLE"));
+const selectedTableRows = computed(() => {
+  const ids = selectedTableIds.value;
+  return selectableRows.value.filter((row) => ids.has(row.id));
+});
+const selectedTableCount = computed(() => selectedTableRows.value.length);
+const allVisibleTablesSelected = computed(
+  () =>
+    visibleSelectableRows.value.length > 0 &&
+    visibleSelectableRows.value.every((row) => selectedTableIds.value.has(row.id)),
+);
 
 function iconFor(row: ObjectBrowserRow) {
   if (row.type === "VIEW") return Eye;
@@ -551,6 +570,89 @@ function openDatabaseExport(row: ObjectBrowserRow) {
   };
 }
 
+function setSelectedTableIds(ids: Set<string>) {
+  selectedTableIds.value = new Set(ids);
+}
+
+function toggleTableSelection(row: ObjectBrowserRow) {
+  if (row.type !== "TABLE") return;
+  const next = new Set(selectedTableIds.value);
+  if (next.has(row.id)) {
+    next.delete(row.id);
+  } else {
+    next.add(row.id);
+  }
+  setSelectedTableIds(next);
+}
+
+function toggleVisibleTableSelection() {
+  const next = new Set(selectedTableIds.value);
+  if (allVisibleTablesSelected.value) {
+    for (const row of visibleSelectableRows.value) next.delete(row.id);
+  } else {
+    for (const row of visibleSelectableRows.value) next.add(row.id);
+  }
+  setSelectedTableIds(next);
+}
+
+function clearTableSelection() {
+  setSelectedTableIds(new Set());
+}
+
+function openBatchDatabaseExport() {
+  const selectedTables = selectedTableRows.value.map((row) => row.name);
+  if (selectedTables.length === 0) return;
+  connectionStore.databaseExportSource = {
+    connectionId: props.connection.id,
+    database: props.database,
+    schema: selectedTableRows.value[0]?.schema || selectedSchema.value,
+    tableNames: selectedTables,
+  };
+}
+
+async function refreshBatchDropPreviewSql() {
+  const statements: string[] = [];
+  for (const row of selectedTableRows.value) {
+    const sql = await buildDropObjectSql({
+      databaseType: props.connection.db_type,
+      objectType: "TABLE",
+      schema: row.schema || selectedSchema.value,
+      name: row.name,
+    }).catch(() => "");
+    if (sql) statements.push(sql);
+  }
+  batchDropPreviewSql.value = statements.join("\n");
+}
+
+function requestBatchDropTables() {
+  if (selectedTableCount.value === 0) return;
+  batchDropPreviewSql.value = "";
+  void refreshBatchDropPreviewSql();
+  showBatchDropConfirm.value = true;
+}
+
+async function confirmBatchDropTables() {
+  const targets = [...selectedTableRows.value];
+  if (targets.length === 0) return;
+  try {
+    for (const row of targets) {
+      const sql = await buildDropObjectSql({
+        databaseType: props.connection.db_type,
+        objectType: "TABLE",
+        schema: row.schema || selectedSchema.value,
+        name: row.name,
+      });
+      await api.executeQuery(props.connection.id, props.database, sql);
+    }
+    toast(t("objects.batchDropSuccess", { count: targets.length }));
+    clearTableSelection();
+    await reload();
+    await connectionStore.refreshObjectListTreeNode(props.connection.id, props.database, selectedSchema.value);
+  } catch (e: any) {
+    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
 async function exportStructure(row: ObjectBrowserRow) {
   try {
     const schema = row.schema || selectedSchema.value || props.database;
@@ -839,6 +941,8 @@ async function loadObjects() {
       fallbackSchema: schema,
       needsSchema: needsSchema.value,
     });
+    const availableTableIds = new Set(rows.value.filter((row) => row.type === "TABLE").map((row) => row.id));
+    setSelectedTableIds(new Set([...selectedTableIds.value].filter((id) => availableTableIds.has(id))));
   } catch (e: any) {
     if (id !== loadId) return;
     error.value = e?.message || String(e);
@@ -913,6 +1017,7 @@ watch(
     selectedSchema.value = props.schema;
     userHasSelectedFilter.value = false;
     objectFilter.value = "all";
+    clearTableSelection();
     void reload();
   },
   { immediate: true },
@@ -973,6 +1078,23 @@ watch(
         <RefreshCw class="h-3.5 w-3.5" :class="{ 'animate-spin': loadingObjects }" />
       </Button>
     </div>
+    <div v-if="selectedTableCount > 0" class="flex h-9 shrink-0 items-center gap-2 border-b bg-muted/30 px-3 text-xs">
+      <div class="min-w-0 flex-1 truncate text-muted-foreground">
+        {{ t("objects.selectedTables", { count: selectedTableCount }) }}
+      </div>
+      <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="openBatchDatabaseExport">
+        <Download class="mr-1.5 h-3.5 w-3.5" />
+        {{ t("objects.exportSelected") }}
+      </Button>
+      <Button variant="ghost" size="sm" class="h-7 px-2 text-xs text-destructive" @click="requestBatchDropTables">
+        <Trash2 class="mr-1.5 h-3.5 w-3.5" />
+        {{ t("objects.dropSelected") }}
+      </Button>
+      <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="clearTableSelection">
+        <X class="mr-1.5 h-3.5 w-3.5" />
+        {{ t("objects.clearSelection") }}
+      </Button>
+    </div>
 
     <div v-if="loadingObjects" class="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
       <Loader2 class="h-4 w-4 animate-spin" />
@@ -992,6 +1114,15 @@ watch(
         class="grid h-8 shrink-0 items-center gap-3 border-b bg-muted/40 px-3 text-xs font-medium text-muted-foreground"
         :style="{ gridTemplateColumns }"
       >
+        <button
+          class="flex h-6 w-6 items-center justify-center rounded-sm hover:bg-accent"
+          type="button"
+          :disabled="visibleSelectableRows.length === 0"
+          @click="toggleVisibleTableSelection"
+        >
+          <CheckSquare v-if="allVisibleTablesSelected" class="h-3.5 w-3.5 text-primary" />
+          <Square v-else class="h-3.5 w-3.5" />
+        </button>
         <button class="flex min-w-0 items-center gap-1 truncate text-left" type="button" @click="toggleSort('name')">
           <span class="truncate">{{ t("objects.name") }}</span>
           <component :is="sortIconFor('name')" v-if="sortIconFor('name')" class="h-3 w-3 shrink-0" />
@@ -1041,10 +1172,22 @@ watch(
             <ContextMenuTrigger as-child>
               <div
                 class="grid h-[38px] cursor-pointer items-center gap-3 border-b px-3 hover:bg-accent/50"
-                :class="{ 'bg-accent/40': sourceRow?.id === item.id }"
+                :class="{
+                  'bg-accent/40': sourceRow?.id === item.id,
+                  'bg-primary/5': selectedTableIds.has(item.id),
+                }"
                 :style="{ gridTemplateColumns }"
                 @click="openRow(item)"
               >
+                <button
+                  class="flex h-6 w-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+                  type="button"
+                  :class="{ invisible: item.type !== 'TABLE' }"
+                  @click.stop="toggleTableSelection(item)"
+                >
+                  <CheckSquare v-if="selectedTableIds.has(item.id)" class="h-3.5 w-3.5 text-primary" />
+                  <Square v-else class="h-3.5 w-3.5" />
+                </button>
                 <div class="flex min-w-0 items-center gap-2">
                   <component :is="iconFor(item)" class="h-3.5 w-3.5 shrink-0" :class="iconClass(item.type)" />
                   <span class="truncate text-[13px] font-medium text-foreground">{{ item.name }}</span>
@@ -1298,6 +1441,15 @@ watch(
     @confirm="confirmDrop"
   />
 
+  <DangerConfirmDialog
+    v-model:open="showBatchDropConfirm"
+    :title="t('objects.confirmBatchDropTitle')"
+    :message="t('objects.confirmBatchDropMessage', { count: selectedTableCount })"
+    :sql="batchDropPreviewSql"
+    :confirm-label="t('objects.dropSelected')"
+    @confirm="confirmBatchDropTables"
+  />
+
   <Dialog v-model:open="showRenameDialog">
     <DialogContent class="sm:max-w-[420px]">
       <DialogHeader>
@@ -1312,8 +1464,8 @@ watch(
         <pre
           v-if="renamePreviewSqlText"
           class="max-h-32 overflow-auto rounded bg-muted p-3 text-xs whitespace-pre-wrap"
-          >{{ renamePreviewSqlText }}</pre
-        >
+          v-html="highlight(renamePreviewSqlText)"
+        ></pre>
         <p v-if="renameError" class="text-sm text-destructive">{{ renameError }}</p>
       </div>
       <DialogFooter>

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, watch, shallowRef, computed } from "vue";
+import { ref, watch, shallowRef, computed, onMounted } from "vue";
 import type { EditorView as EditorViewType } from "@codemirror/view";
 import { useI18n } from "vue-i18n";
 import {
   CircleHelp,
+  Cloud,
   Copy,
+  Download,
   ExternalLink,
   FolderOpen,
   Loader2,
@@ -12,6 +14,8 @@ import {
   RefreshCw,
   Settings,
   Trash2,
+  Upload,
+  X,
 } from "lucide-vue-next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useSettingsStore,
   AI_PROVIDER_PRESETS,
@@ -41,10 +46,17 @@ import { useTheme } from "@/composables/useTheme";
 import {
   aiListModels,
   aiTestConnection,
+  forgetWebdavSavedPassword,
   listSystemFonts,
   loadMcpHttpStatus,
+  saveWebdavSavedPassword,
+  webdavPasswordStatus,
+  webdavSyncDownload,
+  webdavSyncTest,
+  webdavSyncUpload,
   type AiModelInfo,
   type McpHttpStatus,
+  type WebDavConfig,
 } from "@/lib/api";
 import { eventToShortcut } from "@/lib/keyboardShortcuts";
 import {
@@ -60,9 +72,11 @@ import { uuid } from "@/lib/utils";
 import { DEFAULT_SQL_SNIPPETS } from "@/lib/sqlCompletion";
 import AiProviderLogo from "@/components/icons/AiProviderLogo.vue";
 import type { AppThemeAppearance } from "@/lib/appTheme";
+import { useConnectionStore } from "@/stores/connectionStore";
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
+const connectionStore = useConnectionStore();
 const { isDark } = useTheme();
 
 const props = defineProps<{
@@ -83,7 +97,10 @@ const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
 const editWordWrap = ref(settingsStore.editorSettings.wordWrap);
 const editAppLayout = ref(settingsStore.editorSettings.appLayout);
 const editShowTrayIcon = ref(settingsStore.desktopSettings.show_tray_icon);
+const editShowColumnCommentsInHeader = ref(settingsStore.editorSettings.showColumnCommentsInHeader);
+const editCompactColumnHeaderActions = ref(settingsStore.editorSettings.compactColumnHeaderActions);
 const editRedisScanPageSize = ref(settingsStore.editorSettings.redisScanPageSize);
+const editQueryTimeoutSecs = ref(settingsStore.editorSettings.queryTimeoutSecs);
 const editShortcuts = ref(normalizeShortcutSettings(settingsStore.editorSettings.shortcuts));
 const editSidebarActivation = ref(settingsStore.editorSettings.sidebarActivation);
 const editOracleClientLibDir = ref(settingsStore.appSettings.oracleClientLibDir);
@@ -113,6 +130,7 @@ const mcpStatusStartedAt = computed(() => {
 });
 const editAutoSelectActiveSidebarNode = ref(settingsStore.editorSettings.autoSelectActiveSidebarNode);
 const editSidebarHiddenTablePrefixes = ref(settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n"));
+const editSidebarHideTableComments = ref(settingsStore.editorSettings.sidebarHideTableComments);
 const redisScanPageSizeOptions = [200, 1000, 5000, 10000];
 const systemFonts = ref<string[]>([]);
 const systemFontsLoading = ref(false);
@@ -182,10 +200,6 @@ function confirmDeleteSnippet(snippet: SqlSnippet) {
   }
 }
 
-function restoreDefaultSnippets() {
-  editSnippets.value = DEFAULT_SQL_SNIPPETS.map((s) => ({ ...s }));
-}
-
 const presetFontLabels = new Map(FONT_FAMILIES.map((font) => [font.value, font.label]));
 
 function cssFontFamilyForName(name: string): string {
@@ -243,7 +257,10 @@ watch(
       editWordWrap.value = settingsStore.editorSettings.wordWrap;
       editAppLayout.value = settingsStore.editorSettings.appLayout;
       editShowTrayIcon.value = settingsStore.desktopSettings.show_tray_icon;
+      editShowColumnCommentsInHeader.value = settingsStore.editorSettings.showColumnCommentsInHeader;
+      editCompactColumnHeaderActions.value = settingsStore.editorSettings.compactColumnHeaderActions;
       editRedisScanPageSize.value = settingsStore.editorSettings.redisScanPageSize;
+      editQueryTimeoutSecs.value = settingsStore.editorSettings.queryTimeoutSecs;
       editShortcuts.value = normalizeShortcutSettings(settingsStore.editorSettings.shortcuts);
       editSidebarActivation.value = settingsStore.editorSettings.sidebarActivation;
       editOracleClientLibDir.value = settingsStore.appSettings.oracleClientLibDir;
@@ -254,18 +271,12 @@ watch(
       void refreshMcpHttpStatus();
       editAutoSelectActiveSidebarNode.value = settingsStore.editorSettings.autoSelectActiveSidebarNode;
       editSidebarHiddenTablePrefixes.value = settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n");
+      editSidebarHideTableComments.value = settingsStore.editorSettings.sidebarHideTableComments;
       editSnippets.value = settingsStore.editorSettings.snippets.map((s) => ({ ...s }));
       void loadSystemFontOptions();
     }
   },
-);
-
-watch(
-  () => settingsStore.editorSettings.snippets,
-  (snippets) => {
-    editSnippets.value = snippets.map((s) => ({ ...s }));
-  },
-  { deep: true },
+  { immediate: true },
 );
 
 const shortcutConflicts = computed(() =>
@@ -289,10 +300,14 @@ function hasChanges(): boolean {
     editWordWrap.value !== settingsStore.editorSettings.wordWrap ||
     editAppLayout.value !== settingsStore.editorSettings.appLayout ||
     editShowTrayIcon.value !== settingsStore.desktopSettings.show_tray_icon ||
+    editShowColumnCommentsInHeader.value !== settingsStore.editorSettings.showColumnCommentsInHeader ||
+    editCompactColumnHeaderActions.value !== settingsStore.editorSettings.compactColumnHeaderActions ||
     editRedisScanPageSize.value !== settingsStore.editorSettings.redisScanPageSize ||
+    editQueryTimeoutSecs.value !== settingsStore.editorSettings.queryTimeoutSecs ||
     JSON.stringify(editShortcuts.value) !== JSON.stringify(settingsStore.editorSettings.shortcuts) ||
     editSidebarActivation.value !== settingsStore.editorSettings.sidebarActivation ||
     editAutoSelectActiveSidebarNode.value !== settingsStore.editorSettings.autoSelectActiveSidebarNode ||
+    editSidebarHideTableComments.value !== settingsStore.editorSettings.sidebarHideTableComments ||
     JSON.stringify(normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value)) !==
       JSON.stringify(settingsStore.editorSettings.sidebarHiddenTablePrefixes) ||
     JSON.stringify(editSnippets.value) !== JSON.stringify(settingsStore.editorSettings.snippets)
@@ -308,10 +323,14 @@ async function applySettings() {
     executeMode: editExecuteMode.value,
     wordWrap: editWordWrap.value,
     appLayout: editAppLayout.value,
+    showColumnCommentsInHeader: editShowColumnCommentsInHeader.value,
+    compactColumnHeaderActions: editCompactColumnHeaderActions.value,
     redisScanPageSize: editRedisScanPageSize.value,
+    queryTimeoutSecs: editQueryTimeoutSecs.value,
     shortcuts: editShortcuts.value,
     sidebarActivation: editSidebarActivation.value,
     autoSelectActiveSidebarNode: editAutoSelectActiveSidebarNode.value,
+    sidebarHideTableComments: editSidebarHideTableComments.value,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value),
     snippets: editSnippets.value,
   });
@@ -329,10 +348,14 @@ function resetDefaults() {
   editWordWrap.value = DEFAULT_EDITOR_SETTINGS.wordWrap;
   editAppLayout.value = DEFAULT_EDITOR_SETTINGS.appLayout;
   editShowTrayIcon.value = DEFAULT_DESKTOP_SETTINGS.show_tray_icon;
+  editShowColumnCommentsInHeader.value = DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader;
+  editCompactColumnHeaderActions.value = DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions;
   editRedisScanPageSize.value = DEFAULT_EDITOR_SETTINGS.redisScanPageSize;
+  editQueryTimeoutSecs.value = DEFAULT_EDITOR_SETTINGS.queryTimeoutSecs;
   editShortcuts.value = normalizeShortcutSettings(DEFAULT_EDITOR_SETTINGS.shortcuts);
   editSidebarActivation.value = DEFAULT_EDITOR_SETTINGS.sidebarActivation;
   editAutoSelectActiveSidebarNode.value = DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode;
+  editSidebarHideTableComments.value = DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments;
   editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
   editSnippets.value = DEFAULT_SQL_SNIPPETS.map((s) => ({ ...s }));
 }
@@ -438,6 +461,7 @@ type SettingsCategory =
   | "redis"
   | "shortcuts"
   | "snippets"
+  | "sync"
   | "ai"
   | "system"
   | "mcp"
@@ -450,6 +474,7 @@ const settingsCategoryNav = computed<{ value: SettingsCategory; label: string }[
   { value: "redis", label: t("settings.redisTab") },
   { value: "shortcuts", label: t("settings.shortcutsTab") },
   { value: "snippets", label: t("settings.snippetsTab") },
+  ...(isWeb ? [] : [{ value: "sync" as const, label: t("settings.syncTab") }]),
   { value: "ai", label: t("settings.aiTab") },
   ...(isDesktop
     ? [
@@ -526,6 +551,138 @@ async function browseOracleClientConfigDir() {
   if (selected) editOracleClientConfigDir.value = selected;
 }
 
+// ---------- WebDAV Sync ----------
+const webdavEndpoint = ref(localStorage.getItem("dbx-webdav-endpoint") || "");
+const webdavUsername = ref(localStorage.getItem("dbx-webdav-username") || "");
+const webdavPassword = ref("");
+const webdavRememberPassword = ref(localStorage.getItem("dbx-webdav-remember-password") === "true");
+const webdavHasSavedPassword = ref(false);
+const webdavRemotePath = ref(localStorage.getItem("dbx-webdav-remote-path") || "DBX/sync/snapshot.json");
+const webdavSyncSecrets = ref(false);
+const webdavSecretsPassphrase = ref("");
+const webdavBusy = ref<"" | "test" | "upload" | "download">("");
+const webdavMessage = ref("");
+const webdavError = ref(false);
+
+const webdavReady = computed(
+  () =>
+    !!webdavEndpoint.value.trim() &&
+    !webdavBusy.value &&
+    (!webdavSyncSecrets.value || !!webdavSecretsPassphrase.value.trim()),
+);
+
+function currentWebDavConfig(): WebDavConfig {
+  return {
+    endpoint: webdavEndpoint.value.trim(),
+    username: webdavUsername.value.trim() || undefined,
+    password: webdavPassword.value || undefined,
+    remotePath: webdavRemotePath.value.trim() || "DBX/sync/snapshot.json",
+  };
+}
+
+function currentWebDavAccountConfig(): WebDavConfig {
+  const config = currentWebDavConfig();
+  return { ...config, password: undefined };
+}
+
+function rememberWebDavFields() {
+  localStorage.setItem("dbx-webdav-endpoint", webdavEndpoint.value.trim());
+  localStorage.setItem("dbx-webdav-username", webdavUsername.value.trim());
+  localStorage.setItem("dbx-webdav-remote-path", webdavRemotePath.value.trim() || "DBX/sync/snapshot.json");
+}
+
+function setWebDavResult(message: string, error = false) {
+  webdavMessage.value = message;
+  webdavError.value = error;
+}
+
+async function runWebDavAction(kind: "test" | "upload" | "download", action: () => Promise<string>) {
+  webdavBusy.value = kind;
+  webdavMessage.value = "";
+  webdavError.value = false;
+  try {
+    rememberWebDavFields();
+    await applyWebDavPasswordPreference();
+    setWebDavResult(await action());
+  } catch (e: any) {
+    setWebDavResult(e?.message || String(e), true);
+  } finally {
+    webdavBusy.value = "";
+  }
+}
+
+async function refreshWebDavPasswordStatus() {
+  if (!webdavEndpoint.value.trim()) {
+    webdavHasSavedPassword.value = false;
+    webdavRememberPassword.value = false;
+    return;
+  }
+  try {
+    const status = await webdavPasswordStatus(currentWebDavAccountConfig());
+    webdavHasSavedPassword.value = status.hasSavedPassword;
+    if (status.hasSavedPassword) webdavRememberPassword.value = true;
+  } catch {
+    webdavHasSavedPassword.value = false;
+  }
+}
+
+async function applyWebDavPasswordPreference() {
+  const password = webdavPassword.value;
+  if (webdavRememberPassword.value && password) {
+    await saveWebdavSavedPassword(currentWebDavAccountConfig(), password);
+    webdavHasSavedPassword.value = true;
+    return;
+  }
+  if (!webdavRememberPassword.value && webdavHasSavedPassword.value) {
+    await forgetWebdavSavedPassword(currentWebDavAccountConfig());
+    webdavHasSavedPassword.value = false;
+  }
+}
+
+async function testWebDav() {
+  await runWebDavAction("test", async () => {
+    await webdavSyncTest(currentWebDavConfig());
+    return t("settings.syncTestSuccess");
+  });
+}
+
+async function uploadWebDavSnapshot() {
+  await runWebDavAction("upload", async () => {
+    const summary = await webdavSyncUpload(
+      currentWebDavConfig(),
+      settingsStore.editorSettings,
+      webdavSyncSecrets.value ? webdavSecretsPassphrase.value : undefined,
+    );
+    return t("settings.syncUploadSuccess", { bytes: summary.bytes, path: summary.remotePath });
+  });
+}
+
+async function downloadWebDavSnapshot() {
+  if (!window.confirm(t("settings.syncDownloadConfirm"))) return;
+  await runWebDavAction("download", async () => {
+    const result = await webdavSyncDownload(
+      currentWebDavConfig(),
+      webdavSyncSecrets.value ? webdavSecretsPassphrase.value : undefined,
+    );
+    if (result.editorSettings && typeof result.editorSettings === "object") {
+      settingsStore.updateEditorSettings(result.editorSettings as any);
+    }
+    await settingsStore.updateDesktopSettings(result.desktopSettings);
+    await connectionStore.initFromDisk();
+    const message = t("settings.syncDownloadSuccess", {
+      bytes: result.summary.bytes,
+      path: result.summary.remotePath,
+    });
+    if (result.applySummary.encryptedSecretsPresent && !result.applySummary.secretsApplied) {
+      return `${message} ${t("settings.syncSecretsSkipped")}`;
+    }
+    if (result.applySummary.secretsApplied) {
+      return `${message} ${t("settings.syncSecretsApplied")}`;
+    }
+    return message;
+  });
+}
+
 watch(
   () => props.open,
   async (open) => {
@@ -538,10 +695,26 @@ watch(
       await settingsStore.initAiConfig();
       await settingsStore.initDesktopSettings();
       editShowTrayIcon.value = settingsStore.desktopSettings.show_tray_icon;
+      void refreshMcpHttpStatus();
+      webdavPassword.value = "";
+      await refreshWebDavPasswordStatus();
       syncAiEditState();
     }
   },
+  { immediate: true },
 );
+
+watch([webdavEndpoint, webdavUsername], () => {
+  void refreshWebDavPasswordStatus();
+});
+watch(webdavRememberPassword, (val) => {
+  localStorage.setItem("dbx-webdav-remember-password", String(val));
+});
+
+onMounted(() => {
+  void refreshWebDavPasswordStatus();
+});
+
 const oldPassword = ref("");
 const newPassword = ref("");
 const confirmNewPassword = ref("");
@@ -1025,6 +1198,26 @@ watch(
 
               <Separator />
 
+              <div class="space-y-2">
+                <Label for="query-timeout-secs">{{ t("settings.queryTimeoutSecs") }}</Label>
+                <Input
+                  id="query-timeout-secs"
+                  type="number"
+                  min="0"
+                  :model-value="String(editQueryTimeoutSecs)"
+                  @update:model-value="
+                    (v: any) => {
+                      const n = Number(v);
+                      if (Number.isFinite(n) && n >= 0) editQueryTimeoutSecs = n;
+                    }
+                  "
+                  class="h-9 w-28"
+                />
+                <p class="text-xs text-muted-foreground">{{ t("settings.queryTimeoutSecsDescription") }}</p>
+              </div>
+
+              <Separator />
+
               <!-- Live Preview -->
               <div class="space-y-2">
                 <Label>{{ t("settings.preview") }}</Label>
@@ -1081,6 +1274,34 @@ watch(
                 </div>
                 <Switch id="show-tray-icon" v-model="editShowTrayIcon" />
               </div>
+
+              <Separator />
+
+              <div class="space-y-3">
+                <Label>{{ t("settings.dataGridDisplay") }}</Label>
+                <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                  <div class="space-y-1">
+                    <Label for="show-column-comments-in-header">
+                      {{ t("settings.showColumnCommentsInHeader") }}
+                    </Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ t("settings.showColumnCommentsInHeaderDescription") }}
+                    </p>
+                  </div>
+                  <Switch id="show-column-comments-in-header" v-model="editShowColumnCommentsInHeader" />
+                </div>
+                <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                  <div class="space-y-1">
+                    <Label for="compact-column-header-actions">
+                      {{ t("settings.compactColumnHeaderActions") }}
+                    </Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ t("settings.compactColumnHeaderActionsDescription") }}
+                    </p>
+                  </div>
+                  <Switch id="compact-column-header-actions" v-model="editCompactColumnHeaderActions" />
+                </div>
+              </div>
             </section>
 
             <section v-else-if="activeSettingsTab === 'navigation'" class="flex flex-col gap-5 py-2">
@@ -1118,13 +1339,32 @@ watch(
                 </div>
               </div>
               <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
-                <div class="space-y-1">
+                <div class="flex items-center gap-2">
                   <Label for="auto-select-active-sidebar-node">{{ t("settings.autoSelectActiveSidebarNode") }}</Label>
-                  <p class="text-xs text-muted-foreground">
-                    {{ t("settings.autoSelectActiveSidebarNodeDescription") }}
-                  </p>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <CircleHelp class="h-3.5 w-3.5 cursor-help text-muted-foreground hover:text-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent class="max-w-[320px] text-xs leading-relaxed" side="top" align="start">
+                      {{ t("settings.autoSelectActiveSidebarNodeDescription") }}
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
                 <Switch id="auto-select-active-sidebar-node" v-model="editAutoSelectActiveSidebarNode" />
+              </div>
+              <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                <div class="flex items-center gap-2">
+                  <Label for="sidebar-hide-table-comments">{{ t("settings.sidebarHideTableComments") }}</Label>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <CircleHelp class="h-3.5 w-3.5 cursor-help text-muted-foreground hover:text-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent class="max-w-[320px] text-xs leading-relaxed" side="top" align="start">
+                      {{ t("settings.sidebarHideTableCommentsDescription") }}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Switch id="sidebar-hide-table-comments" v-model="editSidebarHideTableComments" />
               </div>
               <div class="space-y-2">
                 <Label for="sidebar-hidden-table-prefixes">{{ t("settings.sidebarHiddenTablePrefixes") }}</Label>
@@ -1215,9 +1455,15 @@ watch(
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="border-b bg-muted/50">
-                      <th class="px-3 py-2 text-left font-medium">{{ t("settings.snippetsLabel") }}</th>
-                      <th class="px-3 py-2 text-left font-medium">{{ t("settings.snippetsPrefix") }}</th>
-                      <th class="px-3 py-2 text-left font-medium">{{ t("settings.snippetsBody") }}</th>
+                      <th class="px-3 py-2 text-left font-medium whitespace-nowrap">
+                        {{ t("settings.snippetsLabel") }}
+                      </th>
+                      <th class="px-3 py-2 text-left font-medium whitespace-nowrap">
+                        {{ t("settings.snippetsPrefix") }}
+                      </th>
+                      <th class="px-3 py-2 text-left font-medium whitespace-nowrap">
+                        {{ t("settings.snippetsBody") }}
+                      </th>
                       <th class="px-3 py-2 w-20"></th>
                     </tr>
                   </thead>
@@ -1228,7 +1474,14 @@ watch(
                       class="border-b last:border-b-0 hover:bg-muted/30"
                     >
                       <td class="px-3 py-2">{{ snippet.label }}</td>
-                      <td class="px-3 py-2 font-mono text-xs">{{ snippet.prefix }}</td>
+                      <td class="px-3 py-2">
+                        <Badge
+                          variant="outline"
+                          class="h-5 rounded-md px-1.5 text-[11px] font-mono text-muted-foreground"
+                        >
+                          {{ snippet.prefix }}
+                        </Badge>
+                      </td>
                       <td class="px-3 py-2 font-mono text-xs text-muted-foreground max-w-[300px] truncate">
                         {{ snippet.body }}
                       </td>
@@ -1246,11 +1499,103 @@ watch(
                   </tbody>
                 </table>
               </div>
+            </section>
 
-              <div class="flex justify-end">
-                <Button variant="outline" size="sm" @click="restoreDefaultSnippets">
-                  {{ t("settings.snippetsRestoreDefaults") }}
-                </Button>
+            <section v-else-if="activeSettingsTab === 'sync'" class="flex flex-col gap-5 py-2">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2 text-sm font-medium">
+                  <Cloud class="h-4 w-4 text-muted-foreground" />
+                  {{ t("settings.syncWebDavTitle") }}
+                </div>
+                <p class="text-xs text-muted-foreground">{{ t("settings.syncWebDavDescription") }}</p>
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-2">
+                <div class="space-y-2 md:col-span-2">
+                  <Label for="webdav-endpoint">{{ t("settings.syncEndpoint") }}</Label>
+                  <Input
+                    id="webdav-endpoint"
+                    v-model="webdavEndpoint"
+                    autocomplete="off"
+                    placeholder="https://example.com/remote.php/dav/files/user/"
+                  />
+                </div>
+                <div class="space-y-2">
+                  <Label for="webdav-username">{{ t("settings.syncUsername") }}</Label>
+                  <Input id="webdav-username" v-model="webdavUsername" autocomplete="username" />
+                </div>
+                <div class="space-y-2">
+                  <Label for="webdav-password">{{ t("settings.syncPassword") }}</Label>
+                  <div class="relative">
+                    <Input
+                      id="webdav-password"
+                      v-model="webdavPassword"
+                      type="password"
+                      :placeholder="webdavHasSavedPassword ? '••••••••' : '输入密码'"
+                      :disabled="webdavHasSavedPassword"
+                      autocomplete="current-password"
+                    />
+                    <Button
+                      v-if="webdavHasSavedPassword"
+                      variant="ghost"
+                      size="icon-xs"
+                      class="absolute right-1 top-1/2 -translate-y-1/2"
+                      title="清除已保存的密码"
+                      @click="
+                        webdavRememberPassword = false;
+                        forgetWebdavSavedPassword(currentWebDavAccountConfig());
+                        webdavHasSavedPassword = false;
+                        webdavPassword = '';
+                      "
+                    >
+                      <X class="size-3.5" />
+                    </Button>
+                  </div>
+                  <label class="flex items-center gap-2 text-xs text-muted-foreground">
+                    <input v-model="webdavRememberPassword" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
+                    <span>
+                      {{ t("settings.syncRememberWebDavPassword") }}
+                      <span v-if="webdavHasSavedPassword">{{ t("settings.syncSavedPassword") }}</span>
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger as-child>
+                        <CircleHelp class="h-3.5 w-3.5 cursor-help text-muted-foreground hover:text-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent class="max-w-[320px] text-xs leading-relaxed" side="top" align="start">
+                        {{ t("settings.syncRememberWebDavPasswordDescription") }}
+                      </TooltipContent>
+                    </Tooltip>
+                  </label>
+                </div>
+                <div class="space-y-2 md:col-span-2">
+                  <Label for="webdav-remote-path">{{ t("settings.syncRemotePath") }}</Label>
+                  <Input id="webdav-remote-path" v-model="webdavRemotePath" autocomplete="off" />
+                  <p class="text-xs text-muted-foreground">{{ t("settings.syncRemotePathDescription") }}</p>
+                </div>
+              </div>
+
+              <div class="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                {{ t("settings.syncSecretNotice") }}
+              </div>
+
+              <div class="space-y-3 rounded-md border bg-muted/20 px-3 py-3">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="space-y-1">
+                    <Label for="webdav-sync-secrets">{{ t("settings.syncSecrets") }}</Label>
+                    <p class="text-xs text-muted-foreground">{{ t("settings.syncSecretsDescription") }}</p>
+                  </div>
+                  <Switch id="webdav-sync-secrets" v-model="webdavSyncSecrets" />
+                </div>
+                <div v-if="webdavSyncSecrets" class="space-y-2">
+                  <Label for="webdav-secrets-passphrase">{{ t("settings.syncSecretsPassphrase") }}</Label>
+                  <Input
+                    id="webdav-secrets-passphrase"
+                    v-model="webdavSecretsPassphrase"
+                    type="password"
+                    autocomplete="new-password"
+                  />
+                  <p class="text-xs text-muted-foreground">{{ t("settings.syncSecretsPassphraseDescription") }}</p>
+                </div>
               </div>
             </section>
 
@@ -1706,7 +2051,7 @@ watch(
                 <button
                   type="button"
                   class="rounded-lg border p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  @click="openExternalUrl('https://github.com/t8y2/dbx')"
+                  @click="openExternalUrl('https://github.com/Cucgua/dbx')"
                 >
                   <div class="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                     {{ t("settings.project") }}
@@ -1720,7 +2065,7 @@ watch(
                     {{ t("settings.openSource") }}
                     <ExternalLink class="ml-auto h-3.5 w-3.5 text-muted-foreground" />
                   </div>
-                  <div class="mt-1 text-sm text-primary">github.com/t8y2/dbx</div>
+                  <div class="mt-1 text-sm text-primary">github.com/Cucgua/dbx</div>
                 </button>
                 <button
                   type="button"
@@ -1789,6 +2134,37 @@ watch(
             </div>
             <Button variant="outline" @click="emit('update:open', false)">{{ t("common.close") }}</Button>
             <Button :disabled="!aiHasChanges()" @click="aiApplySettings">{{ t("settings.apply") }}</Button>
+          </DialogFooter>
+
+          <DialogFooter
+            v-else-if="activeSettingsTab === 'sync'"
+            class="mx-0 mb-0 shrink-0 rounded-none border-t border-border/60 bg-transparent px-0 pb-0 pt-3 gap-3 sm:gap-3"
+          >
+            <Button variant="outline" @click="emit('update:open', false)">
+              {{ t("common.close") }}
+            </Button>
+            <p
+              v-if="webdavMessage"
+              class="text-xs self-center truncate max-w-[280px]"
+              :class="webdavError ? 'text-destructive' : 'text-green-500'"
+            >
+              {{ webdavMessage }}
+            </p>
+            <div class="flex-1" />
+            <Button variant="outline" :disabled="!webdavReady" @click="testWebDav">
+              <Loader2 v-if="webdavBusy === 'test'" class="mr-1 h-3 w-3 animate-spin" />
+              {{ t("settings.syncTest") }}
+            </Button>
+            <Button variant="outline" :disabled="!webdavReady" @click="downloadWebDavSnapshot">
+              <Loader2 v-if="webdavBusy === 'download'" class="mr-1 h-3 w-3 animate-spin" />
+              <Download v-else class="mr-1 h-3 w-3" />
+              {{ t("settings.syncDownload") }}
+            </Button>
+            <Button :disabled="!webdavReady" @click="uploadWebDavSnapshot">
+              <Loader2 v-if="webdavBusy === 'upload'" class="mr-1 h-3 w-3 animate-spin" />
+              <Upload v-else class="mr-1 h-3 w-3" />
+              {{ t("settings.syncUpload") }}
+            </Button>
           </DialogFooter>
 
           <DialogFooter

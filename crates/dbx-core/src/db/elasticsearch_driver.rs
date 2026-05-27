@@ -60,7 +60,7 @@ impl Clone for EsClient {
 }
 
 pub async fn test_connection(client: &EsClient) -> Result<(), String> {
-    let resp = with_connection_timeout("Elasticsearch", async {
+    let resp = with_connection_timeout("Elasticsearch", connection_timeout(), async {
         client.get("/").send().await.map_err(|e| format!("Elasticsearch connection failed: {e}"))
     })
     .await?;

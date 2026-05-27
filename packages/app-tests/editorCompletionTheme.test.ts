@@ -39,11 +39,26 @@ test("sql completion theme styles the autocomplete popup", () => {
   assert.equal(rules[".cm-completionIcon:before"]?.content, "''");
   assert.equal(rules[".cm-completionIcon:before"]?.WebkitMaskSize, "14px 14px");
   assert.equal(rules[".cm-completionIcon:after"]?.display, "none");
-  assert.equal(rules[".cm-completionIcon-table"]?.color, "color-mix(in oklch, var(--primary) 92%, var(--popover-foreground))");
-  assert.equal(rules[".cm-completionIcon-column"]?.color, "color-mix(in oklch, var(--blue-500, #3b82f6) 92%, var(--popover-foreground))");
-  assert.equal(rules[".cm-completionIcon-keyword"]?.color, "color-mix(in oklch, var(--orange-500, #f97316) 92%, var(--popover-foreground))");
-  assert.equal(rules[".cm-completionIcon-keyword"]?.["--dbx-completion-icon-mask"]?.includes("m16%2018%206-6-6-6"), true);
-  assert.equal(rules[".cm-completionIcon-snippet"]?.color, "color-mix(in oklch, var(--emerald-500, #10b981) 92%, var(--popover-foreground))");
+  assert.equal(
+    rules[".cm-completionIcon-table"]?.color,
+    "color-mix(in oklch, var(--primary) 92%, var(--popover-foreground))",
+  );
+  assert.equal(
+    rules[".cm-completionIcon-column"]?.color,
+    "color-mix(in oklch, var(--blue-500, #3b82f6) 92%, var(--popover-foreground))",
+  );
+  assert.equal(
+    rules[".cm-completionIcon-keyword"]?.color,
+    "color-mix(in oklch, var(--orange-500, #f97316) 92%, var(--popover-foreground))",
+  );
+  assert.equal(
+    rules[".cm-completionIcon-keyword"]?.["--dbx-completion-icon-mask"]?.includes("m16%2018%206-6-6-6"),
+    true,
+  );
+  assert.equal(
+    rules[".cm-completionIcon-snippet"]?.color,
+    "color-mix(in oklch, var(--violet-500, #8b5cf6) 92%, var(--popover-foreground))",
+  );
   assert.deepEqual(rules[".cm-completionLabel"], {
     color: "inherit",
     fontFamily: `var(${EDITOR_FONT_FAMILY_CSS_VAR}, var(--font-mono, monospace))`,
@@ -72,6 +87,8 @@ test("editor font theme reads size and family from CSS variables", () => {
   assert.equal(rules["&"]?.fontSize, `var(${EDITOR_FONT_SIZE_CSS_VAR}, 13px)`);
   assert.deepEqual(rules[".cm-content"], {
     fontFamily: `var(${EDITOR_FONT_FAMILY_CSS_VAR}, monospace)`,
+    lineHeight: "1.6",
+    padding: "0",
   });
   assert.equal(rules[".cm-gutters"]?.fontSize, `var(${EDITOR_FONT_SIZE_CSS_VAR}, 13px)`);
   assert.deepEqual(rules[".cm-scroller"], { overflow: "auto" });

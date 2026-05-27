@@ -26,6 +26,11 @@ const KEYWORD_ICON: LucideIconNode = [
 ];
 
 const SNIPPET_ICON: LucideIconNode = [
+  ["path", { d: "M8 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h1" }],
+  ["path", { d: "M16 3h1a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-1" }],
+];
+
+const FUNCTION_ICON: LucideIconNode = [
   ["path", { d: "m15 10 5 5-5 5" }],
   ["path", { d: "M4 4v7a4 4 0 0 0 4 4h12" }],
 ];
@@ -102,6 +107,22 @@ export function buildEditorFontThemeRules(
     ...(opts?.scrollable ? { ".cm-scroller": { overflow: "auto" } } : {}),
     ".cm-content": {
       fontFamily: `var(${EDITOR_FONT_FAMILY_CSS_VAR}, ${defaults?.family ?? "monospace"})`,
+      lineHeight: "1.6",
+      padding: "0",
+    },
+    ".cm-line": {
+      padding: "0 2px !important",
+    },
+    ".cm-selectionLayer .cm-selectionBackground": {
+      display: "none",
+    },
+    ".cm-cursor": {
+      height: "1.6em !important",
+      transform: "translateY(-0.3em)",
+    },
+    ".cm-vscodeSelection": {
+      opacity: "0.38",
+      background: "rgb(148, 163, 184)",
     },
     ".cm-gutters": {
       borderRight: "0 !important",
@@ -220,8 +241,12 @@ export function buildSqlCompletionThemeRules(): CodeMirrorStyleSpec {
       ...lucideCompletionIconMask(KEYWORD_ICON),
     },
     ".cm-completionIcon-snippet": {
-      color: "color-mix(in oklch, var(--emerald-500, #10b981) 92%, var(--popover-foreground))",
+      color: "color-mix(in oklch, var(--violet-500, #8b5cf6) 92%, var(--popover-foreground))",
       ...lucideCompletionIconMask(SNIPPET_ICON),
+    },
+    ".cm-completionIcon-function": {
+      color: "color-mix(in oklch, var(--emerald-500, #10b981) 92%, var(--popover-foreground))",
+      ...lucideCompletionIconMask(FUNCTION_ICON),
     },
     ".cm-completionIcon-schema": {
       color: "color-mix(in oklch, var(--amber-500, #f59e0b) 92%, var(--popover-foreground))",

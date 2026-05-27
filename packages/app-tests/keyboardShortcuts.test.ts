@@ -2,10 +2,12 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 import {
   eventToShortcut,
+  isBrowserReloadShortcut,
   isCancelSearchShortcut,
   isCloseTabShortcut,
   isExecuteSqlShortcut,
   isFocusSearchShortcut,
+  isModRShortcut,
   isNewQueryShortcut,
   isObjectSourceSaveShortcutTarget,
   isRefreshDataShortcut,
@@ -21,14 +23,14 @@ test("matches Cmd+Enter for SQL execution", () => {
 });
 
 test("matches custom shortcut settings for SQL execution", () => {
+  assert.equal(isExecuteSqlShortcut({ key: "Enter", metaKey: true }, { executeSql: "Shift+Mod+Enter" } as any), false);
   assert.equal(
-    isExecuteSqlShortcut({ key: "Enter", metaKey: true }, { executeSql: "Shift+Mod+Enter" } as any),
-    false,
-  );
-  assert.equal(
-    isExecuteSqlShortcut({ key: "Enter", metaKey: true, shiftKey: true } as any, {
-      executeSql: "Shift+Mod+Enter",
-    } as any),
+    isExecuteSqlShortcut(
+      { key: "Enter", metaKey: true, shiftKey: true } as any,
+      {
+        executeSql: "Shift+Mod+Enter",
+      } as any,
+    ),
     true,
   );
 });
@@ -100,6 +102,21 @@ test("matches custom shortcut settings for refreshing data", () => {
     isRefreshDataShortcut({ key: "r", metaKey: true, shiftKey: true } as any, { refreshData: "Shift+Mod+R" } as any),
     true,
   );
+});
+
+test("detects browser reload shortcuts for desktop suppression", () => {
+  assert.equal(isBrowserReloadShortcut({ key: "r", ctrlKey: true }), true);
+  assert.equal(isBrowserReloadShortcut({ key: "R", metaKey: true, shiftKey: true }), true);
+  assert.equal(isBrowserReloadShortcut({ key: "F5" }), true);
+  assert.equal(isBrowserReloadShortcut({ key: "r", altKey: true, ctrlKey: true }), false);
+  assert.equal(isBrowserReloadShortcut({ key: "r", ctrlKey: true, isComposing: true }), false);
+});
+
+test("matches Mod-R without shift or alt for scoped refresh and replace", () => {
+  assert.equal(isModRShortcut({ key: "r", ctrlKey: true }), true);
+  assert.equal(isModRShortcut({ key: "R", metaKey: true }), true);
+  assert.equal(isModRShortcut({ key: "R", metaKey: true, shiftKey: true }), false);
+  assert.equal(isModRShortcut({ key: "r", ctrlKey: true, altKey: true }), false);
 });
 
 test("ignores focus search shortcut while composing", () => {

@@ -320,6 +320,26 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     await copyText(formatSelectionAsSqlInList(selectedCells.value));
   }
 
+  async function copySelectedRowsTsv() {
+    if (!hasRowSelection.value || selectedRowIds.value.size === 0) return;
+    const rows = displayItems.value.filter((item) => selectedRowIds.value.has(item.id)).map((item) => item.data);
+    await copyText(formatSelectionAsTsv({ columns: columns.value, rows }));
+  }
+
+  function rowToJsonObject(item: RowItem): Record<string, unknown> {
+    const obj: Record<string, unknown> = {};
+    columns.value.forEach((col, i) => {
+      obj[col] = item.data[i];
+    });
+    return obj;
+  }
+
+  async function copyRowsAsJson(items: RowItem[]) {
+    if (items.length === 0) return;
+    const value = items.length === 1 ? rowToJsonObject(items[0]) : items.map(rowToJsonObject);
+    await copyText(JSON.stringify(value, null, 2));
+  }
+
   // --- Cell/row copy ---
   async function copyCell() {
     if (!contextCell.value || contextCell.value.col < 0) return;
@@ -331,37 +351,19 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
   async function copyRow() {
     if (hasRowSelection.value && selectedRowIds.value.size > 0) {
       const items = displayItems.value.filter((item) => selectedRowIds.value.has(item.id));
-      const objects = items.map((item) => {
-        const obj: Record<string, unknown> = {};
-        columns.value.forEach((col, i) => {
-          obj[col] = item.data[i];
-        });
-        return obj;
-      });
-      await copyText(JSON.stringify(objects, null, 2));
+      await copyRowsAsJson(items);
       return;
     }
     const range = selectedRange.value;
     if (range && range.startRow !== range.endRow) {
       const items = displayItems.value.slice(range.startRow, range.endRow + 1);
-      const objects = items.map((item) => {
-        const obj: Record<string, unknown> = {};
-        columns.value.forEach((col, i) => {
-          obj[col] = item.data[i];
-        });
-        return obj;
-      });
-      await copyText(JSON.stringify(objects, null, 2));
+      await copyRowsAsJson(items);
       return;
     }
     if (!contextCell.value) return;
     const item = getRowItem(contextCell.value.rowId);
     if (!item) return;
-    const obj: Record<string, unknown> = {};
-    columns.value.forEach((col, i) => {
-      obj[col] = item.data[i];
-    });
-    await copyText(JSON.stringify(obj, null, 2));
+    await copyRowsAsJson([item]);
   }
 
   function insertEligibleRows(): RowItem[] {
@@ -545,6 +547,7 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     copySelectionCsv,
     copySelectionJson,
     copySelectionSqlInList,
+    copySelectedRowsTsv,
     exportCsv,
     exportJson,
     exportMarkdown,

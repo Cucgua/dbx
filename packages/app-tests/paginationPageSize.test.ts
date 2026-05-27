@@ -55,7 +55,12 @@ test("query execution sends the selected page size to agent drivers", () => {
 
   assert.match(source, /if \(tab\.mode === "data"\) \{/);
   assert.match(source, /pageLimit = settingsStore\.editorSettings\.pageSize/);
-  assert.match(source, /maxRows: pageLimit,\s*fetchSize: pageLimit,\s*pageSize: pageLimit/s);
+  assert.match(source, /maxRows: pageLimit/);
+assert.match(source, /fetchSize: pageLimit/);
+assert.match(source, /pageSize: pageLimit/);
+assert.match(source, /resultSessionId: options\?\.pagination\?\.sessionId/);
+assert.match(source, /clientSessionId: tab\.id/);
+assert.match(source, /timeoutSecs: settingsStore\.editorSettings\.queryTimeoutSecs/);
   assert.doesNotMatch(source, /maxRows: 10000,\s*fetchSize: pageLimit,\s*pageSize: pageLimit/s);
 });
 

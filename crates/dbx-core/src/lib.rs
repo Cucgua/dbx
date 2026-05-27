@@ -1,6 +1,7 @@
 pub mod agent_manager;
 pub mod agent_service;
 pub mod ai;
+pub mod cloud_sync;
 pub mod connection;
 pub mod connection_secrets;
 pub mod csv_export;
@@ -13,6 +14,7 @@ pub mod db;
 pub mod db_admin_sql;
 pub mod external;
 pub mod history;
+pub mod jdbc;
 pub mod models;
 pub mod mongo_ops;
 pub mod object_source_sql;

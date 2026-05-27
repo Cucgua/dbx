@@ -28,6 +28,7 @@ pub enum QueryEditabilityReason {
     Cte,
     SetOperation,
     Aggregation,
+    ExternalSource,
     ComplexSource,
     ComputedColumns,
     NoTable,
@@ -113,6 +114,9 @@ pub fn analyze_editable_query_editability(sql: &str) -> QueryEditability {
         first_top_level_keyword_index(&normalized, &["WHERE", "ORDER", "LIMIT", "OFFSET", "FETCH"], from_body_start)
             .unwrap_or(normalized.len());
     let from_body = normalized[from_body_start..from_end].trim();
+    if is_external_from_source(from_body) {
+        return not_editable(QueryEditabilityReason::ExternalSource);
+    }
     let Some(source) = parse_from_source(from_body) else {
         return not_editable(QueryEditabilityReason::ComplexSource);
     };
@@ -306,6 +310,40 @@ fn parse_from_source(body: &str) -> Option<FromSource> {
     let table_name = ident.parts.last()?.clone();
     let schema = if ident.parts.len() == 2 { Some(ident.parts[0].clone()) } else { None };
     Some(FromSource { schema, table_name, alias })
+}
+
+fn is_external_from_source(body: &str) -> bool {
+    let trimmed = body.trim();
+    is_single_quoted_source_with_optional_alias(trimmed) || starts_with_table_function(trimmed)
+}
+
+fn is_single_quoted_source_with_optional_alias(text: &str) -> bool {
+    let mut chars = text.char_indices().peekable();
+    if chars.next().map(|(_, ch)| ch) != Some('\'') {
+        return false;
+    }
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '\'' {
+            if chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                chars.next();
+                continue;
+            }
+            let tail = text[idx + ch.len_utf8()..].trim();
+            if tail.is_empty() {
+                return true;
+            }
+            let alias_text = strip_leading_as(tail).unwrap_or(tail).trim();
+            return read_identifier(alias_text, 0).is_some_and(|alias| alias.end == alias_text.len());
+        }
+    }
+    false
+}
+
+fn starts_with_table_function(text: &str) -> bool {
+    let Some(ident) = read_identifier(text, 0) else {
+        return false;
+    };
+    text[ident.end..].trim_start().starts_with('(')
 }
 
 fn parse_qualified_identifier(text: &str) -> Option<QualifiedIdentifier> {
@@ -564,6 +602,14 @@ mod tests {
 
         assert_eq!(result.editable, false);
         assert_eq!(result.reason, Some(QueryEditabilityReason::ComplexSource));
+    }
+
+    #[test]
+    fn reports_external_file_scan_as_external_source() {
+        let result = analyze_editable_query_editability("SELECT * FROM '/tmp/duckdb_excel_extension_test.xlsx'");
+
+        assert_eq!(result.editable, false);
+        assert_eq!(result.reason, Some(QueryEditabilityReason::ExternalSource));
     }
 
     #[test]

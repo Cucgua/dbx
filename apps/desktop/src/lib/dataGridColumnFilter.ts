@@ -94,5 +94,5 @@ function isBooleanType(dataType: string): boolean {
 
 function isNumericLiteral(text: string): boolean {
   if (!text || text.trim() !== text) return false;
-  return Number.isFinite(Number(text)) && /^[+\-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+\-]?\d+)?$/.test(text);
+  return Number.isFinite(Number(text)) && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(text);
 }

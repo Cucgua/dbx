@@ -35,7 +35,7 @@ test("setErrorResult stops loading and shows the error result", () => {
   assert.equal(tab?.isCancelling, false);
   assert.equal(tab?.executionId, undefined);
   assert.deepEqual(tab?.result?.columns, ["Error"]);
-  assert.deepEqual(tab?.result?.rows, [["Error: metadata failed"]]);
+  assert.deepEqual(tab?.result?.rows, [["metadata failed"]]);
 });
 
 test("evicting cached tab results releases multi-result payloads and sessions", async () => {

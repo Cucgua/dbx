@@ -45,11 +45,31 @@ When no API key is configured, AI features should prompt the user to complete se
 | Ask | Generates SQL, explanations, fixes, optimizations, dialect conversions, or sample data | Does not imply anything has run |
 | Agent | Prioritizes one executable SQL statement when the user clearly asks DBX to query data | DBX evaluates the generated SQL before attempting execution |
 
+## Thinking Mode
+
+For providers and models that support extended reasoning (such as Claude with thinking enabled), DBX exposes a **Thinking** toggle in AI settings. When enabled:
+
+- The model spends more time reasoning before generating SQL
+- Complex queries, multi-table joins, and optimization suggestions benefit most
+- Response time increases, but output quality improves for non-trivial tasks
+
+Toggle Thinking on or off per task. Leave it off for simple queries and explanations; enable it for complex schema reasoning, optimization, or debugging.
+
+## Table Mentions
+
+Use `@table` or `@schema.table` mentions in your prompt to tell the AI which tables matter most:
+
+- `@users` — includes the `users` table schema in context
+- `@public.orders` — includes a specific schema-qualified table
+- Multiple mentions: `@users @orders @products` includes all three tables
+
+Table mentions are the most reliable way to control schema context. They work even when the full schema is too large to include entirely.
+
 ## Schema Context
 
 AI prompts can include the current database type, connection name, database, current SQL, recent error, result preview, and schema context. Schema context contains tables, columns, indexes, and foreign keys.
 
-When a schema is large, DBX truncates context. Use `@table` or `@schema.table` mentions in your prompt to prioritize the tables you want AI to reason about.
+When a schema is large, DBX truncates context. Use table mentions to prioritize the tables you want AI to reason about.
 
 ## SQL Safety Policy
 

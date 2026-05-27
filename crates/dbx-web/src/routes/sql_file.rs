@@ -50,7 +50,7 @@ pub async fn preview_sql_file(
         std::fs::write(&file_path, &data).map_err(|e| AppError(e.to_string()))?;
 
         let size_bytes = data.len() as u64;
-        let content = String::from_utf8_lossy(&data);
+        let content = sql::decode_sql_file_bytes(&data).map_err(AppError)?;
         let preview: String = content.chars().take(5000).collect();
 
         return Ok(Json(serde_json::json!({
@@ -118,8 +118,11 @@ pub async fn execute_sql_file(
             _ => {}
         }
 
-        let file_content = match std::fs::read_to_string(&file_path) {
-            Ok(c) => c,
+        let file_content = match std::fs::read(&file_path).and_then(|bytes| {
+            sql::decode_sql_file_bytes(&bytes)
+                .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))
+        }) {
+            Ok(content) => content,
             Err(e) => {
                 let progress = dbx_core::sql::SqlFileProgress {
                     execution_id: req.execution_id.clone(),
@@ -155,11 +158,14 @@ pub async fn execute_sql_file(
             let _ = tx.send(json);
         }
 
-        let statements = sql::split_sql_statements(&file_content);
         let import_target = {
             let configs = app.configs.read().await;
             configs.get(&req.connection_id).map(|config| (config.db_type, config.driver_profile.clone()))
         };
+        let statements = import_target
+            .as_ref()
+            .map(|(db_type, _)| sql::split_sql_statements_for_database(&file_content, *db_type))
+            .unwrap_or_else(|| sql::split_sql_statements(&file_content));
         let start = std::time::Instant::now();
         let mut success_count = 0usize;
         let mut failure_count = 0usize;

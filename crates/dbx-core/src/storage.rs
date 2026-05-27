@@ -3,6 +3,7 @@ use std::path::Path;
 
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, ToSql};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::ai::{AiChatMessage, AiConfig, AiConversation};
 use crate::db::sqlite::{connect_path_create_if_missing, SqliteHandle};
@@ -371,6 +372,48 @@ impl Storage {
         };
         Ok(array.iter().filter_map(|item| item.as_str().map(|value| value.to_string())).collect())
     }
+
+    pub async fn load_or_create_local_device_secret(&self) -> Result<String, String> {
+        let mut settings = self.load_app_settings_json().await?;
+        if let Some(secret) = settings.get("local_device_secret").and_then(|value| value.as_str()) {
+            if !secret.is_empty() {
+                return Ok(secret.to_string());
+            }
+        }
+        let secret = Uuid::new_v4().to_string();
+        settings.insert("local_device_secret".to_string(), serde_json::Value::String(secret.clone()));
+        self.save_app_settings_json(&settings).await?;
+        Ok(secret)
+    }
+
+    pub async fn save_webdav_password_blob(&self, account: &str, blob: &serde_json::Value) -> Result<(), String> {
+        let mut settings = self.load_app_settings_json().await?;
+        let mut credentials =
+            settings.remove("webdav_passwords").and_then(|value| value.as_object().cloned()).unwrap_or_default();
+        credentials.insert(account.to_string(), blob.clone());
+        settings.insert("webdav_passwords".to_string(), serde_json::Value::Object(credentials));
+        self.save_app_settings_json(&settings).await
+    }
+
+    pub async fn load_webdav_password_blob(&self, account: &str) -> Result<Option<serde_json::Value>, String> {
+        let settings = self.load_app_settings_json().await?;
+        Ok(settings
+            .get("webdav_passwords")
+            .and_then(|value| value.as_object())
+            .and_then(|credentials| credentials.get(account))
+            .cloned())
+    }
+
+    pub async fn delete_webdav_password_blob(&self, account: &str) -> Result<(), String> {
+        let mut settings = self.load_app_settings_json().await?;
+        let Some(mut credentials) = settings.remove("webdav_passwords").and_then(|value| value.as_object().cloned())
+        else {
+            return Ok(());
+        };
+        credentials.remove(account);
+        settings.insert("webdav_passwords".to_string(), serde_json::Value::Object(credentials));
+        self.save_app_settings_json(&settings).await
+    }
 }
 
 fn set_optional_string(map: &mut serde_json::Map<String, serde_json::Value>, key: &str, value: Option<&str>) {
@@ -482,6 +525,45 @@ impl Storage {
 // Connections
 
 impl Storage {
+    pub async fn save_connection_metadata_preserving_secrets(
+        &self,
+        configs: &[ConnectionConfig],
+    ) -> Result<(), String> {
+        let configs = configs.to_vec();
+        self.with_conn(move |conn| {
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM connections", []).map_err(|e| e.to_string())?;
+
+            for config in &configs {
+                let config = config.canonicalized();
+                let config_id = config.id.clone();
+                let mut sanitized = config;
+                sanitized.password = String::new();
+                sanitized.ssh_password = String::new();
+                sanitized.ssh_key_passphrase = String::new();
+                sanitized.proxy_password = String::new();
+                sanitized.redis_sentinel_password = String::new();
+                sanitized.connection_string = None;
+                let json = serde_json::to_string(&sanitized).map_err(|e| e.to_string())?;
+
+                tx.execute("INSERT INTO connections (id, config_json) VALUES (?1, ?2)", params![config_id, json])
+                    .map_err(|e| e.to_string())?;
+            }
+
+            if configs.is_empty() {
+                tx.execute("DELETE FROM connection_secrets", []).map_err(|e| e.to_string())?;
+            } else {
+                let placeholders = vec!["?"; configs.len()].join(",");
+                let sql = format!("DELETE FROM connection_secrets WHERE connection_id NOT IN ({placeholders})");
+                let ids = configs.iter().map(|config| &config.id as &dyn ToSql);
+                tx.execute(&sql, params_from_iter(ids)).map_err(|e| e.to_string())?;
+            }
+
+            tx.commit().map_err(|e| e.to_string())
+        })
+        .await
+    }
+
     pub async fn save_connections(&self, configs: &[ConnectionConfig]) -> Result<(), String> {
         let configs = configs.to_vec();
         self.with_conn(move |conn| {
@@ -496,6 +578,7 @@ impl Storage {
                 sanitized.ssh_password = String::new();
                 sanitized.ssh_key_passphrase = String::new();
                 sanitized.proxy_password = String::new();
+                sanitized.redis_sentinel_password = String::new();
                 sanitized.connection_string = None;
                 let json = serde_json::to_string(&sanitized).map_err(|e| e.to_string())?;
 
@@ -506,6 +589,7 @@ impl Storage {
                 persist_secret_in_tx(&tx, &config.id, "ssh_password", &config.ssh_password)?;
                 persist_secret_in_tx(&tx, &config.id, "ssh_key_passphrase", &config.ssh_key_passphrase)?;
                 persist_secret_in_tx(&tx, &config.id, "proxy_password", &config.proxy_password)?;
+                persist_secret_in_tx(&tx, &config.id, "redis_sentinel_password", &config.redis_sentinel_password)?;
                 if let Some(cs) = &config.connection_string {
                     persist_secret_in_tx(&tx, &config.id, "connection_string", cs)?;
                 } else {
@@ -549,6 +633,7 @@ impl Storage {
             config.ssh_password = self.get_secret(&id, "ssh_password").await?.unwrap_or_default();
             config.ssh_key_passphrase = self.get_secret(&id, "ssh_key_passphrase").await?.unwrap_or_default();
             config.proxy_password = self.get_secret(&id, "proxy_password").await?.unwrap_or_default();
+            config.redis_sentinel_password = self.get_secret(&id, "redis_sentinel_password").await?.unwrap_or_default();
             config.connection_string = self.get_secret(&id, "connection_string").await?;
             configs.push(config.canonicalized());
         }
@@ -559,6 +644,47 @@ impl Storage {
 // Saved SQL
 
 impl Storage {
+    pub async fn replace_saved_sql_library(&self, library: &SavedSqlLibrary) -> Result<(), String> {
+        let library = library.clone();
+        self.with_conn(move |conn| {
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM saved_sql_files", []).map_err(|e| e.to_string())?;
+            tx.execute("DELETE FROM saved_sql_folders", []).map_err(|e| e.to_string())?;
+
+            for folder in &library.folders {
+                tx.execute(
+                    "INSERT INTO saved_sql_folders (id, connection_id, name, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?)",
+                    params![folder.id, folder.connection_id, folder.name, folder.created_at, folder.updated_at],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            for file in &library.files {
+                tx.execute(
+                    "INSERT INTO saved_sql_files \
+                     (id, connection_id, folder_id, name, database_name, schema_name, sql_text, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        file.id,
+                        file.connection_id,
+                        file.folder_id,
+                        file.name,
+                        file.database,
+                        file.schema,
+                        file.sql,
+                        file.created_at,
+                        file.updated_at
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            tx.commit().map_err(|e| e.to_string())
+        })
+        .await
+    }
+
     pub async fn load_saved_sql_library(&self) -> Result<SavedSqlLibrary, String> {
         self.with_conn(|conn| {
             let mut folder_stmt = conn

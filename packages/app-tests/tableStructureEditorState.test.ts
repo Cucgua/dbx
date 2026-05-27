@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildStructureTargetLabel,
+  combineDataTypeForDatabase,
   createColumnDrafts,
   createIndexDrafts,
+  normalizeDataTypeParams,
   toColumnNames,
 } from "../../apps/desktop/src/lib/tableStructureEditorState.ts";
 import type { ColumnInfo, IndexInfo } from "../../apps/desktop/src/types/database.ts";
@@ -122,4 +124,12 @@ test("structure editor target label omits duplicate database and schema", () => 
     buildStructureTargetLabel("online-postgres", "app", "public", "users"),
     "online-postgres / app / public / users",
   );
+});
+
+test("normalizes temporal precision when combining data types", () => {
+  assert.equal(combineDataTypeForDatabase("mysql", "timestamp", "255"), "timestamp");
+  assert.equal(combineDataTypeForDatabase("mysql", "timestamp", "3"), "timestamp(3)");
+  assert.equal(combineDataTypeForDatabase("mysql", "varchar", "255"), "varchar(255)");
+  assert.equal(normalizeDataTypeParams("oracle", "timestamp", "9"), "9");
+  assert.equal(normalizeDataTypeParams("oracle", "timestamp", "10"), "");
 });

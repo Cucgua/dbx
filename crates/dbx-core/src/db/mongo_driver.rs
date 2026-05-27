@@ -13,7 +13,7 @@ pub struct MongoDocumentResult {
 }
 
 pub async fn connect(url: &str) -> Result<Client, String> {
-    with_connection_timeout("MongoDB", async {
+    with_connection_timeout("MongoDB", connection_timeout(), async {
         Client::with_uri_str(url).await.map_err(|e| format!("MongoDB connection failed: {e}"))
     })
     .await

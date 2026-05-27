@@ -2,13 +2,21 @@ use chrono::{Local, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[path = "data_grid_neo4j_sql.rs"]
+mod data_grid_neo4j_sql;
+use data_grid_neo4j_sql::{build_neo4j_data_grid_rollback_statements, build_neo4j_data_grid_save_statements};
+
+#[path = "data_grid_tdengine_sql.rs"]
+mod data_grid_tdengine_sql;
+use data_grid_tdengine_sql::build_tdengine_data_grid_save_statements;
+
 use crate::models::connection::DatabaseType;
 use crate::sql_dialect::quote_table_identifier;
 use crate::transfer::format_pg_array_sql_literal;
 
 const DBX_ROWID_COLUMN: &str = "__DBX_ROWID";
-const DBX_NEO4J_ELEMENT_ID_COLUMN: &str = "__DBX_ELEMENT_ID";
-const DBX_TDENGINE_TBNAME_COLUMN: &str = "tbname";
+pub(crate) const DBX_NEO4J_ELEMENT_ID_COLUMN: &str = "__DBX_ELEMENT_ID";
+pub(crate) const DBX_TDENGINE_TBNAME_COLUMN: &str = "tbname";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -566,76 +574,6 @@ fn build_data_grid_save_statements(options: &DataGridSaveStatementOptions) -> Ve
     statements
 }
 
-fn build_tdengine_data_grid_save_statements(options: &DataGridSaveStatementOptions) -> Vec<String> {
-    let save_columns = effective_columns(options);
-    let mut statements = Vec::new();
-    let can_overwrite_existing_rows = save_columns
-        .iter()
-        .any(|column| column.as_deref().is_some_and(|column| column.eq_ignore_ascii_case(DBX_TDENGINE_TBNAME_COLUMN)));
-
-    if can_overwrite_existing_rows {
-        for (row_index, changes) in &options.dirty_rows {
-            let Some(row) = options.rows.get(*row_index) else {
-                continue;
-            };
-            let mut after_row = row.clone();
-            for (column_index, value) in changes {
-                if *column_index < after_row.len() {
-                    after_row[*column_index] = value.clone();
-                }
-            }
-            if let Some(statement) = build_tdengine_insert_statement(options, &save_columns, &after_row) {
-                statements.push(statement);
-            }
-        }
-    }
-
-    for row in &options.new_rows {
-        if let Some(statement) = build_tdengine_insert_statement(options, &save_columns, row) {
-            statements.push(statement);
-        }
-    }
-
-    statements
-}
-
-fn build_tdengine_insert_statement(
-    options: &DataGridSaveStatementOptions,
-    save_columns: &[Option<String>],
-    row: &[Value],
-) -> Option<String> {
-    let tbname = tdengine_tbname_value(save_columns, row);
-    let table = qualified_table_name(
-        Some(DatabaseType::Tdengine),
-        options.table_meta.schema.as_deref(),
-        &options.table_meta.table_name,
-    );
-    let tag_columns = tdengine_tag_columns(options.table_meta.columns.as_deref());
-    let insert_pairs: Vec<(&str, &Value)> = save_columns
-        .iter()
-        .enumerate()
-        .filter_map(|(index, column)| Some((column.as_deref()?, row.get(index).unwrap_or(&Value::Null))))
-        .filter(|(_, value)| !value.is_null())
-        .filter(|(column, _)| {
-            tdengine_can_insert_column(column, &options.table_meta.table_name, tbname.as_deref(), &tag_columns)
-        })
-        .collect();
-    if insert_pairs.is_empty() {
-        return None;
-    }
-    let columns = insert_pairs
-        .iter()
-        .map(|(column, _)| quote_ident(Some(DatabaseType::Tdengine), column))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let values = insert_pairs
-        .iter()
-        .map(|(_, value)| format_grid_sql_literal(value, Some(DatabaseType::Tdengine), None))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Some(format!("INSERT INTO {table} ({columns}) VALUES ({values});"))
-}
-
 fn build_data_grid_rollback_statements(options: &DataGridSaveStatementOptions) -> Vec<String> {
     if options.database_type == Some(DatabaseType::Neo4j) {
         return build_neo4j_data_grid_rollback_statements(options);
@@ -739,151 +677,7 @@ fn build_data_grid_rollback_statements(options: &DataGridSaveStatementOptions) -
     statements
 }
 
-fn build_neo4j_data_grid_save_statements(options: &DataGridSaveStatementOptions) -> Vec<String> {
-    let label = quote_ident(Some(DatabaseType::Neo4j), &options.table_meta.table_name);
-    let mut statements = Vec::new();
-
-    for (row_index, changes) in &options.dirty_rows {
-        let Some(row) = options.rows.get(*row_index) else {
-            continue;
-        };
-        let sets = changes
-            .iter()
-            .filter_map(|(column_index, value)| {
-                let column = options.columns.get(*column_index)?;
-                if is_neo4j_element_id(Some(DatabaseType::Neo4j), Some(column)) {
-                    return None;
-                }
-                Some(format!(
-                    "n.{} = {}",
-                    quote_ident(Some(DatabaseType::Neo4j), column),
-                    format_grid_sql_literal(value, Some(DatabaseType::Neo4j), None)
-                ))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        if sets.is_empty() {
-            continue;
-        }
-        statements
-            .push(format!("MATCH (n:{label}) WHERE {} SET {sets};", neo4j_element_id_predicate(&options.columns, row)));
-    }
-
-    for row_index in &options.deleted_rows {
-        let Some(row) = options.rows.get(*row_index) else {
-            continue;
-        };
-        statements.push(format!(
-            "MATCH (n:{label}) WHERE {} DETACH DELETE n;",
-            neo4j_element_id_predicate(&options.columns, row)
-        ));
-    }
-
-    for row in &options.new_rows {
-        let props = options
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| !is_neo4j_element_id(Some(DatabaseType::Neo4j), Some(column)))
-            .filter_map(|(index, column)| {
-                let value = row.get(index).unwrap_or(&Value::Null);
-                if value.is_null() {
-                    return None;
-                }
-                Some(format!(
-                    "{}: {}",
-                    quote_ident(Some(DatabaseType::Neo4j), column),
-                    format_grid_sql_literal(value, Some(DatabaseType::Neo4j), None)
-                ))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        statements.push(if props.is_empty() {
-            format!("CREATE (n:{label});")
-        } else {
-            format!("CREATE (n:{label} {{{props}}});")
-        });
-    }
-
-    statements
-}
-
-fn build_neo4j_data_grid_rollback_statements(options: &DataGridSaveStatementOptions) -> Vec<String> {
-    let label = quote_ident(Some(DatabaseType::Neo4j), &options.table_meta.table_name);
-    let mut statements = Vec::new();
-
-    for row in &options.new_rows {
-        let where_clause = neo4j_row_property_where(&options.columns, row);
-        statements.push(if where_clause.is_empty() {
-            format!("MATCH (n:{label}) DETACH DELETE n;")
-        } else {
-            format!("MATCH (n:{label}) WHERE {where_clause} DETACH DELETE n;")
-        });
-    }
-
-    for row_index in &options.deleted_rows {
-        let Some(row) = options.rows.get(*row_index) else {
-            continue;
-        };
-        let props = options
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| !is_neo4j_element_id(Some(DatabaseType::Neo4j), Some(column)))
-            .filter_map(|(index, column)| {
-                let value = row.get(index).unwrap_or(&Value::Null);
-                if value.is_null() {
-                    return None;
-                }
-                Some(format!(
-                    "{}: {}",
-                    quote_ident(Some(DatabaseType::Neo4j), column),
-                    format_grid_sql_literal(value, Some(DatabaseType::Neo4j), None)
-                ))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        statements.push(if props.is_empty() {
-            format!("CREATE (n:{label});")
-        } else {
-            format!("CREATE (n:{label} {{{props}}});")
-        });
-    }
-
-    for (row_index, changes) in &options.dirty_rows {
-        let Some(row) = options.rows.get(*row_index) else {
-            continue;
-        };
-        let sets = changes
-            .iter()
-            .filter_map(|(column_index, _)| {
-                let column = options.columns.get(*column_index)?;
-                if is_neo4j_element_id(Some(DatabaseType::Neo4j), Some(column)) {
-                    return None;
-                }
-                Some(format!(
-                    "n.{} = {}",
-                    quote_ident(Some(DatabaseType::Neo4j), column),
-                    format_grid_sql_literal(
-                        row.get(*column_index).unwrap_or(&Value::Null),
-                        Some(DatabaseType::Neo4j),
-                        None
-                    )
-                ))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        if sets.is_empty() {
-            continue;
-        }
-        statements
-            .push(format!("MATCH (n:{label}) WHERE {} SET {sets};", neo4j_element_id_predicate(&options.columns, row)));
-    }
-
-    statements
-}
-
-fn effective_columns(options: &DataGridSaveStatementOptions) -> Vec<Option<String>> {
+pub(crate) fn effective_columns(options: &DataGridSaveStatementOptions) -> Vec<Option<String>> {
     match &options.source_columns {
         Some(source_columns) if source_columns.len() == options.columns.len() => source_columns.clone(),
         _ => options.columns.iter().map(|column| Some(column.clone())).collect(),
@@ -1193,7 +987,7 @@ fn is_oracle_row_id(database_type: Option<DatabaseType>, name: Option<&str>) -> 
     database_type == Some(DatabaseType::Oracle) && name.is_some_and(|name| name.eq_ignore_ascii_case(DBX_ROWID_COLUMN))
 }
 
-fn is_neo4j_element_id(database_type: Option<DatabaseType>, name: Option<&str>) -> bool {
+pub(crate) fn is_neo4j_element_id(database_type: Option<DatabaseType>, name: Option<&str>) -> bool {
     database_type == Some(DatabaseType::Neo4j) && name == Some(DBX_NEO4J_ELEMENT_ID_COLUMN)
 }
 
@@ -1286,11 +1080,15 @@ fn predicate_ident(database_type: Option<DatabaseType>, name: &str) -> String {
     }
 }
 
-fn quote_ident(database_type: Option<DatabaseType>, name: &str) -> String {
+pub(crate) fn quote_ident(database_type: Option<DatabaseType>, name: &str) -> String {
     quote_table_identifier(database_type, name)
 }
 
-fn qualified_table_name(database_type: Option<DatabaseType>, schema: Option<&str>, table_name: &str) -> String {
+pub(crate) fn qualified_table_name(
+    database_type: Option<DatabaseType>,
+    schema: Option<&str>,
+    table_name: &str,
+) -> String {
     crate::sql_dialect::qualified_table_name(database_type, schema, table_name)
 }
 
@@ -1422,72 +1220,9 @@ fn uses_keyless_row_predicate(database_type: Option<DatabaseType>) -> bool {
     )
 }
 
-fn column_info_for<'a>(columns: &'a [DataGridColumnInfo], name: &str) -> Option<&'a DataGridColumnInfo> {
+pub(crate) fn column_info_for<'a>(columns: &'a [DataGridColumnInfo], name: &str) -> Option<&'a DataGridColumnInfo> {
     let normalized = normalize_column_name(name);
     columns.iter().find(|column| normalize_column_name(&column.name) == normalized)
-}
-
-fn tdengine_tbname_value(save_columns: &[Option<String>], row: &[Value]) -> Option<String> {
-    let index = save_columns.iter().position(|column| {
-        column.as_deref().is_some_and(|column| column.eq_ignore_ascii_case(DBX_TDENGINE_TBNAME_COLUMN))
-    })?;
-    let value = row.get(index)?;
-    if value.is_null() {
-        None
-    } else if let Some(value) = value.as_str() {
-        Some(value.to_string())
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn tdengine_can_insert_column(column: &str, table_name: &str, tbname: Option<&str>, tag_columns: &[String]) -> bool {
-    let normalized = column.to_ascii_lowercase();
-    let target_is_child_table = tbname.is_none_or(|tbname| tbname == table_name);
-    if !target_is_child_table {
-        return true;
-    }
-    if normalized == DBX_TDENGINE_TBNAME_COLUMN {
-        return false;
-    }
-    !tag_columns.iter().any(|tag| tag == &normalized)
-}
-
-fn tdengine_tag_columns(columns: Option<&[DataGridColumnInfo]>) -> Vec<String> {
-    columns
-        .unwrap_or(&[])
-        .iter()
-        .filter(|column| column.extra.as_deref().unwrap_or("").to_ascii_lowercase().contains("tag"))
-        .map(|column| column.name.to_ascii_lowercase())
-        .collect()
-}
-
-fn neo4j_element_id_predicate(columns: &[String], row: &[Value]) -> String {
-    let index = columns.iter().position(|column| column == DBX_NEO4J_ELEMENT_ID_COLUMN).unwrap_or(usize::MAX);
-    format!(
-        "elementId(n) = {}",
-        format_grid_sql_literal(row.get(index).unwrap_or(&Value::Null), Some(DatabaseType::Neo4j), None)
-    )
-}
-
-fn neo4j_row_property_where(columns: &[String], row: &[Value]) -> String {
-    columns
-        .iter()
-        .enumerate()
-        .filter_map(|(index, column)| {
-            if is_neo4j_element_id(Some(DatabaseType::Neo4j), Some(column)) {
-                return None;
-            }
-            let value = row.get(index).unwrap_or(&Value::Null);
-            let ident = format!("n.{}", quote_ident(Some(DatabaseType::Neo4j), column));
-            if value.is_null() {
-                Some(format!("{ident} IS NULL"))
-            } else {
-                Some(format!("{ident} = {}", format_grid_sql_literal(value, Some(DatabaseType::Neo4j), None)))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" AND ")
 }
 
 #[cfg(test)]

@@ -36,3 +36,44 @@ export function buildDatabaseTreeNodes(
     },
   ];
 }
+
+export function buildDuckDbConnectionTreeNodes(
+  connectionId: string,
+  databases: DatabaseInfo[],
+  primarySchemas: string[],
+): TreeNode[] {
+  const schemaNodes = primarySchemas.flatMap((schema) => {
+    const name = schema.trim();
+    if (!name) return [];
+    return [
+      {
+        id: `${connectionId}:main:${name}`,
+        label: name,
+        type: "schema" as const,
+        connectionId,
+        database: "main",
+        schema: name,
+        isExpanded: false,
+        children: [],
+      },
+    ];
+  });
+
+  const attachedCatalogNodes = databases.flatMap((db) => {
+    const name = db.name.trim();
+    if (!name || name === "main") return [];
+    return [
+      {
+        id: `${connectionId}:${name}`,
+        label: name,
+        type: "database" as const,
+        connectionId,
+        database: name,
+        isExpanded: false,
+        children: [],
+      },
+    ];
+  });
+
+  return [...schemaNodes, ...attachedCatalogNodes];
+}

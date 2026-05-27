@@ -259,6 +259,51 @@ const SQL_KEYWORDS = [
   "CRC32",
 ];
 
+// Keywords that appear in nearly every SQL query — boosted so frequency beats length tie-breaking.
+// E.g. typing "WH" should rank WHERE (high frequency) above WHEN (CASE-only).
+const HIGH_FREQUENCY_KEYWORDS = new Set([
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "AND",
+  "OR",
+  "JOIN",
+  "ON",
+  "IN",
+  "AS",
+  "GROUP BY",
+  "ORDER BY",
+  "LEFT",
+  "RIGHT",
+  "INNER",
+  "OUTER",
+  "INSERT",
+  "INTO",
+  "VALUES",
+  "UPDATE",
+  "SET",
+  "DELETE",
+  "NOT",
+  "NULL",
+  "IS",
+  "LIKE",
+  "DISTINCT",
+  "HAVING",
+  "LIMIT",
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MAX",
+  "MIN",
+  "CASE",
+  "UNION",
+  "ALL",
+  "ASC",
+  "DESC",
+  "BETWEEN",
+  "EXISTS",
+]);
+
 const TABLE_TRIGGER_KEYWORDS = new Set(["from", "join", "update", "into", "table", "describe", "explain", "apply"]);
 const EXCLUSIVE_TABLE_TRIGGER_KEYWORDS = new Set(["from", "join", "update", "into", "apply"]);
 const JOIN_MODIFIERS = new Set(["left", "right", "inner", "outer", "cross", "full", "natural"]);
@@ -565,7 +610,7 @@ export interface SqlCompletionColumn {
 
 export interface SqlCompletionItem {
   label: string;
-  type: "keyword" | "table" | "column" | "snippet" | "schema";
+  type: "keyword" | "table" | "column" | "snippet" | "function" | "schema";
   detail?: string;
   apply?: string;
   boost: number;
@@ -1889,16 +1934,20 @@ export function buildSnippetItemsForTest(prefix: string, snippets: SqlSnippet[])
 function buildSnippetItems(prefix: string, snippets: SqlSnippet[]): SqlCompletionItem[] {
   if (!prefix) return [];
   return snippets
-    .filter((snippet) => matchesPrefix(snippet.prefix, prefix) || matchesPrefix(snippet.label, prefix))
+    .filter((snippet) => {
+      const matchesSnippetPrefix = matchesPrefix(snippet.prefix, prefix);
+      const matchesSnippetLabel = prefix.length > snippet.prefix.length && matchesPrefix(snippet.label, prefix);
+      return matchesSnippetPrefix || matchesSnippetLabel;
+    })
     .map((snippet) => {
       const boostByPrefix = computeBoost(snippet.prefix, prefix);
       const boostByLabel = computeBoost(snippet.label, prefix);
       return {
         label: snippet.label,
         type: "snippet" as const,
-        detail: snippet.label,
+        detail: snippet.body,
         apply: snippet.body,
-        boost: Math.max(boostByPrefix, boostByLabel) - 1100,
+        boost: Math.max(boostByPrefix, boostByLabel) + 4000,
       };
     });
 }
@@ -1911,7 +1960,7 @@ function buildFunctionSnippetItems(prefix: string, functionDescriptions: Map<str
     const paramStr = parameters.length > 0 ? parameters.map((p) => `\${${p}}`).join(", ") : "";
     items.push({
       label: name,
-      type: "snippet" as const,
+      type: "function" as const,
       detail: functionDescriptions.get(name) ?? "function",
       apply: `${name}(${paramStr})`,
       boost: computeBoost(name, prefix) + 300,
@@ -1923,7 +1972,7 @@ function buildFunctionSnippetItems(prefix: string, functionDescriptions: Map<str
     if (!matchesPrefix(name, prefix)) continue;
     items.push({
       label: name,
-      type: "snippet" as const,
+      type: "function" as const,
       detail: "window function",
       apply: `${name}() OVER (PARTITION BY \${col} ORDER BY \${col})`,
       boost: computeBoost(name, prefix) + 250,
@@ -1984,11 +2033,15 @@ function buildKeywordItems(prefix: string, context: SqlCompletionContext): SqlCo
     if (!matchesPrefix(keyword, prefix)) return false;
     if (!showDdl && isDml && (DDL_ONLY_KEYWORDS.has(keyword) || DATA_TYPE_KEYWORDS.has(keyword))) return false;
     return true;
-  }).map((keyword) => ({
-    label: keyword,
-    type: "keyword" as const,
-    boost: computeBoost(keyword, prefix),
-  }));
+  }).map((keyword) => {
+    const base = computeBoost(keyword, prefix);
+    const freqBoost = HIGH_FREQUENCY_KEYWORDS.has(keyword) ? 100 : 0;
+    return {
+      label: keyword,
+      type: "keyword" as const,
+      boost: base + freqBoost,
+    };
+  });
 }
 
 function matchesPrefix(candidate: string, prefix: string): boolean {

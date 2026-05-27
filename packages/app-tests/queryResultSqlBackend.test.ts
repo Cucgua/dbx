@@ -43,3 +43,9 @@ test("Rust backends register query result SQL builders", () => {
   assert.match(webMainSource, /\/query\/prepare-pagination-plan/);
   assert.match(webMainSource, /\/query\/build-sorted-sql/);
 });
+
+test("SQL Server pagination keeps user-provided TOP clauses", () => {
+  assert.match(rustQueryResultSqlSource, /fn add_sql_server_top/);
+  assert.match(rustQueryResultSqlSource, /if has_top_level_select_top\(sql\)/);
+  assert.match(rustQueryResultSqlSource, /SELECT TOP 1000 \* FROM TicketInfo/);
+});

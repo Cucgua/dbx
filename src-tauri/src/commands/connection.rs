@@ -152,12 +152,19 @@ mod tests {
             proxy_username: String::new(),
             proxy_password: String::new(),
             ssl: false,
+            ca_cert_path: String::new(),
             sysdba: false,
             oracle_connect_method: OracleConnectMethod::ServiceName,
             oracle_connection_type: None,
             connection_string: Some(
                 "mongodb://mongouser:secret@172.22.4.42:27017/RestCloud_V45PUB_Gateway?authSource=admin".to_string(),
             ),
+            redis_connection_mode: None,
+            redis_sentinel_master: String::new(),
+            redis_sentinel_nodes: String::new(),
+            redis_sentinel_username: String::new(),
+            redis_sentinel_password: String::new(),
+            redis_sentinel_tls: false,
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -225,7 +232,7 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                 }
                 Err(e) => Err(e),
             },
-            DatabaseType::Mysql => match db::mysql::connect(&url).await {
+            DatabaseType::Mysql => match db::mysql::connect_with_ca_cert(&url, Some(&config.ca_cert_path)).await {
                 Ok(pool) => {
                     let _ = pool.disconnect().await;
                     Ok("Connection successful".to_string())
@@ -239,24 +246,35 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                 }
                 Err(e) => Err(e),
             },
-            DatabaseType::Postgres | DatabaseType::Redshift => match db::postgres::connect(&url).await {
-                Ok(pool) => {
-                    pool.close();
-                    Ok("Connection successful".to_string())
+            DatabaseType::Postgres | DatabaseType::Redshift | DatabaseType::Gaussdb | DatabaseType::OpenGauss => {
+                match db::postgres::connect(&url).await {
+                    Ok(pool) => {
+                        pool.close();
+                        Ok("Connection successful".to_string())
+                    }
+                    Err(e) => Err(e),
                 }
-                Err(e) => Err(e),
-            },
+            }
             DatabaseType::Sqlite => match db::sqlite::connect_path(&expand_tilde(&config.host)).await {
                 Ok(_) => Ok("Connection successful".to_string()),
                 Err(e) => Err(e),
             },
-            DatabaseType::Redis => db::redis_driver::connect(&url).await.map(|_| "Connection successful".to_string()),
+            DatabaseType::Redis => {
+                let con = if config.uses_redis_sentinel() {
+                    db::redis_driver::connect_sentinel(&config).await?
+                } else {
+                    db::redis_driver::connect(&url).await?
+                };
+                drop(con);
+                Ok("Connection successful".to_string())
+            }
             DatabaseType::DuckDb => {
                 if state.duckdb_existing_pool_is_usable_for_config(&config).await? {
                     Ok("Connection successful".to_string())
                 } else {
-                    db::duckdb_driver::connect_path(&expand_tilde(&config.host))
-                        .map(|_| "Connection successful".to_string())
+                    let con = db::duckdb_driver::connect_path(&expand_tilde(&config.host))?;
+                    dbx_core::db::duckdb_driver::close_connection(con);
+                    Ok("Connection successful".to_string())
                 }
             }
             DatabaseType::MongoDb => {
@@ -283,7 +301,12 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
             DatabaseType::ClickHouse => {
                 let username = if config.username.is_empty() { None } else { Some(config.username.clone()) };
                 let password = if config.password.is_empty() { None } else { Some(config.password.clone()) };
-                let client = db::clickhouse_driver::ChClient::new(&url, username, password);
+                let client = db::clickhouse_driver::ChClient::new_with_ca_cert(
+                    &url,
+                    username,
+                    password,
+                    Some(&config.ca_cert_path),
+                )?;
                 db::clickhouse_driver::test_connection(&client).await.map(|_| "Connection successful".to_string())
             }
             DatabaseType::SqlServer => {
@@ -350,14 +373,23 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
         DatabaseType::Mysql if db_config.needs_bare_mysql() => {
             PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
         }
-        DatabaseType::Mysql => PoolKind::Mysql(db::mysql::connect(&url).await?, MysqlMode::Normal),
+        DatabaseType::Mysql => PoolKind::Mysql(
+            db::mysql::connect_with_ca_cert(&url, Some(&db_config.ca_cert_path)).await?,
+            MysqlMode::Normal,
+        ),
         DatabaseType::Doris | DatabaseType::StarRocks => {
             PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
         }
-        DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
+        DatabaseType::Postgres | DatabaseType::Redshift | DatabaseType::Gaussdb | DatabaseType::OpenGauss => {
+            PoolKind::Postgres(db::postgres::connect(&url).await?)
+        }
         DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?),
         DatabaseType::Redis => {
-            let con = db::redis_driver::connect(&url).await?;
+            let con = if db_config.uses_redis_sentinel() {
+                db::redis_driver::connect_sentinel(&db_config).await?
+            } else {
+                db::redis_driver::connect(&url).await?
+            };
             PoolKind::Redis(tokio::sync::Mutex::new(con))
         }
         DatabaseType::DuckDb => {
@@ -396,7 +428,12 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
             let username = if db_config.username.is_empty() { None } else { Some(db_config.username.clone()) };
             let password = if db_config.password.is_empty() { None } else { Some(db_config.password.clone()) };
             log::info!("[connect_db] ClickHouse url={url} user={:?} has_pass={}", username, password.is_some());
-            let client = db::clickhouse_driver::ChClient::new(&url, username, password);
+            let client = db::clickhouse_driver::ChClient::new_with_ca_cert(
+                &url,
+                username,
+                password,
+                Some(&db_config.ca_cert_path),
+            )?;
             db::clickhouse_driver::test_connection(&client).await?;
             PoolKind::ClickHouse(client)
         }
@@ -454,13 +491,18 @@ pub async fn disconnect_db(state: State<'_, Arc<AppState>>, connection_id: Strin
                 PoolKind::Postgres(p) => p.close(),
                 PoolKind::Sqlite(_) => {}
                 PoolKind::Redis(_) => {}
-                PoolKind::DuckDb(_) => {}
+                PoolKind::DuckDb(con) => {
+                    dbx_core::db::duckdb_driver::close_connection(con);
+                }
                 PoolKind::MongoDb(_) => {}
                 PoolKind::ClickHouse(_) => {}
                 PoolKind::SqlServer(_) => {}
                 PoolKind::Oracle(_) => {}
                 PoolKind::Elasticsearch(_) => {}
-                PoolKind::Agent(_) => {}
+                PoolKind::Agent(client) => {
+                    let mut client = client.lock().await;
+                    let _ = client.disconnect().await;
+                }
                 PoolKind::ExternalTabular(_) => {}
                 PoolKind::ExternalDriver { .. } => {}
             }
