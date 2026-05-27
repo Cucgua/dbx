@@ -392,10 +392,17 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         proxy_username: clean_optional(args.proxy_username).unwrap_or_default(),
         proxy_password: args.proxy_password.unwrap_or_default(),
         ssl: args.ssl.unwrap_or(false),
+        ca_cert_path: String::new(),
         sysdba: args.sysdba.unwrap_or(false),
         oracle_connect_method: parse_oracle_connect_method(args.oracle_connect_method)?,
         oracle_connection_type: None,
         connection_string: clean_optional(args.connection_string),
+        redis_connection_mode: None,
+        redis_sentinel_master: String::new(),
+        redis_sentinel_nodes: String::new(),
+        redis_sentinel_username: String::new(),
+        redis_sentinel_password: String::new(),
+        redis_sentinel_tls: false,
         external_config: None,
         jdbc_driver_class: clean_optional(args.jdbc_driver_class),
         jdbc_driver_paths: args.jdbc_driver_paths.unwrap_or_default(),
@@ -476,10 +483,17 @@ mod tests {
             proxy_username: String::new(),
             proxy_password: String::new(),
             ssl: false,
+            ca_cert_path: String::new(),
             sysdba: false,
             oracle_connect_method: OracleConnectMethod::ServiceName,
             oracle_connection_type: None,
             connection_string: None,
+            redis_connection_mode: None,
+            redis_sentinel_master: String::new(),
+            redis_sentinel_nodes: String::new(),
+            redis_sentinel_username: String::new(),
+            redis_sentinel_password: String::new(),
+            redis_sentinel_tls: false,
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -555,6 +569,13 @@ mod tests {
         assert_eq!(config.database.as_deref(), Some("orcl"));
         assert_eq!(config.default_database.as_deref(), Some("MCHS"));
         assert_eq!(config.oracle_connect_method, OracleConnectMethod::Sid);
+        assert_eq!(config.ca_cert_path, "");
+        assert_eq!(config.redis_connection_mode, None);
+        assert_eq!(config.redis_sentinel_master, "");
+        assert_eq!(config.redis_sentinel_nodes, "");
+        assert_eq!(config.redis_sentinel_username, "");
+        assert_eq!(config.redis_sentinel_password, "");
+        assert!(!config.redis_sentinel_tls);
     }
 
     #[test]

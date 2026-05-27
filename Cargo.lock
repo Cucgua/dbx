@@ -1834,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "dbx"
-version = "0.5.25"
+version = "0.5.26"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1944,7 +1944,7 @@ dependencies = [
 
 [[package]]
 name = "dbx-web"
-version = "0.5.25"
+version = "0.5.26"
 dependencies = [
  "argon2",
  "async-stream",
