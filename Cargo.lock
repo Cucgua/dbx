@@ -1834,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "dbx"
-version = "0.5.24"
+version = "0.5.25"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1944,7 +1944,7 @@ dependencies = [
 
 [[package]]
 name = "dbx-web"
-version = "0.5.24"
+version = "0.5.25"
 dependencies = [
  "argon2",
  "async-stream",
@@ -2122,6 +2122,15 @@ dependencies = [
  "rustc_version",
  "syn 2.0.117",
  "unicode-xid",
+]
+
+[[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher 0.4.4",
 ]
 
 [[package]]
@@ -6641,6 +6650,7 @@ dependencies = [
  "cbc 0.1.2",
  "chrono",
  "chrono-tz",
+ "des",
  "hex",
  "hmac 0.12.1",
  "hostname",
