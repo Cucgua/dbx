@@ -462,7 +462,7 @@ mod tests {
         decrypt_sensitive_payload, encrypt_sensitive_payload, normalized_remote_path, parent_collection_paths,
         scrub_connection_secrets, ConnectionSecretSnapshot, SensitiveSyncPayload,
     };
-    use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
+    use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType};
 
     #[test]
     fn normalizes_empty_remote_path_to_default() {
@@ -490,6 +490,7 @@ mod tests {
             username: "user".to_string(),
             password: "secret".to_string(),
             database: None,
+            default_database: None,
             visible_databases: None,
             attached_databases: Vec::new(),
             color: None,
@@ -512,6 +513,7 @@ mod tests {
             ca_cert_path: String::new(),
             sysdba: false,
             oracle_connection_type: None,
+            oracle_connect_method: OracleConnectMethod::ServiceName,
             connection_string: Some("postgres://secret".to_string()),
             redis_connection_mode: None,
             redis_sentinel_master: String::new(),
