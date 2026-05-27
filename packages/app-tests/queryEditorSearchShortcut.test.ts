@@ -7,11 +7,11 @@ const source = readFileSync("apps/desktop/src/components/editor/QueryEditor.vue"
 test("SQL editor handles focus-search shortcut with its custom search overlay", () => {
   assert.match(
     source,
-    /key:\s*shortcutToCodeMirrorKey\(shortcuts\.focusSearch\)[\s\S]*?run:\s*\(\)\s*=>\s*openSearch\(\)/,
+    /key:\s*shortcutToCodeMirrorKey\(shortcuts\.find\)[\s\S]*?run:\s*openSearch/,
   );
 });
 
 test("SQL editor search shortcut keymap has higher priority than CodeMirror basicSetup search", () => {
   assert.match(source, /runKeymapComp\.of\(Prec\.highest\(runKeymapExtension\(keymap\)\)\)/);
-  assert.match(source, /runKeymapComp\.reconfigure\(editorPrec\.highest\(runKeymapExtension\(editorViewModule\.keymap\)\)\)/);
+  assert.match(source, /runKeymapComp\.reconfigure\(codeMirrorPrec\.highest\(runKeymapExtension\(editorViewModule\.keymap\)\)\)/);
 });

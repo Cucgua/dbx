@@ -1834,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "dbx"
-version = "0.5.23"
+version = "0.5.24"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1944,7 +1944,7 @@ dependencies = [
 
 [[package]]
 name = "dbx-web"
-version = "0.5.23"
+version = "0.5.24"
 dependencies = [
  "argon2",
  "async-stream",
@@ -6633,7 +6633,7 @@ dependencies = [
 [[package]]
 name = "rust-oracle"
 version = "0.1.6"
-source = "git+https://github.com/t8y2/rust-oracle?branch=main#33ebb2e822029dfefc9171a0755d676b7f14d8f4"
+source = "git+https://github.com/t8y2/rust-oracle?branch=main#6fb5d1650b4e1ed8ae65c8cdface4bf044fa5d06"
 dependencies = [
  "aes 0.8.4",
  "async-trait",

@@ -918,8 +918,8 @@ mod tests {
         agent_connect_params, connection_url_for_endpoint, database_connection_config, metadata_connection_config,
         redacted_connection_url_for_endpoint, uses_tcp_probe, AppState, PoolKind,
     };
-    use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType};
     use crate::db;
+    use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType};
     use crate::schema;
     use crate::storage::Storage;
 

@@ -47,12 +47,7 @@ pub async fn fetch_latest_release() -> Result<TauriRelease, String> {
     let client = build_update_http_client()?;
     let mut last_err = String::new();
     for url in LATEST_JSON_URLS {
-        match client
-            .get(*url)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-        {
+        match client.get(*url).send().await.and_then(|r| r.error_for_status()) {
             Ok(resp) => {
                 let mut release =
                     resp.json::<TauriRelease>().await.map_err(|e| format!("Failed to parse update response: {e}"))?;
