@@ -1025,7 +1025,7 @@ async fn exec_tx_pg_inner(
     let had_schema = schema.is_some();
     if let Some(s) = schema {
         client
-            .execute(&format!("SET search_path TO {}, public", db::postgres::pg_quote_ident(s)), &[])
+            .execute(&format!("SET search_path TO {}", db::postgres::pg_quote_ident(s)), &[])
             .await
             .map_err(|e| format!("SET search_path failed: {}", e))?;
     }
