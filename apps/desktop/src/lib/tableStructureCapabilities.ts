@@ -220,6 +220,7 @@ const capabilityByType: Partial<Record<DatabaseType, TableStructureCapabilities>
   oracle: oracleCapabilities,
   dameng: oracleCapabilities,
   "oceanbase-oracle": oracleCapabilities,
+  iris: oracleCapabilities,
   h2: h2Capabilities,
   clickhouse: clickhouseCapabilities,
 };

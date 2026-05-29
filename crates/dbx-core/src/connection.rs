@@ -297,6 +297,7 @@ impl AppState {
             | DatabaseType::Kylin
             | DatabaseType::Sundb
             | DatabaseType::Tdengine
+            | DatabaseType::Iris
             | DatabaseType::Access => {
                 let connect_params =
                     agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or(""));

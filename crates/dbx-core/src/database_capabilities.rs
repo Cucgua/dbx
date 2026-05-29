@@ -33,6 +33,7 @@ pub fn agent_key(db_type: &DatabaseType, driver_profile: Option<&str>) -> Option
         DatabaseType::Sundb => Some("sundb"),
         DatabaseType::MongoDb => Some("mongodb"),
         DatabaseType::Tdengine => Some("tdengine"),
+        DatabaseType::Iris => Some("iris"),
         DatabaseType::Access => Some("access"),
         _ => None,
     }
@@ -56,6 +57,7 @@ pub fn is_single_connection_pool(db_type: &DatabaseType) -> bool {
             | DatabaseType::Goldendb
             | DatabaseType::Yashandb
             | DatabaseType::Firebird
+            | DatabaseType::Iris
             | DatabaseType::OceanbaseOracle
             | DatabaseType::Access
             | DatabaseType::Jdbc

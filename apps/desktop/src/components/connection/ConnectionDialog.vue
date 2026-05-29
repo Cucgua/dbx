@@ -257,6 +257,7 @@ const driverProfiles: Record<
   sundb: { type: "sundb", port: 22000, user: "root", label: "SunDB", icon: "sundb" },
   jdbc: { type: "jdbc", port: 0, user: "", label: "JDBC", icon: "jdbc" },
   tdengine: { type: "tdengine", port: 6041, user: "root", label: "TDengine", icon: "tdengine" },
+  iris: { type: "iris", port: 1972, user: "_SYSTEM", label: "IRIS", icon: "iris" },
   custom_mysql: {
     type: "mysql",
     port: 3306,
@@ -492,6 +493,7 @@ const iconTypeMap: Record<string, string> = {
   hive: "hive",
   db2: "db2",
   informix: "informix",
+  iris: "iris",
   neo4j: "neo4j",
   cassandra: "cassandra",
   bigquery: "bigquery",
@@ -552,6 +554,7 @@ const dbOptions = [
   { value: "bigquery", label: "BigQuery" },
   { value: "kylin", label: "Kylin" },
   { value: "sundb", label: "SunDB" },
+  { value: "iris", label: "IRIS" },
   { value: "jdbc", label: "JDBC" },
   { value: "custom_mysql", label: "Custom (MySQL)" },
   { value: "custom_postgres", label: "Custom (PostgreSQL)" },

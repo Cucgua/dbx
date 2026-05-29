@@ -278,7 +278,7 @@ fn capabilities_for(database_type: Option<DatabaseType>) -> TableStructureCapabi
             index_comment: true,
             ..base
         },
-        Some(DatabaseType::Oracle | DatabaseType::Dameng | DatabaseType::OceanbaseOracle) => {
+        Some(DatabaseType::Oracle | DatabaseType::Dameng | DatabaseType::OceanbaseOracle | DatabaseType::Iris) => {
             TableStructureCapabilities {
                 dialect: StructureDialect::Oracle,
                 add_column: true,
