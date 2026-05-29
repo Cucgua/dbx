@@ -180,6 +180,7 @@ mod tests {
             username: "user".to_string(),
             password: "secret".to_string(),
             database: database.map(str::to_string),
+            default_database: None,
             visible_databases: None,
             attached_databases: Vec::new(),
             color: None,
