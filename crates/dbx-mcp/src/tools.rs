@@ -312,6 +312,7 @@ fn default_port(db_type: DatabaseType) -> u16 {
         DatabaseType::Kylin => 7070,
         DatabaseType::Sundb => 22000,
         DatabaseType::Tdengine => 6041,
+        DatabaseType::Iris => 1972,
     }
 }
 
@@ -346,6 +347,7 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         DatabaseType::Neo4j => "neo4j",
         DatabaseType::Cassandra => "cassandra",
         DatabaseType::Kylin => "ADMIN",
+        DatabaseType::Iris => "_SYSTEM",
         DatabaseType::Teradata => "",
         DatabaseType::Sqlite
         | DatabaseType::Redis
