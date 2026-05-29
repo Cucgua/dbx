@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   allCellsSelectionRange,
   columnSelectionRange,
+  extractColumnsSelection,
   extractSelection,
   formatSelectionAsCsv,
   formatSelectionAsJson,
@@ -41,6 +42,23 @@ test("extracts selection rows and columns from a rectangular range", () => {
   assert.deepEqual(selection.rows, [
     ["Ada", true],
     ["Linus", false],
+  ]);
+});
+
+test("extracts non-contiguous columns in display order", () => {
+  const selection = extractColumnsSelection(
+    ["id", "name", "active", "email"],
+    [
+      [1, "Ada", true, "ada@example.com"],
+      [2, "Linus", false, "linus@example.com"],
+    ],
+    [3, 1, 3],
+  );
+
+  assert.deepEqual(selection.columns, ["name", "email"]);
+  assert.deepEqual(selection.rows, [
+    ["Ada", "ada@example.com"],
+    ["Linus", "linus@example.com"],
   ]);
 });
 

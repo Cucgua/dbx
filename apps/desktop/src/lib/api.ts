@@ -34,6 +34,7 @@ function forward<K extends keyof Backend>(name: K): Backend[K] {
 export const testConnection = forward("testConnection");
 export const connectDb = forward("connectDb");
 export const disconnectDb = forward("disconnectDb");
+export const refreshConnections = forward("refreshConnections");
 export const saveConnections = forward("saveConnections");
 export const loadConnections = forward("loadConnections");
 export const listPlugins = forward("listPlugins");
@@ -116,6 +117,7 @@ export const buildRoutineRenameObjectSourceStatements = forward("buildRoutineRen
 export const buildViewDdlSql = forward("buildViewDdlSql");
 export const buildTableStructureChangeSql = forward("buildTableStructureChangeSql");
 export const buildCreateTableSql = forward("buildCreateTableSql");
+export const buildSingleColumnAlterSql = forward("buildSingleColumnAlterSql");
 export const analyzeEditableQueryEditability = forward("analyzeEditableQueryEditability");
 export const prepareDataGridSave = forward("prepareDataGridSave");
 export const buildDataGridCopyUpdateStatements = forward("buildDataGridCopyUpdateStatements");
@@ -129,6 +131,7 @@ export const buildExportSqlInsert = forward("buildExportSqlInsert");
 export const buildDatabaseSqlExport = forward("buildDatabaseSqlExport");
 export const prepareDataCompare = forward("prepareDataCompare");
 export const prepareDataCompareFromTables = forward("prepareDataCompareFromTables");
+export const buildDataCompareSyncPlan = forward("buildDataCompareSyncPlan");
 
 // AI
 export const aiComplete = forward("aiComplete");
@@ -166,6 +169,7 @@ export const executeSqlFile = forward("executeSqlFile");
 export const cancelSqlFileExecution = forward("cancelSqlFileExecution");
 export const listenSqlFileProgress = forward("listenSqlFileProgress");
 export const pendingOpenSqlFiles = forward("pendingOpenSqlFiles");
+export const pendingOpenDbFiles = forward("pendingOpenDbFiles");
 export const pendingOpenConnectionLinks = forward("pendingOpenConnectionLinks");
 export const readExternalSqlFile = forward("readExternalSqlFile");
 
@@ -212,6 +216,7 @@ export const redisLoadMore = forward("redisLoadMore");
 export const mongoListDatabases = forward("mongoListDatabases");
 export const mongoListCollections = forward("mongoListCollections");
 export const mongoFindDocuments = forward("mongoFindDocuments");
+export const mongoAggregateDocuments = forward("mongoAggregateDocuments");
 export const mongoInsertDocument = forward("mongoInsertDocument");
 export const mongoUpdateDocument = forward("mongoUpdateDocument");
 export const mongoDeleteDocument = forward("mongoDeleteDocument");

@@ -119,7 +119,9 @@ function columnsForTable(
   const keys = table.schema ? [`${table.schema}.${table.name}`, table.name] : [table.name];
   for (const key of keys) {
     const columns = columnsByTable.get(key) ?? columnsByTable.get(normalizeName(key));
-    if (columns) return columns;
+    // Empty metadata usually means the upstream schema lookup was inconclusive,
+    // so avoid surfacing a false "unknown column" warning.
+    if (columns && columns.length > 0) return columns;
   }
   return null;
 }

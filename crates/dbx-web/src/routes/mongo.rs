@@ -34,11 +34,51 @@ pub struct MongoFindRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MongoAggregateRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub collection: String,
+    pub pipeline_json: String,
+    pub max_rows: Option<usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MongoInsertRequest {
     pub connection_id: String,
     pub database: String,
     pub collection: String,
     pub doc_json: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MongoInsertDocumentsRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub collection: String,
+    pub docs_json: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MongoUpdateDocumentsRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub collection: String,
+    pub filter_json: String,
+    pub update_json: String,
+    pub many: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MongoDeleteDocumentsRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub collection: String,
+    pub filter_json: String,
+    pub many: bool,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +138,23 @@ pub async fn find_documents(
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
+pub async fn aggregate_documents(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<MongoAggregateRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let result = dbx_core::mongo_ops::mongo_aggregate_documents_core(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &req.collection,
+        &req.pipeline_json,
+        req.max_rows,
+    )
+    .await
+    .map_err(AppError)?;
+    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+}
+
 pub async fn insert_document(
     State(state): State<Arc<WebState>>,
     Json(req): Json<MongoInsertRequest>,
@@ -112,6 +169,22 @@ pub async fn insert_document(
     .await
     .map_err(AppError)?;
     Ok(Json(result))
+}
+
+pub async fn insert_documents(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<MongoInsertDocumentsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let result = dbx_core::mongo_ops::mongo_insert_documents_core(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &req.collection,
+        &req.docs_json,
+    )
+    .await
+    .map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "affected_rows": result })))
 }
 
 pub async fn update_document(
@@ -131,6 +204,24 @@ pub async fn update_document(
     Ok(Json(result))
 }
 
+pub async fn update_documents(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<MongoUpdateDocumentsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let result = dbx_core::mongo_ops::mongo_update_documents_core(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &req.collection,
+        &req.filter_json,
+        &req.update_json,
+        req.many,
+    )
+    .await
+    .map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "affected_rows": result })))
+}
+
 pub async fn delete_document(
     State(state): State<Arc<WebState>>,
     Json(req): Json<MongoDeleteRequest>,
@@ -145,4 +236,21 @@ pub async fn delete_document(
     .await
     .map_err(AppError)?;
     Ok(Json(result))
+}
+
+pub async fn delete_documents(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<MongoDeleteDocumentsRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let result = dbx_core::mongo_ops::mongo_delete_documents_core(
+        &state.app,
+        &req.connection_id,
+        &req.database,
+        &req.collection,
+        &req.filter_json,
+        req.many,
+    )
+    .await
+    .map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "affected_rows": result })))
 }

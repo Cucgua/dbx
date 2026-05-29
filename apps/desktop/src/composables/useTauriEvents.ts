@@ -5,6 +5,7 @@ import type { NavigationTarget } from "@/composables/useNavigationTargets";
 export function useTauriEvents(deps: {
   openTableTarget: (target: NavigationTarget) => Promise<void>;
   openSqlFilePath: (path: string) => Promise<void>;
+  openDbFilePath: (path: string) => Promise<void>;
   openConnectionDeepLink: (url: string) => Promise<void>;
 }) {
   const connectionStore = useConnectionStore();
@@ -54,9 +55,15 @@ export function useTauriEvents(deps: {
           }
         }).then((unlisten) => unlistenHandles.push(unlisten));
 
-        listen<{ connection_id: string; database: string; sql: string }>("mcp-execute-query", async (event) => {
+        listen<{
+          connection_id: string;
+          database: string;
+          sql: string;
+          allow_writes?: boolean;
+          allow_dangerous?: boolean;
+        }>("mcp-execute-query", async (event) => {
           try {
-            const { connection_id, database, sql } = event.payload;
+            const { connection_id, database, sql, allow_writes, allow_dangerous } = event.payload;
             if (!connectionStore.connections.length) await connectionStore.initFromDisk();
             const config = connectionStore.getConfig(connection_id);
             if (!config) return;
@@ -64,7 +71,9 @@ export function useTauriEvents(deps: {
             await connectionStore.ensureConnected(connection_id);
             const tabId = queryStore.createTab(connection_id, database, undefined, "query");
             queryStore.updateSql(tabId, sql);
-            await queryStore.executeTabSql(tabId, sql);
+            await queryStore.executeTabSql(tabId, sql, {
+              mongoSafety: { allowWrites: !!allow_writes, allowDangerous: !!allow_dangerous },
+            });
             focusCurrentWindow();
           } catch (e) {
             console.error("[DBX] mcp-execute-query error:", e);
@@ -79,6 +88,17 @@ export function useTauriEvents(deps: {
             focusCurrentWindow();
           } catch (e) {
             console.error("[DBX] dbx-open-sql-files error:", e);
+          }
+        }).then((unlisten) => unlistenHandles.push(unlisten));
+
+        listen<string[]>("dbx-open-db-files", async (event) => {
+          try {
+            for (const path of event.payload) {
+              await deps.openDbFilePath(path);
+            }
+            focusCurrentWindow();
+          } catch (e) {
+            console.error("[DBX] dbx-open-db-files error:", e);
           }
         }).then((unlisten) => unlistenHandles.push(unlisten));
 

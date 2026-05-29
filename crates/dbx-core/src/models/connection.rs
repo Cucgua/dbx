@@ -43,6 +43,10 @@ pub struct ConnectionConfig {
     pub ssh_expose_lan: bool,
     #[serde(default = "default_ssh_connect_timeout_secs")]
     pub ssh_connect_timeout_secs: u64,
+    #[serde(default = "default_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    #[serde(default = "default_query_timeout_secs")]
+    pub query_timeout_secs: u64,
     #[serde(default)]
     pub proxy_enabled: bool,
     #[serde(default)]
@@ -79,6 +83,8 @@ pub struct ConnectionConfig {
     pub redis_sentinel_password: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub redis_sentinel_tls: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub redis_cluster_nodes: String,
     /// Typed configuration for external tabular sources.
     #[serde(default)]
     pub external_config: Option<serde_json::Value>,
@@ -104,6 +110,14 @@ pub fn default_ssh_connect_timeout_secs() -> u64 {
     5
 }
 
+pub fn default_connect_timeout_secs() -> u64 {
+    5
+}
+
+pub fn default_query_timeout_secs() -> u64 {
+    30
+}
+
 fn default_proxy_port() -> u16 {
     1080
 }
@@ -114,15 +128,11 @@ fn is_false(value: &bool) -> bool {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ProxyType {
+    #[default]
     Socks5,
     Http,
-}
-
-impl Default for ProxyType {
-    fn default() -> Self {
-        Self::Socks5
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -184,6 +194,8 @@ pub enum DatabaseType {
     Kylin,
     Sundb,
     Tdengine,
+    #[serde(rename = "iris")]
+    Iris,
     Jdbc,
 }
 
@@ -212,6 +224,22 @@ impl ConnectionConfig {
             default_ssh_connect_timeout_secs()
         } else {
             self.ssh_connect_timeout_secs
+        }
+    }
+
+    pub fn effective_connect_timeout_secs(&self) -> u64 {
+        if self.connect_timeout_secs == 0 {
+            default_connect_timeout_secs()
+        } else {
+            self.connect_timeout_secs.clamp(1, 300)
+        }
+    }
+
+    pub fn effective_query_timeout_secs(&self) -> u64 {
+        if self.query_timeout_secs == 0 {
+            0
+        } else {
+            self.query_timeout_secs.clamp(1, 300)
         }
     }
 
@@ -273,6 +301,11 @@ impl ConnectionConfig {
     pub fn uses_redis_sentinel(&self) -> bool {
         self.db_type == DatabaseType::Redis
             && self.redis_connection_mode.as_deref().is_some_and(|mode| mode.eq_ignore_ascii_case("sentinel"))
+    }
+
+    pub fn uses_redis_cluster(&self) -> bool {
+        self.db_type == DatabaseType::Redis
+            && self.redis_connection_mode.as_deref().is_some_and(|mode| mode.eq_ignore_ascii_case("cluster"))
     }
 
     pub fn connection_url(&self) -> String {
@@ -346,7 +379,14 @@ impl ConnectionConfig {
             DatabaseType::Firebird => format!("firebird://{host}:{port}{db_part}"),
             DatabaseType::Exasol => format!("exasol://{host}:{port}{db_part}"),
             DatabaseType::OpenGauss => format!("opengauss://{host}:{port}{db_part}"),
-            DatabaseType::OceanbaseOracle => format!("oceanbase-oracle://{host}:{port}{db_part}"),
+            DatabaseType::OceanbaseOracle => {
+                let base = format!("oceanbase-oracle://{host}:{port}{db_part}");
+                if params.is_empty() {
+                    base
+                } else {
+                    format!("{base}?{params}")
+                }
+            }
             DatabaseType::Gbase => format!("gbase://{host}:{port}{db_part}"),
             DatabaseType::H2 => format!("h2://{host}:{port}{db_part}"),
             DatabaseType::Snowflake => format!("snowflake://{host}/{db_part}"),
@@ -360,6 +400,7 @@ impl ConnectionConfig {
             DatabaseType::Kylin => format!("kylin://{host}:{port}{db_part}"),
             DatabaseType::Sundb => format!("sundb://{host}:{port}{db_part}"),
             DatabaseType::Tdengine => format!("tdengine://{host}:{port}{db_part}"),
+            DatabaseType::Iris => format!("iris://{host}:{port}{db_part}"),
             DatabaseType::Jdbc => "jdbc:<redacted>".to_string(),
         }
     }
@@ -473,7 +514,12 @@ impl ConnectionConfig {
                 format!("opengauss://{}:{}@{host}:{port}{db_part}", username, password)
             }
             DatabaseType::OceanbaseOracle => {
-                format!("oceanbase-oracle://{}:{}@{host}:{port}{db_part}", username, password)
+                let base = format!("oceanbase-oracle://{}:{}@{host}:{port}{db_part}", username, password);
+                if params.is_empty() {
+                    base
+                } else {
+                    format!("{base}?{params}")
+                }
             }
             DatabaseType::Gbase => {
                 format!("gbase://{}:{}@{host}:{port}{db_part}", username, password)
@@ -513,6 +559,9 @@ impl ConnectionConfig {
             }
             DatabaseType::Tdengine => {
                 format!("tdengine://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Iris => {
+                format!("iris://{}:{}@{host}:{port}{db_part}", username, password)
             }
             DatabaseType::Jdbc => {
                 self.connection_string.as_deref().filter(|value| !value.is_empty()).unwrap_or("jdbc:").to_string()
@@ -816,7 +865,9 @@ fn bracket_ipv6(host: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, ProxyType};
+    use super::{
+        default_query_timeout_secs, default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, ProxyType,
+    };
     use std::str::FromStr;
 
     fn mysql_config(username: &str, password: &str, database: Option<&str>) -> ConnectionConfig {
@@ -845,6 +896,8 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
+            connect_timeout_secs: super::default_connect_timeout_secs(),
+            query_timeout_secs: default_query_timeout_secs(),
             proxy_enabled: false,
             proxy_type: ProxyType::Socks5,
             proxy_host: String::new(),
@@ -863,6 +916,7 @@ mod tests {
             redis_sentinel_username: String::new(),
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
+            redis_cluster_nodes: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -910,6 +964,8 @@ mod tests {
 
         assert_eq!(config.ssh_connect_timeout_secs, default_ssh_connect_timeout_secs());
         assert_eq!(config.effective_ssh_connect_timeout_secs(), default_ssh_connect_timeout_secs());
+        assert_eq!(config.query_timeout_secs, default_query_timeout_secs());
+        assert_eq!(config.effective_query_timeout_secs(), default_query_timeout_secs());
     }
 
     #[test]
@@ -983,6 +1039,14 @@ mod tests {
         config.ssh_connect_timeout_secs = 0;
 
         assert_eq!(config.effective_ssh_connect_timeout_secs(), default_ssh_connect_timeout_secs());
+    }
+
+    #[test]
+    fn query_timeout_zero_disables_timeout() {
+        let mut config = mysql_config("root", "", None);
+        config.query_timeout_secs = 0;
+
+        assert_eq!(config.effective_query_timeout_secs(), 0);
     }
 
     #[test]

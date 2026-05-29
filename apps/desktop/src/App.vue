@@ -25,6 +25,7 @@ import { useDialogSources } from "@/composables/useDialogSources";
 import { useNavigationTargets } from "@/composables/useNavigationTargets";
 import { useDataGridActions } from "@/composables/useDataGridActions";
 import { useTauriEvents } from "@/composables/useTauriEvents";
+import { useVisibilityChange } from "@/composables/useVisibilityChange";
 import "@/i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
 import * as api from "@/lib/api";
@@ -32,8 +33,10 @@ import { resolveDefaultDatabase, resolveDefaultSchema } from "@/lib/defaultDatab
 import { findTreeNodeById, resolveNewQueryTarget } from "@/lib/newQueryContext";
 import { buildExecutableObjectSourceStatements, objectSourceSaveExecutionMode } from "@/lib/objectSourceEditor";
 import { resolveExecutableSql, resolveExecutableSqlWithBackend } from "@/lib/sqlExecutionTarget";
+import { uuid } from "@/lib/utils";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { sqlFileTitleFromPath } from "@/lib/sqlFileOpen";
+import type { ConnectionConfig } from "@/types/database";
 import { parseConnectionDeepLink, type ConnectionDeepLinkDraft } from "@/lib/connectionDeepLink";
 import {
   isBrowserReloadShortcut,
@@ -43,14 +46,18 @@ import {
   isModRShortcut,
   isNewQueryShortcut,
   isObjectSourceSaveShortcutTarget,
+  isResetZoomShortcut,
   isRefreshDataShortcut,
   isSaveShortcut,
+  isZoomInShortcut,
+  isZoomOutShortcut,
 } from "@/lib/keyboardShortcuts";
 import { isPreviewTab } from "@/lib/tabPresentation";
 import { supportsSqlFileExecution } from "@/lib/databaseCapabilities";
 import { classifyAiSqlExecution } from "@/lib/aiSqlExecutionPolicy";
 import { buildHistoryAiAnalysisPrompt } from "@/lib/historyAiAnalysis";
 import { countAvailableAgentDriverUpdates, type AgentDriverUpdateBadgeState } from "@/lib/agentDriverUpdateBadge";
+import { safeLocalStorageGet, safeLocalStorageSet } from "@/lib/safeStorage";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -106,7 +113,7 @@ const showSettingsDialog = ref(false);
 const showDriverStore = ref(false);
 const agentDriverUpdateCount = ref(0);
 const showHistory = ref(false);
-const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") === "true");
+const showAiPanel = ref(safeLocalStorageGet("dbx-ai-panel-open") === "true");
 const aiPanelReady = ref(false);
 const { sidebarWidth, aiPanelWidth, historyWidth, startSidebarResize, startAiPanelResize, startHistoryResize } =
   usePanelResize();
@@ -207,8 +214,10 @@ const { onExecuteSql, onReloadData, onPaginate, onSort } = useDataGridActions(ac
 const { setupTauriListeners, cleanupTauriListeners } = useTauriEvents({
   openTableTarget,
   openSqlFilePath,
+  openDbFilePath,
   openConnectionDeepLink,
 });
+useVisibilityChange();
 
 const appVersion = ref("");
 const isClassicLayout = computed(() => settingsStore.editorSettings.appLayout === "classic");
@@ -233,6 +242,47 @@ function applyDefaultDatabaseToTab(tabId: string, connection: ConnectionConfig, 
   return database;
 }
 
+async function applyUiScale(scale: number) {
+  if (!isDesktop) return;
+  try {
+    const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+    await getCurrentWebview().setZoom(scale);
+  } catch (error) {
+    console.warn("[DBX] Failed to apply UI scale", { scale, error });
+  }
+}
+
+function setGlobalUiScale(scale: number) {
+  settingsStore.updateEditorSettings({ uiScale: scale });
+}
+
+function zoomInUi() {
+  setGlobalUiScale(settingsStore.editorSettings.uiScale + 0.1);
+}
+
+function zoomOutUi() {
+  setGlobalUiScale(settingsStore.editorSettings.uiScale - 0.1);
+}
+
+function resetUiZoom() {
+  setGlobalUiScale(1);
+}
+
+function isGlobalUiZoomTarget(target: EventTarget | null): target is Element {
+  if (!(target instanceof Element)) return false;
+  if (target.closest("[data-query-editor-root], [data-cell-detail-editor-root], [data-object-source-editor]")) {
+    return true;
+  }
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  ) {
+    return false;
+  }
+  return !target.closest("[contenteditable='true']");
+}
+
 watch(
   () => queryStore.activeTabId,
   (id) => {
@@ -251,15 +301,23 @@ watch(
   },
 );
 
+watch(
+  () => settingsStore.editorSettings.uiScale,
+  (scale) => {
+    void applyUiScale(scale);
+  },
+  { immediate: true },
+);
+
 function toggleAiPanel() {
   showAiPanel.value = !showAiPanel.value;
-  localStorage.setItem("dbx-ai-panel-open", String(showAiPanel.value));
+  safeLocalStorageSet("dbx-ai-panel-open", String(showAiPanel.value));
 }
 
 function fixWithAi(errorMessage: string) {
   if (!showAiPanel.value) {
     showAiPanel.value = true;
-    localStorage.setItem("dbx-ai-panel-open", "true");
+    safeLocalStorageSet("dbx-ai-panel-open", "true");
   }
   nextTick(() => aiAssistantRef.value?.triggerAction("fix", errorMessage));
 }
@@ -267,7 +325,7 @@ function fixWithAi(errorMessage: string) {
 function openAiPanel() {
   if (!showAiPanel.value) {
     showAiPanel.value = true;
-    localStorage.setItem("dbx-ai-panel-open", "true");
+    safeLocalStorageSet("dbx-ai-panel-open", "true");
   }
 }
 
@@ -444,6 +502,73 @@ async function openPendingSqlFiles() {
   }
 }
 
+const DB_EXTENSIONS = [".db", ".sqlite", ".sqlite3", ".duckdb"];
+
+function getDbTypeFromPath(path: string): "sqlite" | "duckdb" | null {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".duckdb")) return "duckdb";
+  if (DB_EXTENSIONS.some((ext) => lower.endsWith(ext))) return "sqlite";
+  return null;
+}
+
+async function openDbFilePath(path: string) {
+  if (!isTauriRuntime()) return;
+  try {
+    const name = path.split("/").pop()?.split("\\").pop() || path;
+    const dbType = getDbTypeFromPath(path);
+    if (!dbType) return;
+
+    // Check for existing connection with the same file path
+    const existing = connectionStore.connections.find((c) => c.host === path);
+    if (existing) {
+      const { ask } = await import("@tauri-apps/plugin-dialog");
+      const switchTo = await ask(`A connection to "${path}" already exists. Switch to it?`, {
+        title: "Database Already Open",
+        kind: "info",
+      });
+      if (switchTo) {
+        connectionStore.activeConnectionId = existing.id;
+        connectionStore.ensureConnected(existing.id).catch(() => {});
+        const node = connectionStore.treeNodes.find((n) => n.id === existing.id);
+        if (node && !node.isExpanded) {
+          connectionStore.loadDatabases(existing.id);
+        }
+      }
+      return;
+    }
+
+    const config: ConnectionConfig = {
+      id: uuid(),
+      name,
+      db_type: dbType,
+      driver_profile: dbType,
+      driver_label: dbType === "duckdb" ? "DuckDB" : "SQLite",
+      url_params: "",
+      host: path,
+      port: 0,
+      username: "",
+      password: "",
+    };
+    await connectionStore.addConnection(config);
+    void connectionStore.connect(config);
+    toast(t("welcome.fileOpened", { name }));
+  } catch (e: any) {
+    toast(t("toolbar.sqlOpenFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function openPendingDbFiles() {
+  if (!isTauriRuntime()) return;
+  try {
+    const paths = await api.pendingOpenDbFiles();
+    for (const path of paths) {
+      await openDbFilePath(path);
+    }
+  } catch {
+    /* ignore startup file-open probing errors */
+  }
+}
+
 async function openConnectionDeepLink(url: string) {
   try {
     const draft = parseConnectionDeepLink(url);
@@ -589,7 +714,7 @@ function ensureQueryTab(): string {
   const tab = activeTab.value;
   if (tab && tab.mode === "query") return tab.id;
   const connId = connectionStore.activeConnectionId || connectionStore.connections[0]?.id || "";
-  const db = tab?.database || "";
+  const db = tab?.connectionId === connId ? tab.database : connectionStore.getConfig(connId)?.database || "";
   return queryStore.createTab(connId, db, undefined, "query");
 }
 
@@ -686,6 +811,26 @@ function handleKeydown(e: KeyboardEvent) {
     e.stopPropagation();
     return;
   }
+  if (isDesktop && isGlobalUiZoomTarget(e.target)) {
+    if (isZoomInShortcut(e, shortcuts)) {
+      e.preventDefault();
+      e.stopPropagation();
+      zoomInUi();
+      return;
+    }
+    if (isZoomOutShortcut(e, shortcuts)) {
+      e.preventDefault();
+      e.stopPropagation();
+      zoomOutUi();
+      return;
+    }
+    if (isResetZoomShortcut(e, shortcuts)) {
+      e.preventDefault();
+      e.stopPropagation();
+      resetUiZoom();
+      return;
+    }
+  }
   if (isDesktop && isBrowserReloadShortcut(e)) {
     e.preventDefault();
     e.stopPropagation();
@@ -703,6 +848,7 @@ function onLoginSuccess() {
 function initApp() {
   const t0 = performance.now();
   console.log("[STARTUP] initApp begin");
+  settingsStore.initDesktopSettings().catch(() => {});
   savedSqlStore
     .initFromStorage()
     .then(() => {
@@ -753,6 +899,7 @@ onMounted(async () => {
     aiPanelReady.value = true;
   });
   applyTheme();
+  void applyUiScale(settingsStore.editorSettings.uiScale);
   window.addEventListener("keydown", handleKeydown);
   window.addEventListener("dbx-open-driver-store", openDriverStoreFromEvent);
   if (isDesktop) {
@@ -799,6 +946,7 @@ onMounted(async () => {
     .catch(() => {});
   setupTauriListeners();
   void openPendingSqlFiles();
+  void openPendingDbFiles();
   void openPendingConnectionLinks();
   console.log(`[STARTUP] onMounted sync done: ${(performance.now() - mountStart).toFixed(0)}ms`);
 });

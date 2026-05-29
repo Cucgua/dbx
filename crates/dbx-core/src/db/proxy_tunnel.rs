@@ -19,6 +19,7 @@ impl ProxyTunnelManager {
         Self { tunnels: tokio::sync::Mutex::new(HashMap::new()) }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_tunnel(
         &self,
         connection_id: &str,

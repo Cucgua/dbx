@@ -265,7 +265,7 @@ pub async fn export_database_sql_core(
         .read()
         .await
         .get(&request.connection_id)
-        .map(|c| c.db_type.clone())
+        .map(|c| c.db_type)
         .ok_or_else(|| format!("Connection config not found: {}", request.connection_id))?;
 
     // 2. Get pool

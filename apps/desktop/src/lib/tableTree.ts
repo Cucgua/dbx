@@ -36,6 +36,50 @@ export function buildTableTreeNodes({
   });
 }
 
+export function buildSimpleObjectTreeNodes({
+  nodeId,
+  connectionId,
+  database,
+  schema,
+  objects,
+}: {
+  nodeId: string;
+  connectionId: string;
+  database: string;
+  schema?: string;
+  objects: ObjectInfo[];
+}): TreeNode[] {
+  const seen = new Set<string>();
+  const nodes: TreeNode[] = [];
+
+  for (const obj of objects) {
+    const objectType = normalizeObjectType(obj.object_type);
+    if (objectType !== "TABLE" && objectType !== "VIEW") continue;
+
+    const name = normalizeDatabaseObjectName(obj.name);
+    if (!name) continue;
+
+    const childSchema = obj.schema ? normalizeDatabaseObjectName(obj.schema) : schema;
+    const dedupeKey = `${objectType}\0${(childSchema || "").toLowerCase()}\0${name.toLowerCase()}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    nodes.push({
+      id: `${nodeId}:${childSchema ? `${childSchema}:` : ""}${name}`,
+      label: name,
+      type: objectType === "VIEW" ? ("view" as const) : ("table" as const),
+      comment: obj.comment,
+      connectionId,
+      database,
+      schema: childSchema,
+      isExpanded: false,
+      children: [],
+    });
+  }
+
+  return nodes;
+}
+
 function normalizeObjectType(type: string): "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION" {
   const v = type.toUpperCase();
   if (v.includes("VIEW")) return "VIEW";

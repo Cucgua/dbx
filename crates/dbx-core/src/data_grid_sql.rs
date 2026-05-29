@@ -1216,6 +1216,7 @@ fn uses_keyless_row_predicate(database_type: Option<DatabaseType>) -> bool {
                 | DatabaseType::Bigquery
                 | DatabaseType::Sundb
                 | DatabaseType::Hive
+                | DatabaseType::Iris
         )
     )
 }

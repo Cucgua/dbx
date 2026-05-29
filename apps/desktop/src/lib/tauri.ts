@@ -35,11 +35,17 @@ import type {
 import type {
   DataCompareFromTablesOptions,
   DataCompareFromTablesPreparation,
+  DataCompareSyncPlan,
+  DataCompareSyncPlanOptions,
   DataComparePreparation,
   DataComparePreparationOptions,
 } from "@/lib/dataCompare";
 import type { SchemaDiffPreparation, SchemaDiffPreparationOptions, TableDiff } from "@/lib/schemaDiff";
-import type { BuildTableStructureChangeSqlOptions, TableStructureChangeSql } from "@/lib/tableStructureEditorSql";
+import type {
+  BuildTableStructureChangeSqlOptions,
+  BuildSingleColumnAlterSqlOptions,
+  TableStructureChangeSql,
+} from "@/lib/tableStructureEditorSql";
 import type { BuildTableSelectSqlOptions } from "@/lib/tableSelectSql";
 import type { DatabaseSearchSql, DatabaseSearchSqlOptions, SearchResultWhereOptions } from "@/lib/databaseSearch";
 import type { BuildEditableObjectSourceSqlInput, BuildRoutineRenameObjectSourceInput } from "@/lib/objectSourceEditor";
@@ -332,6 +338,10 @@ export async function pendingOpenSqlFiles(): Promise<string[]> {
   return invoke("pending_open_sql_files");
 }
 
+export async function pendingOpenDbFiles(): Promise<string[]> {
+  return invoke("pending_open_db_files");
+}
+
 export async function pendingOpenConnectionLinks(): Promise<string[]> {
   return invoke("pending_open_connection_links");
 }
@@ -469,6 +479,10 @@ export async function executeMulti(
   },
 ): Promise<QueryResult[]> {
   return invoke("execute_multi", { connectionId, database, sql, schema, executionId, ...options });
+}
+
+export async function refreshConnections(): Promise<void> {
+  return invoke("refresh_connections");
 }
 
 export async function cancelQuery(executionId: string): Promise<boolean> {
@@ -638,6 +652,12 @@ export async function buildCreateTableSql(
   return invoke("build_create_table_sql", { options });
 }
 
+export async function buildSingleColumnAlterSql(
+  options: BuildSingleColumnAlterSqlOptions,
+): Promise<TableStructureChangeSql> {
+  return invoke("build_single_column_alter_sql", { options });
+}
+
 export async function analyzeEditableQueryEditability(sql: string): Promise<QueryEditability> {
   return invoke("analyze_editable_query_editability", { sql });
 }
@@ -708,6 +728,10 @@ export async function prepareDataCompareFromTables(
   options: DataCompareFromTablesOptions,
 ): Promise<DataCompareFromTablesPreparation> {
   return invoke("prepare_data_compare_from_tables", { options });
+}
+
+export async function buildDataCompareSyncPlan(options: DataCompareSyncPlanOptions): Promise<DataCompareSyncPlan> {
+  return invoke("build_data_compare_sync_plan", { options });
 }
 
 export async function listIndexes(
@@ -1113,6 +1137,16 @@ export async function mongoFindDocuments(
   return invoke("mongo_find_documents", { connectionId, database, collection, skip, limit, filter, sort });
 }
 
+export async function mongoAggregateDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  pipelineJson: string,
+  maxRows?: number,
+): Promise<MongoDocumentResult> {
+  return invoke("mongo_aggregate_documents", { connectionId, database, collection, pipelineJson, maxRows });
+}
+
 export async function mongoInsertDocument(
   connectionId: string,
   database: string,
@@ -1261,20 +1295,24 @@ export async function startTransfer(
   request: TransferRequest,
   onProgress: (progress: TransferProgress) => void,
 ): Promise<void> {
-  const unlisten: UnlistenFn = await listen<TransferProgress>("transfer-progress", (event) => {
-    if (event.payload.transferId === request.transferId) {
-      onProgress(event.payload);
-      if (event.payload.status === "done" || event.payload.status === "error" || event.payload.status === "cancelled") {
-        unlisten();
-      }
+  return new Promise(async (resolve, reject) => {
+    let unlisten: UnlistenFn | null = null;
+    try {
+      unlisten = await listen<TransferProgress>("transfer-progress", (event) => {
+        if (event.payload.transferId !== request.transferId) return;
+        onProgress(event.payload);
+        if (event.payload.status === "done" || event.payload.status === "cancelled") {
+          unlisten?.();
+          resolve();
+        }
+      });
+
+      await invoke("start_transfer", { request });
+    } catch (e) {
+      unlisten?.();
+      reject(e);
     }
   });
-  try {
-    await invoke("start_transfer", { request });
-  } catch (e) {
-    unlisten();
-    throw e;
-  }
 }
 
 export async function cancelTransfer(transferId: string): Promise<void> {

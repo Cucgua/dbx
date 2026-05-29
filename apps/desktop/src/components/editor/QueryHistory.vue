@@ -6,10 +6,9 @@ import { Clock, Copy, Database, RotateCcw, Search, Sparkles, Trash2, X } from "l
 import { RecycleScroller } from "vue-virtual-scroller";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import CustomContextMenu, { type ContextMenuItem } from "@/components/ui/CustomContextMenu.vue";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useToast } from "@/composables/useToast";
-import { shouldClearHistory, shouldDeleteHistoryEntry } from "@/lib/historyActions";
 import { resolveHistoryActivityKind } from "@/lib/historyActivityKind";
 import { canRollbackHistoryEntry } from "@/lib/historyAiAnalysis";
 import { HISTORY_ROW_HEIGHT, HISTORY_SCROLL_BUFFER, shouldVirtualizeHistory } from "@/lib/historyVirtualList";
@@ -34,6 +33,9 @@ const searchText = ref("");
 const activeFilter = ref<HistoryFilter>("all");
 const selectedEntry = ref<HistoryEntry | null>(null);
 const isRollingBack = ref(false);
+const showDeleteConfirm = ref(false);
+const showClearConfirm = ref(false);
+const deleteTargetId = ref<string | null>(null);
 
 const filters: HistoryFilter[] = ["all", "query", "data_change", "schema_change", "failed"];
 
@@ -70,15 +72,27 @@ async function copyText(text: string) {
 }
 
 function confirmDeleteEntry(id: string) {
-  if (shouldDeleteHistoryEntry(() => window.confirm(t("history.confirmDelete")))) {
-    store.remove(id);
+  deleteTargetId.value = id;
+  showDeleteConfirm.value = true;
+}
+
+function executeDelete() {
+  if (deleteTargetId.value) {
+    store.remove(deleteTargetId.value);
+    deleteTargetId.value = null;
   }
+  showDeleteConfirm.value = false;
 }
 
 function confirmClearHistory() {
-  if (shouldClearHistory(store.entries.length, () => window.confirm(t("history.confirmClear")))) {
-    store.clear();
+  if (store.entries.length > 0) {
+    showClearConfirm.value = true;
   }
+}
+
+function executeClear() {
+  store.clear();
+  showClearConfirm.value = false;
 }
 
 function formatTime(iso: string): string {
@@ -170,6 +184,22 @@ async function rollback(entry: HistoryEntry) {
   }
 }
 
+function getHistoryMenuItems(entry: HistoryEntry): ContextMenuItem[] {
+  return [
+    {
+      label: t("history.viewDetails"),
+      action: () => {
+        selectedEntry.value = entry;
+      },
+    },
+    { label: t("history.restore"), action: () => restore(entry) },
+    { label: t("history.analyzeWithAi"), action: () => emit("analyzeAi", entry), icon: Sparkles },
+    { label: t("history.copy"), action: () => copyText(entry.sql) },
+    ...(canRollbackHistoryEntry(entry) ? [{ label: t("history.rollback"), action: () => rollback(entry) }] : []),
+    { label: t("history.delete"), action: () => confirmDeleteEntry(entry.id), variant: "destructive" as const },
+  ];
+}
+
 onMounted(() => store.load());
 </script>
 
@@ -224,51 +254,35 @@ onMounted(() => store.load());
         key-field="id"
       >
         <template #default="{ item: entry }">
-          <ContextMenu>
-            <ContextMenuTrigger as-child>
-              <div
-                class="h-[72px] cursor-pointer border-b border-border/50 px-3 py-2 text-xs hover:bg-accent/50"
-                @click="selectedEntry = entry"
-              >
-                <div class="mb-0.5 flex items-center gap-1">
-                  <span
-                    class="inline-flex h-5 w-9 shrink-0 items-center justify-center rounded border px-1 text-[10px] leading-none text-muted-foreground"
-                  >
-                    {{ kindShortLabel(entry) }}
-                  </span>
-                  <span class="truncate font-medium">{{ entryTitle(entry) }}</span>
-                  <span class="ml-auto shrink-0 text-muted-foreground">{{ formatTime(entry.executed_at) }}</span>
-                </div>
-                <div class="truncate font-mono text-muted-foreground">{{ entrySubtitle(entry) }}</div>
-                <div class="mt-0.5 flex items-center gap-2">
-                  <span class="inline-flex min-w-0 items-center gap-1 text-muted-foreground">
-                    <Database class="h-3 w-3 shrink-0" />
-                    <span class="truncate">
-                      {{ entry.connection_name }}<template v-if="entry.database"> / {{ entry.database }}</template>
-                    </span>
-                  </span>
-                  <span class="ml-auto shrink-0" :class="entry.success ? 'text-green-500' : 'text-red-500'">
-                    {{ entry.success ? `${entry.execution_time_ms}ms` : t("history.failed") }}
-                  </span>
-                </div>
+          <CustomContextMenu :items="getHistoryMenuItems(entry)" v-slot="{ onContextMenu }">
+            <div
+              class="h-[72px] cursor-pointer border-b border-border/50 px-3 py-2 text-xs hover:bg-accent/50"
+              @click="selectedEntry = entry"
+              @contextmenu="onContextMenu"
+            >
+              <div class="mb-0.5 flex items-center gap-1">
+                <span
+                  class="inline-flex h-5 w-9 shrink-0 items-center justify-center rounded border px-1 text-[10px] leading-none text-muted-foreground"
+                >
+                  {{ kindShortLabel(entry) }}
+                </span>
+                <span class="truncate font-medium">{{ entryTitle(entry) }}</span>
+                <span class="ml-auto shrink-0 text-muted-foreground">{{ formatTime(entry.executed_at) }}</span>
               </div>
-            </ContextMenuTrigger>
-            <ContextMenuContent class="w-44">
-              <ContextMenuItem @click="selectedEntry = entry">{{ t("history.viewDetails") }}</ContextMenuItem>
-              <ContextMenuItem @click="restore(entry)">{{ t("history.restore") }}</ContextMenuItem>
-              <ContextMenuItem @click="emit('analyzeAi', entry)">
-                <Sparkles class="h-3.5 w-3.5" />
-                {{ t("history.analyzeWithAi") }}
-              </ContextMenuItem>
-              <ContextMenuItem @click="copyText(entry.sql)">{{ t("history.copy") }}</ContextMenuItem>
-              <ContextMenuItem v-if="canRollbackHistoryEntry(entry)" @click="rollback(entry)">{{
-                t("history.rollback")
-              }}</ContextMenuItem>
-              <ContextMenuItem class="text-destructive" @click="confirmDeleteEntry(entry.id)">{{
-                t("history.delete")
-              }}</ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
+              <div class="truncate font-mono text-muted-foreground">{{ entrySubtitle(entry) }}</div>
+              <div class="mt-0.5 flex items-center gap-2">
+                <span class="inline-flex min-w-0 items-center gap-1 text-muted-foreground">
+                  <Database class="h-3 w-3 shrink-0" />
+                  <span class="truncate">
+                    {{ entry.connection_name }}<template v-if="entry.database"> / {{ entry.database }}</template>
+                  </span>
+                </span>
+                <span class="ml-auto shrink-0" :class="entry.success ? 'text-green-500' : 'text-red-500'">
+                  {{ entry.success ? `${entry.execution_time_ms}ms` : t("history.failed") }}
+                </span>
+              </div>
+            </div>
+          </CustomContextMenu>
         </template>
       </RecycleScroller>
 
@@ -330,6 +344,32 @@ onMounted(() => store.load());
             <RotateCcw class="h-4 w-4" />
             {{ isRollingBack ? t("common.loading") : t("history.rollback") }}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="showDeleteConfirm">
+      <DialogContent class="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>{{ t("history.delete") }}</DialogTitle>
+        </DialogHeader>
+        <p class="text-sm text-muted-foreground">{{ t("history.confirmDelete") }}</p>
+        <DialogFooter>
+          <Button variant="outline" @click="showDeleteConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
+          <Button variant="destructive" @click="executeDelete">{{ t("dangerDialog.confirm") }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="showClearConfirm">
+      <DialogContent class="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>{{ t("history.clear") }}</DialogTitle>
+        </DialogHeader>
+        <p class="text-sm text-muted-foreground">{{ t("history.confirmClear") }}</p>
+        <DialogFooter>
+          <Button variant="outline" @click="showClearConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
+          <Button variant="destructive" @click="executeClear">{{ t("dangerDialog.confirm") }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

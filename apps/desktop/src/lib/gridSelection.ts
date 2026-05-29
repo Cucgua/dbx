@@ -17,6 +17,10 @@ export interface SelectionData {
   rows: GridCellValue[][];
 }
 
+export function normalizeSelectedColumnIndexes(columnIndexes: Iterable<number>): number[] {
+  return [...new Set(columnIndexes)].filter((index) => index >= 0).sort((a, b) => a - b);
+}
+
 export function normalizeSelectionRange(anchor: CellPosition, focus: CellPosition): CellSelectionRange {
   return {
     startRow: Math.min(anchor.rowIndex, focus.rowIndex),
@@ -79,6 +83,22 @@ export function extractSelection(
     .map((row) => row.slice(range.startCol, range.endCol + 1));
 
   return { columns: selectedColumns, rows: selectedRows };
+}
+
+export function extractColumnsSelection(
+  columns: readonly string[],
+  rows: readonly GridCellValue[][],
+  selectedColumnIndexes: Iterable<number>,
+): SelectionData {
+  const normalizedIndexes = normalizeSelectedColumnIndexes(selectedColumnIndexes).filter(
+    (index) => index < columns.length,
+  );
+  if (normalizedIndexes.length === 0) return { columns: [], rows: [] };
+
+  return {
+    columns: normalizedIndexes.map((index) => columns[index]),
+    rows: rows.map((row) => normalizedIndexes.map((index) => row[index] ?? null)),
+  };
 }
 
 function displayValue(value: GridCellValue): string {

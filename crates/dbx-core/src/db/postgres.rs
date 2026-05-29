@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio_postgres::config::SslMode;
 use tokio_postgres::types::{FromSql, Type};
 use tokio_postgres::{Row, SimpleQueryMessage};
@@ -344,17 +344,18 @@ async fn execute_select_query(
     }
 }
 
-pub async fn connect(url: &str) -> Result<Pool, String> {
+pub async fn connect(url: &str, fallback_timeout: Duration) -> Result<Pool, String> {
     let postgres_url = postgres_connection_url(url)?;
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
+    let timeout = super::parse_connect_timeout_with_fallback(url, fallback_timeout);
     let tz = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
 
-    super::with_connection_timeout("PostgreSQL", super::connection_timeout(), async {
+    super::with_connection_timeout("PostgreSQL", timeout, async {
         let pg_config = tokio_postgres::Config::from_str(&postgres_url.url)
             .map_err(|e| format!("Invalid PostgreSQL connection URL: {e}"))?;
 
-        let mgr_config = ManagerConfig { recycling_method: RecyclingMethod::Fast };
+        let mgr_config = ManagerConfig { recycling_method: RecyclingMethod::Verified };
         let tls_config = postgres_tls_config(
             &pg_config,
             &postgres_url.ssl_files,
@@ -369,7 +370,7 @@ pub async fn connect(url: &str) -> Result<Pool, String> {
         let pool = Pool::builder(mgr)
             .max_size(1)
             .runtime(Runtime::Tokio1)
-            .wait_timeout(Some(super::connection_timeout()))
+            .wait_timeout(Some(timeout))
             .build()
             .map_err(|e| format!("Failed to create PostgreSQL pool: {e}"))?;
 
@@ -927,10 +928,7 @@ pub async fn execute_query_with_schema_and_max_rows(
     max_rows: Option<usize>,
 ) -> Result<QueryResult, String> {
     let client = pool.get().await.map_err(|e| e.to_string())?;
-    client
-        .execute(&format!("SET search_path TO {}, public", pg_quote_ident(schema)), &[])
-        .await
-        .map_err(pg_error_to_string)?;
+    client.execute(&format!("SET search_path TO {}", pg_quote_ident(schema)), &[]).await.map_err(pg_error_to_string)?;
 
     let result = execute_query_with_max_rows_inner(&client, sql, max_rows).await;
 

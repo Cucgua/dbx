@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, defineAsyncComponent, watch } from "vue";
+import { computed, ref, defineAsyncComponent, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Check,
@@ -168,6 +168,19 @@ watch(
   () => [props.activeTab.isExecuting, props.activeTab.isExplaining],
   ([isExecuting, isExplaining]) => {
     if (isExecuting || isExplaining) resultsPaneOpen.value = true;
+  },
+);
+
+watch(
+  () => props.activeTab.isExecuting,
+  (isExecuting, wasExecuting) => {
+    if (!isExecuting && wasExecuting) {
+      nextTick(() => {
+        requestAnimationFrame(() => {
+          queryEditorRef.value?.scrollCursorIntoView();
+        });
+      });
+    }
   },
 );
 
@@ -412,6 +425,7 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
                 :page-offset="activeTab.resultPageOffset"
                 :page-limit="activeTab.resultPageLimit"
                 :count-sql="activeTab.resultCountSql"
+                :total-row-count="activeTab.resultTotalRowCount"
                 :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
                 @reload="
                   (

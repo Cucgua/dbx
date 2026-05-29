@@ -43,6 +43,12 @@
         "description": "SQL script",
         "role": "Editor",
         "mimeType": "application/sql"
+      },
+      {
+        "ext": ["db", "sqlite", "sqlite3", "duckdb"],
+        "name": "Database File",
+        "description": "Database file",
+        "role": "Editor"
       }
     ],
     "macOS": {

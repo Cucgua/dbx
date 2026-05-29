@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   Database,
+  Info,
   KeyRound,
   Loader2,
   Maximize2,
@@ -28,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -42,6 +44,7 @@ import {
   createColumnDrafts,
   createIndexDrafts,
   DATA_TYPE_OPTIONS,
+  getDefaultLengthForType,
   splitDataType,
   toColumnNames,
 } from "@/lib/tableStructureEditorState";
@@ -91,8 +94,27 @@ const warnings = ref<string[]>([]);
 const foreignKeys = ref<ForeignKeyInfo[]>([]);
 const triggers = ref<TriggerInfo[]>([]);
 
+const colWidths = ref([28, 128, 144, 96, 64, 56, 112, 128, 128]);
+const colResizing = ref<{ col: number; startX: number; startW: number } | null>(null);
 const indexColWidths = ref([132, 200, 64, 96, 132, 160, 132, 76]);
 const resizing = ref<{ col: number; startX: number; startW: number } | null>(null);
+
+function onColResize(e: MouseEvent, col: number) {
+  e.preventDefault();
+  colResizing.value = { col, startX: e.clientX, startW: colWidths.value[col] };
+  const onMove = (ev: MouseEvent) => {
+    if (!colResizing.value) return;
+    const delta = ev.clientX - colResizing.value.startX;
+    colWidths.value[col] = Math.max(28, colResizing.value.startW + delta);
+  };
+  const onUp = () => {
+    colResizing.value = null;
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
 
 function onIndexColResize(e: MouseEvent, col: number) {
   e.preventDefault();
@@ -114,6 +136,7 @@ function onIndexColResize(e: MouseEvent, col: number) {
 const connection = computed(() => (props.connectionId ? store.getConfig(props.connectionId) : undefined));
 const databaseType = computed(() => connection.value?.db_type);
 const structureCapabilities = computed(() => getTableStructureCapabilities(databaseType.value));
+const isTableCommentDisabled = computed(() => !structureCapabilities.value.comment);
 const dataTypeOptions = computed(() => DATA_TYPE_OPTIONS[databaseType.value ?? ""] ?? []);
 
 const indexTypesByDb: Record<string, string[]> = {
@@ -127,6 +150,28 @@ const indexTypeOptions = computed(() =>
   structureCapabilities.value.indexType ? (indexTypesByDb[databaseType.value ?? ""] ?? []) : [],
 );
 
+const showExtendedProperties = computed(() => {
+  const dt = databaseType.value;
+  return dt === "mysql" || dt === "postgres" || dt === "sqlserver";
+});
+
+const colLabels = computed(() => {
+  const labels = [
+    "#",
+    t("structureEditor.columnName"),
+    t("structureEditor.dataType"),
+    t("structureEditor.length"),
+    t("structureEditor.nullable"),
+    t("structureEditor.primaryKey"),
+    t("structureEditor.defaultValue"),
+    t("structureEditor.comment"),
+  ];
+  if (showExtendedProperties.value) {
+    labels.push(t("structureEditor.extendedProperties"));
+  }
+  labels.push(t("structureEditor.actions"));
+  return labels;
+});
 const indexColLabels = computed(() => [
   t("structureEditor.indexName"),
   t("structureEditor.indexColumns"),
@@ -221,7 +266,7 @@ async function loadStructure(silent = false) {
       api.listForeignKeys(props.connectionId, props.database, targetSchema.value, props.tableName).catch(() => []),
       api.listTriggers(props.connectionId, props.database, targetSchema.value, props.tableName).catch(() => []),
     ]);
-    columns.value = createColumnDrafts(nextColumns);
+    columns.value = createColumnDrafts(nextColumns, databaseType.value);
     indexes.value = createIndexDrafts(nextIndexes);
     foreignKeys.value = nextForeignKeys;
     triggers.value = nextTriggers;
@@ -253,6 +298,7 @@ async function addColumn() {
     defaultValue: "",
     comment: "",
     isPrimaryKey: false,
+    extra: {},
     markedForDrop: false,
   });
   await nextTick();
@@ -464,9 +510,16 @@ watch(
       <label class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t("structureEditor.comment") }}</label>
       <Input
         v-model="tableComment"
-        :placeholder="t('structureEditor.commentPlaceholder')"
+        :placeholder="t('structureEditor.tableCommentPlaceholder')"
         class="h-6 max-w-[320px] text-[11px]"
+        :disabled="isTableCommentDisabled"
       />
+      <Tooltip v-if="isTableCommentDisabled">
+        <TooltipTrigger as-child>
+          <Info class="h-4 w-4 shrink-0 text-muted-foreground" />
+        </TooltipTrigger>
+        <TooltipContent>{{ t("structureEditor.tableCommentUnsupported") }}</TooltipContent>
+      </Tooltip>
     </div>
 
     <div v-if="loading" class="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -507,33 +560,26 @@ watch(
           </div>
 
           <TabsContent value="columns" class="m-0 min-h-0 flex-1 overflow-auto p-0">
-            <table class="min-w-full border-separate border-spacing-0 text-[11px]">
+            <table
+              class="border-separate border-spacing-0 text-[11px]"
+              :style="{ minWidth: colWidths.reduce((a, w) => a + w, 0) + 'px' }"
+            >
               <thead class="sticky top-0 z-10 bg-background">
                 <tr>
-                  <th class="w-7 border-b border-r px-1.5 py-1.5 text-left">#</th>
-                  <th class="min-w-32 border-b border-r px-1.5 py-1.5 text-left">
-                    {{ t("structureEditor.columnName") }}
-                  </th>
-                  <th class="w-36 border-b border-r px-1.5 py-1.5 text-left">
-                    {{ t("structureEditor.dataType") }}
-                  </th>
-                  <th class="w-24 border-b border-r px-1.5 py-1.5 text-left">
-                    {{ t("structureEditor.length") }}
-                  </th>
-                  <th class="w-16 whitespace-nowrap border-b border-r px-1.5 py-1.5 text-left">
-                    {{ t("structureEditor.nullable") }}
-                  </th>
-                  <th class="w-14 whitespace-nowrap border-b border-r px-1.5 py-1.5 text-center">
-                    {{ t("structureEditor.primaryKey") }}
-                  </th>
-                  <th class="min-w-28 border-b border-r px-1.5 py-1.5 text-left">
-                    {{ t("structureEditor.defaultValue") }}
-                  </th>
-                  <th class="min-w-32 border-b border-r px-1.5 py-1.5 text-left">
-                    {{ t("structureEditor.comment") }}
-                  </th>
-                  <th class="w-32 border-b px-1.5 py-1.5 text-left">
-                    {{ t("structureEditor.actions") }}
+                  <th
+                    v-for="(label, i) in colLabels"
+                    :key="i"
+                    class="relative border-b border-r px-1.5 py-1.5 text-left"
+                    :class="{ 'text-center': i === 5 }"
+                    :style="{ width: colWidths[i] + 'px', minWidth: colWidths[i] + 'px' }"
+                  >
+                    {{ label }}
+                    <div
+                      v-if="i < colLabels.length - 1"
+                      class="absolute right-0 top-0 z-20 h-full w-1 cursor-col-resize hover:bg-primary/30"
+                      :class="colResizing?.col === i ? 'bg-primary/30' : ''"
+                      @mousedown="onColResize($event, i)"
+                    />
                   </th>
                 </tr>
               </thead>
@@ -574,7 +620,7 @@ watch(
                           (column.dataType = combineDataTypeForDatabase(
                             databaseType,
                             v,
-                            splitDataType(column.dataType).params,
+                            getDefaultLengthForType(databaseType, v),
                           ))
                       "
                     />
@@ -667,6 +713,106 @@ watch(
                           />
                         </PopoverContent>
                       </Popover>
+                    </div>
+                  </td>
+                  <td v-if="showExtendedProperties" class="border-b border-r px-1.5 py-1">
+                    <div class="flex items-center gap-2">
+                      <!-- MySQL: AUTO_INCREMENT + ON UPDATE CURRENT_TIMESTAMP -->
+                      <template v-if="databaseType === 'mysql'">
+                        <label class="flex items-center gap-1 text-[11px] whitespace-nowrap">
+                          <input v-model="column.extra.autoIncrement" type="checkbox" class="h-3.5 w-3.5" />
+                          {{ t("structureEditor.autoIncrement") }}
+                        </label>
+                        <label class="flex items-center gap-1 text-[11px] whitespace-nowrap">
+                          <input v-model="column.extra.onUpdateCurrentTimestamp" type="checkbox" class="h-3.5 w-3.5" />
+                          {{ t("structureEditor.onUpdateCurrentTimestamp") }}
+                        </label>
+                      </template>
+                      <!-- PostgreSQL: IDENTITY -->
+                      <template v-else-if="databaseType === 'postgres'">
+                        <select
+                          :value="column.extra.identity?.generation ?? ''"
+                          class="h-6 rounded border bg-background px-1 text-[11px]"
+                          @change="
+                            (e) => {
+                              const v = (e.target as HTMLSelectElement).value;
+                              if (v) {
+                                column.extra.identity = {
+                                  ...column.extra.identity,
+                                  generation: v as 'BY DEFAULT' | 'ALWAYS',
+                                };
+                              } else {
+                                column.extra.identity = undefined;
+                              }
+                            }
+                          "
+                        >
+                          <option value="">{{ t("structureEditor.no") }}</option>
+                          <option value="BY DEFAULT">BY DEFAULT</option>
+                          <option value="ALWAYS">ALWAYS</option>
+                        </select>
+                        <template v-if="column.extra.identity?.generation">
+                          <Input
+                            :model-value="column.extra.identity.seed?.toString() ?? ''"
+                            type="number"
+                            class="h-6 w-14 text-[10px]"
+                            :placeholder="t('structureEditor.identitySeed')"
+                            @update:model-value="
+                              (v) => {
+                                if (column.extra.identity) {
+                                  column.extra.identity.seed = v ? Number(v) : undefined;
+                                }
+                              }
+                            "
+                          />
+                          <Input
+                            :model-value="column.extra.identity.increment?.toString() ?? ''"
+                            type="number"
+                            class="h-6 w-14 text-[10px]"
+                            :placeholder="t('structureEditor.identityIncrement')"
+                            @update:model-value="
+                              (v) => {
+                                if (column.extra.identity) {
+                                  column.extra.identity.increment = v ? Number(v) : undefined;
+                                }
+                              }
+                            "
+                          />
+                        </template>
+                      </template>
+                      <!-- SQL Server: IDENTITY -->
+                      <template v-else-if="databaseType === 'sqlserver'">
+                        <label class="flex items-center gap-1 text-[11px] whitespace-nowrap">
+                          <input v-model="column.extra.autoIncrement" type="checkbox" class="h-3.5 w-3.5" />
+                          {{ t("structureEditor.identity") }}
+                        </label>
+                        <template v-if="column.extra.autoIncrement">
+                          <Input
+                            :model-value="column.extra.identity?.seed?.toString() ?? '1'"
+                            type="number"
+                            class="h-6 w-14 text-[10px]"
+                            :placeholder="t('structureEditor.identitySeed')"
+                            @update:model-value="
+                              (v) => {
+                                if (!column.extra.identity) column.extra.identity = {};
+                                column.extra.identity.seed = v ? Number(v) : undefined;
+                              }
+                            "
+                          />
+                          <Input
+                            :model-value="column.extra.identity?.increment?.toString() ?? '1'"
+                            type="number"
+                            class="h-6 w-14 text-[10px]"
+                            :placeholder="t('structureEditor.identityIncrement')"
+                            @update:model-value="
+                              (v) => {
+                                if (!column.extra.identity) column.extra.identity = {};
+                                column.extra.identity.increment = v ? Number(v) : undefined;
+                              }
+                            "
+                          />
+                        </template>
+                      </template>
                     </div>
                   </td>
                   <td class="border-b px-1.5 py-1">

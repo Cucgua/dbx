@@ -1,10 +1,11 @@
 use mongodb::{
-    bson::{doc, Bson, Document},
+    bson::{doc, oid::ObjectId, Bson, Document},
     Client,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{connection_timeout, with_connection_timeout, CONNECTION_TIMEOUT_SECS};
+use super::with_connection_timeout;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MongoDocumentResult {
@@ -12,17 +13,17 @@ pub struct MongoDocumentResult {
     pub total: u64,
 }
 
-pub async fn connect(url: &str) -> Result<Client, String> {
-    with_connection_timeout("MongoDB", connection_timeout(), async {
+pub async fn connect(url: &str, timeout: Duration) -> Result<Client, String> {
+    with_connection_timeout("MongoDB", timeout, async {
         Client::with_uri_str(url).await.map_err(|e| format!("MongoDB connection failed: {e}"))
     })
     .await
 }
 
-pub async fn test_connection(client: &Client) -> Result<(), String> {
-    tokio::time::timeout(connection_timeout(), client.list_database_names())
+pub async fn test_connection(client: &Client, timeout: Duration) -> Result<(), String> {
+    tokio::time::timeout(timeout, client.list_database_names())
         .await
-        .map_err(|_| format!("MongoDB connection timed out ({CONNECTION_TIMEOUT_SECS}s)"))?
+        .map_err(|_| format!("MongoDB connection timed out ({}s)", timeout.as_secs()))?
         .map(|_| ())
         .map_err(|e| format!("MongoDB connection failed: {e}"))
 }
@@ -49,7 +50,7 @@ pub async fn find_documents(
     let filter_doc: Document = match filter {
         Some(f) if !f.trim().is_empty() => {
             let json: serde_json::Value = serde_json::from_str(f).map_err(|e| format!("Invalid filter JSON: {e}"))?;
-            mongodb::bson::to_document(&json).map_err(|e| format!("Invalid filter: {e}"))?
+            json_object_to_document(&json)?
         }
         _ => doc! {},
     };
@@ -60,7 +61,7 @@ pub async fn find_documents(
     if let Some(s) = sort {
         if !s.trim().is_empty() {
             let json: serde_json::Value = serde_json::from_str(s).map_err(|e| format!("Invalid sort JSON: {e}"))?;
-            let sort_doc = mongodb::bson::to_document(&json).map_err(|e| format!("Invalid sort: {e}"))?;
+            let sort_doc = json_object_to_document(&json).map_err(|e| format!("Invalid sort: {e}"))?;
             find = find.sort(sort_doc);
         }
     }
@@ -77,6 +78,36 @@ pub async fn find_documents(
     Ok(MongoDocumentResult { documents, total })
 }
 
+pub async fn aggregate_documents(
+    client: &Client,
+    database: &str,
+    collection: &str,
+    pipeline_json: &str,
+    max_rows: Option<usize>,
+) -> Result<MongoDocumentResult, String> {
+    let json: serde_json::Value =
+        serde_json::from_str(pipeline_json).map_err(|e| format!("Invalid pipeline JSON: {e}"))?;
+    let pipeline_values = json.as_array().ok_or_else(|| "Aggregate pipeline must be a JSON array".to_string())?;
+    let pipeline = pipeline_values
+        .iter()
+        .map(|value| json_object_to_document(value).map_err(|e| format!("Invalid pipeline stage: {e}")))
+        .collect::<Result<Vec<Document>, String>>()?;
+    let col = client.database(database).collection::<Document>(collection);
+    let mut cursor = col.aggregate(pipeline).await.map_err(|e| e.to_string())?;
+    let max_rows = max_rows.unwrap_or(100);
+    let fetch_limit = max_rows.saturating_add(1);
+    let mut documents = Vec::new();
+    while documents.len() < fetch_limit && cursor.advance().await.map_err(|e| e.to_string())? {
+        let doc = cursor.deserialize_current().map_err(|e| e.to_string())?;
+        documents.push(bson_to_json(&Bson::Document(doc)));
+    }
+    let total = documents.len() as u64;
+    if documents.len() > max_rows {
+        documents.truncate(max_rows);
+    }
+    Ok(MongoDocumentResult { documents, total })
+}
+
 pub async fn insert_document(
     client: &Client,
     database: &str,
@@ -87,6 +118,28 @@ pub async fn insert_document(
     let col = client.database(database).collection::<Document>(collection);
     let result = col.insert_one(doc).await.map_err(|e| e.to_string())?;
     Ok(format!("{}", result.inserted_id))
+}
+
+pub async fn insert_documents(
+    client: &Client,
+    database: &str,
+    collection: &str,
+    docs_json: &str,
+) -> Result<u64, String> {
+    let json: serde_json::Value = serde_json::from_str(docs_json).map_err(|e| format!("Invalid JSON: {e}"))?;
+    let docs = match json {
+        serde_json::Value::Array(values) => values
+            .into_iter()
+            .map(|value| json_object_to_document(&value).map_err(|e| format!("Invalid document: {e}")))
+            .collect::<Result<Vec<Document>, String>>()?,
+        value => vec![json_object_to_document(&value).map_err(|e| format!("Invalid document: {e}"))?],
+    };
+    if docs.is_empty() {
+        return Ok(0);
+    }
+    let col = client.database(database).collection::<Document>(collection);
+    let result = col.insert_many(docs).await.map_err(|e| e.to_string())?;
+    Ok(result.inserted_ids.len() as u64)
 }
 
 pub async fn update_document(
@@ -104,10 +157,52 @@ pub async fn update_document(
     Ok(result.modified_count)
 }
 
+pub async fn update_documents(
+    client: &Client,
+    database: &str,
+    collection: &str,
+    filter_json: &str,
+    update_json: &str,
+    many: bool,
+) -> Result<u64, String> {
+    let filter_value: serde_json::Value =
+        serde_json::from_str(filter_json).map_err(|e| format!("Invalid filter JSON: {e}"))?;
+    let update_value: serde_json::Value =
+        serde_json::from_str(update_json).map_err(|e| format!("Invalid update JSON: {e}"))?;
+    let filter = json_object_to_document(&filter_value).map_err(|e| format!("Invalid filter: {e}"))?;
+    let update = json_object_to_document(&update_value).map_err(|e| format!("Invalid update: {e}"))?;
+    let col = client.database(database).collection::<Document>(collection);
+    let result = if many {
+        col.update_many(filter, update).await.map_err(|e| e.to_string())?
+    } else {
+        col.update_one(filter, update).await.map_err(|e| e.to_string())?
+    };
+    Ok(result.modified_count)
+}
+
 pub async fn delete_document(client: &Client, database: &str, collection: &str, id: &str) -> Result<u64, String> {
     let oid = mongodb::bson::oid::ObjectId::parse_str(id).map_err(|e| format!("Invalid ObjectId: {e}"))?;
     let col = client.database(database).collection::<Document>(collection);
     let result = col.delete_one(doc! { "_id": oid }).await.map_err(|e| e.to_string())?;
+    Ok(result.deleted_count)
+}
+
+pub async fn delete_documents(
+    client: &Client,
+    database: &str,
+    collection: &str,
+    filter_json: &str,
+    many: bool,
+) -> Result<u64, String> {
+    let filter_value: serde_json::Value =
+        serde_json::from_str(filter_json).map_err(|e| format!("Invalid filter JSON: {e}"))?;
+    let filter = json_object_to_document(&filter_value).map_err(|e| format!("Invalid filter: {e}"))?;
+    let col = client.database(database).collection::<Document>(collection);
+    let result = if many {
+        col.delete_many(filter).await.map_err(|e| e.to_string())?
+    } else {
+        col.delete_one(filter).await.map_err(|e| e.to_string())?
+    };
     Ok(result.deleted_count)
 }
 
@@ -130,5 +225,44 @@ fn bson_to_json(bson: &Bson) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         _ => serde_json::Value::String(format!("{bson}")),
+    }
+}
+
+/// Convert a `serde_json::Value` (JSON object) to a BSON `Document`,
+/// handling MongoDB extended JSON conventions such as `{"$oid":"..."}`.
+pub fn json_object_to_document(value: &serde_json::Value) -> Result<Document, String> {
+    match json_value_to_bson(value) {
+        Bson::Document(doc) => Ok(doc),
+        other => Err(format!("Expected a JSON object, got {other:?}")),
+    }
+}
+
+fn json_value_to_bson(value: &serde_json::Value) -> Bson {
+    match value {
+        serde_json::Value::Null => Bson::Null,
+        serde_json::Value::Bool(b) => Bson::Boolean(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Bson::Int64(i)
+            } else if let Some(f) = n.as_f64() {
+                Bson::Double(f)
+            } else {
+                Bson::Null
+            }
+        }
+        serde_json::Value::String(s) => Bson::String(s.clone()),
+        serde_json::Value::Array(arr) => Bson::Array(arr.iter().map(json_value_to_bson).collect()),
+        serde_json::Value::Object(obj) => {
+            // Extended JSON: {"$oid":"..."} → BSON ObjectId
+            if obj.len() == 1 {
+                if let Some(serde_json::Value::String(hex)) = obj.get("$oid") {
+                    if let Ok(oid) = ObjectId::parse_str(hex) {
+                        return Bson::ObjectId(oid);
+                    }
+                }
+            }
+            let doc: Document = obj.iter().map(|(k, v)| (k.clone(), json_value_to_bson(v))).collect();
+            Bson::Document(doc)
+        }
     }
 }

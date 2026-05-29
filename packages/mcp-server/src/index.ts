@@ -6,9 +6,11 @@ import { z } from "zod";
 import {
   buildSchemaContext,
   createBackend,
+  evaluateMongoAggregateSafety,
   evaluateSqlSafety,
   formatSchemaContext,
   notifyReload,
+  parseMongoAggregateCommand,
   postBridge,
   sqlSafetyFromEnv,
   type Backend,
@@ -102,8 +104,12 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
   async ({ connection_name, database, sql }) => {
     const config = await backend.findConnection(connection_name);
     if (!config) return text(`Connection "${connection_name}" not found`);
-    const safety = evaluateSqlSafety(sql, sqlSafetyFromEnv());
-    if (!safety.allowed) return text(`Query blocked: ${safety.reason}`);
+    if (config.db_type !== "mongodb") {
+      const safety = evaluateSqlSafety(sql, sqlSafetyFromEnv());
+      if (!safety.allowed) return text(`Query blocked: ${safety.reason}`);
+    }
+    // MongoDB shell commands don't fit the SQL safety evaluator; the backend
+    // (node-core executeQuery) applies command-aware read/write gating.
     try {
       const result = await backend.executeQuery(withDatabase(config, database), sql);
       if (result.columns.length === 0) return text(`Query executed. ${result.row_count} row(s) affected.`);
@@ -211,9 +217,25 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
       database: z.string().optional().describe("Database name"),
     },
     async ({ connection_name, sql, database }) => {
-      const safety = evaluateSqlSafety(sql, sqlSafetyFromEnv());
-      if (!safety.allowed) return text(`Query blocked: ${safety.reason}`);
-      return bridgeRequest("/execute-query", { connection_name, sql, database }, "Query sent to DBX");
+      const config = await backend.findConnection(connection_name);
+      const safetyOptions = sqlSafetyFromEnv();
+      if (config?.db_type === "mongodb") {
+        const aggregate = parseMongoAggregateCommand(sql);
+        if (aggregate) {
+          const safety = evaluateMongoAggregateSafety(aggregate, safetyOptions);
+          if (!safety.allowed) return text(`Query blocked: ${safety.reason}`);
+        }
+      } else {
+        const safety = evaluateSqlSafety(sql, safetyOptions);
+        if (!safety.allowed) return text(`Query blocked: ${safety.reason}`);
+      }
+      // MongoDB shell commands bypass the SQL safety evaluator; pass MCP
+      // safety flags to the desktop executor for command-aware gating.
+      return bridgeRequest(
+        "/execute-query",
+        { connection_name, sql, database, allow_writes: safetyOptions.allowWrites, allow_dangerous: safetyOptions.allowDangerous },
+        "Query sent to DBX",
+      );
     },
     );
   }

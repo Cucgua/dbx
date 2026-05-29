@@ -1,7 +1,8 @@
 pub const QUERY_ROW_LIMIT: usize = 100;
 
 use dbx_core::models::connection::{
-    default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType,
+    default_connect_timeout_secs, default_query_timeout_secs, default_ssh_connect_timeout_secs, ConnectionConfig,
+    DatabaseType, OracleConnectMethod, ProxyType,
 };
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
@@ -112,6 +113,10 @@ pub struct CreateConnectionArgs {
     #[serde(default)]
     pub ssh_connect_timeout_secs: Option<u64>,
     #[serde(default)]
+    pub connect_timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub query_timeout_secs: Option<u64>,
+    #[serde(default)]
     pub proxy_enabled: Option<bool>,
     #[serde(default)]
     pub proxy_type: Option<String>,
@@ -127,6 +132,8 @@ pub struct CreateConnectionArgs {
     pub jdbc_driver_class: Option<String>,
     #[serde(default)]
     pub jdbc_driver_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub redis_cluster_nodes: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -385,6 +392,8 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         ssh_key_passphrase: args.ssh_key_passphrase.unwrap_or_default(),
         ssh_expose_lan: args.ssh_expose_lan.unwrap_or(false),
         ssh_connect_timeout_secs: args.ssh_connect_timeout_secs.unwrap_or_else(default_ssh_connect_timeout_secs),
+        connect_timeout_secs: args.connect_timeout_secs.unwrap_or_else(default_connect_timeout_secs),
+        query_timeout_secs: args.query_timeout_secs.unwrap_or_else(default_query_timeout_secs),
         proxy_enabled: args.proxy_enabled.unwrap_or(false),
         proxy_type: parse_proxy_type(args.proxy_type)?,
         proxy_host: clean_optional(args.proxy_host).unwrap_or_default(),
@@ -403,6 +412,7 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         redis_sentinel_username: String::new(),
         redis_sentinel_password: String::new(),
         redis_sentinel_tls: false,
+        redis_cluster_nodes: clean_optional(args.redis_cluster_nodes).unwrap_or_default(),
         external_config: None,
         jdbc_driver_class: clean_optional(args.jdbc_driver_class),
         jdbc_driver_paths: args.jdbc_driver_paths.unwrap_or_default(),
@@ -448,7 +458,10 @@ pub fn resolve_schema(config: &ConnectionConfig, database: &str, requested: Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbx_core::models::connection::{default_ssh_connect_timeout_secs, OracleConnectMethod, ProxyType};
+    use dbx_core::models::connection::{
+        default_connect_timeout_secs, default_query_timeout_secs, default_ssh_connect_timeout_secs,
+        OracleConnectMethod, ProxyType,
+    };
 
     fn config(db_type: DatabaseType, database: Option<&str>, default_database: Option<&str>) -> ConnectionConfig {
         ConnectionConfig {
@@ -476,6 +489,8 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
+            connect_timeout_secs: default_connect_timeout_secs(),
+            query_timeout_secs: default_query_timeout_secs(),
             proxy_enabled: false,
             proxy_type: ProxyType::Socks5,
             proxy_host: String::new(),
@@ -494,6 +509,7 @@ mod tests {
             redis_sentinel_username: String::new(),
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
+            redis_cluster_nodes: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -529,6 +545,8 @@ mod tests {
             ssh_key_passphrase: None,
             ssh_expose_lan: None,
             ssh_connect_timeout_secs: None,
+            connect_timeout_secs: None,
+            query_timeout_secs: None,
             proxy_enabled: None,
             proxy_type: None,
             proxy_host: None,
@@ -537,6 +555,7 @@ mod tests {
             proxy_password: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: None,
+            redis_cluster_nodes: None,
         }
     }
 

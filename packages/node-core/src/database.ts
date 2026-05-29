@@ -278,6 +278,11 @@ interface BridgeColumnInfo {
   comment: string | null;
 }
 
+interface MongoDocumentResult {
+  documents: unknown[];
+  total: number;
+}
+
 function bridgeAppDataDir(): string {
   const home = homedir();
   switch (platform()) {
@@ -413,6 +418,38 @@ function sqliteQuery(config: ConnectionConfig, sql: string, options?: QueryOptio
 }
 
 export async function executeQuery(config: ConnectionConfig, sql: string, options?: QueryOptions): Promise<QueryResult> {
+  if (config.db_type === "mongodb") {
+    const find = parseMongoFindCommand(sql);
+    if (find) {
+      const result = await withTimeout(mongoFindDocuments(config, find.collection, find.skip, find.limit, find.filter, find.sort), resolveTimeoutMs(options));
+      return mongoDocumentsToQueryResult(result.documents.slice(0, resolveMaxRows(options)), result.total);
+    }
+    const count = parseMongoCountDocumentsCommand(sql);
+    if (count) {
+      const result = await withTimeout(mongoFindDocuments(config, count.collection, 0, 1, count.filter), resolveTimeoutMs(options));
+      return { columns: ["count"], rows: [{ count: result.total }], row_count: 1 };
+    }
+    const aggregate = parseMongoAggregateCommand(sql);
+    if (aggregate) {
+      const safety = evaluateMongoAggregateSafety(aggregate, sqlSafetyFromEnv());
+      if (!safety.allowed) throw new Error(safety.reason);
+      const result = await withTimeout(
+        mongoAggregateDocuments(config, aggregate.collection, aggregate.pipeline, resolveMaxRows(options)),
+        resolveTimeoutMs(options),
+      );
+      return mongoDocumentsToQueryResult(result.documents.slice(0, resolveMaxRows(options)), result.total);
+    }
+    const write = parseMongoWriteCommand(sql);
+    if (write) {
+      const safety = evaluateMongoWriteSafety(write, sqlSafetyFromEnv());
+      if (!safety.allowed) throw new Error(safety.reason);
+      const affected = await withTimeout(executeMongoWrite(config, write), resolveTimeoutMs(options));
+      return { columns: [], rows: [], row_count: affected };
+    }
+    throw new Error(
+      "Use MongoDB shell-style commands, for example: db.projects.find({}).limit(100), db.projects.countDocuments({}), db.projects.insertOne({...}), db.projects.updateOne({...}, {$set: {...}}), or db.projects.deleteOne({...})",
+    );
+  }
   if (isDirectType(config.db_type)) {
     return query(config, sql, undefined, options);
   }
@@ -425,6 +462,14 @@ export async function executeQuery(config: ConnectionConfig, sql: string, option
 }
 
 export async function listTables(config: ConnectionConfig, schema?: string): Promise<TableInfo[]> {
+  if (config.db_type === "mongodb") {
+    const collections = await bridgeDataRequest<string[]>("/data/mongo/list-collections", {
+      connection_name: config.name,
+      database: config.database || "",
+      schema: schema || "",
+    });
+    return collections.map((name) => ({ name, type: "COLLECTION" }));
+  }
   if (config.db_type === "sqlite") {
     const result = await query(
       config,
@@ -454,6 +499,10 @@ export async function listTables(config: ConnectionConfig, schema?: string): Pro
 }
 
 export async function describeTable(config: ConnectionConfig, table: string, schema?: string): Promise<ColumnInfo[]> {
+  if (config.db_type === "mongodb") {
+    const result = await mongoFindDocuments(config, table, 0, 20, "{}");
+    return inferMongoColumns(result.documents);
+  }
   if (config.db_type === "sqlite") {
     const result = await query(config, `PRAGMA table_info(${quoteSqliteIdentifier(table)})`);
     return result.rows.map((r) => ({
@@ -503,4 +552,396 @@ export async function describeTable(config: ConnectionConfig, table: string, sch
     is_primary_key: Boolean(r.is_primary_key),
     comment: r.comment != null ? String(r.comment) : null,
   }));
+}
+
+async function mongoFindDocuments(
+  config: ConnectionConfig,
+  collection: string,
+  skip: number,
+  limit: number,
+  filter: string,
+  sort?: string,
+): Promise<MongoDocumentResult> {
+  return bridgeDataRequest<MongoDocumentResult>("/data/mongo/find-documents", {
+    connection_name: config.name,
+    database: config.database || "",
+    collection,
+    skip,
+    limit,
+    filter,
+    sort,
+  });
+}
+
+async function executeMongoWrite(config: ConnectionConfig, command: MongoWriteCommand): Promise<number> {
+  if (command.kind === "insert") {
+    const result = await bridgeDataRequest<{ affected_rows: number }>("/data/mongo/insert-documents", {
+      connection_name: config.name,
+      database: config.database || "",
+      collection: command.collection,
+      docs_json: command.docsJson,
+    });
+    return result.affected_rows;
+  }
+  if (command.kind === "update") {
+    const result = await bridgeDataRequest<{ affected_rows: number }>("/data/mongo/update-documents", {
+      connection_name: config.name,
+      database: config.database || "",
+      collection: command.collection,
+      filter_json: command.filter,
+      update_json: command.update,
+      many: command.many,
+    });
+    return result.affected_rows;
+  }
+  const result = await bridgeDataRequest<{ affected_rows: number }>("/data/mongo/delete-documents", {
+    connection_name: config.name,
+    database: config.database || "",
+    collection: command.collection,
+    filter_json: command.filter,
+    many: command.many,
+  });
+  return result.affected_rows;
+}
+
+async function mongoAggregateDocuments(
+  config: ConnectionConfig,
+  collection: string,
+  pipelineJson: string,
+  maxRows: number,
+): Promise<MongoDocumentResult> {
+  return bridgeDataRequest<MongoDocumentResult>("/data/mongo/aggregate-documents", {
+    connection_name: config.name,
+    database: config.database || "",
+    collection,
+    pipeline_json: pipelineJson,
+    max_rows: maxRows,
+  });
+}
+
+export function mongoDocumentsToQueryResult(documents: unknown[], total: number): QueryResult {
+  const columns: string[] = [];
+  for (const doc of documents) {
+    if (isRecord(doc)) {
+      for (const key of Object.keys(doc)) {
+        if (!columns.includes(key)) columns.push(key);
+      }
+    } else if (!columns.includes("value")) {
+      columns.push("value");
+    }
+  }
+  const rows = documents.map((doc) => {
+    const row: Record<string, unknown> = {};
+    for (const column of columns) {
+      row[column] = isRecord(doc) ? toCellValue(doc[column]) : column === "value" ? toCellValue(doc) : null;
+    }
+    return row;
+  });
+  return { columns, rows, row_count: rows.length };
+}
+
+export function inferMongoColumns(documents: unknown[]): ColumnInfo[] {
+  const columns = new Map<string, { types: Set<string>; nullable: boolean }>();
+  for (const doc of documents) {
+    if (!isRecord(doc)) {
+      const entry = columns.get("value") ?? { types: new Set<string>(), nullable: false };
+      entry.types.add(mongoTypeName(doc));
+      columns.set("value", entry);
+      continue;
+    }
+    for (const [name, value] of Object.entries(doc)) {
+      const entry = columns.get(name) ?? { types: new Set<string>(), nullable: false };
+      entry.types.add(mongoTypeName(value));
+      if (value === null || value === undefined) entry.nullable = true;
+      columns.set(name, entry);
+    }
+  }
+  return Array.from(columns.entries()).map(([name, entry]) => ({
+    name,
+    data_type: Array.from(entry.types).sort().join(" | ") || "unknown",
+    is_nullable: entry.nullable,
+    column_default: null,
+    is_primary_key: name === "_id",
+    comment: null,
+  }));
+}
+
+interface MongoFindCommand {
+  collection: string;
+  filter: string;
+  skip: number;
+  limit: number;
+  sort?: string;
+}
+
+interface MongoCountDocumentsCommand {
+  collection: string;
+  filter: string;
+}
+
+interface MongoAggregateCommand {
+  collection: string;
+  pipeline: string;
+}
+
+export type MongoWriteCommand =
+  | { kind: "insert"; collection: string; docsJson: string }
+  | { kind: "update"; collection: string; filter: string; update: string; many: boolean }
+  | { kind: "delete"; collection: string; filter: string; many: boolean };
+
+export function parseMongoFindCommand(input: string): MongoFindCommand | null {
+  const source = input.trim().replace(/;$/, "").trim();
+  const target = parseCollectionMethodTarget(source, "find");
+  if (!target) return null;
+  const findOpenIndex = source.indexOf("(", target.methodCallIndex);
+  const findCloseIndex = findMatchingParen(source, findOpenIndex);
+  if (findCloseIndex < 0) return null;
+  const findArgs = splitTopLevel(source.slice(findOpenIndex + 1, findCloseIndex));
+  const filter = normalizeJsonArgument(findArgs[0] || "{}");
+  if (!filter) return null;
+  const chain = source.slice(findCloseIndex + 1).trim();
+  if (chain && !chain.startsWith(".")) return null;
+  const sortArg = readChainedCallArgument(chain, "sort");
+  let sort: string | undefined;
+  if (sortArg !== undefined) {
+    const parsedSort = normalizeJsonArgument(sortArg);
+    if (!parsedSort) return null;
+    sort = parsedSort;
+  }
+  const skip = readChainedIntegerArgument(chain, "skip", 0);
+  const limit = readChainedIntegerArgument(chain, "limit", MAX_ROWS);
+  if (skip === null || limit === null) return null;
+  return { collection: target.collection, filter, skip, limit, sort };
+}
+
+export function parseMongoCountDocumentsCommand(input: string): MongoCountDocumentsCommand | null {
+  const source = input.trim().replace(/;$/, "").trim();
+  const target = parseCollectionMethodTarget(source, "countDocuments");
+  if (!target) return null;
+  const openIndex = source.indexOf("(", target.methodCallIndex);
+  const closeIndex = findMatchingParen(source, openIndex);
+  if (closeIndex < 0 || source.slice(closeIndex + 1).trim()) return null;
+  const args = splitTopLevel(source.slice(openIndex + 1, closeIndex));
+  if (args.length > 1 && args.slice(1).some((arg) => arg.trim())) return null;
+  const filter = normalizeJsonArgument(args[0] || "{}");
+  return filter ? { collection: target.collection, filter } : null;
+}
+
+export function parseMongoAggregateCommand(input: string): MongoAggregateCommand | null {
+  const source = input.trim().replace(/;$/, "").trim();
+  const target = parseCollectionMethodTarget(source, "aggregate");
+  if (!target) return null;
+  const args = parseMethodArgs(source, target.methodCallIndex);
+  if (!args || args.length !== 1) return null;
+  const pipeline = normalizeJsonArgument(args[0]);
+  if (!pipeline) return null;
+  return Array.isArray(JSON.parse(pipeline)) ? { collection: target.collection, pipeline } : null;
+}
+
+export function mongoAggregateWriteStage(pipelineJson: string): "$out" | "$merge" | null {
+  try {
+    const pipeline = JSON.parse(pipelineJson);
+    if (!Array.isArray(pipeline)) return null;
+    for (const stage of pipeline) {
+      if (!isRecord(stage)) continue;
+      if (Object.prototype.hasOwnProperty.call(stage, "$out")) return "$out";
+      if (Object.prototype.hasOwnProperty.call(stage, "$merge")) return "$merge";
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseMongoWriteCommand(input: string): MongoWriteCommand | null {
+  const source = input.trim().replace(/;$/, "").trim();
+  const insertOne = parseCollectionMethodTarget(source, "insertOne");
+  if (insertOne) {
+    const args = parseMethodArgs(source, insertOne.methodCallIndex);
+    if (!args || args.length !== 1) return null;
+    const doc = normalizeJsonArgument(args[0]);
+    return doc ? { kind: "insert", collection: insertOne.collection, docsJson: doc } : null;
+  }
+
+  const insertMany = parseCollectionMethodTarget(source, "insertMany");
+  if (insertMany) {
+    const args = parseMethodArgs(source, insertMany.methodCallIndex);
+    if (!args || args.length !== 1) return null;
+    const docs = normalizeJsonArgument(args[0]);
+    if (!docs) return null;
+    return Array.isArray(JSON.parse(docs)) ? { kind: "insert", collection: insertMany.collection, docsJson: docs } : null;
+  }
+
+  for (const method of ["updateOne", "updateMany"] as const) {
+    const target = parseCollectionMethodTarget(source, method);
+    if (!target) continue;
+    const args = parseMethodArgs(source, target.methodCallIndex);
+    if (!args || args.length !== 2) return null;
+    const filter = normalizeJsonArgument(args[0]);
+    const update = normalizeJsonArgument(args[1]);
+    if (!filter || !update) return null;
+    return { kind: "update", collection: target.collection, filter, update, many: method === "updateMany" };
+  }
+
+  for (const method of ["deleteOne", "deleteMany"] as const) {
+    const target = parseCollectionMethodTarget(source, method);
+    if (!target) continue;
+    const args = parseMethodArgs(source, target.methodCallIndex);
+    if (!args || args.length !== 1) return null;
+    const filter = normalizeJsonArgument(args[0]);
+    if (!filter) return null;
+    return { kind: "delete", collection: target.collection, filter, many: method === "deleteMany" };
+  }
+
+  return null;
+}
+
+export function evaluateMongoWriteSafety(
+  command: MongoWriteCommand,
+  options: { allowWrites?: boolean; allowDangerous?: boolean },
+): { allowed: boolean; reason?: string } {
+  if (!options.allowWrites) {
+    return {
+      allowed: false,
+      reason: "MCP MongoDB execution is read-only by default. Set DBX_MCP_ALLOW_WRITES=1 to allow write commands.",
+    };
+  }
+  if (!options.allowDangerous && (command.kind === "update" || command.kind === "delete") && isEmptyJsonObject(command.filter)) {
+    return {
+      allowed: false,
+      reason: "MongoDB update/delete commands must include a non-empty filter unless DBX_MCP_ALLOW_DANGEROUS_SQL=1 is set.",
+    };
+  }
+  return { allowed: true };
+}
+
+export function evaluateMongoAggregateSafety(
+  command: MongoAggregateCommand,
+  options: { allowWrites?: boolean; allowDangerous?: boolean },
+): { allowed: boolean; reason?: string } {
+  const writeStage = mongoAggregateWriteStage(command.pipeline);
+  if (!writeStage) return { allowed: true };
+  if (!options.allowWrites) {
+    return {
+      allowed: false,
+      reason: `MongoDB aggregate stage "${writeStage}" writes data. Set DBX_MCP_ALLOW_WRITES=1 to allow write commands.`,
+    };
+  }
+  if (!options.allowDangerous) {
+    return {
+      allowed: false,
+      reason: `MongoDB aggregate stage "${writeStage}" is dangerous. Set DBX_MCP_ALLOW_DANGEROUS_SQL=1 to allow it.`,
+    };
+  }
+  return { allowed: true };
+}
+
+function parseCollectionMethodTarget(source: string, method: string): { collection: string; methodCallIndex: number } | null {
+  const direct = new RegExp(`^db\\.([A-Za-z_$][\\w$]*)\\.${method}\\s*\\(`).exec(source);
+  if (direct) return { collection: direct[1], methodCallIndex: source.indexOf(`.${method}`) };
+  const quoted = new RegExp(`^db\\.getCollection\\(\\s*(['"])([^'"]+)\\1\\s*\\)\\.${method}\\s*\\(`).exec(source);
+  if (quoted) return { collection: quoted[2], methodCallIndex: source.indexOf(`.${method}`) };
+  return null;
+}
+
+function parseMethodArgs(source: string, methodCallIndex: number): string[] | null {
+  const openIndex = source.indexOf("(", methodCallIndex);
+  const closeIndex = findMatchingParen(source, openIndex);
+  if (closeIndex < 0 || source.slice(closeIndex + 1).trim()) return null;
+  return splitTopLevel(source.slice(openIndex + 1, closeIndex));
+}
+
+function readChainedCallArgument(chain: string, method: string): string | undefined {
+  const pattern = new RegExp(`\\.${method}\\s*\\(`, "g");
+  const match = pattern.exec(chain);
+  if (!match) return undefined;
+  const openIndex = match.index + match[0].lastIndexOf("(");
+  const closeIndex = findMatchingParen(chain, openIndex);
+  return closeIndex < 0 ? undefined : chain.slice(openIndex + 1, closeIndex);
+}
+
+function readChainedIntegerArgument(chain: string, method: string, fallback: number): number | null {
+  const arg = readChainedCallArgument(chain, method);
+  if (arg === undefined) return fallback;
+  if (!/^\d+$/.test(arg.trim())) return null;
+  return Number(arg.trim());
+}
+
+function normalizeJsonArgument(arg: string): string | null {
+  const value = (arg.trim() || "{}").replace(/ObjectId\s*\(\s*["']([^"']+)["']\s*\)/g, '{"$oid":"$1"}');
+  try {
+    JSON.parse(value);
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function isEmptyJsonObject(json: string): boolean {
+  try {
+    const parsed = JSON.parse(json);
+    return isRecord(parsed) && Object.keys(parsed).length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function splitTopLevel(source: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === "\\" && i + 1 < source.length) i += 1;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === "{" || ch === "[" || ch === "(") depth += 1;
+    else if (ch === "}" || ch === "]" || ch === ")") depth -= 1;
+    else if (ch === "," && depth === 0) {
+      parts.push(source.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(source.slice(start));
+  return parts;
+}
+
+function findMatchingParen(source: string, openIndex: number): number {
+  if (openIndex < 0 || source[openIndex] !== "(") return -1;
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = openIndex; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === "\\" && i + 1 < source.length) i += 1;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === "(") depth += 1;
+    else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mongoTypeName(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value)) return "array";
+  if (isRecord(value)) return "object";
+  return typeof value;
+}
+
+function toCellValue(value: unknown): unknown {
+  return typeof value === "object" && value !== null ? JSON.stringify(value) : value;
 }

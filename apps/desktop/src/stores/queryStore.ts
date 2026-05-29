@@ -10,10 +10,13 @@ import { buildExplainSql, parseExplainResult } from "@/lib/explainPlan";
 import { allEditableColumnsWriteable, allPrimaryKeysPresent, sourceColumnsForResult } from "@/lib/sqlAnalysis";
 import { restoreOpenTabsState, serializeOpenTabs } from "@/lib/openTabsPersistence";
 import {
+  evaluateMongoAggregateSafety,
   mongoCountToQueryResult,
   mongoDocumentsToQueryResult,
+  parseMongoAggregateCommand,
   parseMongoCountDocumentsCommand,
   parseMongoFindCommand,
+  type MongoAggregateSafetyOptions,
 } from "@/lib/mongoShellCommand";
 import { AGENT_DRIVER_TYPES } from "@/lib/databaseCapabilities";
 import { editablePrimaryKeys } from "@/lib/tableEditing";
@@ -527,6 +530,7 @@ export const useQueryStore = defineStore("query", () => {
       resultBaseSql?: string;
       resultSortedSql?: string | undefined;
       pagination?: { limit: number; offset: number; sessionId?: string };
+      mongoSafety?: MongoAggregateSafetyOptions;
     },
   ) {
     const tab = tabs.value.find((t) => t.id === id);
@@ -540,6 +544,7 @@ export const useQueryStore = defineStore("query", () => {
     tab.isCancelling = false;
     tab.executionId = executionId;
     tab.lastExecutedSql = sql;
+    tab.resultTotalRowCount = undefined;
     console.info("[DBX][executeTabSql:start]", {
       traceId,
       tabId: id,
@@ -558,8 +563,15 @@ export const useQueryStore = defineStore("query", () => {
     let useAgentResultSession = false;
     try {
       const connStore = useConnectionStore();
+      await connStore.ensureConnected(tab.connectionId);
       const conn = connStore.getConfig(tab.connectionId);
       const useAgentCursor = !!conn?.db_type && AGENT_DRIVER_TYPES.has(conn.db_type);
+      const queryTimeoutSecs =
+        typeof conn?.query_timeout_secs === "number" &&
+        Number.isFinite(conn.query_timeout_secs) &&
+        conn.query_timeout_secs >= 0
+          ? conn.query_timeout_secs
+          : 30;
       const settingsStore = useSettingsStore();
       await closeResultSession(tab, options?.pagination?.sessionId);
       if (tab.mode === "query") {
@@ -582,6 +594,7 @@ export const useQueryStore = defineStore("query", () => {
       }
       const mongoFind = conn?.db_type === "mongodb" ? parseMongoFindCommand(sql) : null;
       if (mongoFind) {
+        await connStore.ensureConnected(tab.connectionId);
         console.info("[DBX][executeTabSql:mongo-find:start]", { traceId, collection: mongoFind.collection });
         const result = await api.mongoFindDocuments(
           tab.connectionId,
@@ -614,6 +627,7 @@ export const useQueryStore = defineStore("query", () => {
       }
       const mongoCount = conn?.db_type === "mongodb" ? parseMongoCountDocumentsCommand(sql) : null;
       if (mongoCount) {
+        await connStore.ensureConnected(tab.connectionId);
         console.info("[DBX][executeTabSql:mongo-count:start]", { traceId, collection: mongoCount.collection });
         const result = await api.mongoFindDocuments(
           tab.connectionId,
@@ -643,6 +657,42 @@ export const useQueryStore = defineStore("query", () => {
         return;
       }
 
+      const mongoAggregate = conn?.db_type === "mongodb" ? parseMongoAggregateCommand(sql) : null;
+      if (mongoAggregate) {
+        if (options?.mongoSafety) {
+          const safety = evaluateMongoAggregateSafety(mongoAggregate, options.mongoSafety);
+          if (!safety.allowed) throw new Error(safety.reason);
+        }
+        await connStore.ensureConnected(tab.connectionId);
+        console.info("[DBX][executeTabSql:mongo-aggregate:start]", { traceId, collection: mongoAggregate.collection });
+        const result = await api.mongoAggregateDocuments(
+          tab.connectionId,
+          tab.database,
+          mongoAggregate.collection,
+          mongoAggregate.pipeline,
+          pageLimit,
+        );
+        console.info("[DBX][executeTabSql:mongo-aggregate:done]", {
+          traceId,
+          rowCount: result.documents.length,
+          total: result.total,
+          elapsed: elapsed(),
+        });
+        const current = tabs.value.find((t) => t.id === id);
+        if (current?.executionId === executionId) {
+          current.results = undefined;
+          current.activeResultIndex = undefined;
+          current.result = mongoDocumentsToQueryResult(result.documents, performance.now() - startedAt, result.total);
+          current.queryAnalysis = undefined;
+          current.querySourceColumns = undefined;
+          current.queryEditabilityReason = undefined;
+          current.tableMeta = undefined;
+          current.resultBaseSql = options?.resultBaseSql ?? sql;
+          current.resultSortedSql = options?.resultSortedSql;
+        }
+        return;
+      }
+
       console.info("[DBX][executeTabSql:execute-multi:start]", { traceId, elapsed: elapsed() });
       const executionOptions = {
         ...(typeof pageLimit === "number"
@@ -656,16 +706,14 @@ export const useQueryStore = defineStore("query", () => {
             : { maxRows: pageLimit, fetchSize: pageLimit }
           : {}),
         clientSessionId: tab.id,
-        timeoutSecs: settingsStore.editorSettings.queryTimeoutSecs,
+        timeoutSecs: queryTimeoutSecs,
       };
-      const results = await api.executeMulti(
-        tab.connectionId,
-        tab.database,
-        sqlToExecute,
-        tab.schema,
-        executionId,
-        executionOptions,
-      );
+      const frontendTimeoutSecs = Math.max(queryTimeoutSecs * 2, 60);
+      const timeoutError = new Error(`查询超时 (${frontendTimeoutSecs}s)，请检查数据库连接是否正常`);
+      const results = await Promise.race([
+        api.executeMulti(tab.connectionId, tab.database, sqlToExecute, tab.schema, executionId, executionOptions),
+        new Promise<never>((_, reject) => setTimeout(() => reject(timeoutError), frontendTimeoutSecs * 1000)),
+      ]);
       console.info("[DBX][executeTabSql:execute-multi:done]", {
         traceId,
         resultCount: results.length,
@@ -691,6 +739,35 @@ export const useQueryStore = defineStore("query", () => {
         current.resultPageOffset = pageOffset;
         current.resultCountSql = countSql;
         current.resultSessionId = current.result?.session_id ?? undefined;
+        if (countSql && current.result?.rows.length) {
+          // When the result set is smaller than the page size we already have
+          // all rows — compute the total directly instead of running COUNT(*).
+          const resultRowCount = current.result.rows.length;
+          if (pageLimit !== undefined && resultRowCount < pageLimit) {
+            current.resultTotalRowCount = (pageOffset ?? 0) + resultRowCount;
+          } else {
+            const capturedExecutionId = executionId;
+            const capturedTabId = id;
+            const capturedCountSql = countSql;
+            const capturedConnectionId = tab.connectionId;
+            const capturedDatabase = tab.database;
+            const capturedSchema = tab.schema;
+            api
+              .executeQuery(capturedConnectionId, capturedDatabase ?? "", capturedCountSql, capturedSchema)
+              .then((countResult) => {
+                const tabAfterCount = tabs.value.find((t) => t.id === capturedTabId);
+                if (tabAfterCount?.executionId === capturedExecutionId) {
+                  const total = Number(countResult.rows?.[0]?.[0] ?? 0);
+                  if (total > 0) {
+                    tabAfterCount.resultTotalRowCount = total;
+                  }
+                }
+              })
+              .catch(() => {
+                // COUNT query failed — silently ignore
+              });
+          }
+        }
         console.info("[DBX][executeTabSql:metadata:start]", { traceId, elapsed: elapsed() });
         await analyzeQueryMetadata(current, queryBaseSql);
         console.info("[DBX][executeTabSql:metadata:done]", { traceId, elapsed: elapsed() });
@@ -741,6 +818,13 @@ export const useQueryStore = defineStore("query", () => {
   async function explainTabSql(id: string, sql: string, databaseType?: DatabaseType) {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab) return { ok: false as const, reason: "empty" as const };
+    const conn = useConnectionStore().getConfig(tab.connectionId);
+    const queryTimeoutSecs =
+      typeof conn?.query_timeout_secs === "number" &&
+      Number.isFinite(conn.query_timeout_secs) &&
+      conn.query_timeout_secs >= 0
+        ? conn.query_timeout_secs
+        : 30;
 
     const built = await buildExplainSql(databaseType, sql);
     if (!built.ok) {
@@ -758,7 +842,7 @@ export const useQueryStore = defineStore("query", () => {
     try {
       const result = await api.executeQuery(tab.connectionId, tab.database, built.sql, tab.schema, executionId, {
         clientSessionId: tab.id,
-        timeoutSecs: useSettingsStore().editorSettings.queryTimeoutSecs,
+        timeoutSecs: queryTimeoutSecs,
       });
       const current = tabs.value.find((t) => t.id === id);
       if (current?.explainExecutionId === executionId) {
@@ -837,6 +921,18 @@ export const useQueryStore = defineStore("query", () => {
     tab.queryEditabilityReason = undefined;
   }
 
+  function notifyConnectionMayBeLost() {
+    const stuck = tabs.value.filter((t) => t.isExecuting);
+    if (stuck.length > 0) {
+      stuck.forEach((t) => {
+        t.isExecuting = false;
+        t.isCancelling = false;
+        t.executionId = undefined;
+        t.result = toErrorResult(new Error("连接可能已断开，请刷新数据重试"));
+      });
+    }
+  }
+
   async function trimResultCache() {
     const inactive = tabs.value.filter((t) => t.id !== activeTabId.value && (t.result || t.results));
     if (inactive.length > MAX_CACHED_RESULTS) {
@@ -885,5 +981,6 @@ export const useQueryStore = defineStore("query", () => {
     cancelTabExecution,
     cancelTabExplain,
     reloadEvictedTab,
+    notifyConnectionMayBeLost,
   };
 });

@@ -14,6 +14,6 @@ mysql_common = { git = "https://github.com/t8y2/rust_mysql_common.git", rev = "5
 [profile.release]
 panic = "abort"
 strip = true
-lto = "thin"
+lto = true
 codegen-units = 1
 opt-level = "s"

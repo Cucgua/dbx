@@ -92,6 +92,27 @@ export function isModRShortcut(event: ShortcutLikeEvent): boolean {
   return matchesShortcut(event, "Mod+R");
 }
 
+export function isZoomInShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  if (matchesShortcut(event, actionShortcut("zoomInUi", shortcuts))) return true;
+  if (event.isComposing || event.altKey) return false;
+  if (!event.metaKey && !event.ctrlKey) return false;
+  return normalizeKey(event.key) === "NumpadAdd" && !event.shiftKey;
+}
+
+export function isZoomOutShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  if (matchesShortcut(event, actionShortcut("zoomOutUi", shortcuts))) return true;
+  if (event.isComposing || event.altKey) return false;
+  if (!event.metaKey && !event.ctrlKey) return false;
+  return normalizeKey(event.key) === "NumpadSubtract" && !event.shiftKey;
+}
+
+export function isResetZoomShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
+  if (matchesShortcut(event, actionShortcut("resetUiZoom", shortcuts))) return true;
+  if (event.isComposing || event.altKey || event.shiftKey) return false;
+  if (!event.metaKey && !event.ctrlKey) return false;
+  return normalizeKey(event.key) === "Numpad0";
+}
+
 export function isToggleTransposeShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {
   return matchesShortcut(event, actionShortcut("toggleTranspose", shortcuts));
 }

@@ -6,11 +6,10 @@ import {
   resolveAppThemeAppearance,
   type AppThemeMode,
 } from "@/lib/appTheme";
+import { safeLocalStorageGet, safeLocalStorageSet } from "@/lib/safeStorage";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 
-const themeMode = ref<AppThemeMode>(
-  normalizeAppThemeMode(typeof localStorage === "undefined" ? null : localStorage.getItem(APP_THEME_STORAGE_KEY)),
-);
+const themeMode = ref<AppThemeMode>(normalizeAppThemeMode(safeLocalStorageGet(APP_THEME_STORAGE_KEY)));
 const systemPrefersDark = ref(readSystemPrefersDark());
 const isDark = computed(() => resolveAppThemeAppearance(themeMode.value, systemPrefersDark.value) === "dark");
 
@@ -68,7 +67,7 @@ function applyTheme() {
 
 function setThemeMode(mode: AppThemeMode) {
   themeMode.value = mode;
-  localStorage.setItem(APP_THEME_STORAGE_KEY, mode);
+  safeLocalStorageSet(APP_THEME_STORAGE_KEY, mode);
   applyTheme();
 }
 

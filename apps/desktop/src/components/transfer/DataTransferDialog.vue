@@ -279,9 +279,11 @@ async function startTransfer() {
 
   try {
     await api.startTransfer(request, (progress) => {
-      transferProgress.value.set(progress.table, progress);
-      transferProgress.value = new Map(transferProgress.value);
-      currentTable.value = progress.table;
+      if (progress.table) {
+        transferProgress.value.set(progress.table, progress);
+        transferProgress.value = new Map(transferProgress.value);
+        currentTable.value = progress.table;
+      }
 
       const nextState = nextTransferTerminalState(
         {
@@ -317,12 +319,37 @@ function getConnectionType(id: string): DatabaseType {
   return store.connections.find((c) => c.id === id)?.db_type ?? "mysql";
 }
 
+const processedStatuses = new Set<TransferProgress["status"]>(["tableDone", "done", "error", "cancelled"]);
+
+function formatRowCount(count: number) {
+  return count.toLocaleString();
+}
+
+function formatTableRows(progress: TransferProgress) {
+  if (typeof progress.totalRows === "number") {
+    return `${formatRowCount(progress.rowsTransferred)} / ${formatRowCount(progress.totalRows)}`;
+  }
+  return formatRowCount(progress.rowsTransferred);
+}
+
 const completedTables = computed(
-  () => [...transferProgress.value.values()].filter((p) => p.status === "tableDone" || p.status === "done").length,
+  () => [...transferProgress.value.values()].filter((p) => processedStatuses.has(p.status)).length,
 );
+
+const failedTables = computed(() => [...transferProgress.value.values()].filter((p) => p.status === "error").length);
 
 const totalTransferred = computed(() =>
   [...transferProgress.value.values()].reduce((sum, p) => sum + p.rowsTransferred, 0),
+);
+
+const knownTotalRows = computed(() =>
+  [...transferProgress.value.values()].reduce((sum, p) => sum + (typeof p.totalRows === "number" ? p.totalRows : 0), 0),
+);
+
+const overallRowsLabel = computed(() =>
+  knownTotalRows.value > 0
+    ? `${formatRowCount(totalTransferred.value)} / ${formatRowCount(knownTotalRows.value)}`
+    : formatRowCount(totalTransferred.value),
 );
 </script>
 
@@ -532,10 +559,15 @@ const totalTransferred = computed(() =>
         <div class="flex items-center justify-between text-xs text-muted-foreground">
           <span>
             {{ t("transfer.overallProgress") }}: {{ completedTables }} / {{ selectedTables.size }}
-            {{ t("transfer.tables").toLowerCase() }} · {{ totalTransferred.toLocaleString() }}
+            {{ t("transfer.tables").toLowerCase() }} · {{ overallRowsLabel }}
             {{ t("grid.rows", { count: "" }).trim() }}
           </span>
-          <span v-if="overallDone" class="text-green-600 font-medium">{{ t("transfer.completed") }}</span>
+          <span v-if="overallDone && !failedTables" class="text-green-600 font-medium">{{
+            t("transfer.completed")
+          }}</span>
+          <span v-else-if="overallDone && failedTables" class="text-amber-600 font-medium">
+            {{ t("transfer.completedWithErrors", { count: failedTables }) }}
+          </span>
           <span v-else-if="overallCancelled" class="text-yellow-600 font-medium">{{ t("transfer.cancelled") }}</span>
           <span v-else-if="overallError" class="text-destructive font-medium">{{ t("transfer.failed") }}</span>
         </div>
@@ -543,7 +575,15 @@ const totalTransferred = computed(() =>
         <div class="w-full bg-muted rounded-full h-2 overflow-hidden">
           <div
             class="h-full rounded-full transition-all duration-300"
-            :class="overallError ? 'bg-destructive' : overallCancelled ? 'bg-yellow-500' : 'bg-primary'"
+            :class="
+              overallError
+                ? 'bg-destructive'
+                : overallCancelled
+                  ? 'bg-yellow-500'
+                  : overallDone && failedTables
+                    ? 'bg-amber-500'
+                    : 'bg-primary'
+            "
             :style="{
               width: `${selectedTables.size ? (completedTables / selectedTables.size) * 100 : 0}%`,
             }"
@@ -561,7 +601,7 @@ const totalTransferred = computed(() =>
               <template v-if="transferProgress.get(table)">
                 <template v-if="transferProgress.get(table)!.status === 'running'">
                   <Loader2 class="w-3 h-3 animate-spin text-primary" />
-                  <span>{{ transferProgress.get(table)!.rowsTransferred.toLocaleString() }}</span>
+                  <span>{{ formatTableRows(transferProgress.get(table)!) }}</span>
                 </template>
                 <template
                   v-else-if="
@@ -570,10 +610,11 @@ const totalTransferred = computed(() =>
                   "
                 >
                   <Check class="w-3 h-3 text-green-500" />
-                  <span>{{ transferProgress.get(table)!.rowsTransferred.toLocaleString() }}</span>
+                  <span>{{ formatTableRows(transferProgress.get(table)!) }}</span>
                 </template>
                 <template v-else-if="transferProgress.get(table)!.status === 'error'">
                   <X class="w-3 h-3 text-destructive" />
+                  <span>{{ formatTableRows(transferProgress.get(table)!) }}</span>
                   <span
                     class="text-destructive truncate max-w-[160px]"
                     :title="transferProgress.get(table)!.error ?? ''"

@@ -1,9 +1,10 @@
 import { ref, type Ref } from "vue";
+import { safeLocalStorageGet, safeLocalStorageSet } from "@/lib/safeStorage";
 
 export function usePanelResize() {
-  const sidebarWidth = ref(Number(localStorage.getItem("dbx-sidebar-width")) || 260);
-  const aiPanelWidth = ref(Number(localStorage.getItem("dbx-ai-panel-width")) || 360);
-  const historyWidth = ref(Number(localStorage.getItem("dbx-history-width")) || 288);
+  const sidebarWidth = ref(Number(safeLocalStorageGet("dbx-sidebar-width")) || 260);
+  const aiPanelWidth = ref(Number(safeLocalStorageGet("dbx-ai-panel-width")) || 360);
+  const historyWidth = ref(Number(safeLocalStorageGet("dbx-history-width")) || 288);
 
   function startPanelResize(widthRef: Ref<number>, storageKey: string, direction: "left" | "right") {
     return (e: MouseEvent) => {
@@ -19,7 +20,7 @@ export function usePanelResize() {
       const onMouseUp = () => {
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
-        localStorage.setItem(storageKey, String(widthRef.value));
+        safeLocalStorageSet(storageKey, String(widthRef.value));
       };
 
       document.addEventListener("mousemove", onMouseMove);

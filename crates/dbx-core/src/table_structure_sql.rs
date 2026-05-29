@@ -16,11 +16,35 @@ pub struct EditableStructureColumn {
     #[serde(default)]
     pub is_primary_key: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra: Option<ColumnExtra>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original: Option<ColumnInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_position: Option<usize>,
     #[serde(default)]
     pub marked_for_drop: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnExtra {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_increment: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_update_current_timestamp: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ColumnIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnIdentity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub increment: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -242,15 +266,19 @@ fn capabilities_for(database_type: Option<DatabaseType>) -> TableStructureCapabi
             dialect: StructureDialect::SqlServer,
             add_column: true,
             drop_column: true,
+            rename_column: true,
+            alter_existing_column: true,
+            comment: true,
             create_index: true,
             drop_index: true,
             rebuild_index: true,
             index_type: true,
             index_include: true,
             index_filter: true,
+            index_comment: true,
             ..base
         },
-        Some(DatabaseType::Oracle | DatabaseType::Dameng | DatabaseType::OceanbaseOracle) => {
+        Some(DatabaseType::Oracle | DatabaseType::Dameng | DatabaseType::OceanbaseOracle | DatabaseType::Iris) => {
             TableStructureCapabilities {
                 dialect: StructureDialect::Oracle,
                 add_column: true,
@@ -322,7 +350,10 @@ fn build_table_comment_sql(options: &TableStructureSqlOptions, warnings: &mut Ve
         StructureDialect::ClickHouse => {
             vec![format!("ALTER TABLE {table} MODIFY COMMENT {quoted};")]
         }
-        StructureDialect::SqlServer | StructureDialect::Sqlite | StructureDialect::DuckDb | _ => {
+        StructureDialect::SqlServer => {
+            build_sqlserver_table_comment_sql(&table, options.schema.as_deref(), &options.table_name, new_comment)
+        }
+        _ => {
             if !clean(new_comment).is_empty() {
                 warnings
                     .push(format!("Table comments are not supported for {} from this editor.", dialect_label(dialect)));
@@ -358,9 +389,17 @@ pub fn build_create_table_sql(options: TableStructureSqlOptions) -> TableStructu
         if !column.is_nullable && !column.is_primary_key && dialect != StructureDialect::ClickHouse {
             parts.push("NOT NULL".to_string());
         }
+        if let Some(extra_clause) = column_extra_clause(dialect, column) {
+            parts.push(extra_clause);
+        }
         let default_value = normalize_default(Some(&column.default_value));
         if !default_value.is_empty() {
             parts.push(format!("DEFAULT {default_value}"));
+        }
+        if let Some(on_update) = column.extra.as_ref().and_then(|e| e.on_update_current_timestamp).filter(|v| *v) {
+            if on_update && dialect == StructureDialect::Mysql {
+                parts.push("ON UPDATE CURRENT_TIMESTAMP".to_string());
+            }
         }
         if dialect == StructureDialect::Mysql && capabilities.comment && !clean(&column.comment).is_empty() {
             parts.push(format!("COMMENT {}", quote_string(&clean(&column.comment))));
@@ -387,6 +426,13 @@ pub fn build_create_table_sql(options: TableStructureSqlOptions) -> TableStructu
                 statements.push(format!("COMMENT ON TABLE {table} IS {};", quote_string(&table_comment)));
             } else if dialect == StructureDialect::ClickHouse {
                 statements.push(format!("ALTER TABLE {table} MODIFY COMMENT {};", quote_string(&table_comment)));
+            } else if dialect == StructureDialect::SqlServer {
+                statements.extend(build_sqlserver_table_comment_sql(
+                    &table,
+                    options.schema.as_deref(),
+                    &options.table_name,
+                    &table_comment,
+                ));
             }
         }
     }
@@ -415,6 +461,19 @@ pub fn build_create_table_sql(options: TableStructureSqlOptions) -> TableStructu
             }
         }
     }
+    if capabilities.comment && dialect == StructureDialect::SqlServer {
+        for column in &active_columns {
+            if !clean(&column.comment).is_empty() {
+                statements.extend(build_sqlserver_column_comment_sql(
+                    &table,
+                    options.schema.as_deref(),
+                    &options.table_name,
+                    &column.name,
+                    &column.comment,
+                ));
+            }
+        }
+    }
 
     for index in options.indexes.iter().filter(|index| !index.marked_for_drop && !index.is_primary) {
         if !capabilities.create_index {
@@ -424,10 +483,132 @@ pub fn build_create_table_sql(options: TableStructureSqlOptions) -> TableStructu
             ));
             continue;
         }
-        statements.extend(build_create_index_statements(dialect, &table, index, &mut warnings));
+        statements.extend(build_create_index_statements(
+            dialect,
+            &table,
+            index,
+            &mut warnings,
+            options.schema.as_deref(),
+            &options.table_name,
+        ));
     }
 
     TableStructureSqlResult { statements, warnings }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SingleColumnAlterSqlOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_type: Option<DatabaseType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    pub table_name: String,
+    pub column: EditableStructureColumn,
+}
+
+pub fn build_single_column_alter_sql(options: SingleColumnAlterSqlOptions) -> TableStructureSqlResult {
+    let capabilities = capabilities_for(options.database_type);
+    let dialect = capabilities.dialect;
+    let table = qualified_table(dialect, options.schema.as_deref(), &options.table_name);
+    let database_label = database_label(options.database_type);
+    let mut warnings = Vec::new();
+    let mut statements = Vec::new();
+
+    if options.column.marked_for_drop {
+        let Some(original) = &options.column.original else {
+            warnings.push("No original column info available.".to_string());
+            return TableStructureSqlResult { statements, warnings };
+        };
+        if !capabilities.drop_column {
+            warnings.push(format!("Dropping columns is not supported for {database_label} from this editor."));
+            return TableStructureSqlResult { statements, warnings };
+        }
+        if original.is_primary_key {
+            warnings.push(format!("Primary key column \"{}\" cannot be dropped from this editor.", original.name));
+            return TableStructureSqlResult { statements, warnings };
+        }
+        statements.push(format!("ALTER TABLE {table} DROP COLUMN {};", quote_ident(dialect, &original.name)));
+        return TableStructureSqlResult { statements, warnings };
+    }
+
+    let Some(original) = &options.column.original else {
+        warnings.push(
+            "This column has no original state — ALTER statements are only available for existing columns.".to_string(),
+        );
+        return TableStructureSqlResult { statements, warnings };
+    };
+
+    if !has_existing_column_attribute_change(&options.column) && !has_column_extra_change(&options.column) {
+        warnings.push("No changes detected for this column.".to_string());
+        return TableStructureSqlResult { statements, warnings };
+    }
+
+    let has_rename = options.column.name != original.name;
+    let has_attribute_change = options.column.data_type.trim() != original.data_type.trim()
+        || options.column.is_nullable != original.is_nullable
+        || normalize_default(Some(&options.column.default_value)) != original_default(&options.column)
+        || clean(&options.column.comment) != original_comment(&options.column);
+
+    if has_rename && !capabilities.rename_column {
+        warnings.push(format!("Renaming columns is not supported for {database_label} from this editor."));
+    }
+    if has_attribute_change && !capabilities.alter_existing_column && dialect != StructureDialect::Sqlite {
+        warnings.push(format!("Editing existing columns is not supported for {database_label} yet."));
+    }
+
+    if (has_rename && !capabilities.rename_column)
+        || (has_attribute_change && !capabilities.alter_existing_column && dialect != StructureDialect::Sqlite)
+    {
+        return TableStructureSqlResult { statements, warnings };
+    }
+
+    match dialect {
+        StructureDialect::Mysql => statements.extend(build_mysql_existing_column_sql(&table, &options.column, "")),
+        StructureDialect::Postgres => statements.extend(build_postgres_existing_column_sql(&table, &options.column)),
+        StructureDialect::Oracle => {
+            statements.extend(build_oracle_like_existing_column_sql(dialect, &table, &options.column))
+        }
+        StructureDialect::H2 => statements.extend(build_h2_existing_column_sql(&table, &options.column)),
+        StructureDialect::ClickHouse => {
+            statements.extend(build_clickhouse_existing_column_sql(&table, &options.column, ""))
+        }
+        StructureDialect::SqlServer => statements.extend(build_sqlserver_existing_column_sql(
+            &table,
+            &options.column,
+            options.schema.as_deref(),
+            &options.table_name,
+        )),
+        StructureDialect::Sqlite => {
+            statements.extend(build_sqlite_existing_column_sql(&table, &options.column, &mut warnings))
+        }
+        _ => warnings.push(format!("Editing existing columns is not supported for {database_label} yet.")),
+    }
+
+    TableStructureSqlResult { statements, warnings }
+}
+
+fn has_column_extra_change(column: &EditableStructureColumn) -> bool {
+    let Some(original) = &column.original else { return false };
+    let current_extra = column.extra.as_ref();
+    match (current_extra, original.extra.as_deref()) {
+        // Neither has extra → no change
+        (None, None | Some("")) => false,
+        // Extra added or removed
+        (Some(_), None | Some("")) => true,
+        (None, Some(_)) => true,
+        // Both have extra → check auto_increment and on_update_current_timestamp flags
+        (Some(curr), Some(orig)) => {
+            let orig_lower = orig.to_lowercase();
+            let curr_has_ai = curr.auto_increment.unwrap_or(false);
+            let orig_has_ai = orig_lower.contains("auto_increment");
+            let curr_has_on_update = curr.on_update_current_timestamp.unwrap_or(false);
+            let orig_has_on_update = orig_lower.contains("on update");
+            let curr_has_identity = curr.identity.is_some();
+            // identity is harder to detect in free-form original.extra, so treat it as changed if present
+            curr_has_ai != orig_has_ai || curr_has_on_update != orig_has_on_update || curr_has_identity
+        }
+    }
 }
 
 fn build_column_sql(options: &TableStructureSqlOptions, warnings: &mut Vec<String>) -> Vec<String> {
@@ -472,7 +653,14 @@ fn build_column_sql(options: &TableStructureSqlOptions, warnings: &mut Vec<Strin
                 warnings.push(format!("Adding columns is not supported for {database_label} from this editor."));
                 continue;
             }
-            statements.extend(build_add_column_sql(dialect, &table, column, &position_clause));
+            statements.extend(build_add_column_sql(
+                dialect,
+                &table,
+                column,
+                &position_clause,
+                options.schema.as_deref(),
+                &options.table_name,
+            ));
             continue;
         }
 
@@ -516,6 +704,12 @@ fn build_column_sql(options: &TableStructureSqlOptions, warnings: &mut Vec<Strin
                 &table,
                 column,
                 if has_position_change { &position_clause } else { "" },
+            )),
+            StructureDialect::SqlServer => statements.extend(build_sqlserver_existing_column_sql(
+                &table,
+                column,
+                options.schema.as_deref(),
+                &options.table_name,
             )),
             StructureDialect::Sqlite => statements.extend(build_sqlite_existing_column_sql(&table, column, warnings)),
             _ => warnings.push(format!("Editing existing columns is not supported for {database_label} yet.")),
@@ -563,7 +757,7 @@ fn build_primary_key_sql(
     if !old_pk_names.is_empty() {
         match dialect {
             StructureDialect::Postgres => {
-                let raw_table = options.table_name.split('.').last().unwrap_or(&options.table_name);
+                let raw_table = options.table_name.split('.').next_back().unwrap_or(&options.table_name);
                 let pk_name = format!("{}_pkey", clean(raw_table));
                 statements.push(format!("ALTER TABLE {table} DROP CONSTRAINT {};", quote_ident(dialect, &pk_name)));
             }
@@ -620,7 +814,14 @@ fn build_index_sql(options: &TableStructureSqlOptions, warnings: &mut Vec<String
                 continue;
             }
             statements.push(build_drop_index_sql(dialect, &table, options.schema.as_deref(), &original.name));
-            statements.extend(build_create_index_statements(dialect, &table, index, warnings));
+            statements.extend(build_create_index_statements(
+                dialect,
+                &table,
+                index,
+                warnings,
+                options.schema.as_deref(),
+                &options.table_name,
+            ));
             continue;
         }
 
@@ -628,7 +829,14 @@ fn build_index_sql(options: &TableStructureSqlOptions, warnings: &mut Vec<String
             warnings.push(format!("Creating indexes is not supported for {database_label} from this editor."));
             continue;
         }
-        statements.extend(build_create_index_statements(dialect, &table, index, warnings));
+        statements.extend(build_create_index_statements(
+            dialect,
+            &table,
+            index,
+            warnings,
+            options.schema.as_deref(),
+            &options.table_name,
+        ));
     }
 
     statements
@@ -639,6 +847,8 @@ fn build_add_column_sql(
     table: &str,
     column: &EditableStructureColumn,
     position_clause: &str,
+    schema: Option<&str>,
+    table_name: &str,
 ) -> Vec<String> {
     let add_keyword = if dialect == StructureDialect::SqlServer { "ADD" } else { "ADD COLUMN" };
     let definition = column_definition(dialect, column);
@@ -660,6 +870,9 @@ fn build_add_column_sql(
             quote_ident(dialect, &column.name),
             quote_string(&clean(&column.comment))
         ));
+    }
+    if dialect == StructureDialect::SqlServer && !clean(&column.comment).is_empty() {
+        statements.extend(build_sqlserver_column_comment_sql(table, schema, table_name, &column.name, &column.comment));
     }
     statements
 }
@@ -772,6 +985,97 @@ fn build_oracle_like_existing_column_sql(
         statements
             .push(format!("COMMENT ON COLUMN {table}.{} IS {comment_value};", quote_ident(dialect, &current_name)));
     }
+    statements
+}
+
+fn build_sqlserver_existing_column_sql(
+    table: &str,
+    column: &EditableStructureColumn,
+    schema: Option<&str>,
+    table_name: &str,
+) -> Vec<String> {
+    let Some(original) = &column.original else {
+        return Vec::new();
+    };
+    let dialect = StructureDialect::SqlServer;
+    let mut statements = Vec::new();
+    let mut current_name = original.name.clone();
+
+    // Rename column via sp_rename
+    if column.name != original.name {
+        let full_obj_path = format!("{table}.{}", quote_ident(dialect, &original.name));
+        statements.push(format!(
+            "EXEC sp_rename '{full_obj_path}', '{new_name}', 'COLUMN';",
+            full_obj_path = full_obj_path.replace('\'', "''"),
+            new_name = column.name.replace('\'', "''")
+        ));
+        current_name = column.name.clone();
+    }
+
+    // Build the ALTER COLUMN clause for type + nullability changes
+    if column.data_type.trim() != original.data_type.trim() || column.is_nullable != original.is_nullable {
+        let null_clause = if column.is_nullable { "NULL" } else { "NOT NULL" };
+        statements.push(format!(
+            "ALTER TABLE {table} ALTER COLUMN {} {} {null_clause};",
+            quote_ident(dialect, &current_name),
+            column_data_type(dialect, column)
+        ));
+    }
+
+    // Default value changes via ADD/DROP CONSTRAINT
+    if normalize_default(Some(&column.default_value)) != original_default(column) {
+        let default_value = normalize_default(Some(&column.default_value));
+        let has_old_default = !column
+            .original
+            .as_ref()
+            .and_then(|o| o.column_default.as_ref())
+            .unwrap_or(&String::new())
+            .trim()
+            .is_empty()
+            && !column
+                .original
+                .as_ref()
+                .and_then(|o| o.column_default.as_ref())
+                .map(|d| d.trim().eq_ignore_ascii_case("null"))
+                .unwrap_or(false);
+
+        if has_old_default {
+            statements.push(format!(
+                "DECLARE @sql NVARCHAR(MAX);\
+                 SELECT @sql = 'ALTER TABLE {table} DROP CONSTRAINT [' + name + ']'\
+                 FROM sys.default_constraints\
+                 WHERE parent_object_id = OBJECT_ID('{table}') AND parent_column_id = COLUMNPROPERTY(OBJECT_ID('{table}'), '{col_name}', 'ColumnId');\
+                 EXEC sp_executesql @sql;",
+                table = table.replace('\'', "''"),
+                col_name = current_name.replace('\'', "''")
+            ));
+        }
+        if !default_value.is_empty() {
+            let short_table =
+                table.split('.').next_back().unwrap_or(table).trim_matches(|c: char| c == '[' || c == ']');
+            let constraint_name = format!(
+                "DF_{short_table}_{col_name}",
+                short_table = short_table,
+                col_name = current_name.trim_matches(|c: char| c == '[' || c == ']')
+            );
+            statements.push(format!(
+                "ALTER TABLE {table} ADD CONSTRAINT [{constraint_name}] DEFAULT {default_value} FOR {};",
+                quote_ident(dialect, &current_name)
+            ));
+        }
+    }
+
+    // Column comment changes via extended properties
+    if clean(&column.comment) != original_comment(column) {
+        statements.extend(build_sqlserver_column_comment_sql(
+            table,
+            schema,
+            table_name,
+            &current_name,
+            &column.comment,
+        ));
+    }
+
     statements
 }
 
@@ -930,6 +1234,8 @@ fn build_create_index_statements(
     table: &str,
     index: &EditableStructureIndex,
     warnings: &mut Vec<String>,
+    schema: Option<&str>,
+    table_name: &str,
 ) -> Vec<String> {
     let capabilities = capabilities_for(database_type_for_dialect(dialect));
     let name = clean(&index.name);
@@ -992,6 +1298,8 @@ fn build_create_index_statements(
     let comment = clean(&index.comment);
     if !comment.is_empty() && capabilities.index_comment && dialect == StructureDialect::Postgres {
         statements.push(format!("COMMENT ON INDEX {} IS {};", quote_ident(dialect, &name), quote_string(&comment)));
+    } else if !comment.is_empty() && capabilities.index_comment && dialect == StructureDialect::SqlServer {
+        statements.extend(build_sqlserver_index_comment_sql(table, schema, table_name, &name, &comment));
     } else if !comment.is_empty() && capabilities.index_comment {
         warnings.push(format!("Index comments are not supported for {} from this editor.", dialect_label(dialect)));
     }
@@ -1045,14 +1353,63 @@ fn column_definition(dialect: StructureDialect, column: &EditableStructureColumn
     if !column.is_nullable && !is_oracle_like(dialect) && dialect != StructureDialect::ClickHouse {
         parts.push("NOT NULL".to_string());
     }
+    if let Some(extra_clause) = column_extra_clause(dialect, column) {
+        parts.push(extra_clause);
+    }
     let default_value = normalize_default(Some(&column.default_value));
     if !default_value.is_empty() {
         parts.push(format!("DEFAULT {default_value}"));
+    }
+    if let Some(on_update) = column.extra.as_ref().and_then(|e| e.on_update_current_timestamp).filter(|v| *v) {
+        if on_update && dialect == StructureDialect::Mysql {
+            parts.push("ON UPDATE CURRENT_TIMESTAMP".to_string());
+        }
     }
     if dialect == StructureDialect::Mysql && !clean(&column.comment).is_empty() {
         parts.push(format!("COMMENT {}", quote_string(&clean(&column.comment))));
     }
     parts.join(" ")
+}
+
+fn column_extra_clause(dialect: StructureDialect, column: &EditableStructureColumn) -> Option<String> {
+    let extra = column.extra.as_ref()?;
+    match dialect {
+        StructureDialect::Mysql => {
+            let mut clauses = Vec::new();
+            if extra.auto_increment.unwrap_or(false) {
+                clauses.push("AUTO_INCREMENT".to_string());
+            }
+            if clauses.is_empty() {
+                None
+            } else {
+                Some(clauses.join(" "))
+            }
+        }
+        StructureDialect::Postgres | StructureDialect::H2 => {
+            if let Some(identity) = &extra.identity {
+                let generation = identity.generation.as_deref().unwrap_or("BY DEFAULT");
+                let mut clause = format!("GENERATED {generation} AS IDENTITY");
+                if identity.seed.is_some() || identity.increment.is_some() {
+                    let start = identity.seed.unwrap_or(1);
+                    let inc = identity.increment.unwrap_or(1);
+                    clause.push_str(&format!(" (START WITH {start} INCREMENT BY {inc})"));
+                }
+                Some(clause)
+            } else {
+                None
+            }
+        }
+        StructureDialect::SqlServer => {
+            if extra.auto_increment.unwrap_or(false) || extra.identity.is_some() {
+                let seed = extra.identity.as_ref().and_then(|i| i.seed).unwrap_or(1);
+                let increment = extra.identity.as_ref().and_then(|i| i.increment).unwrap_or(1);
+                Some(format!("IDENTITY({seed}, {increment})"))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 fn column_data_type(dialect: StructureDialect, column: &EditableStructureColumn) -> String {
@@ -1147,7 +1504,7 @@ fn column_position_clause(dialect: StructureDialect, columns: &[&EditableStructu
     if index == 0 {
         return " FIRST".to_string();
     }
-    format!(" AFTER {}", quote_ident(dialect, &columns.get(index - 1).map(|column| column.name.as_str()).unwrap_or("")))
+    format!(" AFTER {}", quote_ident(dialect, columns.get(index - 1).map(|column| column.name.as_str()).unwrap_or("")))
 }
 
 fn mysql_column_position_changed(columns: &[&EditableStructureColumn], index: usize) -> bool {
@@ -1318,6 +1675,92 @@ fn database_type_for_dialect(dialect: StructureDialect) -> Option<DatabaseType> 
     }
 }
 
+fn sqlserver_schema_name(schema: Option<&str>) -> String {
+    schema.filter(|s| !s.trim().is_empty()).map(|s| s.trim().to_string()).unwrap_or_else(|| "dbo".to_string())
+}
+
+fn build_sqlserver_table_comment_sql(
+    qualified_table: &str,
+    schema: Option<&str>,
+    table_name: &str,
+    new_comment: &str,
+) -> Vec<String> {
+    let mut statements = Vec::new();
+    let schema_name = sqlserver_schema_name(schema);
+    let escaped_qualified = qualified_table.replace('\'', "''");
+    let escaped_schema = schema_name.replace('\'', "''");
+    let escaped_table = table_name.replace('\'', "''");
+
+    statements.push(format!(
+        "IF EXISTS (SELECT 1 FROM sys.extended_properties WHERE major_id = OBJECT_ID(N'{escaped_qualified}') AND minor_id = 0 AND name = N'MS_Description') EXEC sys.sp_dropextendedproperty @name=N'MS_Description', @level0type=N'SCHEMA', @level0name=N'{escaped_schema}', @level1type=N'TABLE', @level1name=N'{escaped_table}';"
+    ));
+
+    if !clean(new_comment).is_empty() {
+        let quoted_comment = clean(new_comment).replace('\'', "''");
+        statements.push(format!(
+            "EXEC sys.sp_addextendedproperty @name=N'MS_Description', @value=N'{quoted_comment}', @level0type=N'SCHEMA', @level0name=N'{escaped_schema}', @level1type=N'TABLE', @level1name=N'{escaped_table}';"
+        ));
+    }
+
+    statements
+}
+
+fn build_sqlserver_index_comment_sql(
+    qualified_table: &str,
+    schema: Option<&str>,
+    table_name: &str,
+    index_name: &str,
+    new_comment: &str,
+) -> Vec<String> {
+    let mut statements = Vec::new();
+    let schema_name = sqlserver_schema_name(schema);
+    let escaped_qualified = qualified_table.replace('\'', "''");
+    let escaped_schema = schema_name.replace('\'', "''");
+    let escaped_table = table_name.replace('\'', "''");
+    let escaped_idx = index_name.replace('\'', "''");
+
+    statements.push(format!(
+        "IF EXISTS (SELECT 1 FROM sys.extended_properties WHERE major_id = OBJECT_ID(N'{escaped_qualified}') AND minor_id = 0 AND name = N'MS_Description' AND class_desc = 'INDEX') EXEC sys.sp_dropextendedproperty @name=N'MS_Description', @level0type=N'SCHEMA', @level0name=N'{escaped_schema}', @level1type=N'TABLE', @level1name=N'{escaped_table}', @level2type=N'INDEX', @level2name=N'{escaped_idx}';"
+    ));
+
+    if !clean(new_comment).is_empty() {
+        let quoted_comment = clean(new_comment).replace('\'', "''");
+        statements.push(format!(
+            "EXEC sys.sp_addextendedproperty @name=N'MS_Description', @value=N'{quoted_comment}', @level0type=N'SCHEMA', @level0name=N'{escaped_schema}', @level1type=N'TABLE', @level1name=N'{escaped_table}', @level2type=N'INDEX', @level2name=N'{escaped_idx}';"
+        ));
+    }
+
+    statements
+}
+
+fn build_sqlserver_column_comment_sql(
+    qualified_table: &str,
+    schema: Option<&str>,
+    table_name: &str,
+    column_name: &str,
+    new_comment: &str,
+) -> Vec<String> {
+    let mut statements = Vec::new();
+    let schema_name = sqlserver_schema_name(schema);
+    let escaped_qualified = qualified_table.replace('\'', "''");
+    let escaped_schema = schema_name.replace('\'', "''");
+    let escaped_table = table_name.replace('\'', "''");
+    let escaped_col = column_name.replace('\'', "''");
+
+    statements.push(format!(
+        "IF EXISTS (SELECT 1 FROM sys.extended_properties WHERE major_id = OBJECT_ID(N'{escaped_qualified}') AND minor_id = COLUMNPROPERTY(OBJECT_ID(N'{escaped_qualified}'), N'{escaped_col}', 'ColumnId') AND name = N'MS_Description') EXEC sys.sp_dropextendedproperty @name=N'MS_Description', @level0type=N'SCHEMA', @level0name=N'{escaped_schema}', @level1type=N'TABLE', @level1name=N'{escaped_table}', @level2type=N'COLUMN', @level2name=N'{escaped_col}';"
+    ));
+
+    if !clean(new_comment).is_empty() {
+        let quoted_comment = clean(new_comment).replace('\'', "''");
+        statements.push(format!(
+            "EXEC sys.sp_addextendedproperty @name=N'MS_Description', @value=N'{quoted_comment}', @level0type=N'SCHEMA', @level0name=N'{escaped_schema}', @level1type=N'TABLE', @level1name=N'{escaped_table}', @level2type=N'COLUMN', @level2name=N'{escaped_col}';"
+        ));
+    }
+
+    statements
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1331,6 +1774,7 @@ mod tests {
             default_value: String::new(),
             comment: String::new(),
             is_primary_key: false,
+            extra: None,
             original: None,
             original_position: None,
             marked_for_drop: false,
@@ -1891,5 +2335,100 @@ mod tests {
         assert_eq!(result.statements, Vec::<String>::new());
         assert_eq!(result.warnings.len(), 1);
         assert!(result.warnings[0].contains("primary key"));
+    }
+
+    #[test]
+    fn mysql_create_table_with_auto_increment() {
+        let mut col = column("id");
+        col.data_type = "int".to_string();
+        col.is_nullable = false;
+        col.is_primary_key = true;
+        col.extra = Some(ColumnExtra { auto_increment: Some(true), on_update_current_timestamp: None, identity: None });
+
+        let result = build_create_table_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Mysql),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![col],
+            indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert_eq!(result.statements.len(), 1);
+        assert!(result.statements[0].contains("AUTO_INCREMENT"));
+    }
+
+    #[test]
+    fn mysql_create_table_with_on_update_current_timestamp() {
+        let mut col = column("updated_at");
+        col.data_type = "timestamp".to_string();
+        col.is_nullable = false;
+        col.default_value = "CURRENT_TIMESTAMP".to_string();
+        col.extra = Some(ColumnExtra { auto_increment: None, on_update_current_timestamp: Some(true), identity: None });
+
+        let result = build_create_table_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Mysql),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![col],
+            indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert!(result.statements[0].contains("ON UPDATE CURRENT_TIMESTAMP"));
+    }
+
+    #[test]
+    fn postgres_create_table_with_identity() {
+        let mut col = column("id");
+        col.data_type = "integer".to_string();
+        col.is_nullable = false;
+        col.extra = Some(ColumnExtra {
+            auto_increment: None,
+            on_update_current_timestamp: None,
+            identity: Some(ColumnIdentity { generation: Some("BY DEFAULT".to_string()), seed: None, increment: None }),
+        });
+
+        let result = build_create_table_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::Postgres),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![col],
+            indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert!(result.statements[0].contains("GENERATED BY DEFAULT AS IDENTITY"));
+    }
+
+    #[test]
+    fn sqlserver_create_table_with_identity() {
+        let mut col = column("id");
+        col.data_type = "int".to_string();
+        col.is_nullable = false;
+        col.extra = Some(ColumnExtra {
+            auto_increment: Some(true),
+            on_update_current_timestamp: None,
+            identity: Some(ColumnIdentity { generation: None, seed: Some(100), increment: Some(5) }),
+        });
+
+        let result = build_create_table_sql(TableStructureSqlOptions {
+            database_type: Some(DatabaseType::SqlServer),
+            schema: None,
+            table_name: "users".to_string(),
+            columns: vec![col],
+            indexes: Vec::new(),
+            table_comment: None,
+            original_table_comment: None,
+        });
+
+        assert_eq!(result.warnings, Vec::<String>::new());
+        assert!(result.statements[0].contains("IDENTITY(100, 5)"));
     }
 }

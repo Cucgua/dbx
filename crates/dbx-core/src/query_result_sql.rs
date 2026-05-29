@@ -1,8 +1,14 @@
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
 
 use crate::models::connection::DatabaseType;
 use crate::sql::find_statement_at_cursor;
 use crate::sql_dialect::{quote_table_identifier, uses_fetch_first};
+
+static LIMIT_OFFSET_STRIP_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(\s+LIMIT\s+\d+(\s+OFFSET\s+\d+)?|\s+OFFSET\s+\d+(\s+LIMIT\s+\d+)?|\s+OFFSET\s+\d+\s+ROWS?\s+FETCH\s+(?:FIRST|NEXT)\s+\d+\s+ROWS?\s+ONLY|\s+FETCH\s+(?:FIRST|NEXT)\s+\d+\s+ROWS?\s+ONLY)\s*$").unwrap()
+});
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -183,6 +189,8 @@ pub fn build_count_query_sql(options: CountQuerySqlOptions) -> QuerySqlBuildResu
         return err("unsupported");
     }
 
+    let statement = LIMIT_OFFSET_STRIP_RE.replace(&statement, "").to_string();
+
     let alias = quote_table_identifier(options.database_type, "dbx_count");
     let wrapped_sql = if options.database_type == Some(DatabaseType::SqlServer) {
         sql_server_statement_for_derived_table(&statement)
@@ -323,7 +331,7 @@ fn add_sql_server_top(sql: &str, limit: usize) -> String {
     if has_top_level_select_top(sql) {
         return sql.to_string();
     }
-    if sql.len() >= 6 && sql[..6].to_ascii_uppercase() == "SELECT" {
+    if sql.len() >= 6 && sql[..6].eq_ignore_ascii_case("SELECT") {
         format!("SELECT TOP ({limit}){}", &sql[6..])
     } else {
         format!("SELECT TOP ({limit}) * FROM ({sql}) [dbx_page]")

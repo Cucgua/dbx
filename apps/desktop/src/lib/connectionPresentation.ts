@@ -73,6 +73,9 @@ export function connectionUrlPlaceholder(dbType: DatabaseType): string {
     case "bigquery":
       return "bigquery://https://www.googleapis.com/bigquery/v2:443/project-id";
 
+    case "iris":
+      return "iris://user:password@host:port/namespace";
+
     case "jdbc":
       return "jdbc:mysql://host:3306/database";
 

@@ -10,11 +10,13 @@ use dbx_core::storage::Storage;
 use dbx_mcp::{DesktopEventSink, McpExecuteQueryEvent, McpOpenTableEvent};
 use std::sync::Arc;
 use std::time::Instant;
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{Emitter, Manager};
 #[cfg(any(windows, target_os = "linux"))]
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -174,12 +176,20 @@ pub fn run() {
             let links = commands::deep_link::connection_deep_links_from_args(args.clone());
             open_connection_deep_links(app, links);
 
-            let paths = commands::external_sql::sql_file_paths_from_args(args, std::path::Path::new(&cwd));
+            let paths = commands::external_sql::sql_file_paths_from_args(args.clone(), std::path::Path::new(&cwd));
             if !paths.is_empty() {
                 if let Some(state) = app.try_state::<commands::external_sql::ExternalSqlOpenState>() {
                     state.push(paths.clone());
                 }
                 let _ = app.emit("dbx-open-sql-files", paths);
+            }
+
+            let db_paths = commands::external_db::db_file_paths_from_args(args, std::path::Path::new(&cwd));
+            if !db_paths.is_empty() {
+                if let Some(state) = app.try_state::<commands::external_db::ExternalDbOpenState>() {
+                    state.push(db_paths.clone());
+                }
+                let _ = app.emit("dbx-open-db-files", db_paths);
             }
             show_main_window(app);
         }))
@@ -220,6 +230,7 @@ pub fn run() {
             ));
             app.manage(state.clone());
             app.manage(commands::external_sql::ExternalSqlOpenState::default());
+            app.manage(commands::external_db::ExternalDbOpenState::default());
             app.manage(commands::deep_link::DeepLinkOpenState::default());
             let startup_links = commands::deep_link::connection_deep_links_from_args(std::env::args().skip(1));
             open_connection_deep_links(app.handle(), startup_links);
@@ -288,6 +299,7 @@ pub fn run() {
             commands::connection::test_connection,
             commands::connection::connect_db,
             commands::connection::disconnect_db,
+            commands::connection::refresh_connections,
             commands::connection::save_connections,
             commands::connection::load_connections,
             commands::connection::save_sidebar_layout,
@@ -352,6 +364,7 @@ pub fn run() {
             commands::query::build_view_ddl_sql,
             commands::query::build_table_structure_change_sql,
             commands::query::build_create_table_sql,
+            commands::query::build_single_column_alter_sql,
             commands::query::analyze_editable_query_editability,
             commands::query::prepare_data_grid_save,
             commands::query::build_data_grid_copy_update_statements,
@@ -365,11 +378,13 @@ pub fn run() {
             commands::query::build_database_sql_export,
             commands::data_compare::prepare_data_compare,
             commands::data_compare::prepare_data_compare_from_tables,
+            commands::data_compare::build_data_compare_sync_plan,
             commands::sql_file::preview_sql_file,
             commands::sql_file::execute_sql_file,
             commands::sql_file::cancel_sql_file_execution,
             commands::external_sql::pending_open_sql_files,
             commands::external_sql::read_external_sql_file,
+            commands::external_db::pending_open_db_files,
             commands::deep_link::pending_open_connection_links,
             commands::table_import::preview_table_import_file,
             commands::table_import::import_table_file,
@@ -402,6 +417,7 @@ pub fn run() {
             commands::mongo_cmd::mongo_list_databases,
             commands::mongo_cmd::mongo_list_collections,
             commands::mongo_cmd::mongo_find_documents,
+            commands::mongo_cmd::mongo_aggregate_documents,
             commands::mongo_cmd::mongo_insert_document,
             commands::mongo_cmd::mongo_update_document,
             commands::mongo_cmd::mongo_delete_document,
@@ -438,6 +454,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            #[cfg(not(target_os = "macos"))]
+            let _ = (&app_handle, &event);
+
             #[cfg(target_os = "macos")]
             if let RunEvent::Opened { urls } = &event {
                 let links: Vec<String> = urls
@@ -463,6 +482,23 @@ pub fn run() {
                         let _ = window.set_focus();
                     }
                 }
+
+                let db_paths: Vec<String> = urls
+                    .iter()
+                    .filter_map(|url| url.to_file_path().ok())
+                    .filter(|path| commands::external_db::is_db_file_path(path))
+                    .map(|path| path.to_string_lossy().to_string())
+                    .collect();
+                if !db_paths.is_empty() {
+                    if let Some(state) = app_handle.try_state::<commands::external_db::ExternalDbOpenState>() {
+                        state.push(db_paths.clone());
+                    }
+                    let _ = app_handle.emit("dbx-open-db-files", db_paths);
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
             }
 
             #[cfg(target_os = "macos")]
@@ -470,6 +506,12 @@ pub fn run() {
                 if !has_visible_windows {
                     show_main_window(app_handle);
                 }
+                let app_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Some(state) = app_handle.try_state::<AppState>() {
+                        state.refresh_connections().await;
+                    }
+                });
             }
         });
 }

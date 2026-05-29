@@ -41,7 +41,7 @@ type DbOption = { value: string; label: string };
 type DbCategory = { key: string; title: string; options: DbOption[] };
 type DialogStep = "select" | "config";
 type DbPickerView = "icon" | "list";
-type ConfigTab = "connection" | "tls" | "ssh" | "proxy";
+type ConfigTab = "connection" | "advanced" | "tls" | "ssh" | "proxy";
 
 const { t } = useI18n();
 const { toast } = useToast();
@@ -89,6 +89,8 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   ssh_key_passphrase: "",
   ssh_expose_lan: false,
   ssh_connect_timeout_secs: 5,
+  connect_timeout_secs: 5,
+  query_timeout_secs: 30,
   proxy_enabled: false,
   proxy_type: "socks5",
   proxy_host: "",
@@ -109,6 +111,7 @@ const defaultForm = (): Omit<ConnectionConfig, "id"> => ({
   redis_sentinel_username: "",
   redis_sentinel_password: "",
   redis_sentinel_tls: false,
+  redis_cluster_nodes: "",
 });
 
 const form = ref(defaultForm());
@@ -121,6 +124,7 @@ const jdbcDrivers = ref<JdbcDriverInfo[]>([]);
 const agentDrivers = ref<AgentDriverInstallState[]>([]);
 const selectedJdbcDriverPath = ref("");
 const connectionUrlInput = ref("");
+const oceanbaseSubMode = ref<"mysql" | "oracle">("mysql");
 const dialogStep = ref<DialogStep>("select");
 const dbPickerView = ref<DbPickerView>("icon");
 const dbSearchQuery = ref("");
@@ -259,6 +263,7 @@ const driverProfiles: Record<
   sundb: { type: "sundb", port: 22000, user: "root", label: "SunDB", icon: "sundb" },
   jdbc: { type: "jdbc", port: 0, user: "", label: "JDBC", icon: "jdbc" },
   tdengine: { type: "tdengine", port: 6041, user: "root", label: "TDengine", icon: "tdengine" },
+  iris: { type: "iris", port: 1972, user: "_SYSTEM", label: "IRIS", icon: "iris" },
   custom_mysql: {
     type: "mysql",
     port: 3306,
@@ -278,8 +283,12 @@ const driverProfiles: Record<
 };
 
 function profileForConfig(config: ConnectionConfig) {
-  if (config.driver_profile && driverProfiles[config.driver_profile]) return config.driver_profile;
+  if (config.driver_profile && driverProfiles[config.driver_profile]) {
+    if (config.driver_profile === "oceanbase-oracle") return "oceanbase";
+    return config.driver_profile;
+  }
   if (config.db_type === "dameng") return "dm";
+  if (config.db_type === "oceanbase-oracle") return "oceanbase";
   return config.db_type;
 }
 
@@ -327,6 +336,17 @@ function applyProfile(val: string, preserveConnectionFields = false) {
   }
 }
 
+function switchOceanbaseMode(mode: "mysql" | "oracle") {
+  oceanbaseSubMode.value = mode;
+  if (mode === "mysql") {
+    applyProfile("oceanbase", false);
+  } else {
+    applyProfile("oceanbase-oracle", false);
+    selectedType.value = "oceanbase";
+  }
+  resetTestState();
+}
+
 watch(
   () => props.editConfig,
   (config) => {
@@ -356,6 +376,8 @@ watch(
         ssh_key_passphrase: config.ssh_key_passphrase || "",
         ssh_expose_lan: config.ssh_expose_lan || false,
         ssh_connect_timeout_secs: config.ssh_connect_timeout_secs || 5,
+        connect_timeout_secs: config.connect_timeout_secs || 5,
+        query_timeout_secs: config.query_timeout_secs ?? 30,
         proxy_enabled: config.proxy_enabled || false,
         proxy_type: config.proxy_type || "socks5",
         proxy_host: config.proxy_host || "",
@@ -378,10 +400,14 @@ watch(
         redis_sentinel_username: config.redis_sentinel_username || "",
         redis_sentinel_password: config.redis_sentinel_password || "",
         redis_sentinel_tls: config.redis_sentinel_tls || false,
+        redis_cluster_nodes: config.redis_cluster_nodes || "",
       };
       selectedType.value = profile;
       mongoUseUrl.value = config.db_type === "mongodb" && !!config.connection_string;
       oracleUseConnectString.value = profile === "oracle_oci" && !!config.connection_string;
+      if (profile === "oceanbase") {
+        oceanbaseSubMode.value = config.driver_profile === "oceanbase-oracle" ? "oracle" : "mysql";
+      }
       jdbcDriverPathsInput.value = (config.jdbc_driver_paths || []).join("\n");
       customDriverName.value = isCustomCompatibleProfile() ? config.driver_label || "" : "";
       dialogStep.value = "config";
@@ -396,6 +422,7 @@ watch(
       jdbcDriverPathsInput.value = "";
       selectedJdbcDriverPath.value = "";
       connectionUrlInput.value = "";
+      oceanbaseSubMode.value = "mysql";
       dialogStep.value = "select";
       configTab.value = "connection";
     }
@@ -489,6 +516,7 @@ const iconTypeMap: Record<string, string> = {
   hive: "hive",
   db2: "db2",
   informix: "informix",
+  iris: "iris",
   neo4j: "neo4j",
   cassandra: "cassandra",
   bigquery: "bigquery",
@@ -517,7 +545,6 @@ const dbOptions = [
   { value: "gaussdb", label: "GaussDB" },
   { value: "tidb", label: "TiDB" },
   { value: "oceanbase", label: "OceanBase" },
-  { value: "oceanbase-oracle", label: "OceanBase Oracle Mode" },
   { value: "goldendb", label: "GoldenDB" },
   { value: "tdsql", label: "TDSQL" },
   { value: "polardb", label: "PolarDB" },
@@ -551,6 +578,7 @@ const dbOptions = [
   { value: "bigquery", label: "BigQuery" },
   { value: "kylin", label: "Kylin" },
   { value: "sundb", label: "SunDB" },
+  { value: "iris", label: "IRIS" },
   { value: "jdbc", label: "JDBC" },
   { value: "custom_mysql", label: "Custom (MySQL)" },
   { value: "custom_postgres", label: "Custom (PostgreSQL)" },
@@ -847,6 +875,14 @@ function normalizePostgresSslMode(value: string): string {
 }
 
 function normalizeRedisSentinelNodes(value: string): string {
+  return normalizeRedisNodeList(value);
+}
+
+function normalizeRedisClusterNodes(value: string): string {
+  return normalizeRedisNodeList(value);
+}
+
+function normalizeRedisNodeList(value: string): string {
   return value
     .split(/[\n,;]+/)
     .map((node) => node.trim())
@@ -855,11 +891,19 @@ function normalizeRedisSentinelNodes(value: string): string {
 }
 
 function firstRedisSentinelEndpoint(value?: string): { host: string; port: number } | null {
-  const first = normalizeRedisSentinelNodes(value || "")
+  const first = normalizeRedisNodeList(value || "")
     .split("\n")
     .find(Boolean);
   if (!first) return null;
   return parseRedisEndpoint(first, 26379);
+}
+
+function firstRedisClusterEndpoint(value?: string): { host: string; port: number } | null {
+  const first = normalizeRedisNodeList(value || "")
+    .split("\n")
+    .find(Boolean);
+  if (!first) return null;
+  return parseRedisEndpoint(first, 6379);
 }
 
 function parseRedisEndpoint(value: string, defaultPort: number): { host: string; port: number } {
@@ -913,6 +957,7 @@ function resetForm() {
   customDriverName.value = "";
   mongoUseUrl.value = false;
   oracleUseConnectString.value = false;
+  oceanbaseSubMode.value = "mysql";
   jdbcDriverPathsInput.value = "";
   selectedJdbcDriverPath.value = "";
   connectionUrlInput.value = "";
@@ -972,6 +1017,10 @@ function applyConnectionPrefill(draft: ConnectionDeepLinkDraft) {
     one_time: draft.oneTime || undefined,
   };
   selectedType.value = draft.driverProfile;
+  if (draft.driverProfile === "oceanbase-oracle") {
+    oceanbaseSubMode.value = "oracle";
+    selectedType.value = "oceanbase";
+  }
   customDriverName.value = isCustomCompatibleProfile() ? draft.driverLabel : "";
   mongoUseUrl.value = !!draft.useMongoUrl;
   if (draft.name?.trim()) {
@@ -1076,6 +1125,10 @@ function buildSubmitConfig(id: string): ConnectionConfig {
   }
   const sshTimeout = Number(config.ssh_connect_timeout_secs);
   config.ssh_connect_timeout_secs = Number.isFinite(sshTimeout) && sshTimeout > 0 ? sshTimeout : 5;
+  const connectTimeout = Number(config.connect_timeout_secs);
+  config.connect_timeout_secs = Number.isFinite(connectTimeout) && connectTimeout > 0 ? connectTimeout : 5;
+  const queryTimeout = Number(config.query_timeout_secs);
+  config.query_timeout_secs = Number.isFinite(queryTimeout) && queryTimeout >= 0 ? queryTimeout : 30;
   const proxyPort = Number(config.proxy_port);
   config.proxy_port = Number.isFinite(proxyPort) && proxyPort > 0 ? proxyPort : 1080;
   if (!config.one_time) config.one_time = undefined;
@@ -1101,11 +1154,25 @@ function buildSubmitConfig(id: string): ConnectionConfig {
     config.redis_sentinel_username = undefined;
     config.redis_sentinel_password = undefined;
     config.redis_sentinel_tls = undefined;
+    config.redis_cluster_nodes = undefined;
   } else if (config.redis_connection_mode === "sentinel") {
     config.redis_sentinel_master = config.redis_sentinel_master?.trim() || "";
     config.redis_sentinel_nodes = normalizeRedisSentinelNodes(config.redis_sentinel_nodes || "");
     config.redis_sentinel_username = config.redis_sentinel_username?.trim() || "";
+    config.redis_cluster_nodes = undefined;
     const firstNode = firstRedisSentinelEndpoint(config.redis_sentinel_nodes);
+    if (firstNode) {
+      config.host = firstNode.host;
+      config.port = firstNode.port;
+    }
+  } else if (config.redis_connection_mode === "cluster") {
+    config.redis_sentinel_master = undefined;
+    config.redis_sentinel_nodes = undefined;
+    config.redis_sentinel_username = undefined;
+    config.redis_sentinel_password = undefined;
+    config.redis_sentinel_tls = undefined;
+    config.redis_cluster_nodes = normalizeRedisClusterNodes(config.redis_cluster_nodes || "");
+    const firstNode = firstRedisClusterEndpoint(config.redis_cluster_nodes);
     if (firstNode) {
       config.host = firstNode.host;
       config.port = firstNode.port;
@@ -1117,6 +1184,7 @@ function buildSubmitConfig(id: string): ConnectionConfig {
     config.redis_sentinel_username = undefined;
     config.redis_sentinel_password = undefined;
     config.redis_sentinel_tls = undefined;
+    config.redis_cluster_nodes = undefined;
   }
   if (config.db_type !== "mysql" && config.db_type !== "clickhouse") {
     config.ca_cert_path = undefined;
@@ -1329,7 +1397,7 @@ function openExternalUrl(url: string) {
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent :class="dialogStep === 'select' ? 'sm:max-w-[760px]' : 'sm:max-w-[560px]'">
+    <DialogContent :class="dialogStep === 'select' ? 'sm:max-w-[760px]' : 'sm:max-w-[560px]'" @interact-outside.prevent>
       <DialogHeader>
         <DialogTitle>{{ editingId ? t("connection.editTitle") : t("connection.title") }}</DialogTitle>
       </DialogHeader>
@@ -1445,15 +1513,13 @@ function openExternalUrl(url: string) {
       <template v-else>
         <div class="space-y-3">
           <Tabs v-model="configTab" class="min-h-0">
-            <div
-              v-if="supportsTlsToggle || canUseSsh || canUseProxy"
-              class="flex items-center justify-between border-b pb-2"
-            >
+            <div class="flex items-center justify-between border-b pb-2">
               <TabsList>
                 <TabsTrigger value="connection">{{ t("connection.basicTab") }}</TabsTrigger>
                 <TabsTrigger v-if="supportsTlsToggle" value="tls">{{ t("connection.tlsTab") }}</TabsTrigger>
                 <TabsTrigger v-if="canUseSsh" value="ssh">{{ t("connection.sshTunnel") }}</TabsTrigger>
                 <TabsTrigger v-if="canUseProxy" value="proxy">{{ t("connection.proxy") }}</TabsTrigger>
+                <TabsTrigger value="advanced">{{ t("connection.advancedTab") }}</TabsTrigger>
               </TabsList>
             </div>
 
@@ -1502,6 +1568,27 @@ function openExternalUrl(url: string) {
                     <span class="min-w-0 flex-1 truncate text-sm text-left">{{ selectedProfile().label }}</span>
                     <Pencil class="h-3 w-3 text-muted-foreground" />
                   </button>
+                </div>
+
+                <!-- OceanBase mode toggle -->
+                <div v-if="selectedType === 'oceanbase'" class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.mode") }}</Label>
+                  <div class="col-span-3 flex gap-2">
+                    <Button
+                      size="sm"
+                      :variant="oceanbaseSubMode === 'mysql' ? 'default' : 'outline'"
+                      @click="switchOceanbaseMode('mysql')"
+                    >
+                      {{ t("connection.oceanbaseMySQLMode") }}
+                    </Button>
+                    <Button
+                      size="sm"
+                      :variant="oceanbaseSubMode === 'oracle' ? 'default' : 'outline'"
+                      @click="switchOceanbaseMode('oracle')"
+                    >
+                      {{ t("connection.oceanbaseOracleMode") }}
+                    </Button>
+                  </div>
                 </div>
 
                 <div v-if="isCustomCompatibleProfile()" class="grid grid-cols-4 items-center gap-4">
@@ -1658,7 +1745,7 @@ function openExternalUrl(url: string) {
                     <div class="col-span-3 flex gap-2">
                       <Button
                         size="sm"
-                        :variant="form.redis_connection_mode === 'sentinel' ? 'outline' : 'default'"
+                        :variant="form.redis_connection_mode === 'standalone' ? 'default' : 'outline'"
                         @click="form.redis_connection_mode = 'standalone'"
                       >
                         {{ t("connection.redisStandaloneMode") }}
@@ -1670,13 +1757,22 @@ function openExternalUrl(url: string) {
                       >
                         {{ t("connection.redisSentinelMode") }}
                       </Button>
+                      <Button
+                        size="sm"
+                        :variant="form.redis_connection_mode === 'cluster' ? 'default' : 'outline'"
+                        @click="form.redis_connection_mode = 'cluster'"
+                      >
+                        {{ t("connection.redisClusterMode") }}
+                      </Button>
                     </div>
                   </div>
                   <div class="grid grid-cols-4 items-center gap-4">
                     <Label class="text-right">{{
                       form.redis_connection_mode === "sentinel"
                         ? t("connection.redisFirstSentinel")
-                        : t("connection.host")
+                        : form.redis_connection_mode === "cluster"
+                          ? t("connection.redisFirstClusterNode")
+                          : t("connection.host")
                     }}</Label>
                     <Input v-model="form.host" class="col-span-2" />
                     <Input v-model.number="form.port" type="number" class="col-span-1" />
@@ -1709,6 +1805,17 @@ function openExternalUrl(url: string) {
                         <input type="checkbox" v-model="form.redis_sentinel_tls" class="mr-0" />
                         <span class="text-xs text-muted-foreground">{{ t("connection.redisSentinelTlsHint") }}</span>
                       </label>
+                    </div>
+                  </template>
+                  <template v-else-if="form.redis_connection_mode === 'cluster'">
+                    <div class="grid grid-cols-4 items-start gap-4">
+                      <Label class="text-right mt-2">{{ t("connection.redisClusterNodes") }}</Label>
+                      <textarea
+                        v-model="form.redis_cluster_nodes"
+                        class="col-span-3 flex min-h-[76px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        placeholder="redis-1:6379&#10;redis-2:6379"
+                        spellcheck="false"
+                      />
                     </div>
                   </template>
                   <div class="grid grid-cols-4 items-center gap-4">
@@ -1947,23 +2054,7 @@ function openExternalUrl(url: string) {
                     </label>
                   </div>
 
-                  <div
-                    v-if="
-                      form.db_type === 'mysql' ||
-                      form.db_type === 'postgres' ||
-                      form.db_type === 'redshift' ||
-                      form.db_type === 'informix' ||
-                      form.db_type === 'kingbase' ||
-                      form.db_type === 'highgo' ||
-                      form.db_type === 'yashandb' ||
-                      form.db_type === 'vastbase' ||
-                      form.db_type === 'goldendb' ||
-                      form.db_type === 'clickhouse' ||
-                      form.db_type === 'saphana' ||
-                      form.db_type === 'bigquery'
-                    "
-                    class="grid grid-cols-4 items-center gap-4"
-                  >
+                  <div class="grid grid-cols-4 items-center gap-4">
                     <Label class="text-right">{{ t("connection.urlParams") }}</Label>
                     <Input
                       v-model="form.url_params"
@@ -2250,6 +2341,33 @@ function openExternalUrl(url: string) {
                       <TooltipContent>{{ t("connection.caCertPathBrowse") }}</TooltipContent>
                     </Tooltip>
                   </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="advanced" class="m-0">
+              <div class="grid gap-4 py-4 pr-2 max-h-[65vh] overflow-y-auto">
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.connectTimeout") }}</Label>
+                  <Input
+                    v-model.number="form.connect_timeout_secs"
+                    type="number"
+                    min="1"
+                    max="300"
+                    step="1"
+                    class="col-span-3"
+                  />
+                </div>
+                <div class="grid grid-cols-4 items-center gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.queryTimeout") }}</Label>
+                  <Input
+                    v-model.number="form.query_timeout_secs"
+                    type="number"
+                    min="0"
+                    max="300"
+                    step="1"
+                    class="col-span-3"
+                  />
                 </div>
               </div>
             </TabsContent>

@@ -23,6 +23,8 @@ struct ExecuteQueryRequest {
     database: Option<String>,
     sql: String,
     schema: Option<String>,
+    allow_writes: Option<bool>,
+    allow_dangerous: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -40,6 +42,53 @@ struct DescribeTableRequest {
     table: String,
 }
 
+#[derive(Deserialize)]
+struct MongoFindDocumentsRequest {
+    connection_name: String,
+    database: Option<String>,
+    collection: String,
+    skip: Option<u64>,
+    limit: Option<i64>,
+    filter: Option<String>,
+    sort: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MongoAggregateDocumentsRequest {
+    connection_name: String,
+    database: Option<String>,
+    collection: String,
+    pipeline_json: String,
+    max_rows: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct MongoInsertDocumentsRequest {
+    connection_name: String,
+    database: Option<String>,
+    collection: String,
+    docs_json: String,
+}
+
+#[derive(Deserialize)]
+struct MongoUpdateDocumentsRequest {
+    connection_name: String,
+    database: Option<String>,
+    collection: String,
+    filter_json: String,
+    update_json: String,
+    many: bool,
+}
+
+#[derive(Deserialize)]
+struct MongoDeleteDocumentsRequest {
+    connection_name: String,
+    database: Option<String>,
+    collection: String,
+    filter_json: String,
+    many: bool,
+}
+
 #[derive(Clone, Serialize)]
 pub struct McpOpenTableEvent {
     pub connection_id: String,
@@ -53,6 +102,8 @@ pub struct McpExecuteQueryEvent {
     pub connection_id: String,
     pub database: String,
     pub sql: String,
+    pub allow_writes: bool,
+    pub allow_dangerous: bool,
 }
 
 pub fn start(app_handle: AppHandle, state: Arc<AppState>) {
@@ -93,6 +144,18 @@ pub fn start(app_handle: AppHandle, state: Arc<AppState>) {
                     handle_list_tables_data(&st, body, &mut stream).await;
                 } else if first_line.starts_with("POST /data/describe-table") {
                     handle_describe_table_data(&st, body, &mut stream).await;
+                } else if first_line.starts_with("POST /data/mongo/list-collections") {
+                    handle_mongo_list_collections_data(&st, body, &mut stream).await;
+                } else if first_line.starts_with("POST /data/mongo/find-documents") {
+                    handle_mongo_find_documents_data(&st, body, &mut stream).await;
+                } else if first_line.starts_with("POST /data/mongo/aggregate-documents") {
+                    handle_mongo_aggregate_documents_data(&st, body, &mut stream).await;
+                } else if first_line.starts_with("POST /data/mongo/insert-documents") {
+                    handle_mongo_insert_documents_data(&st, body, &mut stream).await;
+                } else if first_line.starts_with("POST /data/mongo/update-documents") {
+                    handle_mongo_update_documents_data(&st, body, &mut stream).await;
+                } else if first_line.starts_with("POST /data/mongo/delete-documents") {
+                    handle_mongo_delete_documents_data(&st, body, &mut stream).await;
                 } else if first_line.starts_with("POST /data/execute-query") {
                     handle_execute_query_data(&st, body, &mut stream).await;
                 } else if first_line.starts_with("POST /execute-query") {
@@ -153,6 +216,30 @@ async fn resolve_connection(
     Ok(config)
 }
 
+async fn resolve_mongo_pool_key(
+    state: &Arc<AppState>,
+    connection_name: &str,
+    database: Option<String>,
+    stream: &mut tokio::net::TcpStream,
+) -> Option<(String, String)> {
+    let config = match resolve_connection(state, connection_name).await {
+        Ok(c) => c,
+        Err(e) => {
+            respond_error(stream, "404 Not Found", &e).await;
+            return None;
+        }
+    };
+    let database = database.unwrap_or_else(|| config.database.clone().unwrap_or_default());
+    let pool_key = match state.get_or_create_pool(&config.id, Some(&database)).await {
+        Ok(key) => key,
+        Err(e) => {
+            respond_error(stream, "500 Internal Server Error", &e).await;
+            return None;
+        }
+    };
+    Some((pool_key, database))
+}
+
 async fn handle_open_table(app: &AppHandle, state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
     let req: OpenTableRequest = match serde_json::from_str(body) {
         Ok(r) => r,
@@ -205,6 +292,8 @@ async fn handle_execute_query(app: &AppHandle, state: &Arc<AppState>, body: &str
         connection_id: config.id.clone(),
         database: resolve_event_database(config, req.database),
         sql: req.sql,
+        allow_writes: req.allow_writes.unwrap_or(false),
+        allow_dangerous: req.allow_dangerous.unwrap_or(false),
     };
     let _ = app.emit("mcp-execute-query", &event);
     respond(stream, "200 OK", "ok").await;
@@ -252,6 +341,155 @@ async fn handle_describe_table_data(state: &Arc<AppState>, body: &str, stream: &
     let schema = req.schema.unwrap_or_default();
     match dbx_core::schema::get_columns_core(state, &config.id, &database, &schema, &req.table).await {
         Ok(columns) => respond_json(stream, &columns).await,
+        Err(e) => respond_error(stream, "500 Internal Server Error", &e).await,
+    }
+}
+
+async fn handle_mongo_list_collections_data(state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
+    let req: ListTablesRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => {
+            respond_error(stream, "400 Bad Request", "Invalid JSON").await;
+            return;
+        }
+    };
+    let Some((pool_key, database)) = resolve_mongo_pool_key(state, &req.connection_name, req.database, stream).await
+    else {
+        return;
+    };
+    match dbx_core::mongo_ops::mongo_list_collections_core(state, &pool_key, &database).await {
+        Ok(collections) => respond_json(stream, &collections).await,
+        Err(e) => respond_error(stream, "500 Internal Server Error", &e).await,
+    }
+}
+
+async fn handle_mongo_find_documents_data(state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
+    let req: MongoFindDocumentsRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => {
+            respond_error(stream, "400 Bad Request", "Invalid JSON").await;
+            return;
+        }
+    };
+    let Some((pool_key, database)) = resolve_mongo_pool_key(state, &req.connection_name, req.database, stream).await
+    else {
+        return;
+    };
+    match dbx_core::mongo_ops::mongo_find_documents_core(
+        state,
+        &pool_key,
+        &database,
+        &req.collection,
+        req.skip.unwrap_or(0),
+        req.limit.unwrap_or(100),
+        req.filter.as_deref(),
+        req.sort.as_deref(),
+    )
+    .await
+    {
+        Ok(result) => respond_json(stream, &result).await,
+        Err(e) => respond_error(stream, "500 Internal Server Error", &e).await,
+    }
+}
+
+async fn handle_mongo_aggregate_documents_data(state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
+    let req: MongoAggregateDocumentsRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => {
+            respond_error(stream, "400 Bad Request", "Invalid JSON").await;
+            return;
+        }
+    };
+    let Some((pool_key, database)) = resolve_mongo_pool_key(state, &req.connection_name, req.database, stream).await
+    else {
+        return;
+    };
+    match dbx_core::mongo_ops::mongo_aggregate_documents_core(
+        state,
+        &pool_key,
+        &database,
+        &req.collection,
+        &req.pipeline_json,
+        req.max_rows,
+    )
+    .await
+    {
+        Ok(result) => respond_json(stream, &result).await,
+        Err(e) => respond_error(stream, "500 Internal Server Error", &e).await,
+    }
+}
+
+async fn handle_mongo_insert_documents_data(state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
+    let req: MongoInsertDocumentsRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => {
+            respond_error(stream, "400 Bad Request", "Invalid JSON").await;
+            return;
+        }
+    };
+    let Some((pool_key, database)) = resolve_mongo_pool_key(state, &req.connection_name, req.database, stream).await
+    else {
+        return;
+    };
+    match dbx_core::mongo_ops::mongo_insert_documents_core(state, &pool_key, &database, &req.collection, &req.docs_json)
+        .await
+    {
+        Ok(inserted) => respond_json(stream, &serde_json::json!({ "affected_rows": inserted })).await,
+        Err(e) => respond_error(stream, "500 Internal Server Error", &e).await,
+    }
+}
+
+async fn handle_mongo_update_documents_data(state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
+    let req: MongoUpdateDocumentsRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => {
+            respond_error(stream, "400 Bad Request", "Invalid JSON").await;
+            return;
+        }
+    };
+    let Some((pool_key, database)) = resolve_mongo_pool_key(state, &req.connection_name, req.database, stream).await
+    else {
+        return;
+    };
+    match dbx_core::mongo_ops::mongo_update_documents_core(
+        state,
+        &pool_key,
+        &database,
+        &req.collection,
+        &req.filter_json,
+        &req.update_json,
+        req.many,
+    )
+    .await
+    {
+        Ok(modified) => respond_json(stream, &serde_json::json!({ "affected_rows": modified })).await,
+        Err(e) => respond_error(stream, "500 Internal Server Error", &e).await,
+    }
+}
+
+async fn handle_mongo_delete_documents_data(state: &Arc<AppState>, body: &str, stream: &mut tokio::net::TcpStream) {
+    let req: MongoDeleteDocumentsRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(_) => {
+            respond_error(stream, "400 Bad Request", "Invalid JSON").await;
+            return;
+        }
+    };
+    let Some((pool_key, database)) = resolve_mongo_pool_key(state, &req.connection_name, req.database, stream).await
+    else {
+        return;
+    };
+    match dbx_core::mongo_ops::mongo_delete_documents_core(
+        state,
+        &pool_key,
+        &database,
+        &req.collection,
+        &req.filter_json,
+        req.many,
+    )
+    .await
+    {
+        Ok(deleted) => respond_json(stream, &serde_json::json!({ "affected_rows": deleted })).await,
         Err(e) => respond_error(stream, "500 Internal Server Error", &e).await,
     }
 }

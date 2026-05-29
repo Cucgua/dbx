@@ -92,6 +92,7 @@ const emit = defineEmits<{
 // Local edit state
 const editFontFamily = ref(settingsStore.editorSettings.fontFamily);
 const editFontSize = ref(settingsStore.editorSettings.fontSize);
+const editUiScale = ref(settingsStore.editorSettings.uiScale);
 const editTheme = ref(settingsStore.editorSettings.theme);
 const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
 const editWordWrap = ref(settingsStore.editorSettings.wordWrap);
@@ -100,7 +101,6 @@ const editShowTrayIcon = ref(settingsStore.desktopSettings.show_tray_icon);
 const editShowColumnCommentsInHeader = ref(settingsStore.editorSettings.showColumnCommentsInHeader);
 const editCompactColumnHeaderActions = ref(settingsStore.editorSettings.compactColumnHeaderActions);
 const editRedisScanPageSize = ref(settingsStore.editorSettings.redisScanPageSize);
-const editQueryTimeoutSecs = ref(settingsStore.editorSettings.queryTimeoutSecs);
 const editShortcuts = ref(normalizeShortcutSettings(settingsStore.editorSettings.shortcuts));
 const editSidebarActivation = ref(settingsStore.editorSettings.sidebarActivation);
 const editOracleClientLibDir = ref(settingsStore.appSettings.oracleClientLibDir);
@@ -128,6 +128,8 @@ const mcpStatusStartedAt = computed(() => {
   if (!mcpHttpStatus.value?.started_at) return "";
   return new Date(mcpHttpStatus.value.started_at).toLocaleString();
 });
+const editSidebarObjectDisplay = ref(settingsStore.editorSettings.sidebarObjectDisplay);
+const sidebarObjectDisplayHelp = ref<"grouped" | "simple" | null>(null);
 const editAutoSelectActiveSidebarNode = ref(settingsStore.editorSettings.autoSelectActiveSidebarNode);
 const editSidebarHiddenTablePrefixes = ref(settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n"));
 const editSidebarHideTableComments = ref(settingsStore.editorSettings.sidebarHideTableComments);
@@ -135,6 +137,7 @@ const redisScanPageSizeOptions = [200, 1000, 5000, 10000];
 const systemFonts = ref<string[]>([]);
 const systemFontsLoading = ref(false);
 const systemFontsLoaded = ref(false);
+const uiScaleOptions = [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 
 // --- Snippet state ---
 const editSnippets = ref<SqlSnippet[]>(settingsStore.editorSettings.snippets.map((s) => ({ ...s })));
@@ -252,6 +255,7 @@ watch(
       if (!props.open) return;
       editFontFamily.value = settingsStore.editorSettings.fontFamily;
       editFontSize.value = settingsStore.editorSettings.fontSize;
+      editUiScale.value = settingsStore.editorSettings.uiScale;
       editTheme.value = settingsStore.editorSettings.theme;
       editExecuteMode.value = settingsStore.editorSettings.executeMode;
       editWordWrap.value = settingsStore.editorSettings.wordWrap;
@@ -260,7 +264,6 @@ watch(
       editShowColumnCommentsInHeader.value = settingsStore.editorSettings.showColumnCommentsInHeader;
       editCompactColumnHeaderActions.value = settingsStore.editorSettings.compactColumnHeaderActions;
       editRedisScanPageSize.value = settingsStore.editorSettings.redisScanPageSize;
-      editQueryTimeoutSecs.value = settingsStore.editorSettings.queryTimeoutSecs;
       editShortcuts.value = normalizeShortcutSettings(settingsStore.editorSettings.shortcuts);
       editSidebarActivation.value = settingsStore.editorSettings.sidebarActivation;
       editOracleClientLibDir.value = settingsStore.appSettings.oracleClientLibDir;
@@ -269,6 +272,7 @@ watch(
       editMcpHttpHost.value = settingsStore.appSettings.mcpHttpHost;
       editMcpHttpPort.value = String(settingsStore.appSettings.mcpHttpPort);
       void refreshMcpHttpStatus();
+      editSidebarObjectDisplay.value = settingsStore.editorSettings.sidebarObjectDisplay;
       editAutoSelectActiveSidebarNode.value = settingsStore.editorSettings.autoSelectActiveSidebarNode;
       editSidebarHiddenTablePrefixes.value = settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n");
       editSidebarHideTableComments.value = settingsStore.editorSettings.sidebarHideTableComments;
@@ -295,6 +299,7 @@ function hasChanges(): boolean {
   return (
     editFontFamily.value !== settingsStore.editorSettings.fontFamily ||
     editFontSize.value !== settingsStore.editorSettings.fontSize ||
+    editUiScale.value !== settingsStore.editorSettings.uiScale ||
     editTheme.value !== settingsStore.editorSettings.theme ||
     editExecuteMode.value !== settingsStore.editorSettings.executeMode ||
     editWordWrap.value !== settingsStore.editorSettings.wordWrap ||
@@ -303,9 +308,9 @@ function hasChanges(): boolean {
     editShowColumnCommentsInHeader.value !== settingsStore.editorSettings.showColumnCommentsInHeader ||
     editCompactColumnHeaderActions.value !== settingsStore.editorSettings.compactColumnHeaderActions ||
     editRedisScanPageSize.value !== settingsStore.editorSettings.redisScanPageSize ||
-    editQueryTimeoutSecs.value !== settingsStore.editorSettings.queryTimeoutSecs ||
     JSON.stringify(editShortcuts.value) !== JSON.stringify(settingsStore.editorSettings.shortcuts) ||
     editSidebarActivation.value !== settingsStore.editorSettings.sidebarActivation ||
+    editSidebarObjectDisplay.value !== settingsStore.editorSettings.sidebarObjectDisplay ||
     editAutoSelectActiveSidebarNode.value !== settingsStore.editorSettings.autoSelectActiveSidebarNode ||
     editSidebarHideTableComments.value !== settingsStore.editorSettings.sidebarHideTableComments ||
     JSON.stringify(normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value)) !==
@@ -314,11 +319,14 @@ function hasChanges(): boolean {
   );
 }
 
-async function applySettings() {
+async function persistSettings() {
   if (hasBlockingShortcutConflicts.value) return;
+  const sidebarObjectDisplayChanged =
+    editSidebarObjectDisplay.value !== settingsStore.editorSettings.sidebarObjectDisplay;
   settingsStore.updateEditorSettings({
     fontFamily: editFontFamily.value,
     fontSize: editFontSize.value,
+    uiScale: editUiScale.value,
     theme: editTheme.value,
     executeMode: editExecuteMode.value,
     wordWrap: editWordWrap.value,
@@ -326,9 +334,9 @@ async function applySettings() {
     showColumnCommentsInHeader: editShowColumnCommentsInHeader.value,
     compactColumnHeaderActions: editCompactColumnHeaderActions.value,
     redisScanPageSize: editRedisScanPageSize.value,
-    queryTimeoutSecs: editQueryTimeoutSecs.value,
     shortcuts: editShortcuts.value,
     sidebarActivation: editSidebarActivation.value,
+    sidebarObjectDisplay: editSidebarObjectDisplay.value,
     autoSelectActiveSidebarNode: editAutoSelectActiveSidebarNode.value,
     sidebarHideTableComments: editSidebarHideTableComments.value,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value),
@@ -337,12 +345,24 @@ async function applySettings() {
   await settingsStore.updateDesktopSettings({
     show_tray_icon: editShowTrayIcon.value,
   });
+  if (sidebarObjectDisplayChanged) {
+    await connectionStore.refreshAllTree();
+  }
+}
+
+async function applySettings() {
+  await persistSettings();
+}
+
+async function applySettingsAndClose() {
+  await persistSettings();
   emit("update:open", false);
 }
 
 function resetDefaults() {
   editFontFamily.value = DEFAULT_EDITOR_SETTINGS.fontFamily;
   editFontSize.value = DEFAULT_EDITOR_SETTINGS.fontSize;
+  editUiScale.value = DEFAULT_EDITOR_SETTINGS.uiScale;
   editTheme.value = DEFAULT_EDITOR_SETTINGS.theme;
   editExecuteMode.value = DEFAULT_EDITOR_SETTINGS.executeMode;
   editWordWrap.value = DEFAULT_EDITOR_SETTINGS.wordWrap;
@@ -351,9 +371,9 @@ function resetDefaults() {
   editShowColumnCommentsInHeader.value = DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader;
   editCompactColumnHeaderActions.value = DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions;
   editRedisScanPageSize.value = DEFAULT_EDITOR_SETTINGS.redisScanPageSize;
-  editQueryTimeoutSecs.value = DEFAULT_EDITOR_SETTINGS.queryTimeoutSecs;
   editShortcuts.value = normalizeShortcutSettings(DEFAULT_EDITOR_SETTINGS.shortcuts);
   editSidebarActivation.value = DEFAULT_EDITOR_SETTINGS.sidebarActivation;
+  editSidebarObjectDisplay.value = DEFAULT_EDITOR_SETTINGS.sidebarObjectDisplay;
   editAutoSelectActiveSidebarNode.value = DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode;
   editSidebarHideTableComments.value = DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments;
   editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
@@ -419,6 +439,10 @@ function onThemeChange(v: any) {
 function onRedisScanPageSizeChange(v: any) {
   const value = Number(v);
   if (redisScanPageSizeOptions.includes(value)) editRedisScanPageSize.value = value;
+}
+
+function setSidebarObjectDisplay(value: "grouped" | "simple") {
+  editSidebarObjectDisplay.value = value;
 }
 
 function onShortcutChange(actionId: ShortcutActionId, value: any) {
@@ -1069,9 +1093,9 @@ watch(
         </DialogTitle>
       </DialogHeader>
 
-      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden sm:min-h-[520px] sm:flex-row">
+      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden sm:flex-row">
         <nav
-          class="settingsCategoryNav flex shrink-0 gap-1 overflow-x-auto border-b pb-3 sm:w-40 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:pb-0 sm:pr-3"
+          class="settingsCategoryNav flex min-h-0 shrink-0 gap-1 overflow-x-auto border-b pb-3 sm:w-40 sm:flex-col sm:overflow-x-hidden sm:overflow-y-auto sm:border-b-0 sm:border-r sm:pb-0 sm:pr-3"
         >
           <button
             v-for="category in settingsCategoryNav"
@@ -1198,26 +1222,6 @@ watch(
 
               <Separator />
 
-              <div class="space-y-2">
-                <Label for="query-timeout-secs">{{ t("settings.queryTimeoutSecs") }}</Label>
-                <Input
-                  id="query-timeout-secs"
-                  type="number"
-                  min="0"
-                  :model-value="String(editQueryTimeoutSecs)"
-                  @update:model-value="
-                    (v: any) => {
-                      const n = Number(v);
-                      if (Number.isFinite(n) && n >= 0) editQueryTimeoutSecs = n;
-                    }
-                  "
-                  class="h-9 w-28"
-                />
-                <p class="text-xs text-muted-foreground">{{ t("settings.queryTimeoutSecsDescription") }}</p>
-              </div>
-
-              <Separator />
-
               <!-- Live Preview -->
               <div class="space-y-2">
                 <Label>{{ t("settings.preview") }}</Label>
@@ -1235,6 +1239,31 @@ watch(
             </section>
 
             <section v-else-if="activeSettingsTab === 'appearance'" class="flex flex-col gap-5 py-2">
+              <div class="space-y-2">
+                <Label>{{ t("settings.uiScale") }}</Label>
+                <Select
+                  :model-value="String(editUiScale)"
+                  @update:model-value="
+                    (value: any) => {
+                      const next = Number(value);
+                      if (Number.isFinite(next)) editUiScale = next;
+                    }
+                  "
+                >
+                  <SelectTrigger class="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="scale in uiScaleOptions" :key="scale" :value="String(scale)">
+                      {{ Math.round(scale * 100) }}%
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-xs text-muted-foreground">{{ t("settings.uiScaleDescription") }}</p>
+              </div>
+
+              <Separator />
+
               <div class="space-y-2">
                 <Label>{{ t("settings.appLayout") }}</Label>
                 <div class="grid grid-cols-2 gap-2">
@@ -1333,6 +1362,79 @@ watch(
                       <div class="text-sm font-medium">{{ t("settings.sidebarActivationDouble") }}</div>
                       <div class="text-xs text-muted-foreground">
                         {{ t("settings.sidebarActivationDoubleDescription") }}
+                      </div>
+                    </div>
+                  </Button>
+                </div>
+              </div>
+              <div class="space-y-2">
+                <Label>{{ t("settings.sidebarObjectDisplay") }}</Label>
+                <div class="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    class="h-auto justify-start border p-3"
+                    :class="editSidebarObjectDisplay === 'grouped' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
+                    @click="setSidebarObjectDisplay('grouped')"
+                  >
+                    <div class="text-left">
+                      <div class="flex items-center gap-2">
+                        <div class="text-sm font-medium">{{ t("settings.sidebarObjectDisplayGrouped") }}</div>
+                        <Tooltip :open="sidebarObjectDisplayHelp === 'grouped'">
+                          <TooltipTrigger as-child>
+                            <span
+                              class="inline-flex shrink-0 cursor-help text-muted-foreground hover:text-foreground"
+                              @click.stop
+                              @pointerdown.stop
+                              @mouseenter="sidebarObjectDisplayHelp = 'grouped'"
+                              @mouseleave="sidebarObjectDisplayHelp = null"
+                            >
+                              <CircleHelp class="h-3.5 w-3.5" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent
+                            class="max-w-[320px] text-xs leading-relaxed"
+                            side="top"
+                            align="center"
+                            :side-offset="8"
+                          >
+                            {{ t("settings.sidebarObjectDisplayGroupedDescription") }}
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    class="h-auto justify-start border p-3"
+                    :class="editSidebarObjectDisplay === 'simple' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''"
+                    @click="setSidebarObjectDisplay('simple')"
+                  >
+                    <div class="text-left">
+                      <div class="flex items-center gap-2">
+                        <div class="text-sm font-medium">{{ t("settings.sidebarObjectDisplaySimple") }}</div>
+                        <Tooltip :open="sidebarObjectDisplayHelp === 'simple'">
+                          <TooltipTrigger as-child>
+                            <span
+                              class="inline-flex shrink-0 cursor-help text-muted-foreground hover:text-foreground"
+                              @click.stop
+                              @pointerdown.stop
+                              @mouseenter="sidebarObjectDisplayHelp = 'simple'"
+                              @mouseleave="sidebarObjectDisplayHelp = null"
+                            >
+                              <CircleHelp class="h-3.5 w-3.5" />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent
+                            class="max-w-[320px] text-xs leading-relaxed"
+                            side="top"
+                            align="center"
+                            :side-offset="8"
+                          >
+                            {{ t("settings.sidebarObjectDisplaySimpleDescription") }}
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                     </div>
                   </Button>
@@ -2099,6 +2201,9 @@ watch(
             </Button>
             <Button :disabled="!hasChanges() || hasBlockingShortcutConflicts" @click="applySettings">
               {{ t("settings.apply") }}
+            </Button>
+            <Button :disabled="!hasChanges() || hasBlockingShortcutConflicts" @click="applySettingsAndClose">
+              {{ t("settings.applyAndClose") }}
             </Button>
           </DialogFooter>
 

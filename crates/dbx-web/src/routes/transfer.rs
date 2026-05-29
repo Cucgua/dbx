@@ -71,7 +71,28 @@ pub async fn start_transfer(
 
         let tables = req.tables.clone();
         for (i, table) in tables.iter().enumerate() {
+            if transfer::is_cancelled(&req.transfer_id).await {
+                let progress = transfer::TransferProgress {
+                    transfer_id: req.transfer_id.clone(),
+                    table: table.clone(),
+                    table_index: i,
+                    total_tables: tables.len(),
+                    rows_transferred: 0,
+                    total_rows: None,
+                    status: TransferStatus::Cancelled,
+                    error: None,
+                };
+                if let Ok(json) = serde_json::to_string(&progress) {
+                    let _ = tx.send(json);
+                }
+                transfer::clear_cancelled(&req.transfer_id).await;
+                state_clone.remove_sse_channel(&req.transfer_id).await;
+                return;
+            }
+
             let tx_clone = tx.clone();
+            let mut last_rows_transferred = 0_u64;
+            let mut last_total_rows = None;
             let result = transfer::transfer_table(
                 &app,
                 &req,
@@ -82,6 +103,8 @@ pub async fn start_transfer(
                 &source_pool_key,
                 &target_pool_key,
                 |progress| {
+                    last_rows_transferred = progress.rows_transferred;
+                    last_total_rows = progress.total_rows;
                     if let Ok(json) = serde_json::to_string(&progress) {
                         let _ = tx_clone.send(json);
                     }
@@ -96,8 +119,8 @@ pub async fn start_transfer(
                         table: table.clone(),
                         table_index: i,
                         total_tables: tables.len(),
-                        rows_transferred: 0,
-                        total_rows: None,
+                        rows_transferred: last_rows_transferred,
+                        total_rows: last_total_rows.or(Some(last_rows_transferred)),
                         status: TransferStatus::TableDone,
                         error: None,
                     };
@@ -111,15 +134,14 @@ pub async fn start_transfer(
                         table: table.clone(),
                         table_index: i,
                         total_tables: tables.len(),
-                        rows_transferred: 0,
-                        total_rows: None,
+                        rows_transferred: last_rows_transferred,
+                        total_rows: last_total_rows,
                         status: TransferStatus::Error,
                         error: Some(e),
                     };
                     if let Ok(json) = serde_json::to_string(&progress) {
                         let _ = tx.send(json);
                     }
-                    break;
                 }
             }
         }
@@ -139,6 +161,7 @@ pub async fn start_transfer(
             let _ = tx.send(json);
         }
 
+        transfer::clear_cancelled(&req.transfer_id).await;
         state_clone.remove_sse_channel(&req.transfer_id).await;
     });
 

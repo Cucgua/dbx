@@ -172,6 +172,7 @@ export type EditorTheme =
 export interface EditorSettings {
   fontFamily: string;
   fontSize: number;
+  uiScale: number;
   theme: EditorTheme;
   executeMode: "all" | "current";
   wordWrap: boolean;
@@ -184,14 +185,13 @@ export interface EditorSettings {
   compactColumnHeaderActions: boolean;
   shortcuts: ShortcutSettings;
   sidebarActivation: SidebarActivation;
+  sidebarObjectDisplay: "grouped" | "simple";
   autoSelectActiveSidebarNode: boolean;
   sidebarHiddenTablePrefixes: string[];
   sidebarHideTableComments: boolean;
   columnFormatters: Record<string, ColumnFormatterConfig>;
   customColumnFormatters: Record<string, CustomColumnFormatterConfig>;
   snippets: SqlSnippet[];
-  /** Query timeout in seconds. 0 = no timeout. Default 30s. */
-  queryTimeoutSecs: number;
 }
 
 export interface AppSettings {
@@ -230,6 +230,7 @@ export const FONT_FAMILIES: { value: string; label: string }[] = [
 export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
   fontSize: 13,
+  uiScale: 1,
   theme: "app",
   executeMode: "all",
   wordWrap: false,
@@ -242,13 +243,13 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   compactColumnHeaderActions: true,
   shortcuts: normalizeShortcutSettings(),
   sidebarActivation: "single",
+  sidebarObjectDisplay: "grouped",
   autoSelectActiveSidebarNode: false,
   sidebarHiddenTablePrefixes: [],
   sidebarHideTableComments: false,
   columnFormatters: {},
   customColumnFormatters: {},
   snippets: DEFAULT_SQL_SNIPPETS,
-  queryTimeoutSecs: 30,
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -261,6 +262,13 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 
 export const STORAGE_KEY = "dbx-editor-settings";
 const OLD_FONT_SIZE_KEY = "dbx-query-editor-font-size";
+const MIN_UI_SCALE = 0.75;
+const MAX_UI_SCALE = 2;
+
+function normalizeUiScale(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_EDITOR_SETTINGS.uiScale;
+  return Math.min(MAX_UI_SCALE, Math.max(MIN_UI_SCALE, Math.round(value * 100) / 100));
+}
 
 function normalizeColumnFormatters(value: unknown): Record<string, ColumnFormatterConfig> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -308,15 +316,11 @@ function normalizeSqlSnippets(value: unknown, existing?: SqlSnippet[]): SqlSnipp
   return valid;
 }
 
-function normalizeQueryTimeoutSecs(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
-  return DEFAULT_EDITOR_SETTINGS.queryTimeoutSecs;
-}
-
 export function normalizeEditorSettings(settings: Partial<EditorSettings>, existing?: EditorSettings): EditorSettings {
   return {
     fontFamily: settings.fontFamily ?? DEFAULT_EDITOR_SETTINGS.fontFamily,
     fontSize: settings.fontSize ?? DEFAULT_EDITOR_SETTINGS.fontSize,
+    uiScale: normalizeUiScale(settings.uiScale),
     theme: settings.theme && EDITOR_THEME_VALUES.has(settings.theme) ? settings.theme : DEFAULT_EDITOR_SETTINGS.theme,
     executeMode: settings.executeMode ?? DEFAULT_EDITOR_SETTINGS.executeMode,
     wordWrap: settings.wordWrap ?? DEFAULT_EDITOR_SETTINGS.wordWrap,
@@ -334,6 +338,10 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
       settings.sidebarActivation === "single" || settings.sidebarActivation === "double"
         ? settings.sidebarActivation
         : DEFAULT_EDITOR_SETTINGS.sidebarActivation,
+    sidebarObjectDisplay:
+      settings.sidebarObjectDisplay === "simple" || settings.sidebarObjectDisplay === "grouped"
+        ? settings.sidebarObjectDisplay
+        : DEFAULT_EDITOR_SETTINGS.sidebarObjectDisplay,
     autoSelectActiveSidebarNode:
       settings.autoSelectActiveSidebarNode ?? DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(settings.sidebarHiddenTablePrefixes),
@@ -341,7 +349,6 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
     columnFormatters: normalizeColumnFormatters(settings.columnFormatters),
     customColumnFormatters: normalizeCustomColumnFormatters(settings.customColumnFormatters),
     snippets: normalizeSqlSnippets(settings.snippets, existing?.snippets),
-    queryTimeoutSecs: normalizeQueryTimeoutSecs(settings.queryTimeoutSecs),
   };
 }
 
@@ -463,6 +470,7 @@ export const useSettingsStore = defineStore("settings", () => {
   function updateEditorSettings(partial: Partial<EditorSettings>) {
     if (partial.fontFamily !== undefined) editorSettings.value.fontFamily = partial.fontFamily;
     if (partial.fontSize !== undefined) editorSettings.value.fontSize = partial.fontSize;
+    if (partial.uiScale !== undefined) editorSettings.value.uiScale = normalizeUiScale(partial.uiScale);
     if (partial.theme !== undefined) editorSettings.value.theme = partial.theme;
     if (partial.executeMode !== undefined) editorSettings.value.executeMode = partial.executeMode;
     if (partial.wordWrap !== undefined) editorSettings.value.wordWrap = partial.wordWrap;
@@ -477,6 +485,8 @@ export const useSettingsStore = defineStore("settings", () => {
       editorSettings.value.compactColumnHeaderActions = partial.compactColumnHeaderActions;
     if (partial.shortcuts !== undefined) editorSettings.value.shortcuts = normalizeShortcutSettings(partial.shortcuts);
     if (partial.sidebarActivation !== undefined) editorSettings.value.sidebarActivation = partial.sidebarActivation;
+    if (partial.sidebarObjectDisplay !== undefined)
+      editorSettings.value.sidebarObjectDisplay = partial.sidebarObjectDisplay;
     if (partial.autoSelectActiveSidebarNode !== undefined)
       editorSettings.value.autoSelectActiveSidebarNode = partial.autoSelectActiveSidebarNode;
     if (partial.sidebarHiddenTablePrefixes !== undefined)
@@ -489,8 +499,6 @@ export const useSettingsStore = defineStore("settings", () => {
     if (partial.customColumnFormatters !== undefined)
       editorSettings.value.customColumnFormatters = partial.customColumnFormatters;
     if (partial.snippets !== undefined) editorSettings.value.snippets = normalizeSqlSnippets(partial.snippets);
-    if (partial.queryTimeoutSecs !== undefined)
-      editorSettings.value.queryTimeoutSecs = normalizeQueryTimeoutSecs(partial.queryTimeoutSecs);
     saveEditorSettings(editorSettings.value);
   }
 

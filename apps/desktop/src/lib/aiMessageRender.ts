@@ -35,6 +35,8 @@ const SQL_LANGUAGES = new Map([
   ["sqlite", "SQLITE"],
   ["tsql", "TSQL"],
   ["clickhouse", "CLICKHOUSE"],
+  ["mongodb", "MONGODB"],
+  ["mongo", "MONGODB"],
 ]);
 const SHELL_LANGUAGES = new Map([
   ["bash", "BASH"],

@@ -216,7 +216,7 @@ struct ExpressionAlias {
 
 fn parse_expression_alias(column: &str) -> Option<ExpressionAlias> {
     let trimmed_end = column.trim_end();
-    for (index, _) in trimmed_end.match_indices(|c: char| c == 'A' || c == 'a') {
+    for (index, _) in trimmed_end.match_indices(['A', 'a']) {
         let candidate = &trimmed_end[index..];
         if !candidate.get(..2).is_some_and(|prefix| prefix.eq_ignore_ascii_case("AS")) {
             continue;

@@ -14,6 +14,5 @@ export function nextTransferTerminalState(
 ): TransferTerminalState {
   if (progress.status === "done") return { ...state, done: true };
   if (progress.status === "cancelled") return { ...state, cancelled: true };
-  if (progress.status === "error") return { ...state, error: true };
   return state;
 }

@@ -8,9 +8,7 @@ format_staged_rust() {
   local staged=""
   staged=$(git diff --staged --name-only --diff-filter=ACM -- ":(top,literal)$dir/*.rs" ":(top,literal)$dir/**/*.rs" 2>/dev/null)
   if [ -n "$staged" ]; then
-    echo "$staged" | while IFS= read -r f; do
-      rustfmt "$TOPLEVEL/$f" 2>/dev/null || true
-    done
+    cargo fmt --manifest-path "$TOPLEVEL/$dir/Cargo.toml"
     echo "$staged" | while IFS= read -r f; do
       git add "$TOPLEVEL/$f" 2>/dev/null || true
     done

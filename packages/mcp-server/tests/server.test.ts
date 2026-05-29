@@ -53,3 +53,96 @@ test("execute query scopes the connection to the requested database", async () =
 
   assert.equal(usedDatabase, "stores_demo");
 });
+
+test("mongodb list tables returns collections from the selected database", async () => {
+  let usedDatabase = "";
+  const mongoConnection: ConnectionConfig = { ...connection, db_type: "mongodb", database: "admin" };
+  const scopedBackend: Backend = {
+    ...backend,
+    findConnection: async () => mongoConnection,
+    listTables: async (config) => {
+      usedDatabase = config.database || "";
+      return [{ name: "projects", type: "COLLECTION" }];
+    },
+  };
+  const server = createDbxMcpServer(scopedBackend, { isWebMode: true });
+
+  const result = await (server as any)._registeredTools.dbx_list_tables.handler({
+    connection_name: "local",
+    database: "pystrument",
+  });
+
+  assert.equal(usedDatabase, "pystrument");
+  assert.match(result.content[0].text, /projects/);
+  assert.match(result.content[0].text, /COLLECTION/);
+});
+
+test("mongodb describe table returns inferred document fields", async () => {
+  const mongoConnection: ConnectionConfig = { ...connection, db_type: "mongodb" };
+  const scopedBackend: Backend = {
+    ...backend,
+    findConnection: async () => mongoConnection,
+    describeTable: async () => [
+      { name: "_id", data_type: "object", is_nullable: false, column_default: null, is_primary_key: true, comment: null },
+      { name: "name", data_type: "string", is_nullable: false, column_default: null, is_primary_key: false, comment: null },
+    ],
+  };
+  const server = createDbxMcpServer(scopedBackend, { isWebMode: true });
+
+  const result = await (server as any)._registeredTools.dbx_describe_table.handler({
+    connection_name: "local",
+    database: "pystrument",
+    table: "projects",
+  });
+
+  assert.match(result.content[0].text, /_id \(PK\)/);
+  assert.match(result.content[0].text, /name/);
+});
+
+test("mongodb execute query formats shell-style find results", async () => {
+  const mongoConnection: ConnectionConfig = { ...connection, db_type: "mongodb" };
+  const scopedBackend: Backend = {
+    ...backend,
+    findConnection: async () => mongoConnection,
+    executeQuery: async () => ({ columns: ["_id", "name"], rows: [{ _id: "1", name: "demo" }], row_count: 1 }),
+  };
+  const server = createDbxMcpServer(scopedBackend, { isWebMode: true });
+
+  const result = await (server as any)._registeredTools.dbx_execute_query.handler({
+    connection_name: "local",
+    database: "pystrument",
+    sql: "db.projects.find({}).limit(1)",
+  });
+
+  assert.match(result.content[0].text, /demo/);
+  assert.match(result.content[0].text, /1 row\(s\)/);
+});
+
+test("mongodb execute-and-show blocks aggregate write stages before desktop bridge", async () => {
+  const oldAllowWrites = process.env.DBX_MCP_ALLOW_WRITES;
+  const oldAllowDangerous = process.env.DBX_MCP_ALLOW_DANGEROUS_SQL;
+  delete process.env.DBX_MCP_ALLOW_WRITES;
+  delete process.env.DBX_MCP_ALLOW_DANGEROUS_SQL;
+  const mongoConnection: ConnectionConfig = { ...connection, db_type: "mongodb" };
+  const scopedBackend: Backend = {
+    ...backend,
+    findConnection: async () => mongoConnection,
+  };
+  const server = createDbxMcpServer(scopedBackend, { isWebMode: false });
+
+  try {
+    const result = await (server as any)._registeredTools.dbx_execute_and_show.handler({
+      connection_name: "local",
+      database: "pystrument",
+      sql: 'db.projects.aggregate([{"$out":"projects_dump"}])',
+    });
+
+    assert.match(result.content[0].text, /Query blocked:/);
+    assert.match(result.content[0].text, /DBX_MCP_ALLOW_WRITES=1/);
+  } finally {
+    if (oldAllowWrites === undefined) delete process.env.DBX_MCP_ALLOW_WRITES;
+    else process.env.DBX_MCP_ALLOW_WRITES = oldAllowWrites;
+    if (oldAllowDangerous === undefined) delete process.env.DBX_MCP_ALLOW_DANGEROUS_SQL;
+    else process.env.DBX_MCP_ALLOW_DANGEROUS_SQL = oldAllowDangerous;
+  }
+});

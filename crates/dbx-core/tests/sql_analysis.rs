@@ -21,3 +21,17 @@ fn extracts_unqualified_columns_from_single_table_select() {
         analysis.columns.iter().map(|column| (column.qualifier.as_deref(), column.name.as_str())).collect();
     assert_eq!(columns, vec![(None, "missing"), (None, "id")]);
 }
+
+#[test]
+fn extracts_unqualified_order_by_columns_for_sqlserver_queries() {
+    let analysis =
+        analyze_sql_references("SELECT * FROM Evt_GCM_Qop_Info ORDER BY PDReceiveDatePartInfo DESC", Some("sqlserver"))
+            .unwrap();
+
+    assert_eq!(analysis.tables.len(), 1);
+    assert_eq!(analysis.tables[0].name, "Evt_GCM_Qop_Info");
+
+    let columns: Vec<_> =
+        analysis.columns.iter().map(|column| (column.qualifier.as_deref(), column.name.as_str())).collect();
+    assert_eq!(columns, vec![(None, "PDReceiveDatePartInfo")]);
+}

@@ -68,7 +68,11 @@ import type {
   DataGridSaveStatementOptions,
   HiveTablePropertiesSqlOptions,
 } from "@/lib/dataGridSql";
-import type { BuildTableStructureChangeSqlOptions, TableStructureChangeSql } from "@/lib/tableStructureEditorSql";
+import type {
+  BuildTableStructureChangeSqlOptions,
+  BuildSingleColumnAlterSqlOptions,
+  TableStructureChangeSql,
+} from "@/lib/tableStructureEditorSql";
 import type { BuildTableSelectSqlOptions } from "@/lib/tableSelectSql";
 import type { DatabaseSearchSql, DatabaseSearchSqlOptions, SearchResultWhereOptions } from "@/lib/databaseSearch";
 import type { BuildEditableObjectSourceSqlInput, BuildRoutineRenameObjectSourceInput } from "@/lib/objectSourceEditor";
@@ -86,6 +90,8 @@ import type { BuildDatabaseSqlExportOptions, BuildExportInsertStatementsOptions 
 import type {
   DataCompareFromTablesOptions,
   DataCompareFromTablesPreparation,
+  DataCompareSyncPlan,
+  DataCompareSyncPlanOptions,
   DataComparePreparation,
   DataComparePreparationOptions,
 } from "@/lib/dataCompare";
@@ -664,6 +670,12 @@ export async function buildCreateTableSql(
   return post("/api/query/build-create-table-sql", { options });
 }
 
+export async function buildSingleColumnAlterSql(
+  options: BuildSingleColumnAlterSqlOptions,
+): Promise<TableStructureChangeSql> {
+  return post("/api/query/build-single-column-alter-sql", { options });
+}
+
 export async function analyzeEditableQueryEditability(sql: string): Promise<QueryEditability> {
   return post("/api/query/analyze-editability", { sql });
 }
@@ -727,6 +739,10 @@ export async function prepareDataCompareFromTables(
   options: DataCompareFromTablesOptions,
 ): Promise<DataCompareFromTablesPreparation> {
   return post("/api/data-compare/prepare-from-tables", options);
+}
+
+export async function buildDataCompareSyncPlan(options: DataCompareSyncPlanOptions): Promise<DataCompareSyncPlan> {
+  return post("/api/data-compare/build-sync-plan", options);
 }
 
 // ---------------------------------------------------------------------------
@@ -923,6 +939,10 @@ export async function pendingOpenSqlFiles(): Promise<string[]> {
   return [];
 }
 
+export async function pendingOpenDbFiles(): Promise<string[]> {
+  return [];
+}
+
 export async function pendingOpenConnectionLinks(): Promise<string[]> {
   return [];
 }
@@ -953,7 +973,7 @@ export async function startTransfer(
     es.onmessage = (e) => {
       const progress: TransferProgress = JSON.parse(e.data);
       onProgress(progress);
-      if (progress.status === "done" || progress.status === "error" || progress.status === "cancelled") {
+      if (progress.status === "done" || progress.status === "cancelled") {
         es.close();
         resolve();
       }
@@ -1291,6 +1311,16 @@ export async function mongoFindDocuments(
   return post("/api/mongo/find-documents", { connectionId, database, collection, skip, limit, filter, sort });
 }
 
+export async function mongoAggregateDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  pipelineJson: string,
+  maxRows?: number,
+): Promise<MongoDocumentResult> {
+  return post("/api/mongo/aggregate-documents", { connectionId, database, collection, pipelineJson, maxRows });
+}
+
 export async function mongoInsertDocument(
   connectionId: string,
   database: string,
@@ -1366,4 +1396,8 @@ export async function saveSidebarLayout(layout: SidebarLayout): Promise<void> {
 
 export async function loadSidebarLayout(): Promise<SidebarLayout | null> {
   return get("/api/layout/sidebar");
+}
+
+export async function refreshConnections(): Promise<void> {
+  // Web mode doesn't maintain persistent connection pools — no-op
 }

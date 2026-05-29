@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::agent_catalog;
 use crate::agent_manager::{
     AgentDriverInfo, AgentManager, AgentRegistry, InstalledDriver, JavaRuntimeMode, DEFAULT_JRE_KEY,
 };
@@ -11,47 +12,45 @@ const REGISTRY_R2_PATH: &str = "agents/agent-registry.json";
 static REGISTRY_CACHE: std::sync::LazyLock<tokio::sync::Mutex<Option<(std::time::Instant, AgentRegistry)>>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(None));
 
-pub const AGENT_TYPES: &[(&str, &str)] = &[
-    ("dameng", "达梦 DM8"),
-    ("kingbase", "人大金仓 KingbaseES"),
-    ("highgo", "瀚高 HighGo"),
-    ("vastbase", "Vastbase"),
-    ("goldendb", "GoldenDB"),
-    ("databricks", "Databricks SQL"),
-    ("saphana", "SAP HANA"),
-    ("teradata", "Teradata"),
-    ("vertica", "Vertica"),
-    ("firebird", "Firebird"),
-    ("exasol", "Exasol"),
-    ("oceanbase-oracle", "OceanBase Oracle Mode"),
-    ("gbase", "GBase"),
-    ("access", "Microsoft Access"),
-    ("oracle", "Oracle"),
-    ("oracle-10g", "Oracle 10g"),
-    ("h2", "H2"),
-    ("snowflake", "Snowflake"),
-    ("trino", "Trino (Presto)"),
-    ("hive", "Apache Hive"),
-    ("db2", "IBM DB2"),
-    ("informix", "IBM Informix"),
-    ("neo4j", "Neo4j"),
-    ("cassandra", "Apache Cassandra"),
-    ("bigquery", "Google BigQuery"),
-    ("kylin", "Apache Kylin"),
-    ("sundb", "SunDB"),
-    ("yashandb", "崖山 YashanDB"),
-    ("tdengine", "TDengine"),
-    ("mongodb", "MongoDB (Legacy)"),
-];
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AgentProgressEvent {
+    pub step: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub downloaded: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_drivers: Option<u32>,
+}
+
+impl AgentProgressEvent {
+    pub fn step(step: impl Into<String>) -> Self {
+        Self { step: step.into(), downloaded: None, total: None, db_type: None, current: None, total_drivers: None }
+    }
+
+    pub fn transfer(step: impl Into<String>, downloaded: u64, total: u64) -> Self {
+        Self { downloaded: Some(downloaded), total: Some(total), ..Self::step(step) }
+    }
+
+    pub fn with_batch(mut self, db_type: Option<&str>, current: Option<u32>, total_drivers: Option<u32>) -> Self {
+        self.db_type = db_type.map(ToString::to_string);
+        self.current = current;
+        self.total_drivers = total_drivers;
+        self
+    }
+}
 
 pub fn build_agent_list(am: &AgentManager, registry: Option<&AgentRegistry>) -> Vec<AgentDriverInfo> {
     let local_state = am.load_state();
-    AGENT_TYPES
-        .iter()
+    agent_catalog::driver_store_entries()
         .map(|(key, label)| {
             let installed = am.is_driver_installed(key);
-            let local = local_state.installed_drivers.get(*key);
-            let remote = registry.and_then(|r| r.drivers.get(*key));
+            let local = local_state.installed_drivers.get(key);
+            let remote = registry.and_then(|r| r.drivers.get(key));
             let jre_key = remote
                 .map(|r| r.jre.clone())
                 .or_else(|| local.map(|l| l.jre.clone()))
@@ -142,6 +141,288 @@ pub async fn fetch_registry() -> Result<AgentRegistry, String> {
 
 pub async fn invalidate_registry_cache() {
     *REGISTRY_CACHE.lock().await = None;
+}
+
+pub async fn install_agent_driver(
+    am: &AgentManager,
+    db_type: &str,
+    progress: impl Fn(AgentProgressEvent),
+) -> Result<(), String> {
+    install_agent_driver_with_batch(am, db_type, &progress, None, None).await
+}
+
+pub async fn upgrade_all_agent_drivers(
+    am: &AgentManager,
+    progress: impl Fn(AgentProgressEvent),
+) -> Result<u32, String> {
+    let registry = fetch_registry().await?;
+    let agents = build_agent_list(am, Some(&registry));
+    let updatable: Vec<&AgentDriverInfo> = agents.iter().filter(|agent| agent.update_available).collect();
+    let total = updatable.len() as u32;
+
+    for (index, agent) in updatable.iter().enumerate() {
+        install_agent_driver_from_registry(
+            am,
+            &registry,
+            &agent.db_type,
+            &progress,
+            Some((index + 1) as u32),
+            Some(total),
+        )
+        .await?;
+    }
+
+    progress(AgentProgressEvent::step("all-done"));
+    Ok(total)
+}
+
+pub async fn uninstall_agent_driver(am: &AgentManager, db_type: &str) -> Result<(), String> {
+    let jar_path = am.driver_jar_path(db_type);
+    if jar_path.exists() {
+        std::fs::remove_file(&jar_path).map_err(|err| err.to_string())?;
+    }
+    if let Some(driver_dir) = jar_path.parent() {
+        if driver_dir.exists() {
+            std::fs::remove_dir_all(driver_dir).map_err(|err| err.to_string())?;
+        }
+    }
+    let mut local_state = am.load_state();
+    local_state.installed_drivers.remove(db_type);
+    am.save_state(&local_state)?;
+    am.stop_daemon_by_key(db_type).await;
+    Ok(())
+}
+
+pub async fn uninstall_agent_jre(am: &AgentManager, jre_key: &str) -> Result<(), String> {
+    let local_state = am.load_state();
+    let dependents: Vec<&str> = local_state
+        .installed_drivers
+        .iter()
+        .filter(|(_, driver)| driver.jre == jre_key)
+        .map(|(k, _)| k.as_str())
+        .collect();
+    if !dependents.is_empty() {
+        return Err(format!("JRE {} 正在被以下驱动使用: {}，请先卸载这些驱动", jre_key, dependents.join(", ")));
+    }
+    let jre_dir = am.jre_dir(jre_key);
+    if jre_dir.exists() {
+        std::fs::remove_dir_all(&jre_dir).map_err(|err| format!("Failed to remove JRE: {err}"))?;
+    }
+    let mut local_state = am.load_state();
+    local_state.jre_versions.remove(jre_key);
+    am.save_state(&local_state)?;
+    am.stop_daemons().await;
+    Ok(())
+}
+
+pub async fn reinstall_agent_jre(
+    am: &AgentManager,
+    jre_key: &str,
+    progress: impl Fn(AgentProgressEvent),
+) -> Result<(), String> {
+    let registry = fetch_registry().await?;
+    let jre_info = registry.resolve_jre(jre_key).ok_or_else(|| format!("No JRE definition for version: {jre_key}"))?;
+    let platform = AgentManager::current_platform();
+    let platform_jre = jre_info
+        .platforms
+        .get(platform)
+        .ok_or_else(|| format!("No JRE {jre_key} available for platform: {platform}"))?;
+    let jre_archive = am.base_dir().join("jre-download.tar.gz");
+    download_with_progress(
+        &progress,
+        "jre",
+        &platform_jre.url,
+        &github_url_to_r2_path(&platform_jre.url, "jre"),
+        &jre_archive,
+        platform_jre.size,
+        None,
+        None,
+        None,
+    )
+    .await?;
+    let jre_dir = am.jre_dir(jre_key);
+    if jre_dir.exists() {
+        std::fs::remove_dir_all(&jre_dir).map_err(|err| format!("Failed to remove old JRE: {err}"))?;
+    }
+    extract_tar_gz(&jre_archive, &jre_dir)?;
+    std::fs::remove_file(&jre_archive).ok();
+    let mut local_state = am.load_state();
+    local_state.jre_versions.insert(jre_key.to_string(), jre_info.version.clone());
+    am.save_state(&local_state)?;
+    am.stop_daemons().await;
+    progress(AgentProgressEvent::step("done"));
+    Ok(())
+}
+
+pub fn import_agents_from_zip(
+    am: &AgentManager,
+    zip_path: &Path,
+    progress: impl Fn(AgentProgressEvent),
+) -> Result<OfflineImportResult, String> {
+    import_offline_zip(am, zip_path, |p| {
+        progress(AgentProgressEvent {
+            step: p.step,
+            downloaded: Some(p.current as u64),
+            total: Some(p.total as u64),
+            db_type: Some(p.label),
+            current: Some(p.current),
+            total_drivers: Some(p.total),
+        });
+    })
+}
+
+async fn install_agent_driver_with_batch(
+    am: &AgentManager,
+    db_type: &str,
+    progress: &impl Fn(AgentProgressEvent),
+    current: Option<u32>,
+    total_drivers: Option<u32>,
+) -> Result<(), String> {
+    match fetch_registry().await {
+        Ok(registry) => {
+            install_agent_driver_from_registry(am, &registry, db_type, progress, current, total_drivers).await
+        }
+        Err(registry_err) => {
+            if let Some(local_jar) = find_local_agent_jar(db_type) {
+                install_local_agent(am, db_type, local_jar)?;
+                am.stop_daemon_by_key(db_type).await;
+                progress(AgentProgressEvent::step("done"));
+                return Ok(());
+            }
+            Err(registry_err)
+        }
+    }
+}
+
+async fn install_agent_driver_from_registry(
+    am: &AgentManager,
+    registry: &AgentRegistry,
+    db_type: &str,
+    progress: &impl Fn(AgentProgressEvent),
+    current: Option<u32>,
+    total_drivers: Option<u32>,
+) -> Result<(), String> {
+    let Some(driver) = registry.drivers.get(db_type) else {
+        if let Some(local_jar) = find_local_agent_jar(db_type) {
+            install_local_agent(am, db_type, local_jar)?;
+            am.stop_daemon_by_key(db_type).await;
+            progress(AgentProgressEvent::step("done"));
+            return Ok(());
+        }
+        return Err(format!("Unknown driver type: {db_type}"));
+    };
+    let jre_key = &driver.jre;
+    let needs_jre = jre_needs_install(am, registry, jre_key);
+
+    if needs_jre {
+        let jre_info =
+            registry.resolve_jre(jre_key).ok_or_else(|| format!("No JRE definition for version: {jre_key}"))?;
+        let platform = AgentManager::current_platform();
+        let platform_jre = jre_info
+            .platforms
+            .get(platform)
+            .ok_or_else(|| format!("No JRE {jre_key} available for platform: {platform}"))?;
+        let jre_archive = am.base_dir().join("jre-download.tar.gz");
+        progress(AgentProgressEvent::transfer("jre", 0, platform_jre.size).with_batch(
+            Some(db_type),
+            current,
+            total_drivers,
+        ));
+        download_with_progress(
+            progress,
+            "jre",
+            &platform_jre.url,
+            &github_url_to_r2_path(&platform_jre.url, "jre"),
+            &jre_archive,
+            platform_jre.size,
+            Some(db_type),
+            current,
+            total_drivers,
+        )
+        .await?;
+        progress(AgentProgressEvent::transfer("jre-extract", 0, 0).with_batch(Some(db_type), current, total_drivers));
+        let jre_dir = am.jre_dir(jre_key);
+        if jre_dir.exists() {
+            std::fs::remove_dir_all(&jre_dir).map_err(|err| format!("Failed to remove old JRE: {err}"))?;
+        }
+        extract_tar_gz(&jre_archive, &jre_dir)?;
+        std::fs::remove_file(&jre_archive).ok();
+    }
+
+    let jar_path = am.driver_jar_path(db_type);
+    progress(AgentProgressEvent::transfer("driver", 0, driver.jar.size).with_batch(
+        Some(db_type),
+        current,
+        total_drivers,
+    ));
+    download_with_progress(
+        progress,
+        "driver",
+        &driver.jar.url,
+        &github_url_to_r2_path(&driver.jar.url, "driver"),
+        &jar_path,
+        driver.jar.size,
+        Some(db_type),
+        current,
+        total_drivers,
+    )
+    .await?;
+
+    let mut local_state = am.load_state();
+    if let Some(jre_info) = registry.resolve_jre(jre_key) {
+        local_state.jre_versions.insert(jre_key.clone(), jre_info.version.clone());
+    }
+    local_state.installed_drivers.insert(
+        db_type.to_string(),
+        InstalledDriver {
+            version: driver.version.clone(),
+            installed_at: chrono::Utc::now().to_rfc3339(),
+            jre: jre_key.clone(),
+        },
+    );
+    am.save_state(&local_state)?;
+    am.stop_daemon_by_key(db_type).await;
+    progress(AgentProgressEvent::step("done"));
+    Ok(())
+}
+
+async fn download_with_progress(
+    progress: &impl Fn(AgentProgressEvent),
+    step: &str,
+    url: &str,
+    r2_path: &str,
+    dest: &std::path::Path,
+    total_size: u64,
+    db_type: Option<&str>,
+    current: Option<u32>,
+    total_drivers: Option<u32>,
+) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let tmp = download_temp_path(dest);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|err| format!("Failed to create HTTP client: {err}"))?;
+    let mut resp = crate::race_download(&client, url, r2_path, "dbx-agent-manager")
+        .await
+        .map_err(|err| format!("Failed to download {url}: {err}"))?;
+    let content_length = resp.content_length().unwrap_or(total_size);
+    let mut file = std::fs::File::create(&tmp).map_err(|err| format!("Failed to create temp file: {err}"))?;
+    let mut downloaded = 0;
+    while let Some(chunk) = resp.chunk().await.map_err(|err| format!("Download stream error: {err}"))? {
+        std::io::Write::write_all(&mut file, &chunk).map_err(|err| format!("Failed to write chunk: {err}"))?;
+        downloaded += chunk.len() as u64;
+        progress(AgentProgressEvent::transfer(step, downloaded, content_length).with_batch(
+            db_type,
+            current,
+            total_drivers,
+        ));
+    }
+    std::io::Write::flush(&mut file).map_err(|err| format!("Failed to flush temp file: {err}"))?;
+    drop(file);
+    replace_download(&tmp, dest)
 }
 
 pub fn github_url_to_r2_path(github_url: &str, category: &str) -> String {
@@ -314,11 +595,7 @@ pub fn import_offline_zip(
             step: "driver".into(),
             current,
             total,
-            label: AGENT_TYPES
-                .iter()
-                .find(|(k, _)| *k == db_type)
-                .map(|(_, l)| l.to_string())
-                .unwrap_or_else(|| db_type.clone()),
+            label: agent_catalog::label_for_key(db_type).unwrap_or(db_type).to_string(),
         });
 
         let jar_path = am.driver_jar_path(db_type);

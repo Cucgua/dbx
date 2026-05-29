@@ -13,6 +13,16 @@ export interface MongoCountDocumentsCommand {
   filter: string;
 }
 
+export interface MongoAggregateCommand {
+  collection: string;
+  pipeline: string;
+}
+
+export interface MongoAggregateSafetyOptions {
+  allowWrites?: boolean;
+  allowDangerous?: boolean;
+}
+
 const DEFAULT_LIMIT = 100;
 
 export function parseMongoFindCommand(input: string): MongoFindCommand | null {
@@ -70,6 +80,67 @@ export function parseMongoCountDocumentsCommand(input: string): MongoCountDocume
     collection: target.collection,
     filter,
   };
+}
+
+export function parseMongoAggregateCommand(input: string): MongoAggregateCommand | null {
+  const source = input.trim().replace(/;$/, "").trim();
+  const target = parseCollectionMethodTarget(source, "aggregate");
+  if (!target) return null;
+
+  const openIndex = source.indexOf("(", target.methodCallIndex);
+  const closeIndex = findMatchingParen(source, openIndex);
+  if (closeIndex < 0 || source.slice(closeIndex + 1).trim()) return null;
+
+  const args = splitTopLevel(source.slice(openIndex + 1, closeIndex));
+  if (args.length !== 1) return null;
+  const pipeline = normalizeJsonArgument(args[0]);
+  if (!pipeline) return null;
+  try {
+    if (!Array.isArray(JSON.parse(pipeline))) return null;
+  } catch {
+    return null;
+  }
+
+  return {
+    collection: target.collection,
+    pipeline,
+  };
+}
+
+export function mongoAggregateWriteStage(pipelineJson: string): "$out" | "$merge" | null {
+  try {
+    const pipeline = JSON.parse(pipelineJson);
+    if (!Array.isArray(pipeline)) return null;
+    for (const stage of pipeline) {
+      if (!isRecord(stage)) continue;
+      if (Object.prototype.hasOwnProperty.call(stage, "$out")) return "$out";
+      if (Object.prototype.hasOwnProperty.call(stage, "$merge")) return "$merge";
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function evaluateMongoAggregateSafety(
+  command: MongoAggregateCommand,
+  options: MongoAggregateSafetyOptions,
+): { allowed: boolean; reason?: string } {
+  const writeStage = mongoAggregateWriteStage(command.pipeline);
+  if (!writeStage) return { allowed: true };
+  if (!options.allowWrites) {
+    return {
+      allowed: false,
+      reason: `MongoDB aggregate stage "${writeStage}" writes data. Set DBX_MCP_ALLOW_WRITES=1 to allow write commands.`,
+    };
+  }
+  if (!options.allowDangerous) {
+    return {
+      allowed: false,
+      reason: `MongoDB aggregate stage "${writeStage}" is dangerous. Set DBX_MCP_ALLOW_DANGEROUS_SQL=1 to allow it.`,
+    };
+  }
+  return { allowed: true };
 }
 
 export function mongoDocumentsToQueryResult(documents: unknown[], executionTimeMs: number, total: number): QueryResult {
@@ -146,9 +217,10 @@ function parseCollectionMethodTarget(
 function normalizeJsonArgument(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return "{}";
+  const preprocessed = trimmed.replace(/ObjectId\s*\(\s*["']([^"']+)["']\s*\)/g, '{"$oid":"$1"}');
   try {
-    JSON.parse(trimmed);
-    return trimmed;
+    JSON.parse(preprocessed);
+    return preprocessed;
   } catch {
     return null;
   }

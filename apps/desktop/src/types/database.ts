@@ -41,6 +41,7 @@ export type DatabaseType =
   | "kylin"
   | "sundb"
   | "tdengine"
+  | "iris"
   | "jdbc";
 
 export interface SqlSnippet {
@@ -75,6 +76,8 @@ export interface ConnectionConfig {
   ssh_key_passphrase?: string;
   ssh_expose_lan?: boolean;
   ssh_connect_timeout_secs?: number;
+  connect_timeout_secs?: number;
+  query_timeout_secs?: number;
   proxy_enabled?: boolean;
   proxy_type?: "socks5" | "http";
   proxy_host?: string;
@@ -89,12 +92,13 @@ export interface ConnectionConfig {
   connection_string?: string;
   jdbc_driver_class?: string;
   jdbc_driver_paths?: string[];
-  redis_connection_mode?: "standalone" | "sentinel";
+  redis_connection_mode?: "standalone" | "sentinel" | "cluster";
   redis_sentinel_master?: string;
   redis_sentinel_nodes?: string;
   redis_sentinel_username?: string;
   redis_sentinel_password?: string;
   redis_sentinel_tls?: boolean;
+  redis_cluster_nodes?: string;
   one_time?: boolean;
 }
 
@@ -325,6 +329,7 @@ export interface QueryTab {
   resultPageLimit?: number;
   resultPageOffset?: number;
   resultCountSql?: string;
+  resultTotalRowCount?: number;
   resultSessionId?: string;
   pinned?: boolean;
   result?: QueryResult;

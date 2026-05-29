@@ -192,6 +192,12 @@ pub struct BuildTableStructureSqlRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BuildSingleColumnAlterSqlRequest {
+    pub options: dbx_core::table_structure_sql::SingleColumnAlterSqlOptions,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PrepareDataGridSaveRequest {
     pub options: dbx_core::data_grid_sql::DataGridSaveStatementOptions,
 }
@@ -541,6 +547,12 @@ pub async fn build_create_table_sql(
     Json(req): Json<BuildTableStructureSqlRequest>,
 ) -> Json<dbx_core::table_structure_sql::TableStructureSqlResult> {
     Json(dbx_core::table_structure_sql::build_create_table_sql(req.options))
+}
+
+pub async fn build_single_column_alter_sql(
+    Json(req): Json<BuildSingleColumnAlterSqlRequest>,
+) -> Json<dbx_core::table_structure_sql::TableStructureSqlResult> {
+    Json(dbx_core::table_structure_sql::build_single_column_alter_sql(req.options))
 }
 
 pub async fn analyze_editable_query_editability(

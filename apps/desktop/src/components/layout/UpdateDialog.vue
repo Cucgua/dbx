@@ -28,6 +28,20 @@ const isDesktop = isTauriRuntime();
 
 const renderedNotes = ref("");
 
+function handleReleaseNotesClick(event: MouseEvent) {
+  const target = event.target as HTMLElement;
+  const anchor = target.closest("a");
+  if (!anchor) return;
+  event.preventDefault();
+  const url = anchor.getAttribute("href");
+  if (!url) return;
+  if (isTauriRuntime()) {
+    import("@tauri-apps/plugin-shell").then(({ open }) => open(url));
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 watch(
   () => props.updateInfo?.release_notes,
   async (notes) => {
@@ -77,6 +91,7 @@ watch(
           v-if="updateInfo?.update_available && updateInfo.release_notes"
           class="max-h-48 overflow-auto rounded-md border bg-muted/30 p-3 text-xs [&_h1]:text-sm [&_h1]:font-semibold [&_h1]:mb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:mb-1 [&_h3]:text-xs [&_h3]:font-semibold [&_h3]:mb-1 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:pl-4 [&_ol]:my-1 [&_li]:my-0.5 [&_p]:my-1 [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[11px] [&_a]:text-primary [&_a]:underline"
           v-html="renderedNotes"
+          @click="handleReleaseNotesClick"
         />
         <p v-if="!isDesktop && updateInfo?.update_available" class="text-xs text-muted-foreground">
           Docker 用户请运行

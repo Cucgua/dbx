@@ -1046,7 +1046,7 @@ async fn exec_tx_pg_inner(
     let had_schema = schema.is_some();
     if let Some(s) = schema {
         client
-            .execute(&format!("SET search_path TO {}, public", db::postgres::pg_quote_ident(s)), &[])
+            .execute(&format!("SET search_path TO {}", db::postgres::pg_quote_ident(s)), &[])
             .await
             .map_err(|e| format!("SET search_path failed: {}", e))?;
     }
@@ -1092,7 +1092,7 @@ async fn exec_tx_mysql_inner(
     statements: &[String],
     start: std::time::Instant,
 ) -> Result<db::QueryResult, String> {
-    let mut conn = pool.get_conn().await.map_err(|e| format!("Failed to acquire connection: {}", e))?;
+    let mut conn = db::mysql::get_conn_with_health_check(&pool).await?;
     conn.query_drop("START TRANSACTION").await.map_err(|e| format!("Failed to begin transaction: {}", e))?;
     let mut total_affected: u64 = 0;
     for (i, sql) in statements.iter().enumerate() {
@@ -1428,6 +1428,8 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: 5,
+            connect_timeout_secs: 5,
+            query_timeout_secs: 30,
             proxy_enabled: false,
             proxy_type: ProxyType::Socks5,
             proxy_host: String::new(),
@@ -1446,6 +1448,7 @@ mod tests {
             redis_sentinel_username: String::new(),
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
+            redis_cluster_nodes: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),

@@ -51,17 +51,12 @@ pub enum AiProvider {
     Custom,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AiApiStyle {
+    #[default]
     Completions,
     Responses,
-}
-
-impl Default for AiApiStyle {
-    fn default() -> Self {
-        Self::Completions
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -430,7 +425,7 @@ pub async fn call_claude(client: &reqwest::Client, request: AiCompletionRequest)
     });
 
     let res = client
-        .post(&resolve_endpoint(&request.config))
+        .post(resolve_endpoint(&request.config))
         .headers(claude_headers(&request.config)?)
         .json(&body)
         .send()
@@ -469,7 +464,7 @@ pub async fn call_openai_compatible(client: &reqwest::Client, request: AiComplet
     }
 
     let res = client
-        .post(&resolve_endpoint(&request.config))
+        .post(resolve_endpoint(&request.config))
         .headers(headers)
         .json(&body_obj)
         .send()
@@ -496,7 +491,7 @@ pub async fn call_responses_api(client: &reqwest::Client, request: AiCompletionR
     });
 
     let res = client
-        .post(&resolve_endpoint(&request.config))
+        .post(resolve_endpoint(&request.config))
         .headers(headers)
         .json(&body)
         .send()
@@ -542,7 +537,7 @@ pub async fn call_gemini(client: &reqwest::Client, request: AiCompletionRequest)
     });
 
     let res = client
-        .post(&resolve_endpoint(&request.config))
+        .post(resolve_endpoint(&request.config))
         .query(&[("key", request.config.api_key.as_str())])
         .header(CONTENT_TYPE, "application/json")
         .json(&body)
@@ -668,7 +663,7 @@ async fn stream_claude(
     });
 
     let res = client
-        .post(&resolve_endpoint(&request.config))
+        .post(resolve_endpoint(&request.config))
         .headers(claude_headers(&request.config)?)
         .json(&body)
         .send()
@@ -755,7 +750,7 @@ async fn stream_openai(
     }
 
     let res = client
-        .post(&resolve_endpoint(&request.config))
+        .post(resolve_endpoint(&request.config))
         .headers(headers)
         .json(&body_obj)
         .send()
@@ -842,7 +837,7 @@ async fn stream_responses_api(
     });
 
     let res = client
-        .post(&resolve_endpoint(&request.config))
+        .post(resolve_endpoint(&request.config))
         .headers(headers)
         .json(&body)
         .send()
@@ -931,7 +926,7 @@ async fn stream_gemini(
     });
 
     let res = client
-        .post(&resolve_gemini_stream_endpoint(&request.config))
+        .post(resolve_gemini_stream_endpoint(&request.config))
         .query(&[("key", request.config.api_key.as_str()), ("alt", "sse")])
         .header(CONTENT_TYPE, "application/json")
         .json(&body)

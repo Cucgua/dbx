@@ -139,12 +139,19 @@ const sqlserverCapabilities = capabilities({
   createTable: true,
   addColumn: true,
   dropColumn: true,
+  renameColumn: true,
+  alterExistingColumn: true,
+  alterType: true,
+  alterNullability: true,
+  alterDefault: true,
+  comment: true,
   createIndex: true,
   dropIndex: true,
   rebuildIndex: true,
   indexType: true,
   indexInclude: true,
   indexFilter: true,
+  indexComment: true,
 });
 
 const oracleCapabilities = capabilities({
@@ -213,6 +220,7 @@ const capabilityByType: Partial<Record<DatabaseType, TableStructureCapabilities>
   oracle: oracleCapabilities,
   dameng: oracleCapabilities,
   "oceanbase-oracle": oracleCapabilities,
+  iris: oracleCapabilities,
   h2: h2Capabilities,
   clickhouse: clickhouseCapabilities,
 };

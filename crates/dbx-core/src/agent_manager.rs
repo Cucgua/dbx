@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::database_capabilities;
 use crate::db::agent_driver::{AgentDriverClient, AgentMethod};
 use crate::models::connection::DatabaseType;
 
@@ -121,6 +120,41 @@ mod tests {
 
         assert_eq!(resolve_system_java_path(Some(path.as_os_str())).unwrap(), system_java);
     }
+
+    #[tokio::test]
+    async fn runtime_gateway_returns_existing_missing_driver_error() {
+        let manager = test_manager("missing-driver");
+
+        let err = match manager.spawn(&DatabaseType::H2, None).await {
+            Ok(_) => panic!("missing driver should fail"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err, "h2 driver is not installed. Please install it from the Driver Manager.");
+    }
+
+    #[tokio::test]
+    async fn runtime_gateway_returns_existing_missing_java_error() {
+        let manager = test_manager("missing-java");
+        let jar = manager.driver_jar_path("h2");
+        touch(&jar);
+
+        let err = match manager.spawn(&DatabaseType::H2, None).await {
+            Ok(_) => panic!("missing Java runtime should fail"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err, "JRE 21 runtime is not installed. Please install it from the Driver Manager.");
+    }
+
+    #[tokio::test]
+    async fn runtime_gateway_resolves_profile_specific_keys() {
+        let manager = test_manager("profile-key");
+
+        assert_eq!(AgentManager::db_type_to_agent_key(&DatabaseType::Oracle, Some("oracle-10g")), Some("oracle-10g"));
+        assert_eq!(AgentManager::db_type_to_agent_key(&DatabaseType::Oracle, None), Some("oracle"));
+        manager.stop_daemon_by_key("oracle-10g").await;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,7 +249,13 @@ pub struct DriverStoreUsage {
 pub struct AgentManager {
     base_dir: PathBuf,
     app_version: String,
-    daemons: Mutex<std::collections::HashMap<String, AgentDriverClient>>,
+    pub(crate) daemons: Mutex<std::collections::HashMap<String, AgentDriverClient>>,
+}
+
+impl Default for AgentManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AgentManager {
@@ -388,15 +428,19 @@ impl AgentManager {
     }
 
     pub async fn stop_daemons(&self) {
-        self.daemons.lock().await.clear();
+        crate::agent_runtime::stop_daemons(self).await;
+    }
+
+    pub async fn stop_daemon_by_key(&self, agent_key: &str) {
+        crate::agent_runtime::stop_daemon_by_key(self, agent_key).await;
     }
 
     pub fn db_type_to_agent_key(db_type: &DatabaseType, driver_profile: Option<&str>) -> Option<&'static str> {
-        database_capabilities::agent_key(db_type, driver_profile)
+        crate::agent_runtime::db_type_to_agent_key(db_type, driver_profile)
     }
 
     pub fn is_agent_type(db_type: &DatabaseType) -> bool {
-        database_capabilities::is_agent_type(db_type)
+        crate::agent_runtime::is_agent_type(db_type)
     }
 
     pub async fn spawn(
@@ -404,21 +448,7 @@ impl AgentManager {
         db_type: &DatabaseType,
         driver_profile: Option<&str>,
     ) -> Result<AgentDriverClient, String> {
-        let key = Self::db_type_to_agent_key(db_type, driver_profile)
-            .ok_or_else(|| format!("{:?} is not an agent-driven database type", db_type))?;
-
-        let state = self.load_state();
-        let jre_key = state.installed_drivers.get(key).map(|d| d.jre.as_str()).unwrap_or(DEFAULT_JRE_KEY);
-
-        if !self.is_driver_installed(key) {
-            return Err(format!("{key} driver is not installed. Please install it from the Driver Manager."));
-        }
-
-        let java = self.resolve_java_runtime(&state, jre_key)?.to_string_lossy().to_string();
-        let jar = self.driver_jar_path(key).to_string_lossy().to_string();
-        let mut client = AgentDriverClient::spawn(&java, &jar).await?;
-        client.try_optional_handshake(self.agent_app_version()).await;
-        Ok(client)
+        crate::agent_runtime::spawn_connection_client(self, db_type, driver_profile).await
     }
 
     pub async fn call_daemon<T: serde::de::DeserializeOwned + Send + 'static>(
@@ -428,43 +458,7 @@ impl AgentManager {
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, String> {
-        let key = Self::db_type_to_agent_key(db_type, driver_profile)
-            .ok_or_else(|| format!("{:?} is not an agent-driven database type", db_type))?
-            .to_string();
-
-        let mut daemons = self.daemons.lock().await;
-
-        if !daemons.contains_key(&key) {
-            let state = self.load_state();
-            let jre_key = state.installed_drivers.get(&key).map(|d| d.jre.as_str()).unwrap_or(DEFAULT_JRE_KEY);
-
-            if !self.is_driver_installed(&key) {
-                return Err(format!("{key} driver is not installed. Please install it from the Driver Manager."));
-            }
-            let java = self.resolve_java_runtime(&state, jre_key)?.to_string_lossy().to_string();
-            let jar = self.driver_jar_path(&key).to_string_lossy().to_string();
-            let mut client = AgentDriverClient::spawn(&java, &jar).await?;
-            client.try_optional_handshake(self.agent_app_version()).await;
-            daemons.insert(key.clone(), client);
-        }
-
-        let client = daemons.get_mut(&key).unwrap();
-        match client.call::<T>(method, params.clone()).await {
-            Ok(result) => Ok(result),
-            Err(e) => {
-                log::warn!("[agent] daemon call failed, respawning: {e}");
-                daemons.remove(&key);
-                let state = self.load_state();
-                let jre_key = state.installed_drivers.get(&key).map(|d| d.jre.as_str()).unwrap_or(DEFAULT_JRE_KEY);
-                let java = self.resolve_java_runtime(&state, jre_key)?.to_string_lossy().to_string();
-                let jar = self.driver_jar_path(&key).to_string_lossy().to_string();
-                let mut new_client = AgentDriverClient::spawn(&java, &jar).await?;
-                new_client.try_optional_handshake(self.agent_app_version()).await;
-                let result = new_client.call::<T>(method, params).await?;
-                daemons.insert(key, new_client);
-                Ok(result)
-            }
-        }
+        crate::agent_runtime::call_daemon(self, db_type, driver_profile, method, params).await
     }
 
     pub async fn call_daemon_method<T: serde::de::DeserializeOwned + Send + 'static>(
@@ -474,7 +468,7 @@ impl AgentManager {
         method: AgentMethod,
         params: serde_json::Value,
     ) -> Result<T, String> {
-        self.call_daemon(db_type, driver_profile, method.as_str(), params).await
+        crate::agent_runtime::call_daemon_method(self, db_type, driver_profile, method, params).await
     }
 
     pub async fn download_file(url: &str, dest: &Path) -> Result<(), String> {
@@ -571,7 +565,7 @@ fn is_executable_file(path: &Path) -> bool {
     {
         use std::os::unix::fs::PermissionsExt;
 
-        return path.metadata().map(|meta| meta.permissions().mode() & 0o111 != 0).unwrap_or(false);
+        path.metadata().map(|meta| meta.permissions().mode() & 0o111 != 0).unwrap_or(false)
     }
     #[cfg(not(unix))]
     {

@@ -9,6 +9,7 @@ pub mod csv_export;
 pub mod data_compare;
 pub mod database_export;
 pub mod deep_link;
+pub mod external_db;
 pub mod external_sql;
 pub mod history;
 pub mod mcp_bridge;

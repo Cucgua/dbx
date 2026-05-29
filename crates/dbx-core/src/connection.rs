@@ -1,4 +1,3 @@
-use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,6 +7,10 @@ use tokio::sync::RwLock;
 use mysql_async::prelude::Queryable;
 use mysql_async::Row as MysqlRow;
 
+use crate::agent_connection::{
+    agent_connect_params, mongo_legacy_error_with_auth_hint, oracle_alternate_connect_config,
+    should_retry_oracle_with_10g_driver,
+};
 use crate::database_capabilities;
 use crate::db;
 use crate::db::agent_driver::AgentMethod;
@@ -16,7 +19,6 @@ use crate::db::ssh_tunnel::TunnelManager;
 use crate::external;
 use crate::models::connection::{
     parse_jdbc_host_port, parse_mongo_first_host, rewrite_jdbc_url_host, ConnectionConfig, DatabaseType,
-    OracleConnectMethod,
 };
 use crate::plugins::{PluginDriverSession, PluginRegistry};
 use crate::query_cancel::RunningQueries;
@@ -45,7 +47,7 @@ pub enum PoolKind {
     Mysql(db::mysql::MySqlPool, MysqlMode),
     Postgres(deadpool_postgres::Pool),
     Sqlite(db::sqlite::SqliteHandle),
-    Redis(tokio::sync::Mutex<redis::aio::MultiplexedConnection>),
+    Redis(db::redis_driver::RedisConnection),
     DuckDb(Arc<std::sync::Mutex<duckdb::Connection>>),
     MongoDb(mongodb::Client),
     ClickHouse(db::clickhouse_driver::ChClient),
@@ -197,29 +199,37 @@ impl AppState {
         probe_connection_endpoint(&db_config, &host, port).await?;
         let url = connection_url_for_endpoint(&db_config, &host, port);
         let app_settings = if db_config.is_oracle_oci() { Some(self.storage.load_app_settings().await?) } else { None };
+        let connect_timeout = std::time::Duration::from_secs(db_config.effective_connect_timeout_secs());
         let pool = match db_config.db_type {
             DatabaseType::Mysql if db_config.needs_bare_mysql() => {
-                PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
+                PoolKind::Mysql(db::mysql::connect_bare(&url, connect_timeout).await?, MysqlMode::Bare)
             }
             DatabaseType::Mysql => {
-                let pool = db::mysql::connect_with_ca_cert(&url, Some(&db_config.ca_cert_path)).await?;
+                let pool =
+                    db::mysql::connect_with_ca_cert(&url, Some(&db_config.ca_cert_path), connect_timeout).await?;
                 let mode = detect_ob_oracle_mode(&db_config, &pool).await;
                 PoolKind::Mysql(pool, mode)
             }
             DatabaseType::Doris | DatabaseType::StarRocks => {
-                PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
+                PoolKind::Mysql(db::mysql::connect_bare(&url, connect_timeout).await?, MysqlMode::Bare)
             }
             DatabaseType::Postgres | DatabaseType::Redshift | DatabaseType::Gaussdb | DatabaseType::OpenGauss => {
-                PoolKind::Postgres(db::postgres::connect(&url).await?)
+                PoolKind::Postgres(db::postgres::connect(&url, connect_timeout).await?)
             }
             DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?),
             DatabaseType::Redis => {
-                let con = if db_config.uses_redis_sentinel() {
-                    db::redis_driver::connect_sentinel(&db_config).await?
+                let con = if db_config.uses_redis_cluster() {
+                    db::redis_driver::RedisConnection::Cluster(db::redis_driver::connect_cluster(&db_config).await?)
+                } else if db_config.uses_redis_sentinel() {
+                    db::redis_driver::RedisConnection::Direct(tokio::sync::Mutex::new(
+                        db::redis_driver::connect_sentinel(&db_config).await?,
+                    ))
                 } else {
-                    db::redis_driver::connect(&url).await?
+                    db::redis_driver::RedisConnection::Direct(tokio::sync::Mutex::new(
+                        db::redis_driver::connect(&url, connect_timeout).await?,
+                    ))
                 };
-                PoolKind::Redis(tokio::sync::Mutex::new(con))
+                PoolKind::Redis(con)
             }
             DatabaseType::DuckDb => {
                 let con = db::duckdb_driver::connect_path(&expand_tilde(&db_config.host))?;
@@ -232,8 +242,8 @@ impl AppState {
                 PoolKind::DuckDb(con)
             }
             DatabaseType::MongoDb => {
-                let native_err = match db::mongo_driver::connect(&url).await {
-                    Ok(client) => match db::mongo_driver::test_connection(&client).await {
+                let native_err = match db::mongo_driver::connect(&url, connect_timeout).await {
+                    Ok(client) => match db::mongo_driver::test_connection(&client, connect_timeout).await {
                         Ok(()) => {
                             self.connections.write().await.insert(pool_key.clone(), PoolKind::MongoDb(client));
                             return Ok(pool_key);
@@ -260,8 +270,9 @@ impl AppState {
                     username,
                     password,
                     Some(&db_config.ca_cert_path),
+                    connect_timeout,
                 )?;
-                db::clickhouse_driver::test_connection(&client).await?;
+                db::clickhouse_driver::test_connection(&client, connect_timeout).await?;
                 PoolKind::ClickHouse(client)
             }
             DatabaseType::SqlServer => {
@@ -271,6 +282,7 @@ impl AppState {
                     &db_config.username,
                     &db_config.password,
                     db_config.database.as_deref(),
+                    connect_timeout,
                 )
                 .await?;
                 PoolKind::SqlServer(Arc::new(tokio::sync::Mutex::new(client)))
@@ -297,8 +309,9 @@ impl AppState {
                     Some(&db_config.username),
                     Some(&db_config.password),
                     accept_invalid_certs,
+                    connect_timeout,
                 );
-                db::elasticsearch_driver::test_connection(&client).await?;
+                db::elasticsearch_driver::test_connection(&client, connect_timeout).await?;
                 PoolKind::Elasticsearch(client)
             }
             DatabaseType::Dameng
@@ -327,6 +340,7 @@ impl AppState {
             | DatabaseType::Kylin
             | DatabaseType::Sundb
             | DatabaseType::Tdengine
+            | DatabaseType::Iris
             | DatabaseType::Access => {
                 let connect_params =
                     agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or(""));
@@ -501,7 +515,10 @@ impl AppState {
             self.remove_connection_pools(connection_id).await;
             self.reset_connection_transport(connection_id).await;
         } else {
-            self.connections.write().await.remove(&pool_key);
+            let removed = self.connections.write().await.remove(&pool_key);
+            if let Some(pool) = removed {
+                close_pool_kind(pool).await;
+            }
         }
         self.get_or_create_pool_for_session(connection_id, database, client_session_id).await
     }
@@ -522,7 +539,13 @@ impl AppState {
         };
         let base_pool_key = base_pool_key_for(db_type, connection_id, database, false);
         let pool_key = session_scoped_pool_key(base_pool_key, Some(&session));
-        Ok(self.connections.write().await.remove(&pool_key).is_some())
+        let removed = self.connections.write().await.remove(&pool_key);
+        if let Some(pool) = removed {
+            close_pool_kind(pool).await;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     pub async fn duckdb_existing_pool_is_usable_for_config(&self, config: &ConnectionConfig) -> Result<bool, String> {
@@ -562,6 +585,82 @@ impl AppState {
         self.proxy_tunnels.stop_tunnel(connection_id).await;
     }
 
+    pub async fn refresh_connections(&self) {
+        // Clone pool handles under a short-lived read lock, then release it
+        // before performing I/O-heavy health checks to avoid blocking writers.
+        let checks: Vec<(String, PoolKind)> = {
+            let conns = self.connections.read().await;
+            conns
+                .iter()
+                .filter(|(_, pool)| matches!(pool, PoolKind::Mysql(..) | PoolKind::Postgres(..)))
+                .map(|(key, pool)| (key.clone(), clone_pool_kind(pool)))
+                .collect()
+        };
+
+        let mut dead_keys = Vec::new();
+        for (key, pool) in &checks {
+            let healthy = match pool {
+                PoolKind::Mysql(p, _) => match db::mysql::get_conn_with_health_check(p).await {
+                    Ok(_) => true,
+                    Err(e) => {
+                        log::warn!("MySQL connection pool '{key}' is unhealthy: {e}");
+                        false
+                    }
+                },
+                PoolKind::Postgres(p) => match p.get().await {
+                    Ok(client) => match client.simple_query("SELECT 1").await {
+                        Ok(_) => true,
+                        Err(e) => {
+                            log::warn!("PostgreSQL connection pool '{key}' is unhealthy: {e}");
+                            false
+                        }
+                    },
+                    Err(e) => {
+                        log::warn!("PostgreSQL connection pool '{key}' is unhealthy: {e}");
+                        false
+                    }
+                },
+                _ => true,
+            };
+            if !healthy {
+                dead_keys.push(key.clone());
+            }
+        }
+
+        // Remove dead pools
+        if !dead_keys.is_empty() {
+            let mut conns = self.connections.write().await;
+            for key in &dead_keys {
+                if let Some(pool) = conns.remove(key) {
+                    close_pool_kind(pool).await;
+                }
+            }
+        }
+
+        // Re-establish SSH tunnels that have died
+        let tunnel_connection_ids: Vec<String> = {
+            let configs = self.configs.read().await;
+            configs.iter().filter(|(_, c)| c.ssh_enabled && !c.ssh_host.is_empty()).map(|(id, _)| id.clone()).collect()
+        };
+        for connection_id in tunnel_connection_ids {
+            self.tunnels.stop_tunnel(&connection_id).await;
+            // Tunnels will be re-created on next pool access via connection_host_port
+        }
+
+        // Re-establish proxy tunnels
+        let proxy_connection_ids: Vec<String> = {
+            let configs = self.configs.read().await;
+            configs
+                .iter()
+                .filter(|(_, c)| c.proxy_enabled && !c.proxy_host.is_empty())
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for connection_id in proxy_connection_ids {
+            self.proxy_tunnels.stop_tunnel(&connection_id).await;
+        }
+    }
+
     pub async fn remove_connection_pools(&self, connection_id: &str) {
         let mut conns = self.connections.write().await;
         let keys_to_remove: Vec<String> = conns
@@ -569,10 +668,15 @@ impl AppState {
             .filter(|k| *k == connection_id || k.starts_with(&format!("{connection_id}:")))
             .cloned()
             .collect();
+        let mut removed = Vec::with_capacity(keys_to_remove.len());
         for key in keys_to_remove {
-            if let Some(PoolKind::DuckDb(con)) = conns.remove(&key) {
-                crate::db::duckdb_driver::close_connection(con);
+            if let Some(pool) = conns.remove(&key) {
+                removed.push(pool);
             }
+        }
+        drop(conns);
+        for pool in removed {
+            close_pool_kind(pool).await;
         }
     }
 
@@ -593,6 +697,39 @@ fn session_scoped_pool_key(base_pool_key: String, client_session_id: Option<&str
     normalize_client_session_id(client_session_id)
         .map(|session| format!("{base_pool_key}:session:{session}"))
         .unwrap_or(base_pool_key)
+}
+
+fn clone_pool_kind(pool: &PoolKind) -> PoolKind {
+    match pool {
+        PoolKind::Mysql(p, mode) => PoolKind::Mysql(p.clone(), *mode),
+        PoolKind::Postgres(p) => PoolKind::Postgres(p.clone()),
+        other => panic!("clone_pool_kind not supported for {:?}", std::mem::discriminant(other)),
+    }
+}
+
+pub async fn close_pool_kind(pool: PoolKind) {
+    match pool {
+        PoolKind::Mysql(p, _) => {
+            let _ = p.disconnect().await;
+        }
+        PoolKind::Postgres(p) => p.close(),
+        PoolKind::Sqlite(_) => {}
+        PoolKind::Redis(_) => {}
+        PoolKind::DuckDb(con) => {
+            crate::db::duckdb_driver::close_connection(con);
+        }
+        PoolKind::MongoDb(_) => {}
+        PoolKind::ClickHouse(_) => {}
+        PoolKind::SqlServer(_) => {}
+        PoolKind::Oracle(_) => {}
+        PoolKind::Elasticsearch(_) => {}
+        PoolKind::Agent(client) => {
+            let mut client = client.lock().await;
+            let _ = client.disconnect().await;
+        }
+        PoolKind::ExternalTabular(_) => {}
+        PoolKind::ExternalDriver { .. } => {}
+    }
 }
 
 fn base_pool_key_for(
@@ -676,164 +813,6 @@ fn native_postgres_url_config(config: &ConnectionConfig) -> Option<ConnectionCon
     }
 }
 
-pub fn agent_connect_params(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> serde_json::Value {
-    let agent_database = if config.db_type == DatabaseType::MongoDb {
-        mongo_agent_database(config, database)
-    } else {
-        database.to_string()
-    };
-    let connection_string = if config.db_type == DatabaseType::MongoDb {
-        config.connection_url_with_host(host, port)
-    } else if config.db_type == DatabaseType::Oracle {
-        oracle_jdbc_connection_string(config, host, port, database)
-    } else if matches!(config.db_type, DatabaseType::Kingbase | DatabaseType::Highgo | DatabaseType::Vastbase) {
-        postgres_like_agent_jdbc_connection_string(config, host, port, database)
-    } else if config.db_type == DatabaseType::SapHana {
-        sap_hana_jdbc_connection_string(config, host, port, database)
-    } else {
-        config.connection_string.as_deref().unwrap_or("").to_string()
-    };
-
-    serde_json::json!({
-        "host": host,
-        "port": port,
-        "database": agent_database,
-        "username": config.username,
-        "password": config.password,
-        "url_params": config.url_params.as_deref().unwrap_or(""),
-        "connection_string": connection_string,
-    })
-}
-
-fn mongo_agent_database(config: &ConnectionConfig, database: &str) -> String {
-    if let Some(database) = non_empty_database(database) {
-        return database.to_string();
-    }
-    if let Some(database) = config.database.as_deref().and_then(non_empty_database) {
-        return database.to_string();
-    }
-    if let Some(database) = config.connection_string.as_deref().and_then(mongo_uri_database) {
-        return database;
-    }
-    "admin".to_string()
-}
-
-fn non_empty_database(database: &str) -> Option<&str> {
-    let database = database.trim();
-    (!database.is_empty()).then_some(database)
-}
-
-fn mongo_uri_database(uri: &str) -> Option<String> {
-    let rest = uri.strip_prefix("mongodb://").or_else(|| uri.strip_prefix("mongodb+srv://"))?;
-    let (_, after_hosts) = rest.split_once('/')?;
-    let database = after_hosts.split(['?', '#']).next()?.trim();
-    if database.is_empty() {
-        return None;
-    }
-    Some(percent_decode_str(database).decode_utf8_lossy().into_owned())
-}
-
-pub fn mongo_legacy_error_with_auth_hint(err: &str) -> String {
-    let Some(source_start) = err.find("source='") else {
-        return err.to_string();
-    };
-    if !err.contains("Exception authenticating MongoCredential") || err.contains("Current authentication database:") {
-        return err.to_string();
-    }
-    let source = &err[source_start + "source='".len()..];
-    let Some(source_end) = source.find('\'') else {
-        return err.to_string();
-    };
-    let source = &source[..source_end];
-    format!(
-        "{err}\n\nCurrent authentication database: {source}. If this user was created in admin, set Authentication database to admin or add authSource=admin to URL params."
-    )
-}
-
-fn oracle_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> String {
-    let database = database.trim();
-    if database.is_empty() {
-        return config.connection_string.as_deref().unwrap_or("").to_string();
-    }
-
-    if config.oracle_connect_method == OracleConnectMethod::Sid
-        || config.oracle_connection_type.as_deref() == Some("sid")
-    {
-        format!("jdbc:oracle:thin:@{host}:{port}:{database}")
-    } else {
-        format!("jdbc:oracle:thin:@//{host}:{port}/{database}")
-    }
-}
-
-fn postgres_like_agent_jdbc_connection_string(
-    config: &ConnectionConfig,
-    host: &str,
-    port: u16,
-    database: &str,
-) -> String {
-    let scheme = match config.db_type {
-        DatabaseType::Kingbase => "kingbase8",
-        DatabaseType::Highgo => "highgo",
-        DatabaseType::Vastbase => "vastbase",
-        _ => unreachable!("postgres-like agent JDBC URL requested for {:?}", config.db_type),
-    };
-    let base = format!("jdbc:{scheme}://{host}:{port}/{}", database.trim());
-    append_agent_url_params(base, config.url_params.as_deref())
-}
-
-pub fn should_retry_oracle_with_10g_driver(config: &ConnectionConfig, err: &str) -> bool {
-    if config.db_type != DatabaseType::Oracle {
-        return false;
-    }
-    if config.driver_profile.as_deref() == Some("oracle-10g") {
-        return false;
-    }
-    let normalized = err.to_lowercase();
-    normalized.contains("ora-12541") || normalized.contains("no listener") || err.contains("没有监听程序")
-}
-
-pub fn oracle_alternate_connect_config(config: &ConnectionConfig, err: &str) -> Option<ConnectionConfig> {
-    if !should_retry_oracle_with_10g_driver(config, err) {
-        return None;
-    }
-
-    let mut retry = config.clone();
-    retry.oracle_connection_type =
-        Some(if config.oracle_connection_type.as_deref() == Some("sid") { "service_name" } else { "sid" }.to_string());
-    Some(retry)
-}
-
-fn sap_hana_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> String {
-    let database = database.trim();
-    let params = config.url_params.as_deref().unwrap_or("").trim().trim_start_matches('?');
-    let has_database_name = params
-        .split(['&', ';'])
-        .any(|part| part.split_once('=').map(|(key, _)| key.eq_ignore_ascii_case("databaseName")).unwrap_or(false));
-
-    let mut query_parts = Vec::new();
-    if !database.is_empty() && !has_database_name {
-        query_parts.push(format!("databaseName={}", utf8_percent_encode(database, NON_ALPHANUMERIC)));
-    }
-    if !params.is_empty() {
-        query_parts.push(params.to_string());
-    }
-
-    if query_parts.is_empty() {
-        format!("jdbc:sap://{host}:{port}")
-    } else {
-        format!("jdbc:sap://{host}:{port}/?{}", query_parts.join("&"))
-    }
-}
-
-fn append_agent_url_params(base: String, params: Option<&str>) -> String {
-    let params = params.unwrap_or("").trim().trim_start_matches(['?', '&']);
-    if params.is_empty() {
-        return base;
-    }
-    let separator = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{separator}{params}")
-}
-
 fn duckdb_paths_match(left: &str, right: &str) -> bool {
     let left = expand_tilde(left);
     let right = expand_tilde(right);
@@ -857,7 +836,8 @@ pub async fn probe_connection_endpoint(config: &ConnectionConfig, host: &str, po
     if !uses_tcp_probe(config, host, port) {
         return Ok(());
     }
-    db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port).await
+    let timeout = std::time::Duration::from_secs(config.effective_connect_timeout_secs());
+    db::probe_tcp_endpoint(&format!("{:?}", config.db_type), host, port, timeout).await
 }
 
 fn uses_tcp_probe(config: &ConnectionConfig, host: &str, port: u16) -> bool {
@@ -915,11 +895,17 @@ async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &db::mysql::MySq
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_connect_params, connection_url_for_endpoint, database_connection_config, metadata_connection_config,
+        connection_url_for_endpoint, database_connection_config, metadata_connection_config,
         redacted_connection_url_for_endpoint, uses_tcp_probe, AppState, PoolKind,
     };
+    use crate::agent_connection::{
+        agent_connect_params, mongo_legacy_error_with_auth_hint, oracle_alternate_connect_config,
+        should_retry_oracle_with_10g_driver,
+    };
     use crate::db;
-    use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType};
+    use crate::models::connection::{
+        default_connect_timeout_secs, ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType,
+    };
     use crate::schema;
     use crate::storage::Storage;
 
@@ -949,6 +935,8 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: crate::models::connection::default_ssh_connect_timeout_secs(),
+            connect_timeout_secs: default_connect_timeout_secs(),
+            query_timeout_secs: crate::models::connection::default_query_timeout_secs(),
             proxy_enabled: false,
             proxy_type: ProxyType::Socks5,
             proxy_host: String::new(),
@@ -967,6 +955,7 @@ mod tests {
             redis_sentinel_username: String::new(),
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
+            redis_cluster_nodes: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -1023,7 +1012,7 @@ mod tests {
         let err = "Agent RPC error: Exception authenticating MongoCredential{mechanism=SCRAM-SHA-1, userName='rwuser', source='gray_lite_twin_fat'}";
 
         assert_eq!(
-            super::mongo_legacy_error_with_auth_hint(err),
+            mongo_legacy_error_with_auth_hint(err),
             "Agent RPC error: Exception authenticating MongoCredential{mechanism=SCRAM-SHA-1, userName='rwuser', source='gray_lite_twin_fat'}\n\nCurrent authentication database: gray_lite_twin_fat. If this user was created in admin, set Authentication database to admin or add authSource=admin to URL params."
         );
     }
@@ -1115,20 +1104,14 @@ mod tests {
         config.db_type = DatabaseType::Oracle;
         config.driver_profile = Some("oracle".to_string());
 
-        assert!(super::should_retry_oracle_with_10g_driver(
-            &config,
-            "Agent RPC error (-1): ORA-12541: TNS:no listener"
-        ));
-        assert!(super::should_retry_oracle_with_10g_driver(&config, "host xxx port 1521 中没有监听程序"));
+        assert!(should_retry_oracle_with_10g_driver(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener"));
+        assert!(should_retry_oracle_with_10g_driver(&config, "host xxx port 1521 中没有监听程序"));
 
         config.driver_profile = Some("oracle-10g".to_string());
-        assert!(!super::should_retry_oracle_with_10g_driver(
-            &config,
-            "Agent RPC error (-1): ORA-12541: TNS:no listener"
-        ));
+        assert!(!should_retry_oracle_with_10g_driver(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener"));
 
         config.driver_profile = Some("oracle".to_string());
-        assert!(!super::should_retry_oracle_with_10g_driver(
+        assert!(!should_retry_oracle_with_10g_driver(
             &config,
             "Agent RPC error (-1): ORA-01017: invalid username/password"
         ));
@@ -1141,12 +1124,12 @@ mod tests {
         config.driver_profile = Some("oracle".to_string());
         config.oracle_connection_type = Some("service_name".to_string());
 
-        let retry = super::oracle_alternate_connect_config(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener")
+        let retry = oracle_alternate_connect_config(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener")
             .expect("listener errors should allow alternate descriptor retry");
         assert_eq!(retry.driver_profile.as_deref(), Some("oracle"));
         assert_eq!(retry.oracle_connection_type.as_deref(), Some("sid"));
 
-        let service_retry = super::oracle_alternate_connect_config(
+        let service_retry = oracle_alternate_connect_config(
             &retry,
             "Agent RPC error (-1): ORA-12541: host xxx port 1521 中没有监听程序",
         )
@@ -1160,10 +1143,10 @@ mod tests {
         config.db_type = DatabaseType::Oracle;
         config.driver_profile = Some("oracle".to_string());
 
-        assert!(super::oracle_alternate_connect_config(&config, "ORA-01017: invalid username/password").is_none());
+        assert!(oracle_alternate_connect_config(&config, "ORA-01017: invalid username/password").is_none());
 
         config.driver_profile = Some("oracle-10g".to_string());
-        assert!(super::oracle_alternate_connect_config(&config, "ORA-12541: TNS:no listener").is_none());
+        assert!(oracle_alternate_connect_config(&config, "ORA-12541: TNS:no listener").is_none());
     }
 
     #[test]
@@ -1209,9 +1192,11 @@ mod tests {
 
     async fn assert_live_postgres_like_query(config: ConnectionConfig) {
         let url = connection_url_for_endpoint(&config, &config.host, config.port);
-        let pool = db::postgres::connect(&url).await.unwrap_or_else(|err| {
-            panic!("failed to connect to {:?} at {}:{}: {}", config.db_type, config.host, config.port, err)
-        });
+        let pool = db::postgres::connect(&url, std::time::Duration::from_secs(config.effective_connect_timeout_secs()))
+            .await
+            .unwrap_or_else(|err| {
+                panic!("failed to connect to {:?} at {}:{}: {}", config.db_type, config.host, config.port, err)
+            });
         let result =
             db::postgres::execute_query(&pool, "SELECT current_database(), current_schema()").await.unwrap_or_else(
                 |err| panic!("failed to query {:?} at {}:{}: {}", config.db_type, config.host, config.port, err),
@@ -1469,6 +1454,29 @@ mod tests {
         assert!(!conns.contains_key("conn:session:tab-1"));
         assert!(!conns.contains_key("conn:analytics:session:tab-1"));
         assert!(conns.contains_key("other"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn close_client_session_pool_removes_session_scoped_duckdb_pool() {
+        let (state, dir) = test_app_state().await;
+        let db_path = dir.join("session.duckdb");
+        let mut config = mysql_config(None);
+        config.id = "duckdb-conn".to_string();
+        config.name = "DuckDB".to_string();
+        config.db_type = DatabaseType::DuckDb;
+        config.host = db_path.to_string_lossy().to_string();
+        config.port = 0;
+
+        state.configs.write().await.insert(config.id.clone(), config.clone());
+        let pool_key = state.get_or_create_pool_for_session("duckdb-conn", Some("main"), Some("tab-1")).await.unwrap();
+        assert_eq!(pool_key, "duckdb-conn:session:tab-1");
+
+        assert!(state.close_client_session_pool("duckdb-conn", Some("main"), "tab-1").await.unwrap());
+
+        let conns = state.connections.read().await;
+        assert!(!conns.contains_key("duckdb-conn:session:tab-1"));
 
         let _ = std::fs::remove_dir_all(dir);
     }

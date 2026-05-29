@@ -284,7 +284,7 @@ impl SqlStatementSplitter {
         let trimmed = self.buffer.trim();
         let last_line = trimmed.rsplit('\n').next().unwrap_or(trimmed).trim();
         if parse_delimiter_command(last_line).is_some() {
-            let before = trimmed.rsplitn(2, '\n').nth(1).unwrap_or("").trim();
+            let before = trimmed.rsplit_once('\n').map(|x| x.0).unwrap_or("").trim();
             if has_executable_sql_with_options(before, self.options) {
                 statements.push(before.to_string());
             }
@@ -634,9 +634,9 @@ pub fn split_sql_batches(sql: &str) -> Vec<String> {
 
 fn parse_delimiter_command(line: &str) -> Option<&str> {
     let bytes = line.as_bytes();
-    let rest = if bytes.len() > 10 && bytes[..10].eq_ignore_ascii_case(b"delimiter ") {
-        Some(&line[10..])
-    } else if bytes.len() > 10 && bytes[..10].eq_ignore_ascii_case(b"delimiter\t") {
+    let rest = if bytes.len() > 10
+        && (bytes[..10].eq_ignore_ascii_case(b"delimiter ") || bytes[..10].eq_ignore_ascii_case(b"delimiter\t"))
+    {
         Some(&line[10..])
     } else {
         None
@@ -701,7 +701,12 @@ pub fn starts_with_executable_sql_keyword_with_options(
     let Some(token) = first_executable_sql_token_with_options(sql, options) else {
         return false;
     };
-    keywords.iter().any(|keyword| token.eq_ignore_ascii_case(keyword))
+    keywords.iter().any(|keyword| executable_sql_keyword_matches(token, keyword))
+}
+
+fn executable_sql_keyword_matches(token: &str, keyword: &str) -> bool {
+    token.eq_ignore_ascii_case(keyword)
+        || (keyword.eq_ignore_ascii_case("DESCRIBE") && token.eq_ignore_ascii_case("DESC"))
 }
 
 fn is_mysql_compatible_import_target(db_type: &DatabaseType, driver_profile: Option<&str>) -> bool {
@@ -1168,6 +1173,12 @@ mod tests {
     fn detects_mysql_executable_comment_keyword() {
         assert!(starts_with_executable_sql_keyword("/*!40101 SELECT 1 */", &["SELECT"]));
         assert!(starts_with_executable_sql_keyword("/*M! SELECT 1 */", &["SELECT"]));
+    }
+
+    #[test]
+    fn describe_keyword_detection_accepts_desc_shorthand() {
+        assert!(starts_with_executable_sql_keyword("DESC users", &["DESCRIBE"]));
+        assert!(starts_with_executable_sql_keyword("-- comment\nDESC users", &["DESCRIBE"]));
     }
 
     #[test]

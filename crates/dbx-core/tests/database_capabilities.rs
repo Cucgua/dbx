@@ -1,4 +1,4 @@
-use dbx_core::agent_service::AGENT_TYPES;
+use dbx_core::agent_catalog;
 use dbx_core::database_capabilities::{
     agent_key, is_agent_type, is_metadata_connection_scoped, is_single_connection_pool, skips_tcp_probe,
 };
@@ -192,7 +192,17 @@ fn driver_manifest_matches_agent_driver_store_entries() {
             expected.insert(profile.agent_key.as_str(), profile.label.as_str());
         }
     }
-    let actual: std::collections::BTreeMap<&str, &str> = AGENT_TYPES.iter().copied().collect();
+    let actual: std::collections::BTreeMap<&str, &str> = agent_catalog::driver_store_entries().collect();
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn catalog_marks_runtime_only_agent_entries_explicitly() {
+    let runtime_only: Vec<&str> =
+        agent_catalog::entries().iter().filter(|entry| !entry.store_visible).map(|entry| entry.key).collect();
+
+    assert_eq!(runtime_only, vec!["iris"]);
+    assert!(is_agent_type(&DatabaseType::Iris));
+    assert_eq!(agent_key(&DatabaseType::Iris, None), Some("iris"));
 }

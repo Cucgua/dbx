@@ -86,7 +86,6 @@ pub async fn disconnect_db(
     }
     drop(connections);
 
-    app.configs.write().await.remove(&body.connection_id);
     app.tunnels.stop_tunnel(&body.connection_id).await;
     app.proxy_tunnels.stop_tunnel(&body.connection_id).await;
 
@@ -154,6 +153,8 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: dbx_core::models::connection::default_ssh_connect_timeout_secs(),
+            connect_timeout_secs: dbx_core::models::connection::default_connect_timeout_secs(),
+            query_timeout_secs: dbx_core::models::connection::default_query_timeout_secs(),
             proxy_enabled: false,
             proxy_type: ProxyType::Socks5,
             proxy_host: String::new(),
@@ -172,6 +173,7 @@ mod tests {
             redis_sentinel_username: String::new(),
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
+            redis_cluster_nodes: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -235,6 +237,32 @@ mod tests {
         let connections = state.app.connections.read().await;
         assert!(!connections.contains_key("conn"));
         assert!(connections.contains_key("conn2"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn disconnect_db_keeps_connection_config_for_reconnect() {
+        let (state, dir) = test_web_state().await;
+        let conn_path = dir.join("conn.db");
+        std::fs::File::create(&conn_path).unwrap();
+        let conn_pool = dbx_core::db::sqlite::connect_path(&conn_path.to_string_lossy()).await.unwrap();
+
+        {
+            let mut connections = state.app.connections.write().await;
+            connections.insert("conn".to_string(), PoolKind::Sqlite(conn_pool));
+        }
+        {
+            let mut configs = state.app.configs.write().await;
+            configs.insert("conn".to_string(), sqlite_config("conn", &conn_path.to_string_lossy()));
+        }
+
+        let result =
+            disconnect_db(State(state.clone()), Json(DisconnectRequest { connection_id: "conn".to_string() })).await;
+        assert!(result.is_ok());
+
+        let configs = state.app.configs.read().await;
+        assert!(configs.contains_key("conn"));
 
         let _ = std::fs::remove_dir_all(dir);
     }

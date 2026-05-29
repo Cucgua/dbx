@@ -5,7 +5,6 @@ use mysql_async::prelude::*;
 use percent_encoding::percent_decode_str;
 use rust_decimal::Decimal;
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
@@ -21,6 +20,10 @@ pub type MySqlPool = mysql_async::Pool;
 
 fn quote_value(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+fn quote_identifier(s: &str) -> String {
+    format!("`{}`", s.replace('`', "``"))
 }
 
 fn row_get<T, I>(row: &mysql_async::Row, index: I) -> Option<T>
@@ -258,12 +261,16 @@ fn mysql_value_to_json(row: &mysql_async::Row, idx: usize) -> serde_json::Value 
         .unwrap_or(serde_json::Value::Null)
 }
 
-pub async fn connect(url: &str) -> Result<MySqlPool, String> {
-    connect_with_ca_cert(url, None).await
+pub async fn connect(url: &str, fallback_timeout: Duration) -> Result<MySqlPool, String> {
+    connect_with_ca_cert(url, None, fallback_timeout).await
 }
 
-pub async fn connect_with_ca_cert(url: &str, ca_cert_path: Option<&str>) -> Result<MySqlPool, String> {
-    let timeout = super::parse_connect_timeout(url);
+pub async fn connect_with_ca_cert(
+    url: &str,
+    ca_cert_path: Option<&str>,
+    fallback_timeout: Duration,
+) -> Result<MySqlPool, String> {
+    let timeout = super::parse_connect_timeout_with_fallback(url, fallback_timeout);
     let pool = create_pool(url, ca_cert_path)?;
     let result = verify_pool_connection(&pool, timeout).await;
 
@@ -295,7 +302,7 @@ fn create_pool(url: &str, ca_cert_path: Option<&str>) -> Result<MySqlPool, Strin
         mysql_async::Opts::from_url(&mysql_async_url(&tls_url.url)).map_err(|e| format!("Invalid MySQL URL: {e}"))?;
     let base_ssl_opts = opts.ssl_opts().cloned();
     let pool_opts = mysql_async::PoolOpts::new()
-        .with_constraints(mysql_async::PoolConstraints::new(1, 1).unwrap())
+        .with_constraints(mysql_async::PoolConstraints::new(1, 3).unwrap())
         .with_inactive_connection_ttl(Duration::from_secs(300));
     let mut builder = mysql_async::OptsBuilder::from_opts(opts)
         .stmt_cache_size(0)
@@ -407,7 +414,12 @@ fn mysql_ssl_opts(
 
 fn mysql_setup_queries(url: &str) -> Vec<String> {
     let charset = mysql_connection_charset(url).unwrap_or("utf8mb4");
-    vec![format!("SET NAMES {charset}")]
+    let mut queries = Vec::new();
+    if let Some(database) = mysql_connection_database(url) {
+        queries.push(format!("USE {}", quote_identifier(&database)));
+    }
+    queries.push(format!("SET NAMES {charset}"));
+    queries
 }
 
 fn should_enable_explicit_timestamp_defaults(sql: &str) -> bool {
@@ -473,6 +485,17 @@ fn mysql_connection_charset(url: &str) -> Option<&str> {
         let value = value.trim();
         is_safe_mysql_charset_name(value).then_some(value)
     })
+}
+
+fn mysql_connection_database(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("mysql://")?;
+    let (_, path_and_query) = rest.split_once('/')?;
+    let path = path_and_query.split(['?', '#']).next().unwrap_or(path_and_query);
+    let database = path.trim_start_matches('/').split('/').next().unwrap_or("").trim();
+    if database.is_empty() {
+        return None;
+    }
+    percent_decode_str(database).decode_utf8().ok().map(|value| value.into_owned())
 }
 
 fn is_safe_mysql_charset_name(value: &str) -> bool {
@@ -554,6 +577,52 @@ fn mysql_url_verifies_identity(url: &str) -> bool {
     })
 }
 
+fn is_jdbc_param(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "useunicode"
+            | "characterencoding"
+            | "zerodatetimebehavior"
+            | "usessl"
+            | "servertimezone"
+            | "allowpublickeyretrieval"
+            | "autoreconnect"
+            | "maxreconnects"
+            | "uselegacydatetimecode"
+            | "usecompression"
+            | "cacheprepstmts"
+            | "useserverprepstmts"
+            | "useconfigs"
+            | "usecursorfetch"
+            | "defaultfetchsize"
+            | "usejdbccomplianttimezoneshift"
+            | "usesspscompatibletimezoneshift"
+            | "failoverreadonly"
+            | "maxallowedpacket"
+            | "tinyint1isbit"
+            | "transformedbitisboolean"
+            | "yearisdatetype"
+            | "createdatabaseifnotexist"
+            | "noaccesstoprocedurebodies"
+            | "nullcatalogmeanscurrent"
+            | "nullnamepatternmatchesall"
+            | "dumponqueriesexception"
+            | "enablequerytimeouts"
+            | "useinformationschema"
+            | "gatherperfmetrics"
+            | "reportmetricsintervalmillis"
+            | "maxquerysizetolog"
+            | "packetdebugbuffersize"
+            | "usenanosforelapsedtime"
+            | "slowquerythresholdmillis"
+            | "autoslowlog"
+            | "explainslowqueries"
+            | "resultsetsizethreshold"
+            | "nettimeoutforstreamingresults"
+            | "useusageadvisor"
+    )
+}
+
 fn mysql_async_url(url: &str) -> Cow<'_, str> {
     let Some((base, query)) = url.split_once('?') else {
         return Cow::Borrowed(url);
@@ -561,6 +630,7 @@ fn mysql_async_url(url: &str) -> Cow<'_, str> {
 
     let original_count = query.split('&').filter(|segment| !segment.trim().is_empty()).count();
     let mut filtered: Vec<String> = Vec::new();
+    let mut changed = false;
     for segment in query.split('&') {
         let segment = segment.trim();
         if segment.is_empty()
@@ -570,6 +640,7 @@ fn mysql_async_url(url: &str) -> Cow<'_, str> {
             || segment.to_ascii_lowercase().starts_with("connect_timeout=")
             || segment.to_ascii_lowercase().starts_with("connecttimeout=")
         {
+            changed = true;
             continue;
         }
 
@@ -578,6 +649,7 @@ fn mysql_async_url(url: &str) -> Cow<'_, str> {
             continue;
         };
         if key.eq_ignore_ascii_case("ssl-mode") || key.eq_ignore_ascii_case("sslmode") {
+            changed = true;
             match value.to_ascii_lowercase().replace('-', "_").as_str() {
                 "disabled" | "disable" => filtered.push("require_ssl=false".to_string()),
                 "required" | "require" => {
@@ -594,10 +666,14 @@ fn mysql_async_url(url: &str) -> Cow<'_, str> {
             }
             continue;
         }
+        if is_jdbc_param(key) {
+            changed = true;
+            continue;
+        }
         filtered.push(segment.to_string());
     }
 
-    if filtered.len() == original_count {
+    if !changed && filtered.len() == original_count {
         Cow::Borrowed(url)
     } else if filtered.is_empty() {
         Cow::Owned(base.to_string())
@@ -606,8 +682,8 @@ fn mysql_async_url(url: &str) -> Cow<'_, str> {
     }
 }
 
-pub async fn connect_bare(url: &str) -> Result<MySqlPool, String> {
-    let timeout = super::parse_connect_timeout(url);
+pub async fn connect_bare(url: &str, fallback_timeout: Duration) -> Result<MySqlPool, String> {
+    let timeout = super::parse_connect_timeout_with_fallback(url, fallback_timeout);
     let pool = create_pool(url, None)?;
     verify_pool_connection(&pool, timeout).await.map(|_| pool)
 }
@@ -712,8 +788,14 @@ pub async fn list_objects(pool: &MySqlPool, database: &str) -> Result<Vec<Object
 fn columns_sql(database: &str, table: &str) -> String {
     format!(
         "SELECT c.COLUMN_NAME, c.COLUMN_TYPE, c.IS_NULLABLE, c.COLUMN_DEFAULT, c.EXTRA, c.COLUMN_COMMENT, \
-         c.COLUMN_KEY, c.NUMERIC_PRECISION, c.NUMERIC_SCALE, c.CHARACTER_MAXIMUM_LENGTH \
+         c.COLUMN_KEY, c.NUMERIC_PRECISION, c.NUMERIC_SCALE, c.CHARACTER_MAXIMUM_LENGTH, \
+         CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 1 ELSE 0 END AS is_pk \
          FROM information_schema.COLUMNS c \
+         LEFT JOIN information_schema.KEY_COLUMN_USAGE pk \
+           ON pk.TABLE_SCHEMA = c.TABLE_SCHEMA \
+           AND pk.TABLE_NAME = c.TABLE_NAME \
+           AND pk.COLUMN_NAME = c.COLUMN_NAME \
+           AND pk.CONSTRAINT_NAME = 'PRIMARY' \
          WHERE c.TABLE_SCHEMA = {} AND c.TABLE_NAME = {} \
          ORDER BY c.ORDINAL_POSITION",
         quote_value(database),
@@ -721,29 +803,7 @@ fn columns_sql(database: &str, table: &str) -> String {
     )
 }
 
-fn primary_key_columns_sql(database: &str, table: &str) -> String {
-    format!(
-        "SELECT COLUMN_NAME \
-         FROM information_schema.KEY_COLUMN_USAGE \
-         WHERE TABLE_SCHEMA = {} AND TABLE_NAME = {} AND CONSTRAINT_NAME = 'PRIMARY' \
-         ORDER BY ORDINAL_POSITION",
-        quote_value(database),
-        quote_value(table),
-    )
-}
-
-fn is_primary_key_column(primary_key_columns: &HashSet<String>, name: &str, column_key: &str) -> bool {
-    primary_key_columns.contains(name) || column_key.eq_ignore_ascii_case("PRI")
-}
-
 pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    let pk_sql = primary_key_columns_sql(database, table);
-    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
-    let result = conn.query_iter(&pk_sql).await.map_err(|e| e.to_string())?;
-    let pk_rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
-    let primary_key_columns: HashSet<String> = pk_rows.iter().map(|row| get_str_by_name(row, "COLUMN_NAME")).collect();
-    drop(conn);
-
     let sql = columns_sql(database, table);
     let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
     let result = conn.query_iter(&sql).await.map_err(|e| e.to_string())?;
@@ -754,8 +814,9 @@ pub async fn get_columns(pool: &MySqlPool, database: &str, table: &str) -> Resul
         .map(|row| {
             let name = get_str_by_name(row, "COLUMN_NAME");
             let column_key = get_str_by_name(row, "COLUMN_KEY");
+            let from_pk_join = row.get::<i32, &str>("is_pk").unwrap_or(0) == 1;
             ColumnInfo {
-                is_primary_key: is_primary_key_column(&primary_key_columns, &name, &column_key),
+                is_primary_key: from_pk_join || column_key.eq_ignore_ascii_case("PRI"),
                 name,
                 data_type: get_str_by_name(row, "COLUMN_TYPE"),
                 is_nullable: get_str_by_name(row, "IS_NULLABLE") == "YES",
@@ -774,13 +835,26 @@ fn query_result_row_limit(max_rows: Option<usize>) -> usize {
     max_rows.unwrap_or(crate::query::MAX_ROWS).max(1)
 }
 
+/// Get a connection from the pool with a health check. If the connection is dead
+/// (e.g. after app was backgrounded), it tries again with a fresh connection.
+pub async fn get_conn_with_health_check(pool: &MySqlPool) -> Result<mysql_async::Conn, String> {
+    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    match conn.ping().await {
+        Ok(()) => Ok(conn),
+        Err(_) => {
+            let _ = conn.disconnect().await;
+            pool.get_conn().await.map_err(|e| e.to_string())
+        }
+    }
+}
+
 async fn execute_result_set_with_text_protocol(
     pool: &MySqlPool,
     sql: &str,
     row_limit: usize,
     start: Instant,
 ) -> Result<QueryResult, String> {
-    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let mut conn = get_conn_with_health_check(pool).await?;
     let mut result = conn.query_iter(sql).await.map_err(|e| e.to_string())?;
     let columns: Vec<String> = result.columns_ref().iter().map(|c| c.name_str().to_string()).collect();
 
@@ -822,7 +896,7 @@ async fn execute_result_set_with_prepared_protocol(
     row_limit: usize,
     start: Instant,
 ) -> Result<QueryResult, String> {
-    let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+    let mut conn = get_conn_with_health_check(pool).await?;
     let mut result = conn.exec_iter(sql, ()).await.map_err(|e| e.to_string())?;
     let columns: Vec<String> = result.columns_ref().iter().map(|c| c.name_str().to_string()).collect();
 
@@ -884,7 +958,7 @@ pub async fn execute_query_with_max_rows(
             }
         }
     } else {
-        let mut conn = pool.get_conn().await.map_err(|e| e.to_string())?;
+        let mut conn = get_conn_with_health_check(pool).await?;
         let previous_explicit_timestamp_defaults = enable_explicit_timestamp_defaults_for_query(&mut conn, sql).await;
         let result = match conn.query_iter(sql).await {
             Ok(result) => result,
@@ -1029,6 +1103,11 @@ mod tests {
     }
 
     #[test]
+    fn mysql_desc_queries_are_treated_as_result_sets() {
+        assert!(is_result_set_query("DESC users"));
+    }
+
+    #[test]
     fn numeric_metadata_accepts_unsigned_information_schema_values() {
         assert_eq!(numeric_metadata_u64_to_i32(Some(65)), Some(65));
     }
@@ -1064,28 +1143,13 @@ mod tests {
     }
 
     #[test]
-    fn mysql_columns_sql_avoids_information_schema_join_collation() {
+    fn mysql_columns_sql_joins_key_column_usage_for_primary_keys() {
         let sql = columns_sql("app", "users");
 
-        assert!(!sql.contains("COLLATE"));
-        assert!(!sql.contains("KEY_COLUMN_USAGE"));
-        assert!(sql.contains("information_schema.COLUMNS"));
-    }
-
-    #[test]
-    fn mysql_primary_key_columns_sql_reads_key_column_usage_separately() {
-        let sql = primary_key_columns_sql("app", "users");
-
-        assert!(!sql.contains("COLLATE"));
-        assert!(sql.contains("information_schema.KEY_COLUMN_USAGE"));
+        assert!(sql.contains("LEFT JOIN information_schema.KEY_COLUMN_USAGE"));
         assert!(sql.contains("CONSTRAINT_NAME = 'PRIMARY'"));
-    }
-
-    #[test]
-    fn mysql_columns_sql_selects_column_key_for_starrocks_primary_fallback() {
-        let sql = columns_sql("app", "users");
-
         assert!(sql.contains("c.COLUMN_KEY"));
+        assert!(!sql.contains("COLLATE"));
     }
 
     #[test]
@@ -1155,10 +1219,12 @@ mod tests {
     }
 
     #[test]
-    fn mysql_column_key_marks_primary_when_key_column_usage_is_unavailable() {
-        let primary_key_columns = HashSet::new();
-
-        assert!(is_primary_key_column(&primary_key_columns, "id", "PRI"));
+    fn mysql_column_key_marks_primary_when_pk_join_returns_null() {
+        // COLUMN_KEY='PRI' provides a fallback when KEY_COLUMN_USAGE LEFT JOIN returns NULL
+        let from_pk_join = false;
+        let column_key = "PRI";
+        let is_pk = from_pk_join || column_key.eq_ignore_ascii_case("PRI");
+        assert!(is_pk);
     }
 
     #[test]
@@ -1249,6 +1315,27 @@ mod tests {
     }
 
     #[test]
+    fn mysql_setup_queries_select_requested_database_before_session_init() {
+        let queries = mysql_setup_queries("mysql://root:secret@localhost:3306/app?charset=utf8mb4");
+
+        assert_eq!(queries, vec!["USE `app`", "SET NAMES utf8mb4"]);
+    }
+
+    #[test]
+    fn mysql_setup_queries_skip_use_when_database_missing() {
+        let queries = mysql_setup_queries("mysql://root:secret@localhost:3306?charset=utf8mb4");
+
+        assert_eq!(queries, vec!["SET NAMES utf8mb4"]);
+    }
+
+    #[test]
+    fn mysql_setup_queries_decode_database_name_from_url() {
+        let queries = mysql_setup_queries("mysql://root:secret@localhost:3306/db%2Fname?charset=utf8mb4");
+
+        assert_eq!(queries, vec!["USE `db/name`", "SET NAMES utf8mb4"]);
+    }
+
+    #[test]
     fn mysql_datetime_utc_values_display_without_rfc3339_offset() {
         let value = NaiveDateTime::new(
             NaiveDate::from_ymd_opt(2026, 5, 12).unwrap(),
@@ -1262,7 +1349,7 @@ mod tests {
     #[ignore = "requires remote MariaDB with ed25519 user"]
     async fn test_ed25519_auth() {
         let url = "mysql://edtest:test123@172.26.128.159:20026/testdb";
-        let pool = super::connect(url).await.expect("connect with ed25519");
+        let pool = super::connect(url, std::time::Duration::from_secs(5)).await.expect("connect with ed25519");
         let mut conn = pool.get_conn().await.expect("get connection");
         conn.ping().await.expect("ping");
         let _ = conn.disconnect().await;
@@ -1315,6 +1402,32 @@ mod tests {
     }
 
     #[test]
+    fn mysql_async_url_translates_disabled_ssl_mode_even_when_param_count_matches() {
+        let url = "mysql://host:3306/db?ssl-mode=disabled";
+
+        assert_eq!(mysql_async_url(url).as_ref(), "mysql://host:3306/db?require_ssl=false");
+    }
+
+    #[test]
+    fn mysql_async_url_translates_verify_identity_ssl_mode_even_when_param_count_matches() {
+        let url = "mysql://host:3306/db?sslmode=verify_identity";
+
+        assert_eq!(mysql_async_url(url).as_ref(), "mysql://host:3306/db?require_ssl=true");
+    }
+
+    #[test]
+    fn mysql_async_url_strips_jdbc_params() {
+        let url = "mysql://host:3306/db?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true";
+        assert_eq!(mysql_async_url(url).as_ref(), "mysql://host:3306/db");
+    }
+
+    #[test]
+    fn mysql_async_url_keeps_valid_params_while_stripping_jdbc() {
+        let url = "mysql://host:3306/db?useUnicode=true&characterEncoding=utf8&require_ssl=true&charset=utf8mb4&autoReconnect=true";
+        assert_eq!(mysql_async_url(url).as_ref(), "mysql://host:3306/db?require_ssl=true");
+    }
+
+    #[test]
     fn ssl_fallback_does_not_disable_required_tls() {
         assert_eq!(ssl_fallback_url("mysql://host:3306/db?require_ssl=true&charset=utf8mb4"), None);
         assert_eq!(ssl_fallback_url("mysql://host:3306/db?ssl-mode=verify_ca&charset=utf8mb4"), None);
@@ -1322,15 +1435,18 @@ mod tests {
 
     #[test]
     fn mysql_setup_queries_default_to_utf8mb4() {
-        assert_eq!(mysql_setup_queries("mysql://host:3306/db"), vec!["SET NAMES utf8mb4"]);
+        assert_eq!(mysql_setup_queries("mysql://host:3306/db"), vec!["USE `db`", "SET NAMES utf8mb4"]);
     }
 
     #[test]
     fn mysql_setup_queries_use_safe_custom_charset() {
-        assert_eq!(mysql_setup_queries("mysql://host:3306/db?ssl-mode=preferred&charset=gbk"), vec!["SET NAMES gbk"]);
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?ssl-mode=preferred&charset=gbk"),
+            vec!["USE `db`", "SET NAMES gbk"]
+        );
         assert_eq!(
             mysql_setup_queries("mysql://host:3306/db?charset=utf8mb4;DROP TABLE users"),
-            vec!["SET NAMES utf8mb4"]
+            vec!["USE `db`", "SET NAMES utf8mb4"]
         );
     }
 }

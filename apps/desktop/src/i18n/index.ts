@@ -1,5 +1,6 @@
 import { createI18n } from "vue-i18n";
 import zhCN from "./locales/zh-CN";
+import { safeLocalStorageGet, safeLocalStorageSet } from "@/lib/safeStorage";
 
 export type Locale = "en" | "es" | "zh-CN";
 type LocaleMessages = Record<string, unknown>;
@@ -23,7 +24,7 @@ function normalizeLocale(value: string | null): Locale {
   return defaultLocale;
 }
 
-const savedLocale = normalizeLocale(localStorage.getItem("dbx-locale"));
+const savedLocale = normalizeLocale(safeLocalStorageGet("dbx-locale"));
 
 const i18n = createI18n({
   legacy: false,
@@ -51,7 +52,7 @@ export async function loadSavedLocale() {
 export async function setLocale(locale: Locale) {
   await loadLocaleMessages(locale);
   i18nGlobal.locale.value = locale;
-  localStorage.setItem("dbx-locale", locale);
+  safeLocalStorageSet("dbx-locale", locale);
 }
 
 export function currentLocale(): Locale {

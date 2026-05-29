@@ -10,11 +10,14 @@ import {
   isModRShortcut,
   isNewQueryShortcut,
   isObjectSourceSaveShortcutTarget,
+  isResetZoomShortcut,
   isRefreshDataShortcut,
   isSaveShortcut,
   isCopyCurrentRowShortcut,
   isDeleteCurrentRowShortcut,
   isToggleTransposeShortcut,
+  isZoomInShortcut,
+  isZoomOutShortcut,
 } from "../../apps/desktop/src/lib/keyboardShortcuts.ts";
 import { shortcutToCodeMirrorKey } from "../../apps/desktop/src/lib/shortcutRegistry.ts";
 
@@ -117,6 +120,27 @@ test("matches Mod-R without shift or alt for scoped refresh and replace", () => 
   assert.equal(isModRShortcut({ key: "R", metaKey: true }), true);
   assert.equal(isModRShortcut({ key: "R", metaKey: true, shiftKey: true }), false);
   assert.equal(isModRShortcut({ key: "r", ctrlKey: true, altKey: true }), false);
+});
+
+test("matches desktop UI zoom shortcuts", () => {
+  assert.equal(isZoomInShortcut({ key: "=", ctrlKey: true }), true);
+  assert.equal(isZoomInShortcut({ key: "NumpadAdd", ctrlKey: true }), true);
+  assert.equal(isZoomOutShortcut({ key: "-", ctrlKey: true }), true);
+  assert.equal(isZoomOutShortcut({ key: "NumpadSubtract", metaKey: true }), true);
+  assert.equal(isResetZoomShortcut({ key: "0", ctrlKey: true }), true);
+  assert.equal(isResetZoomShortcut({ key: "Numpad0", metaKey: true }), true);
+});
+
+test("matches configurable desktop UI zoom shortcuts", () => {
+  assert.equal(isZoomInShortcut({ key: "i", ctrlKey: true }, { zoomInUi: "Mod+I" } as any), true);
+  assert.equal(isZoomOutShortcut({ key: "o", metaKey: true }, { zoomOutUi: "Mod+O" } as any), true);
+  assert.equal(isResetZoomShortcut({ key: "9", ctrlKey: true }, { resetUiZoom: "Mod+9" } as any), true);
+});
+
+test("ignores desktop UI zoom shortcuts with the wrong modifiers", () => {
+  assert.equal(isZoomInShortcut({ key: "=", ctrlKey: true, altKey: true }), false);
+  assert.equal(isZoomOutShortcut({ key: "-", isComposing: true, ctrlKey: true }), false);
+  assert.equal(isResetZoomShortcut({ key: "0", metaKey: true, shiftKey: true }), false);
 });
 
 test("ignores focus search shortcut while composing", () => {

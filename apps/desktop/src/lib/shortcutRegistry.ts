@@ -7,6 +7,9 @@ export type ShortcutActionId =
   | "newQuery"
   | "closeTab"
   | "focusSearch"
+  | "zoomInUi"
+  | "zoomOutUi"
+  | "resetUiZoom"
   | "find"
   | "replace"
   | "refreshData"
@@ -72,6 +75,24 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
     labelKey: "settings.shortcutFocusSearch",
     scope: "global",
     defaultShortcut: "Mod+F",
+  },
+  {
+    id: "zoomInUi",
+    labelKey: "settings.shortcutZoomInUi",
+    scope: "global",
+    defaultShortcut: "Mod+=",
+  },
+  {
+    id: "zoomOutUi",
+    labelKey: "settings.shortcutZoomOutUi",
+    scope: "global",
+    defaultShortcut: "Mod+-",
+  },
+  {
+    id: "resetUiZoom",
+    labelKey: "settings.shortcutResetUiZoom",
+    scope: "global",
+    defaultShortcut: "Mod+0",
   },
   {
     id: "find",

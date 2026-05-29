@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { createPinia, setActivePinia } from "pinia";
+import { useConnectionStore } from "../../apps/desktop/src/stores/connectionStore.ts";
 import { useQueryStore } from "../../apps/desktop/src/stores/queryStore.ts";
+import type { ConnectionConfig } from "../../apps/desktop/src/types/database.ts";
 import type { QueryResult } from "../../apps/desktop/src/types/database.ts";
 
 function installMemoryStorage() {
@@ -19,6 +21,18 @@ function installMemoryStorage() {
   return () => {
     if (original) Object.defineProperty(globalThis, "localStorage", original);
     else Reflect.deleteProperty(globalThis, "localStorage");
+  };
+}
+
+function conn(id: string): ConnectionConfig {
+  return {
+    id,
+    name: id,
+    db_type: "postgres",
+    host: "localhost",
+    port: 5432,
+    username: "postgres",
+    password: "",
   };
 }
 
@@ -41,10 +55,13 @@ test("setErrorResult stops loading and shows the error result", () => {
 test("evicting cached tab results releases multi-result payloads and sessions", async () => {
   const restoreStorage = installMemoryStorage();
   setActivePinia(createPinia());
+  const connectionStore = useConnectionStore();
   const store = useQueryStore();
   const originalFetch = globalThis.fetch;
   let executeCount = 0;
   const closedSessions: string[] = [];
+
+  connectionStore.addEphemeralConnection(conn("conn-1"));
 
   globalThis.fetch = (async (input, init) => {
     const url = String(input);

@@ -105,7 +105,7 @@ fn cell_xml(value: Option<&Value>, row_index: usize, col_index: usize, style: Op
             format!("<c r=\"{reference}\" t=\"b\"{style_attr}><v>{bool_v}</v></c>")
         }
         Some(Value::Number(n)) => {
-            if n.as_f64().map_or(false, |f| f.is_finite()) {
+            if n.as_f64().is_some_and(|f| f.is_finite()) {
                 format!("<c r=\"{reference}\"{style_attr}><v>{}</v></c>", n)
             } else {
                 format!(

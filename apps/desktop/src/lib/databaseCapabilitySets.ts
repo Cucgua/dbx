@@ -25,6 +25,7 @@ export const SCHEMA_AWARE_TYPES = new Set<DatabaseType>([
   "trino",
   "db2",
   "tdengine",
+  "iris",
   "duckdb",
 ]);
 
@@ -56,6 +57,7 @@ export const DIAGRAM_SUPPORTED_TYPES = new Set<DatabaseType>([
   "access",
   "h2",
   "db2",
+  "iris",
 ]);
 
 export const DATABASE_SEARCH_SUPPORTED_TYPES = new Set<DatabaseType>([
@@ -96,6 +98,7 @@ export const DATABASE_SEARCH_SUPPORTED_TYPES = new Set<DatabaseType>([
   "kylin",
   "sundb",
   "tdengine",
+  "iris",
 ]);
 
 export const TABLE_IMPORT_SUPPORTED_TYPES = new Set<DatabaseType>([
@@ -140,6 +143,7 @@ export const TABLE_STRUCTURE_SUPPORTED_TYPES = new Set<DatabaseType>([
   "oceanbase-oracle",
   "h2",
   "sundb",
+  "iris",
 ]);
 
 export const CREATE_DATABASE_SUPPORTED_TYPES = new Set<DatabaseType>([
@@ -202,6 +206,7 @@ export const TREE_SCHEMA_TYPES = new Set<DatabaseType>([
   "trino",
   "h2",
   "tdengine",
+  "iris",
   "duckdb",
 ]);
 
@@ -238,6 +243,7 @@ export const AGENT_DRIVER_TYPES = new Set<DatabaseType>([
   "sundb",
   "gaussdb",
   "tdengine",
+  "iris",
 ]);
 
 export const TRANSFER_SQL_TYPES = new Set<DatabaseType>([

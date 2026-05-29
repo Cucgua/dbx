@@ -1,5 +1,6 @@
 import { source } from '@/lib/source';
 import { notFound } from 'next/navigation';
+import type { Metadata } from 'next';
 import {
   DocsPage,
   DocsBody,
@@ -15,6 +16,28 @@ import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
 import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
 import type { MDXContent } from 'mdx/types';
 import type { TOCItemType } from 'fumadocs-core/toc';
+import { buildMetadata, SITE_URL } from '@/lib/metadata';
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ lang: string; slug?: string[] }>;
+}): Promise<Metadata> {
+  const { lang, slug } = await params;
+  const page = source.getPage(slug, lang);
+  if (!page) return {};
+
+  const title = page.data.title as string;
+  const description = (page.data.description as string) || undefined;
+
+  return buildMetadata({
+    title,
+    description: description ?? '',
+    path: slug ? `/${lang}/docs/${slug.join('/')}` : `/${lang}/docs`,
+    lang,
+    ogType: 'article',
+  });
+}
 
 const mdxComponents = {
   ...defaultMdxComponents,
@@ -44,10 +67,51 @@ export default async function Page({
     toc: TOCItemType[];
   };
 
+  const title = page.data.title as string;
+  const description = (page.data.description as string) || '';
+  const docPath = slug ? `/${lang}/docs/${slug.join('/')}` : `/${lang}/docs`;
+
+  const breadcrumbJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: SITE_URL },
+      { '@type': 'ListItem', position: 2, name: 'Docs', item: `${SITE_URL}/${lang}/docs` },
+      ...(slug
+        ? slug.map((segment, i) => ({
+            '@type': 'ListItem' as const,
+            position: i + 3,
+            name: segment.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+            item: `${SITE_URL}/${lang}/docs/${slug.slice(0, i + 1).join('/')}`,
+          }))
+        : []),
+    ],
+  };
+
+  const articleJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'TechArticle',
+    headline: title,
+    description,
+    inLanguage: lang === 'cn' ? 'zh-CN' : 'en',
+    isPartOf: {
+      '@type': 'WebSite',
+      url: SITE_URL,
+    },
+  };
+
   return (
     <DocsPage toc={toc}>
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription>{page.data.description}</DocsDescription>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd) }}
+      />
+      <DocsTitle>{title}</DocsTitle>
+      <DocsDescription>{description}</DocsDescription>
       <DocsBody>
         <MDX components={mdxComponents} />
       </DocsBody>

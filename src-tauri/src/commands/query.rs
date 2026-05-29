@@ -353,6 +353,13 @@ pub fn build_create_table_sql(
 }
 
 #[tauri::command]
+pub fn build_single_column_alter_sql(
+    options: dbx_core::table_structure_sql::SingleColumnAlterSqlOptions,
+) -> Result<dbx_core::table_structure_sql::TableStructureSqlResult, String> {
+    Ok(dbx_core::table_structure_sql::build_single_column_alter_sql(options))
+}
+
+#[tauri::command]
 pub fn analyze_editable_query_editability(sql: String) -> Result<dbx_core::sql_editability::QueryEditability, String> {
     Ok(dbx_core::sql_editability::analyze_editable_query_editability(&sql))
 }

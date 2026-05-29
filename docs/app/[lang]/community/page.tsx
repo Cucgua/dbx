@@ -1,4 +1,6 @@
 import { LandingNav } from '@/components/landing/LandingNav';
+import { buildMetadata } from '@/lib/metadata';
+import type { Metadata } from 'next';
 
 const channels = [
   {
@@ -57,6 +59,23 @@ const i18n = {
     github: { name: 'GitHub Discussions', desc: 'Bug 反馈、功能建议和深度讨论。' },
   },
 };
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ lang: string }>;
+}): Promise<Metadata> {
+  const { lang } = await params;
+  const l = lang === 'cn' ? 'cn' : 'en';
+  const t = i18n[l];
+
+  return buildMetadata({
+    title: t.title,
+    description: t.desc,
+    path: `/${l}/community`,
+    lang: l,
+  });
+}
 
 export default async function CommunityPage({ params }: { params: Promise<{ lang: string }> }) {
   const { lang } = await params;

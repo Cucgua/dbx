@@ -40,6 +40,9 @@ test("defaults shortcut settings", () => {
   assert.equal(settings.shortcuts.deleteCurrentRow, "Delete");
   assert.equal(settings.shortcuts.newQuery, "Mod+T");
   assert.equal(settings.shortcuts.focusSearch, "Mod+F");
+  assert.equal(settings.shortcuts.zoomInUi, "Mod+=");
+  assert.equal(settings.shortcuts.zoomOutUi, "Mod+-");
+  assert.equal(settings.shortcuts.resetUiZoom, "Mod+0");
   assert.equal(settings.shortcuts.refreshData, "F5");
   assert.equal(settings.shortcuts.toggleTranspose, "Tab");
 });
@@ -51,6 +54,7 @@ test("keeps saved shortcut overrides", () => {
       copyCurrentRow: "Alt+Shift+D",
       deleteCurrentRow: "Backspace",
       newQuery: "Shift+Mod+N",
+      zoomInUi: "Alt+Mod+=",
     } as any,
   });
 
@@ -58,6 +62,7 @@ test("keeps saved shortcut overrides", () => {
   assert.equal(settings.shortcuts.copyCurrentRow, "Alt+Shift+D");
   assert.equal(settings.shortcuts.deleteCurrentRow, "Backspace");
   assert.equal(settings.shortcuts.newQuery, "Shift+Mod+N");
+  assert.equal(settings.shortcuts.zoomInUi, "Alt+Mod+=");
   assert.equal(settings.shortcuts.saveSql, "Mod+S");
 });
 
@@ -179,4 +184,19 @@ test("infers legacy AI provider from saved endpoint and model", () => {
   assert.equal(deepseek.provider, "deepseek");
   assert.equal(deepseek.endpoint, "https://api.deepseek.com/anthropic/v1/messages");
   assert.equal(deepseek.model, "deepseek-v4-pro");
+});
+
+test("normalizeEditorSettings falls back to the default UI scale", () => {
+  const settings = normalizeEditorSettings({});
+
+  assert.equal(settings.uiScale, DEFAULT_EDITOR_SETTINGS.uiScale);
+});
+
+test("normalizeEditorSettings clamps UI scale into the supported range", () => {
+  assert.equal(normalizeEditorSettings({ uiScale: 0.2 }).uiScale, 0.75);
+  assert.equal(normalizeEditorSettings({ uiScale: 2.8 }).uiScale, 2);
+});
+
+test("normalizeEditorSettings keeps valid UI scales with two-decimal precision", () => {
+  assert.equal(normalizeEditorSettings({ uiScale: 1.125 }).uiScale, 1.13);
 });

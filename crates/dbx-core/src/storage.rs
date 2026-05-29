@@ -351,6 +351,7 @@ impl Storage {
             show_tray_icon: settings
                 .get("show_tray_icon")
                 .and_then(|value| value.as_bool())
+                .or_else(|| settings.get("run_in_background").and_then(|value| value.as_bool()))
                 .unwrap_or_else(|| DesktopSettings::default().show_tray_icon),
         })
     }
@@ -1129,14 +1130,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn desktop_settings_ignore_legacy_background_preference() {
+    async fn desktop_settings_fall_back_to_legacy_background_preference() {
         let path = temp_db_path("desktop-settings-legacy-background");
         let storage = Storage::open(&path).await.unwrap();
         let mut settings = serde_json::Map::new();
         settings.insert("run_in_background".to_string(), serde_json::Value::Bool(false));
         storage.save_app_settings_json(&settings).await.unwrap();
 
-        assert_eq!(storage.load_desktop_settings().await.unwrap(), DesktopSettings { show_tray_icon: true });
+        assert_eq!(storage.load_desktop_settings().await.unwrap(), DesktopSettings { show_tray_icon: false });
     }
 
     #[tokio::test]

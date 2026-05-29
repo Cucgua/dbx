@@ -46,6 +46,26 @@ pub async fn mongo_find_documents(
 }
 
 #[tauri::command]
+pub async fn mongo_aggregate_documents(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    database: String,
+    collection: String,
+    pipeline_json: String,
+    max_rows: Option<usize>,
+) -> Result<MongoDocumentResult, String> {
+    dbx_core::mongo_ops::mongo_aggregate_documents_core(
+        &state,
+        &connection_id,
+        &database,
+        &collection,
+        &pipeline_json,
+        max_rows,
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn mongo_insert_document(
     state: State<'_, Arc<AppState>>,
     connection_id: String,
