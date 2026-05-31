@@ -56,7 +56,7 @@ import type { DatabaseType, TreeNode, TreeNodeType } from "@/types/database";
 import * as api from "@/lib/api";
 import { uuid } from "@/lib/utils";
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
-import { canTreeNodeShowExpander, treeItemPaddingLeft } from "@/lib/sidebarTreeItemLayout";
+import { canTreeNodeShowExpander, treeItemPaddingLeft, usesFullWidthTreeLabel } from "@/lib/sidebarTreeItemLayout";
 import { buildTableSelectSql } from "@/lib/tableSelectSql";
 import {
   clearActiveTableReferencePayload,
@@ -156,6 +156,14 @@ const emit = defineEmits<{
   "node-toggled": [node: TreeNode, wasExpanded: boolean];
   "search-toggle": [node: TreeNode];
 }>();
+
+const usesFullWidthLabel = computed(() =>
+  usesFullWidthTreeLabel(props.node.type, settingsStore.editorSettings.sidebarAllowHorizontalScroll),
+);
+const rowWidthClass = computed(() => (usesFullWidthLabel.value ? "w-max min-w-full" : "w-full min-w-0"));
+const labelWidthClass = computed(() =>
+  usesFullWidthLabel.value ? "shrink-0 whitespace-nowrap" : "min-w-0 flex-1 truncate",
+);
 
 function currentDatabaseType(): DatabaseType | undefined {
   return props.node.connectionId ? connectionStore.getConfig(props.node.connectionId)?.db_type : undefined;
@@ -1652,9 +1660,13 @@ const isActiveConnectionScope = computed(
 const isSelected = computed(() => connectionStore.selectedTreeNodeId === props.node.id);
 const rowStyle = computed(() => {
   const color = connectionColor.value;
+  const backgroundColor = hexToRgba(color, isActiveConnectionScope.value ? 0.14 : 0.08);
   return {
     paddingLeft: paddingLeft.value,
-    backgroundColor: hexToRgba(color, isActiveConnectionScope.value ? 0.14 : 0.08),
+    "--tree-connection-row-bg": backgroundColor,
+    "--tree-connection-row-hover-bg": hexToRgba(color, isActiveConnectionScope.value ? 0.18 : 0.12),
+    "--tree-connection-active-bg": hexToRgba(color, 0.18),
+    "--tree-connection-active-focus-bg": hexToRgba(color, 0.22),
   };
 });
 
@@ -2253,16 +2265,21 @@ function treeItemMenuItems(): ContextMenuItem[] {
     <div @contextmenu="onContextMenu">
       <div
         ref="rowRef"
-        class="group flex min-w-0 items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent transition-colors relative outline-none"
-        style="contain: layout style paint"
-        :class="{
-          'ring-1 ring-primary/50 bg-primary/5': showDropInside,
-          'opacity-50': isDragging,
-          'rounded-none': connectionColor && !isSelected,
-          'rounded-sm': !connectionColor && !isSelected,
-          'tree-item-active rounded-md': isSelected,
-          'tree-item-highlight': highlighted,
-        }"
+        class="group flex items-center gap-1.5 py-1 px-2 cursor-pointer hover:bg-accent transition-colors relative outline-none"
+        style="contain: layout style"
+        :class="[
+          rowWidthClass,
+          {
+            'ring-1 ring-primary/50 bg-primary/5': showDropInside,
+            'opacity-50': isDragging,
+            'tree-item-connection-tint': connectionColor,
+            'rounded-none': connectionColor && !isSelected,
+            'rounded-sm': !connectionColor && !isSelected,
+            'tree-item-active rounded-none': connectionColor && isSelected,
+            'tree-item-active rounded-md': !connectionColor && isSelected,
+            'tree-item-highlight': highlighted,
+          },
+        ]"
         :tabindex="isSelected ? 0 : -1"
         :style="rowStyle"
         @click="onClick"
@@ -2316,7 +2333,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
           @click.stop
         />
         <LightTooltip v-else :text="displayLabel(node)" :disabled="isTooltipDisabled" side="right" :side-offset="8">
-          <span ref="labelRef" class="min-w-0 flex-1 truncate">{{ visibleLabel(node) }}</span>
+          <span ref="labelRef" :class="labelWidthClass">{{ visibleLabel(node) }}</span>
         </LightTooltip>
         <span
           v-if="
@@ -2659,20 +2676,58 @@ function treeItemMenuItems(): ContextMenuItem[] {
 </template>
 
 <style>
+.tree-item-connection-tint {
+  isolation: isolate;
+  background-color: transparent !important;
+}
+
+.tree-item-connection-tint::before {
+  content: "";
+  position: absolute;
+  inset: 0 -9999px;
+  z-index: 0;
+  background-color: var(--tree-connection-row-bg);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.tree-item-connection-tint > * {
+  position: relative;
+  z-index: 1;
+}
+
+.tree-item-connection-tint:hover,
+.tree-item-connection-tint.tree-item-active,
+.tree-item-connection-tint.tree-item-active:focus {
+  background-color: transparent !important;
+}
+
+.tree-item-connection-tint:hover::before {
+  background-color: var(--tree-connection-row-hover-bg, var(--tree-connection-row-bg));
+}
+
+.tree-item-connection-tint.tree-item-active::before {
+  background-color: var(--tree-connection-active-bg, var(--tree-connection-row-bg));
+}
+
+.tree-item-connection-tint.tree-item-active:focus::before {
+  background-color: var(--tree-connection-active-focus-bg, var(--tree-connection-active-bg));
+}
+
 /* Unfocused: subtle gray */
 .tree-item-active {
-  background-color: oklch(0.94 0 0) !important;
+  background-color: var(--tree-connection-active-bg, oklch(0.94 0 0)) !important;
 }
 :root.dark .tree-item-active {
-  background-color: oklch(0.26 0 0) !important;
+  background-color: var(--tree-connection-active-bg, oklch(0.26 0 0)) !important;
 }
 
 /* Focused: soft blue */
 .tree-item-active:focus {
-  background-color: oklch(0.91 0.03 250) !important;
+  background-color: var(--tree-connection-active-focus-bg, oklch(0.91 0.03 250)) !important;
 }
 :root.dark .tree-item-active:focus {
-  background-color: oklch(0.35 0.06 250) !important;
+  background-color: var(--tree-connection-active-focus-bg, oklch(0.35 0.06 250)) !important;
 }
 
 /* Locate highlight: instant amber, then fade on removal */

@@ -76,6 +76,11 @@ test("defaults active tab sidebar selection to off", () => {
   assert.equal(normalizeEditorSettings({}).autoSelectActiveSidebarNode, false);
 });
 
+test("defaults sidebar horizontal scroll to off", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll, false);
+  assert.equal(normalizeEditorSettings({}).sidebarAllowHorizontalScroll, false);
+});
+
 test("defaults data grid header display settings", () => {
   assert.equal(DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader, false);
   assert.equal(DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions, true);
@@ -117,6 +122,13 @@ test("normalizes grid drawer widths", () => {
 
 test("keeps saved active tab sidebar selection", () => {
   assert.equal(normalizeEditorSettings({ autoSelectActiveSidebarNode: true } as any).autoSelectActiveSidebarNode, true);
+});
+
+test("keeps saved sidebar horizontal scroll preference", () => {
+  assert.equal(
+    normalizeEditorSettings({ sidebarAllowHorizontalScroll: true } as any).sidebarAllowHorizontalScroll,
+    true,
+  );
 });
 
 test("keeps saved sidebar activation", () => {

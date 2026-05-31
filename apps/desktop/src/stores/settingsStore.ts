@@ -207,6 +207,7 @@ export interface EditorSettings {
   autoSelectActiveSidebarNode: boolean;
   sidebarHiddenTablePrefixes: string[];
   sidebarHideTableComments: boolean;
+  sidebarAllowHorizontalScroll: boolean;
   columnFormatters: Record<string, ColumnFormatterConfig>;
   customColumnFormatters: Record<string, CustomColumnFormatterConfig>;
   snippets: SqlSnippet[];
@@ -260,6 +261,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   autoSelectActiveSidebarNode: false,
   sidebarHiddenTablePrefixes: [],
   sidebarHideTableComments: false,
+  sidebarAllowHorizontalScroll: false,
   columnFormatters: {},
   customColumnFormatters: {},
   snippets: DEFAULT_SQL_SNIPPETS,
@@ -373,6 +375,8 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
       settings.autoSelectActiveSidebarNode ?? DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(settings.sidebarHiddenTablePrefixes),
     sidebarHideTableComments: settings.sidebarHideTableComments ?? DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments,
+    sidebarAllowHorizontalScroll:
+      settings.sidebarAllowHorizontalScroll ?? DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll,
     columnFormatters: normalizeColumnFormatters(settings.columnFormatters),
     customColumnFormatters: normalizeCustomColumnFormatters(settings.customColumnFormatters),
     snippets: normalizeSqlSnippets(settings.snippets, existing?.snippets),
@@ -508,6 +512,8 @@ export const useSettingsStore = defineStore("settings", () => {
       );
     if (partial.sidebarHideTableComments !== undefined)
       editorSettings.value.sidebarHideTableComments = partial.sidebarHideTableComments;
+    if (partial.sidebarAllowHorizontalScroll !== undefined)
+      editorSettings.value.sidebarAllowHorizontalScroll = partial.sidebarAllowHorizontalScroll;
     if (partial.columnFormatters !== undefined) editorSettings.value.columnFormatters = partial.columnFormatters;
     if (partial.customColumnFormatters !== undefined)
       editorSettings.value.customColumnFormatters = partial.customColumnFormatters;

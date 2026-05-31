@@ -79,6 +79,15 @@ export function tabTooltipLines(tab: QueryTab, t: Translate): { label: string; v
   return lines;
 }
 
+export function shouldShowTabOverflowControls(
+  tabCount: number,
+  hasTabOverflow: boolean,
+  canScrollLeft: boolean,
+  canScrollRight: boolean,
+): boolean {
+  return tabCount > 0 && (hasTabOverflow || canScrollLeft || canScrollRight);
+}
+
 export function tabModeLabel(tab: QueryTab, t: Translate): string {
   if (tab.mode === "data") return t("tabs.table");
   if (tab.mode === "query") return t("tabs.sql");

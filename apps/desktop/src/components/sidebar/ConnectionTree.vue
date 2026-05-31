@@ -163,6 +163,11 @@ const filteredNodes = computed(() => {
 const flatNodes = computed<FlatTreeNode[]>(() => flattenTree(filteredNodes.value));
 const useVirtualTree = computed(() => shouldVirtualizeFlatTree(flatNodes.value.length));
 const activeTab = computed(() => queryStore.tabs.find((tab) => tab.id === queryStore.activeTabId));
+const sidebarTreeOverflowClass = computed(() =>
+  settingsStore.editorSettings.sidebarAllowHorizontalScroll
+    ? "overflow-x-auto sidebar-tree-horizontal-scroll"
+    : "overflow-x-hidden",
+);
 
 const pendingRenameGroupId = ref<string | null>(null);
 const highlightedNodeId = ref<string | null>(null);
@@ -492,7 +497,8 @@ defineExpose({ focusSearch });
     <RecycleScroller
       v-if="flatNodes.length > 0 && useVirtualTree"
       ref="treeScrollerRef"
-      class="sidebar-tree connection-tree-scroller min-h-0 flex-1 overflow-y-auto overflow-x-auto"
+      class="sidebar-tree connection-tree-scroller min-h-0 flex-1 overflow-y-auto"
+      :class="sidebarTreeOverflowClass"
       :items="flatNodes"
       :item-size="SIDEBAR_TREE_ROW_HEIGHT"
       :buffer="SIDEBAR_TREE_SCROLL_BUFFER"
@@ -518,7 +524,8 @@ defineExpose({ focusSearch });
     <div
       v-else-if="flatNodes.length > 0"
       ref="plainTreeScrollerRef"
-      class="sidebar-tree min-h-0 flex-1 overflow-y-auto overflow-x-auto"
+      class="sidebar-tree min-h-0 flex-1 overflow-y-auto"
+      :class="sidebarTreeOverflowClass"
     >
       <TreeItem
         v-for="item in flatNodes"
@@ -546,6 +553,11 @@ defineExpose({ focusSearch });
 }
 
 .connection-tree-scroller :deep(.vue-recycle-scroller__item-view) {
-  contain: layout style paint;
+  min-width: 100%;
+  contain: style;
+}
+
+.connection-tree-scroller.sidebar-tree-horizontal-scroll :deep(.vue-recycle-scroller__item-view) {
+  width: max-content;
 }
 </style>

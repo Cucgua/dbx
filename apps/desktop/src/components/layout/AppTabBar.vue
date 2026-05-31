@@ -2,14 +2,31 @@
 import { computed, ref, watch, nextTick } from "vue";
 import type { CSSProperties } from "vue";
 import { useI18n } from "vue-i18n";
-import { X, Pin, ChevronDown, Table2, Code2, TableProperties, PencilRuler, Package, Check } from "lucide-vue-next";
+import {
+  X,
+  Pin,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Table2,
+  Code2,
+  TableProperties,
+  PencilRuler,
+  Package,
+  Check,
+} from "lucide-vue-next";
 import CustomContextMenu, { type ContextMenuItem } from "@/components/ui/CustomContextMenu.vue";
 import LightDropdown from "@/components/ui/LightDropdown.vue";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTabScroll } from "@/composables/useTabScroll";
-import { connectionColor, tabDisplayTitle, tabTooltipLines } from "@/lib/tabPresentation";
+import {
+  connectionColor,
+  shouldShowTabOverflowControls,
+  tabDisplayTitle,
+  tabTooltipLines,
+} from "@/lib/tabPresentation";
 import { hexToRgba } from "@/lib/color";
 import type { QueryTab } from "@/types/database";
 
@@ -70,7 +87,8 @@ function getTabMenuItems(tab: QueryTab): ContextMenuItem[] {
 }
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
-const { canScrollLeft, canScrollRight, updateScrollButtons } = useTabScroll(tabsContainerRef);
+const { hasTabOverflow, canScrollLeft, canScrollRight, updateScrollButtons, scrollTabs, onTabsWheel } =
+  useTabScroll(tabsContainerRef);
 const tabScrollBehavior = ref<ScrollBehavior>("smooth");
 
 watch(
@@ -146,21 +164,33 @@ function tabIconClass(tab: QueryTab) {
   return "text-blue-600 dark:text-blue-400";
 }
 
-const dataTabs = computed(() => queryStore.tabs.filter((tab) => tab.mode === "data"));
-const showPinnedDataTabsMenu = computed(
-  () => dataTabs.value.length > 0 && (canScrollLeft.value || canScrollRight.value),
+const showTabOverflowControls = computed(() =>
+  shouldShowTabOverflowControls(
+    queryStore.tabs.length,
+    hasTabOverflow.value,
+    canScrollLeft.value,
+    canScrollRight.value,
+  ),
 );
-const dataTabMenuItems = computed(() =>
-  dataTabs.value.map((tab) => ({
+
+const openTabMenuItems = computed(() =>
+  queryStore.tabs.map((tab) => ({
     value: tab.id,
     label: tabDisplayTitle(tab, t),
     title: tabDisplayTitle(tab, t),
-    icon: Table2,
-    iconClass: "text-emerald-600 dark:text-emerald-400",
+    icon: tabMenuIcon(tab),
+    iconClass: tabIconClass(tab),
   })),
 );
 
-function activateDataTab(tabId: string) {
+function tabMenuIcon(tab: QueryTab) {
+  if (tab.mode === "data") return Table2;
+  if (tab.mode === "objects") return TableProperties;
+  if (tab.mode === "structure") return PencilRuler;
+  return Code2;
+}
+
+function activateTab(tabId: string) {
   tabScrollBehavior.value = "auto";
   queryStore.activeTabId = tabId;
   emit("close-driver-store");
@@ -170,17 +200,16 @@ const tabsContainerStyle = computed<CSSProperties>(() => ({
   msOverflowStyle: "none",
   scrollbarWidth: "none",
   WebkitOverflowScrolling: "touch",
-  paddingRight: showPinnedDataTabsMenu.value && settingsStore.editorSettings.appLayout !== "classic" ? "28px" : "0px",
 }));
 
 const tabTailDragRegionClass = computed(() =>
-  showPinnedDataTabsMenu.value ? "w-0 flex-none self-stretch" : "min-w-8 flex-1 self-stretch",
+  showTabOverflowControls.value ? "w-0 flex-none self-stretch" : "min-w-8 flex-1 self-stretch",
 );
 
-const dataTabsMenuContainerClass = computed(() =>
+const tabOverflowControlClass = computed(() =>
   settingsStore.editorSettings.appLayout === "classic"
-    ? "relative z-30 flex shrink-0 items-stretch"
-    : "absolute inset-y-0 -right-2 z-30 flex items-stretch",
+    ? "h-full w-8 border-r border-border/80 dark:border-border/45 bg-background/80 text-foreground/75 hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40"
+    : "h-7 w-7 rounded-md border border-border/60 bg-background text-foreground/70 hover:border-border hover:text-foreground",
 );
 </script>
 
@@ -194,17 +223,25 @@ const dataTabsMenuContainerClass = computed(() =>
         : 'h-10 items-center bg-background px-2'
     "
   >
-    <div
-      v-if="canScrollLeft"
-      class="pointer-events-none absolute left-0 z-10 h-full w-6 bg-linear-to-r from-background from-40% to-transparent"
-      aria-hidden="true"
-    />
+    <button
+      v-if="showTabOverflowControls"
+      type="button"
+      class="z-30 shrink-0 inline-flex items-center justify-center"
+      :class="[tabOverflowControlClass, canScrollLeft ? '' : 'opacity-40']"
+      :aria-label="t('tabs.scrollLeft')"
+      :title="t('tabs.scrollLeft')"
+      :disabled="!canScrollLeft"
+      @click="scrollTabs('left')"
+    >
+      <ChevronLeft class="h-4 w-4 stroke-[2.5]" />
+    </button>
     <div
       ref="tabsContainerRef"
       class="flex-1 flex items-center overflow-x-auto min-w-0"
       :class="settingsStore.editorSettings.appLayout === 'classic' ? '' : 'gap-1.5'"
       :style="tabsContainerStyle"
       @scroll="updateScrollButtons"
+      @wheel="onTabsWheel"
     >
       <CustomContextMenu
         v-for="tab in queryStore.tabs"
@@ -311,29 +348,37 @@ const dataTabsMenuContainerClass = computed(() =>
       </div>
       <div :class="tabTailDragRegionClass" data-tauri-drag-region />
     </div>
-    <div
-      v-if="canScrollRight"
-      class="pointer-events-none absolute right-0 z-20 h-full w-6 bg-linear-to-l from-background from-40% to-transparent"
-      aria-hidden="true"
-    />
-    <div v-if="showPinnedDataTabsMenu" :class="dataTabsMenuContainerClass">
+    <div v-if="showTabOverflowControls" class="relative z-30 flex shrink-0 items-center">
+      <button
+        v-if="showTabOverflowControls"
+        type="button"
+        class="inline-flex shrink-0 items-center justify-center"
+        :class="[tabOverflowControlClass, canScrollRight ? '' : 'opacity-40']"
+        :aria-label="t('tabs.scrollRight')"
+        :title="t('tabs.scrollRight')"
+        :disabled="!canScrollRight"
+        @click="scrollTabs('right')"
+      >
+        <ChevronRight class="h-4 w-4 stroke-[2.5]" />
+      </button>
       <LightDropdown
         :model-value="queryStore.activeTabId || ''"
-        :items="dataTabMenuItems"
-        :aria-label="t('tabs.openDataTabs')"
+        :items="openTabMenuItems"
+        :aria-label="t('tabs.openTabs')"
+        :trigger-title="t('tabs.openTabs')"
         :trigger-icon="ChevronDown"
-        trigger-class="h-full w-7 rounded-none text-foreground/70 hover:text-foreground inline-flex items-center justify-center bg-background"
+        :trigger-class="['inline-flex shrink-0 items-center justify-center', tabOverflowControlClass].join(' ')"
         trigger-icon-class="h-4 w-4"
         item-icon-class="w-3.5 h-3.5 mr-2"
         item-class="max-w-full"
-        content-class="w-auto min-w-36 max-w-60"
+        content-class="w-auto min-w-48 max-w-72"
         :show-trigger-label="false"
         :show-chevron="false"
         :highlight-selected="false"
         :match-trigger-width="false"
         check-position="none"
         align="end"
-        @update:model-value="activateDataTab"
+        @update:model-value="activateTab"
       />
     </div>
   </div>

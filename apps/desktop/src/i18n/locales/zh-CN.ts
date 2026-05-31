@@ -362,6 +362,7 @@ export default {
     resultN: "结果 {n}",
     scrollLeft: "向左滚动标签页",
     scrollRight: "向右滚动标签页",
+    openTabs: "已打开的标签页",
     openDataTabs: "已打开的数据表",
   },
   chart: {
@@ -1468,6 +1469,8 @@ export default {
     sidebarHiddenTablePrefixesPlaceholder: "例如：\nODS_\nT8Y2_LONG_",
     sidebarHideTableComments: "隐藏侧边栏表注释",
     sidebarHideTableCommentsDescription: "隐藏侧边栏中表名旁边显示的表/视图注释，以节省横向空间。",
+    sidebarAllowHorizontalScroll: "允许侧边栏横向滚动",
+    sidebarAllowHorizontalScrollDescription: "完整显示较长的表、视图和集合名称；默认关闭以保留省略号截断。",
     snippetsDescription: "自定义编辑器中触发的 SQL 代码片段模板。",
     snippetsAdd: "添加片段",
     snippetsLabel: "显示名",
