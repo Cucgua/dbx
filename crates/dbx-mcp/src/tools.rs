@@ -342,7 +342,11 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         DatabaseType::OceanbaseOracle => "SYS",
         DatabaseType::Gbase => "gbasedbt",
         DatabaseType::H2 => "sa",
-        DatabaseType::Hive | DatabaseType::Trino | DatabaseType::Snowflake | DatabaseType::Bigquery | DatabaseType::Xugu => "",
+        DatabaseType::Hive
+        | DatabaseType::Trino
+        | DatabaseType::Snowflake
+        | DatabaseType::Bigquery
+        | DatabaseType::Xugu => "",
         DatabaseType::Db2 => "db2inst1",
         DatabaseType::Informix => "informix",
         DatabaseType::Neo4j => "neo4j",
