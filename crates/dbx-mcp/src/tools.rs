@@ -312,6 +312,7 @@ fn default_port(db_type: DatabaseType) -> u16 {
         DatabaseType::Kylin => 7070,
         DatabaseType::Sundb => 22000,
         DatabaseType::Tdengine => 6041,
+        DatabaseType::Xugu => 5138,
         DatabaseType::Iris => 1972,
     }
 }
@@ -341,7 +342,7 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         DatabaseType::OceanbaseOracle => "SYS",
         DatabaseType::Gbase => "gbasedbt",
         DatabaseType::H2 => "sa",
-        DatabaseType::Hive | DatabaseType::Trino | DatabaseType::Snowflake | DatabaseType::Bigquery => "",
+        DatabaseType::Hive | DatabaseType::Trino | DatabaseType::Snowflake | DatabaseType::Bigquery | DatabaseType::Xugu => "",
         DatabaseType::Db2 => "db2inst1",
         DatabaseType::Informix => "informix",
         DatabaseType::Neo4j => "neo4j",
