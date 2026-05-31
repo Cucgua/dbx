@@ -349,6 +349,8 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
                     name: row.get_string(0).unwrap_or("").to_string(),
                     table_type: row.get_string(1).unwrap_or("TABLE").to_string(),
                     comment: row.get_string(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                    parent_schema: None,
+                    parent_name: None,
                 })
                 .collect())
         }
@@ -362,6 +364,8 @@ pub async fn list_tables(conn: &OracleClient, schema: &str) -> Result<Vec<TableI
                         name: oci_string(&row, 0),
                         table_type: oci_string(&row, 1),
                         comment: Some(oci_string(&row, 2)).filter(|s| !s.is_empty()),
+                        parent_schema: None,
+                        parent_name: None,
                     });
                 }
                 Ok(tables)
@@ -411,6 +415,8 @@ pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate
                     comment: row.get_string(2).filter(|s| !s.is_empty()).map(|s| s.to_string()),
                     created_at: row.get_string(3).filter(|s| !s.is_empty()).map(|s| s.to_string()),
                     updated_at: row.get_string(4).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                    parent_schema: None,
+                    parent_name: None,
                 })
                 .collect())
         }
@@ -428,6 +434,8 @@ pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate
                         comment: Some(oci_string(&row, 2)).filter(|s| !s.is_empty()),
                         created_at: Some(oci_string(&row, 3)).filter(|s| !s.is_empty()),
                         updated_at: Some(oci_string(&row, 4)).filter(|s| !s.is_empty()),
+                        parent_schema: None,
+                        parent_name: None,
                     });
                 }
                 Ok(objects)
