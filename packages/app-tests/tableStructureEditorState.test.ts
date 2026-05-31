@@ -5,6 +5,7 @@ import {
   combineDataTypeForDatabase,
   createColumnDrafts,
   createIndexDrafts,
+  getDataTypeOptions,
   normalizeDataTypeParams,
   parseExtraToColumnExtra,
   toColumnNames,
@@ -158,4 +159,12 @@ test("normalizes temporal precision when combining data types", () => {
   assert.equal(combineDataTypeForDatabase("mysql", "varchar", "255"), "varchar(255)");
   assert.equal(normalizeDataTypeParams("oracle", "timestamp", "9"), "9");
   assert.equal(normalizeDataTypeParams("oracle", "timestamp", "10"), "");
+});
+
+test("returns data type options for compatible table structure editors", () => {
+  assert.deepEqual(getDataTypeOptions("dameng"), getDataTypeOptions("oracle"));
+  assert.deepEqual(getDataTypeOptions("gaussdb"), getDataTypeOptions("postgres"));
+  assert.deepEqual(getDataTypeOptions("doris"), getDataTypeOptions("mysql"));
+  assert.equal(getDataTypeOptions("dameng").includes("varchar2"), true);
+  assert.equal(getDataTypeOptions("sqlserver").includes("nvarchar"), true);
 });

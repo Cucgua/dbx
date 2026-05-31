@@ -91,6 +91,7 @@
       "skipTcpProbe": true,
       "defaultPort": 1521,
       "driverProfiles": [
+        { "profile": "oracle-legacy", "label": "Oracle Legacy", "agentKey": "oracle-legacy" },
         { "profile": "oracle-10g", "label": "Oracle 10g", "agentKey": "oracle-10g" }
       ]
     },
@@ -448,6 +449,17 @@
       "metadataConnectionScoped": false,
       "skipTcpProbe": true,
       "defaultPort": 6041
+    },
+    {
+      "dbType": "xugu",
+      "label": "虚谷 XuguDB",
+      "runtimeMode": "agent",
+      "mcpMode": "bridge",
+      "agentKey": "xugu",
+      "singleConnectionPool": false,
+      "metadataConnectionScoped": false,
+      "skipTcpProbe": true,
+      "defaultPort": 5138
     },
     {
       "dbType": "jdbc",

@@ -45,6 +45,7 @@ const SCHEME_PROFILES: Record<string, ConnectionProfile> = {
   opengauss: { type: "gaussdb", profile: "opengauss", label: "openGauss", defaultPort: 5432 },
   tdengine: { type: "tdengine", profile: "tdengine", label: "TDengine", defaultPort: 6041 },
   "taos-ws": { type: "tdengine", profile: "tdengine", label: "TDengine", defaultPort: 6041 },
+  xugu: { type: "xugu", profile: "xugu", label: "XuguDB", defaultPort: 5138 },
   iris: { type: "iris", profile: "iris", label: "IRIS", defaultPort: 1972 },
 };
 
@@ -76,6 +77,30 @@ function queryParamValue(params: string, key: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function extractMysqlCredentialParams(params: string): { username?: string; password?: string; urlParams: string } {
+  let username: string | undefined;
+  let password: string | undefined;
+  let foundCredentialParam = false;
+  const urlParams: string[] = [];
+
+  for (const part of params.split(/[&;]/)) {
+    if (!part) continue;
+    const [rawKey, ...rest] = part.split("=");
+    const key = decodeUrlPart(rawKey).trim().toLowerCase();
+    if (key === "user") {
+      username = decodeUrlPart(rest.join("=")).trim();
+      foundCredentialParam = true;
+    } else if (key === "password") {
+      password = decodeUrlPart(rest.join("=")).trim();
+      foundCredentialParam = true;
+    } else {
+      urlParams.push(part);
+    }
+  }
+
+  return { username, password, urlParams: foundCredentialParam ? urlParams.join("&") : params };
 }
 
 function urlParamsRequireTls(dbType: DatabaseType, params: string): boolean {
@@ -140,6 +165,30 @@ function parseJdbcSqlServerUrl(source: string): ParsedConnectionUrl | null {
 }
 
 function parseJdbcOracleUrl(source: string): ParsedConnectionUrl | null {
+  const descriptorMatch = source.match(/^jdbc:oracle:thin:@\s*\((.+)\)\s*$/i);
+  if (descriptorMatch) {
+    const profile = SCHEME_PROFILES.oracle;
+    const host = oracleDescriptorValue(source, "HOST");
+    const port = oracleDescriptorValue(source, "PORT");
+    const serviceName = oracleDescriptorValue(source, "SERVICE_NAME");
+    const sid = oracleDescriptorValue(source, "SID");
+    if (!host) return null;
+    return {
+      dbType: profile.type,
+      driverProfile: profile.profile,
+      driverLabel: profile.label,
+      host,
+      port: port ? Number(port) : profile.defaultPort,
+      username: "",
+      password: "",
+      database: serviceName || sid || undefined,
+      urlParams: "",
+      ssl: false,
+      connectionString: source,
+      oracleConnectionType: sid && !serviceName ? "sid" : "service_name",
+    };
+  }
+
   const serviceMatch = source.match(/^jdbc:oracle:thin:@\/\/([^:/?#]+)(?::(\d+))?\/([^?]+)(?:\?(.*))?$/i);
   if (serviceMatch) {
     const profile = SCHEME_PROFILES.oracle;
@@ -179,6 +228,11 @@ function parseJdbcOracleUrl(source: string): ParsedConnectionUrl | null {
   return null;
 }
 
+function oracleDescriptorValue(source: string, key: string): string | undefined {
+  const match = new RegExp(`\\(${key}\\s*=\\s*([^\\)]+)\\)`, "i").exec(source);
+  return match?.[1]?.trim();
+}
+
 function parseJdbcUCanAccessUrl(source: string): ParsedConnectionUrl | null {
   const match = source.match(/^jdbc:ucanaccess:\/\/(.+?)(?:;.*)?$/i);
   if (!match) return null;
@@ -213,7 +267,8 @@ export function parseConnectionUrl(value: string, preferredProfile?: string): Pa
   if (jdbcOracle) return jdbcOracle;
   const jdbcSqlServer = parseJdbcSqlServerUrl(input);
   if (jdbcSqlServer) return jdbcSqlServer;
-  const source = input.replace(/^jdbc:/i, "");
+  const isJdbcUrl = /^jdbc:/i.test(input);
+  const source = isJdbcUrl ? input.replace(/^jdbc:/i, "") : input;
 
   let parsed: URL;
   try {
@@ -229,6 +284,14 @@ export function parseConnectionUrl(value: string, preferredProfile?: string): Pa
   }
 
   const urlParams = parsed.search.replace(/^\?/, "");
+  const normalizedFragment = decodeUrlPart(parsed.hash.replace(/^#/, "")).trim().toLowerCase();
+  const parsedUrlParams =
+    profile.type === "redis" && normalizedFragment === "insecure"
+      ? [urlParams, "insecure=true"].filter(Boolean).join("&")
+      : urlParams;
+  const mysqlCredentials =
+    isJdbcUrl && profile.type === "mysql" ? extractMysqlCredentialParams(parsedUrlParams) : undefined;
+  const effectiveUrlParams = mysqlCredentials?.urlParams ?? parsedUrlParams;
   if (profile.type === "mongodb") {
     return {
       dbType: profile.type,
@@ -239,7 +302,7 @@ export function parseConnectionUrl(value: string, preferredProfile?: string): Pa
       username: decodeUrlPart(parsed.username),
       password: decodeUrlPart(parsed.password),
       database: databaseFromPath(parsed.pathname),
-      urlParams,
+      urlParams: parsedUrlParams,
       ssl: scheme === "mongodb+srv",
       connectionString: source,
       useMongoUrl: true,
@@ -252,11 +315,11 @@ export function parseConnectionUrl(value: string, preferredProfile?: string): Pa
     driverLabel: profile.label,
     host: parsed.hostname,
     port: parsed.port ? Number(parsed.port) : profile.defaultPort,
-    username: decodeUrlPart(parsed.username),
-    password: decodeUrlPart(parsed.password),
+    username: mysqlCredentials?.username ?? decodeUrlPart(parsed.username),
+    password: mysqlCredentials?.password ?? decodeUrlPart(parsed.password),
     database: databaseFromPath(parsed.pathname),
-    urlParams,
-    ssl: scheme === "rediss" || scheme === "https" || urlParamsRequireTls(profile.type, urlParams),
+    urlParams: effectiveUrlParams,
+    ssl: scheme === "rediss" || scheme === "https" || urlParamsRequireTls(profile.type, effectiveUrlParams),
   };
 }
 

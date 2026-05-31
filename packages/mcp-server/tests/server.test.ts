@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import type { Backend, ConnectionConfig } from "@dbx-app/node-core";
-import { createDbxMcpServer } from "../src/index.js";
+import { createDbxMcpServer, DBX_MCP_PACKAGE_VERSION } from "../src/index.js";
 
 const connection: ConnectionConfig = {
   id: "1",
@@ -34,6 +37,23 @@ test("creates an MCP server without starting stdio transport", () => {
   assert.equal(typeof server.connect, "function");
 });
 
+test("MCP server metadata version matches package metadata", () => {
+  const server = createDbxMcpServer(backend, { isWebMode: true });
+
+  assert.equal((server as any).server._serverInfo.version, DBX_MCP_PACKAGE_VERSION);
+});
+
+test("README runtime requirements match package engines", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf-8")) as {
+    engines: { node: string };
+  };
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf-8");
+  const minimumNodeVersion = packageJson.engines.node.replace(">=", "");
+
+  assert.match(readme, new RegExp(`Node\\.js ${minimumNodeVersion.replace(/\./g, "\\.")} or newer`));
+  assert.match(readme, new RegExp(`Node\\.js ${minimumNodeVersion.replace(/\./g, "\\.")} 或更高版本`));
+});
+
 test("execute query scopes the connection to the requested database", async () => {
   let usedDatabase = "";
   const scopedBackend: Backend = {
@@ -52,6 +72,48 @@ test("execute query scopes the connection to the requested database", async () =
   });
 
   assert.equal(usedDatabase, "stores_demo");
+});
+
+test("execute query runs safe multi-statement SQL one statement at a time", async () => {
+  const executed: string[] = [];
+  const scopedBackend: Backend = {
+    ...backend,
+    executeQuery: async (_config, sql) => {
+      executed.push(sql);
+      return { columns: ["value"], rows: [{ value: executed.length }], row_count: 1 };
+    },
+  };
+  const server = createDbxMcpServer(scopedBackend, { isWebMode: true });
+
+  const result = await (server as any)._registeredTools.dbx_execute_query.handler({
+    connection_name: "local",
+    sql: "select 1; select 2;",
+  });
+
+  assert.deepEqual(executed, ["select 1", "select 2"]);
+  assert.match(result.content[0].text, /Statement 1/);
+  assert.match(result.content[0].text, /Statement 2/);
+});
+
+test("execute query reports the blocked statement number for unsafe multi-statement SQL", async () => {
+  const oldAllowWrites = process.env.DBX_MCP_ALLOW_WRITES;
+  process.env.DBX_MCP_ALLOW_WRITES = "1";
+  const server = createDbxMcpServer(backend, { isWebMode: true });
+
+  try {
+    const result = await (server as any)._registeredTools.dbx_execute_query.handler({
+      connection_name: "local",
+      sql: "select 1; delete from users;",
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /SQL_BLOCKED:/);
+    assert.match(result.content[0].text, /Statement 2/);
+    assert.match(result.content[0].text, /WHERE/);
+  } finally {
+    if (oldAllowWrites === undefined) delete process.env.DBX_MCP_ALLOW_WRITES;
+    else process.env.DBX_MCP_ALLOW_WRITES = oldAllowWrites;
+  }
 });
 
 test("mongodb list tables returns collections from the selected database", async () => {
@@ -104,7 +166,7 @@ test("mongodb execute query formats shell-style find results", async () => {
   const scopedBackend: Backend = {
     ...backend,
     findConnection: async () => mongoConnection,
-    executeQuery: async () => ({ columns: ["_id", "name"], rows: [{ _id: "1", name: "demo" }], row_count: 1 }),
+    executeQuery: async () => ({ columns: ["_id", "meta", "missing"], rows: [{ _id: "1", meta: { name: "demo" }, missing: null }], row_count: 1 }),
   };
   const server = createDbxMcpServer(scopedBackend, { isWebMode: true });
 
@@ -114,8 +176,74 @@ test("mongodb execute query formats shell-style find results", async () => {
     sql: "db.projects.find({}).limit(1)",
   });
 
-  assert.match(result.content[0].text, /demo/);
+  assert.match(result.content[0].text, /"name":"demo"/);
+  assert.match(result.content[0].text, /NULL/);
   assert.match(result.content[0].text, /1 row\(s\)/);
+});
+
+test("connection lookup failures include a stable MCP error code", async () => {
+  const server = createDbxMcpServer(backend, { isWebMode: true });
+
+  const result = await (server as any)._registeredTools.dbx_list_tables.handler({
+    connection_name: "missing",
+  });
+
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /CONNECTION_NOT_FOUND:/);
+  assert.match(result.content[0].text, /missing/);
+});
+
+test("SQL safety failures include a stable MCP error code", async () => {
+  const server = createDbxMcpServer(backend, { isWebMode: true });
+
+  const result = await (server as any)._registeredTools.dbx_execute_query.handler({
+    connection_name: "local",
+    sql: "drop table users",
+  });
+
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /SQL_BLOCKED:/);
+  assert.match(result.content[0].text, /Dangerous SQL/);
+});
+
+test("query exceptions include a stable MCP error code", async () => {
+  const scopedBackend: Backend = {
+    ...backend,
+    executeQuery: async () => {
+      throw new Error("database timeout");
+    },
+  };
+  const server = createDbxMcpServer(scopedBackend, { isWebMode: true });
+
+  const result = await (server as any)._registeredTools.dbx_execute_query.handler({
+    connection_name: "local",
+    sql: "select 1",
+  });
+
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /QUERY_ERROR: database timeout/);
+});
+
+test("desktop bridge failures include a stable MCP error code", async () => {
+  const oldHome = process.env.HOME;
+  const dir = await mkdtemp(join(tmpdir(), "dbx-mcp-home-"));
+  process.env.HOME = dir;
+
+  try {
+    const server = createDbxMcpServer(backend, { isWebMode: false });
+    const result = await (server as any)._registeredTools.dbx_open_table.handler({
+      connection_name: "local",
+      table: "users",
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /DBX_NOT_RUNNING:/);
+    assert.match(result.content[0].text, /DBX is not running/);
+  } finally {
+    if (oldHome === undefined) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("mongodb execute-and-show blocks aggregate write stages before desktop bridge", async () => {
@@ -137,7 +265,7 @@ test("mongodb execute-and-show blocks aggregate write stages before desktop brid
       sql: 'db.projects.aggregate([{"$out":"projects_dump"}])',
     });
 
-    assert.match(result.content[0].text, /Query blocked:/);
+    assert.match(result.content[0].text, /SQL_BLOCKED:/);
     assert.match(result.content[0].text, /DBX_MCP_ALLOW_WRITES=1/);
   } finally {
     if (oldAllowWrites === undefined) delete process.env.DBX_MCP_ALLOW_WRITES;

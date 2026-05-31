@@ -178,6 +178,16 @@ function applyFilter() {
   load();
 }
 
+function onSort(column: string, _columnIndex: number, direction: "asc" | "desc" | null) {
+  if (direction) {
+    sortInput.value = JSON.stringify({ [column]: direction === "asc" ? 1 : -1 });
+  } else {
+    sortInput.value = "";
+  }
+  page.value = 0;
+  load();
+}
+
 function asRecord(value: unknown): JsonRecord {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as JsonRecord;
@@ -491,6 +501,7 @@ onMounted(load);
       context="results"
       editable
       :custom-save="gridSave"
+      @sort="onSort"
       @reload="load"
     >
       <template #search-bar>

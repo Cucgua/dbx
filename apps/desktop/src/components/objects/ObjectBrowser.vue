@@ -11,6 +11,8 @@ import {
   Code2,
   Copy,
   CopyPlus,
+  ChevronDown,
+  ChevronRight,
   Download,
   Eraser,
   Eye,
@@ -142,6 +144,7 @@ const showDuplicateDialog = ref(false);
 const duplicateTarget = ref<ObjectBrowserRow | null>(null);
 const duplicateTableName = ref("");
 const selectedTableIds = ref<Set<string>>(new Set());
+const expandedPartitionParentIds = ref<Set<string>>(new Set());
 const showBatchDropConfirm = ref(false);
 const batchDropPreviewSql = ref("");
 let loadId = 0;
@@ -195,17 +198,17 @@ const gridTemplateColumns = computed(() => {
   if (hasComments.value) columns.push("minmax(160px,0.7fr)");
   return columns.join(" ");
 });
-const searchedRows = computed(() => {
-  return filterObjectBrowserRows(rows.value, search.value);
+const partitionRowsByParentId = computed(() => {
+  const groups = new Map<string, ObjectBrowserRow[]>();
+  for (const row of rows.value) {
+    if (!row.partitionParentId) continue;
+    const group = groups.get(row.partitionParentId) ?? [];
+    group.push(row);
+    groups.set(row.partitionParentId, group);
+  }
+  return groups;
 });
-const filteredRows = computed(() => {
-  let rows = searchedRows.value;
-  if (objectFilter.value === "tables") rows = rows.filter((row) => row.type === "TABLE");
-  if (objectFilter.value === "views") rows = rows.filter((row) => row.type === "VIEW");
-  if (objectFilter.value === "procedures") rows = rows.filter((row) => row.type === "PROCEDURE");
-  if (objectFilter.value === "functions") rows = rows.filter((row) => row.type === "FUNCTION");
-  return sortObjectBrowserRows(rows, sortKey.value, sortDirection.value);
-});
+const filteredRows = computed(() => groupedFilteredRows());
 const selectableRows = computed(() => rows.value.filter((row) => row.type === "TABLE"));
 const visibleSelectableRows = computed(() => filteredRows.value.filter((row) => row.type === "TABLE"));
 const selectedTableRows = computed(() => {
@@ -247,11 +250,63 @@ function toggleSort(key: ObjectBrowserSortKey) {
   sortDirection.value = initialObjectBrowserSortDirection(key);
 }
 
+function rowMatchesObjectFilter(row: ObjectBrowserRow) {
+  if (objectFilter.value === "tables") return row.type === "TABLE";
+  if (objectFilter.value === "views") return row.type === "VIEW";
+  if (objectFilter.value === "procedures") return row.type === "PROCEDURE";
+  if (objectFilter.value === "functions") return row.type === "FUNCTION";
+  return true;
+}
+
+function groupedFilteredRows() {
+  const query = search.value.trim();
+  const candidateRows = rows.value.filter(rowMatchesObjectFilter);
+  const candidateIds = new Set(candidateRows.map((row) => row.id));
+  const matchingRows = filterObjectBrowserRows(candidateRows, query);
+  const matchingIds = new Set(matchingRows.map((row) => row.id));
+  const parentIdsWithMatchingPartitions = new Set(
+    matchingRows.flatMap((row) => (row.partitionParentId ? [row.partitionParentId] : [])),
+  );
+  const rootRows = candidateRows.filter((row) => {
+    if (row.partitionParentId) return false;
+    if (!query) return true;
+    return matchingIds.has(row.id) || parentIdsWithMatchingPartitions.has(row.id);
+  });
+  const sortedRoots = sortObjectBrowserRows(rootRows, sortKey.value, sortDirection.value);
+  const result: ObjectBrowserRow[] = [];
+
+  for (const row of sortedRoots) {
+    result.push(row);
+    const partitions = partitionRowsByParentId.value.get(row.id)?.filter((partition) => candidateIds.has(partition.id));
+    if (!partitions?.length) continue;
+    const parentMatches = matchingIds.has(row.id);
+    const shouldShowPartitions = expandedPartitionParentIds.value.has(row.id) || !!query;
+    if (!shouldShowPartitions) continue;
+    const visiblePartitions =
+      query && !parentMatches ? partitions.filter((partition) => matchingIds.has(partition.id)) : partitions;
+    result.push(...sortObjectBrowserRows(visiblePartitions, sortKey.value, sortDirection.value));
+  }
+
+  return result;
+}
+
 function iconClass(type: ObjectBrowserRow["type"]) {
   if (type === "VIEW") return "text-purple-500";
   if (type === "PROCEDURE") return "text-blue-500";
   if (type === "FUNCTION") return "text-amber-500";
   return "text-green-500";
+}
+
+function isPartitionParentExpanded(row: ObjectBrowserRow) {
+  return expandedPartitionParentIds.value.has(row.id);
+}
+
+function togglePartitionParent(row: ObjectBrowserRow) {
+  if (!row.partitionCount) return;
+  const next = new Set(expandedPartitionParentIds.value);
+  if (next.has(row.id)) next.delete(row.id);
+  else next.add(row.id);
+  expandedPartitionParentIds.value = next;
 }
 
 function canOpenSource(row: ObjectBrowserRow) {
@@ -945,6 +1000,11 @@ async function loadObjects() {
     });
     const availableTableIds = new Set(rows.value.filter((row) => row.type === "TABLE").map((row) => row.id));
     setSelectedTableIds(new Set([...selectedTableIds.value].filter((id) => availableTableIds.has(id))));
+    expandedPartitionParentIds.value = new Set(
+      [...expandedPartitionParentIds.value].filter((id) =>
+        rows.value.some((row) => row.id === id && row.partitionCount),
+      ),
+    );
   } catch (e: any) {
     if (id !== loadId) return;
     error.value = e?.message || String(e);
@@ -1305,8 +1365,25 @@ function getObjectBrowserMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
                 <Square v-else class="h-3.5 w-3.5" />
               </button>
               <div class="flex min-w-0 items-center gap-2">
+                <button
+                  v-if="item.partitionCount"
+                  type="button"
+                  class="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+                  :aria-label="t('objects.partitions', { count: item.partitionCount })"
+                  @click.stop="togglePartitionParent(item)"
+                >
+                  <ChevronDown v-if="isPartitionParentExpanded(item)" class="h-3.5 w-3.5" />
+                  <ChevronRight v-else class="h-3.5 w-3.5" />
+                </button>
+                <span v-else class="h-5 w-5 shrink-0" :class="{ 'ml-4': item.partitionParentId }" />
                 <component :is="iconFor(item)" class="h-3.5 w-3.5 shrink-0" :class="iconClass(item.type)" />
                 <span class="truncate text-[13px] font-medium text-foreground">{{ item.name }}</span>
+                <span
+                  v-if="item.partitionCount"
+                  class="shrink-0 rounded border bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground"
+                >
+                  {{ t("objects.partitions", { count: item.partitionCount }) }}
+                </span>
               </div>
               <div class="truncate text-xs text-muted-foreground">{{ typeLabel(item.type) }}</div>
               <div
@@ -1391,6 +1468,7 @@ function getObjectBrowserMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
             class="min-h-0 flex-1"
             :connection-id="props.connection.id"
             :database="props.database"
+            :database-type="props.connection.db_type"
             :dialect="sourceDialect"
             :format-dialect="sourceFormatDialect"
             force-word-wrap
@@ -1407,6 +1485,7 @@ function getObjectBrowserMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
           class="min-h-0 flex-1"
           :connection-id="props.connection.id"
           :database="props.database"
+          :database-type="props.connection.db_type"
           :dialect="sourceDialect"
           :format-dialect="sourceFormatDialect"
           force-word-wrap

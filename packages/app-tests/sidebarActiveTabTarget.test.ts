@@ -81,7 +81,7 @@ test("saved SQL tabs target the matching visible saved SQL file node", () => {
   assert.equal(findSidebarNodeForActiveTab(tab, [flat(file)])?.id, "file-node");
 });
 
-test("query tabs without a saved SQL file have no sidebar target", () => {
+test("query tabs target their database node in the sidebar", () => {
   const tab: QueryTab = {
     id: "tab-1",
     title: "Query 1",
@@ -92,10 +92,27 @@ test("query tabs without a saved SQL file have no sidebar target", () => {
     mode: "query",
   };
 
-  assert.equal(activeTabSidebarTarget(tab), null);
-  assert.equal(findSidebarNodeForActiveTab(tab, []), null);
+  assert.deepEqual(activeTabSidebarTarget(tab), {
+    type: "query-context",
+    connectionId: "conn-1",
+    database: "app",
+    schema: undefined,
+  });
 });
 
+test("query tabs without connectionId have no sidebar target", () => {
+  const tab: QueryTab = {
+    id: "tab-1",
+    title: "Query 1",
+    connectionId: "",
+    database: "",
+    sql: "select 1",
+    isExecuting: false,
+    mode: "query",
+  };
+
+  assert.equal(activeTabSidebarTarget(tab), null);
+});
 test("sidebar target lookup only uses the current flat visible tree", () => {
   const tab: QueryTab = {
     id: "tab-1",

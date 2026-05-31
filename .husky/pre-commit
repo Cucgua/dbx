@@ -4,10 +4,10 @@ pnpm exec lint-staged
 TOPLEVEL=$(git rev-parse --show-toplevel)
 
 format_staged_rust() {
-  local dir="$1"
-  local staged=""
-  staged=$(git diff --staged --name-only --diff-filter=ACM -- ":(top,literal)$dir/*.rs" ":(top,literal)$dir/**/*.rs" 2>/dev/null)
+  dir="$1"
+  staged=$(git diff --staged --name-only --diff-filter=ACM -- "$dir" | grep '\.rs$' || true)
   if [ -n "$staged" ]; then
+    echo "Formatting staged Rust files in $dir"
     cargo fmt --manifest-path "$TOPLEVEL/$dir/Cargo.toml"
     echo "$staged" | while IFS= read -r f; do
       git add "$TOPLEVEL/$f" 2>/dev/null || true

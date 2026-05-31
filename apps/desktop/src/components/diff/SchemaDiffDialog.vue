@@ -372,7 +372,10 @@ watch(
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" @interact-outside.prevent>
+    <DialogContent
+      class="min-w-[min(720px,calc(100vw-2rem))] resize-x sm:max-w-5xl max-h-[80vh] flex flex-col overflow-hidden"
+      @interact-outside.prevent
+    >
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <GitCompareArrows class="w-4 h-4" />

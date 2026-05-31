@@ -97,6 +97,7 @@ export interface DriverStoreUsage {
 
 export interface DesktopSettings {
   show_tray_icon: boolean;
+  icon_theme: "default" | "black";
 }
 
 export interface WebDavConfig {
@@ -390,6 +391,10 @@ export async function connectDb(config: ConnectionConfig): Promise<string> {
 
 export async function disconnectDb(connectionId: string): Promise<void> {
   return invoke("disconnect_db", { connectionId });
+}
+
+export async function closeDatabaseConnection(connectionId: string, database: string): Promise<boolean> {
+  return invoke("close_database_connection", { connectionId, database });
 }
 
 export async function listDatabases(connectionId: string): Promise<DatabaseInfo[]> {
@@ -925,6 +930,7 @@ export interface UpdateInfo {
   current_version: string;
   latest_version: string;
   update_available: boolean;
+  portable_mode: boolean;
   release_name: string;
   release_url: string;
   release_notes: string;

@@ -28,6 +28,7 @@ test("uses the selected Oracle driver profile for install hints", () => {
       "oracle",
       [
         { db_type: "oracle", installed: false },
+        { db_type: "oracle-legacy", installed: false },
         { db_type: "oracle-10g", installed: true },
       ],
       "oracle-10g",
@@ -39,9 +40,22 @@ test("uses the selected Oracle driver profile for install hints", () => {
       "oracle",
       [
         { db_type: "oracle", installed: true },
+        { db_type: "oracle-legacy", installed: false },
         { db_type: "oracle-10g", installed: false },
       ],
       "oracle",
+    ),
+    false,
+  );
+  assert.equal(
+    showAgentDriverInstallHint(
+      "oracle",
+      [
+        { db_type: "oracle", installed: true },
+        { db_type: "oracle-legacy", installed: true },
+        { db_type: "oracle-10g", installed: false },
+      ],
+      "oracle-legacy",
     ),
     false,
   );

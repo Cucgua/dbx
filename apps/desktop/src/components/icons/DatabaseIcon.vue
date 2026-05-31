@@ -20,7 +20,9 @@ const assetIcons: Record<string, string> = {
   elasticsearch: "elasticsearch",
   oracle: "oracle",
   "oracle-10g": "oracle",
+  "oracle-legacy": "oracle",
   oracle_10g: "oracle",
+  oracle_legacy: "oracle",
   sqlserver: "sqlserver",
   access: "access.png",
   oceanbase: "oceanbase",
@@ -62,6 +64,7 @@ const assetIcons: Record<string, string> = {
   tdsql: "tdsql.webp",
   polardb: "polardb.webp",
   greatsql: "greatsql.webp",
+  xugu: "xugu.png",
   iris: "iris.png",
 };
 

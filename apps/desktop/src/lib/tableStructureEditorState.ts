@@ -230,6 +230,27 @@ export const DATA_TYPE_OPTIONS: Record<string, string[]> = {
   ],
 };
 
+const DATA_TYPE_OPTION_ALIASES: Partial<Record<DatabaseType, string>> = {
+  doris: "mysql",
+  starrocks: "mysql",
+  goldendb: "mysql",
+  sundb: "mysql",
+  gaussdb: "postgres",
+  opengauss: "postgres",
+  redshift: "postgres",
+  highgo: "postgres",
+  vastbase: "postgres",
+  kingbase: "postgres",
+  dameng: "oracle",
+  "oceanbase-oracle": "oracle",
+  iris: "oracle",
+};
+
+export function getDataTypeOptions(dbType: DatabaseType | undefined): string[] {
+  const key = dbType ? (DATA_TYPE_OPTION_ALIASES[dbType] ?? dbType) : "";
+  return DATA_TYPE_OPTIONS[key] ?? [];
+}
+
 export const DEFAULT_TYPE_LENGTHS: Record<string, string> = {
   tinyint: "4",
   smallint: "6",

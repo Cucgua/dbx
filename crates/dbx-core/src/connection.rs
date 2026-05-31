@@ -9,7 +9,7 @@ use mysql_async::Row as MysqlRow;
 
 use crate::agent_connection::{
     agent_connect_params, mongo_legacy_error_with_auth_hint, oracle_alternate_connect_config,
-    should_retry_oracle_with_10g_driver,
+    oracle_auth_fallback_profiles, should_retry_oracle_with_10g_driver,
 };
 use crate::database_capabilities;
 use crate::db;
@@ -180,7 +180,7 @@ impl AppState {
         };
 
         let base_pool_key = base_pool_key_for(db_type, connection_id, database, false);
-        let pool_key = session_scoped_pool_key(base_pool_key, client_session_id);
+        let pool_key = session_scoped_pool_key_for(db_type, base_pool_key, client_session_id);
 
         let conns = self.connections.read().await;
         if conns.contains_key(&pool_key) {
@@ -340,6 +340,7 @@ impl AppState {
             | DatabaseType::Kylin
             | DatabaseType::Sundb
             | DatabaseType::Tdengine
+            | DatabaseType::Xugu
             | DatabaseType::Iris
             | DatabaseType::Access => {
                 let connect_params =
@@ -372,19 +373,39 @@ impl AppState {
                             })?;
                     } else if should_retry_oracle_with_10g_driver(&db_config, &err) {
                         log::warn!(
-                            "Oracle connect failed with profile {:?}: {}. Retrying with oracle-10g profile.",
+                            "Oracle connect failed with profile {:?}: {}. Retrying with legacy Oracle profiles.",
                             db_config.driver_profile,
                             err
                         );
-                        let mut fallback_client =
-                            self.agent_manager.spawn(&db_config.db_type, Some("oracle-10g")).await?;
-                        fallback_client
-                            .call_method::<serde_json::Value>(AgentMethod::Connect, connect_params)
-                            .await
-                            .map_err(|fallback_err| {
-                                format!("{err}\n\nFallback with oracle-10g driver failed: {fallback_err}")
-                            })?;
-                        client = fallback_client;
+                        let mut fallback_errors = Vec::new();
+                        let mut connected_client = None;
+                        for profile in oracle_auth_fallback_profiles(&db_config, &err) {
+                            match self.agent_manager.spawn(&db_config.db_type, Some(profile)).await {
+                                Ok(mut fallback_client) => {
+                                    match fallback_client
+                                        .call_method::<serde_json::Value>(AgentMethod::Connect, connect_params.clone())
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            connected_client = Some(fallback_client);
+                                            break;
+                                        }
+                                        Err(fallback_err) => {
+                                            fallback_errors.push(format!("{profile}: {fallback_err}"));
+                                        }
+                                    }
+                                }
+                                Err(fallback_err) => {
+                                    fallback_errors.push(format!("{profile}: {fallback_err}"));
+                                }
+                            }
+                        }
+                        client = connected_client.ok_or_else(|| {
+                            format!(
+                                "{err}\n\nFallback with legacy Oracle drivers failed: {}",
+                                fallback_errors.join("\n")
+                            )
+                        })?;
                     } else {
                         return Err(err);
                     }
@@ -510,7 +531,7 @@ impl AppState {
             configs.get(connection_id).map(|c| c.db_type)
         };
         let base_pool_key = base_pool_key_for(db_type, connection_id, database, true);
-        let pool_key = session_scoped_pool_key(base_pool_key, client_session_id);
+        let pool_key = session_scoped_pool_key_for(db_type, base_pool_key, client_session_id);
         if self.uses_forwarded_transport(connection_id).await {
             self.remove_connection_pools(connection_id).await;
             self.reset_connection_transport(connection_id).await;
@@ -538,7 +559,10 @@ impl AppState {
             configs.get(connection_id).map(|c| c.db_type)
         };
         let base_pool_key = base_pool_key_for(db_type, connection_id, database, false);
-        let pool_key = session_scoped_pool_key(base_pool_key, Some(&session));
+        let pool_key = session_scoped_pool_key_for(db_type, base_pool_key.clone(), Some(&session));
+        if pool_key == base_pool_key {
+            return Ok(false);
+        }
         let removed = self.connections.write().await.remove(&pool_key);
         if let Some(pool) = removed {
             close_pool_kind(pool).await;
@@ -546,6 +570,30 @@ impl AppState {
         } else {
             Ok(false)
         }
+    }
+
+    pub async fn close_database_pool(&self, connection_id: &str, database: Option<&str>) -> Result<bool, String> {
+        let db_type = {
+            let configs = self.configs.read().await;
+            configs.get(connection_id).map(|c| c.db_type)
+        };
+        let base_pool_key = base_pool_key_for(db_type, connection_id, database, false);
+        let session_prefix = format!("{base_pool_key}:session:");
+        let mut conns = self.connections.write().await;
+        let keys_to_remove: Vec<String> =
+            conns.keys().filter(|key| *key == &base_pool_key || key.starts_with(&session_prefix)).cloned().collect();
+        let mut removed = Vec::with_capacity(keys_to_remove.len());
+        for key in keys_to_remove {
+            if let Some(pool) = conns.remove(&key) {
+                removed.push(pool);
+            }
+        }
+        drop(conns);
+        let closed = !removed.is_empty();
+        for pool in removed {
+            close_pool_kind(pool).await;
+        }
+        Ok(closed)
     }
 
     pub async fn duckdb_existing_pool_is_usable_for_config(&self, config: &ConnectionConfig) -> Result<bool, String> {
@@ -697,6 +745,17 @@ fn session_scoped_pool_key(base_pool_key: String, client_session_id: Option<&str
     normalize_client_session_id(client_session_id)
         .map(|session| format!("{base_pool_key}:session:{session}"))
         .unwrap_or(base_pool_key)
+}
+
+fn session_scoped_pool_key_for(
+    db_type: Option<DatabaseType>,
+    base_pool_key: String,
+    client_session_id: Option<&str>,
+) -> String {
+    if matches!(db_type, Some(DatabaseType::DuckDb)) {
+        return base_pool_key;
+    }
+    session_scoped_pool_key(base_pool_key, client_session_id)
 }
 
 fn clone_pool_kind(pool: &PoolKind) -> PoolKind {
@@ -1104,11 +1163,19 @@ mod tests {
         config.db_type = DatabaseType::Oracle;
         config.driver_profile = Some("oracle".to_string());
 
-        assert!(should_retry_oracle_with_10g_driver(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener"));
-        assert!(should_retry_oracle_with_10g_driver(&config, "host xxx port 1521 中没有监听程序"));
+        assert!(should_retry_oracle_with_10g_driver(
+            &config,
+            "Agent RPC error (-1): ORA-28040: No matching authentication protocol"
+        ));
+        assert!(!should_retry_oracle_with_10g_driver(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener"));
+        assert!(!should_retry_oracle_with_10g_driver(&config, "host xxx port 1521 中没有监听程序"));
 
         config.driver_profile = Some("oracle-10g".to_string());
         assert!(!should_retry_oracle_with_10g_driver(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener"));
+        assert!(!should_retry_oracle_with_10g_driver(
+            &config,
+            "Agent RPC error (-1): ORA-28040: No matching authentication protocol"
+        ));
 
         config.driver_profile = Some("oracle".to_string());
         assert!(!should_retry_oracle_with_10g_driver(
@@ -1124,17 +1191,22 @@ mod tests {
         config.driver_profile = Some("oracle".to_string());
         config.oracle_connection_type = Some("service_name".to_string());
 
-        let retry = oracle_alternate_connect_config(&config, "Agent RPC error (-1): ORA-12541: TNS:no listener")
-            .expect("listener errors should allow alternate descriptor retry");
+        let retry = oracle_alternate_connect_config(
+            &config,
+            "Agent RPC error (-1): ORA-12514: listener does not currently know of service requested",
+        )
+        .expect("listener errors should allow alternate descriptor retry");
         assert_eq!(retry.driver_profile.as_deref(), Some("oracle"));
         assert_eq!(retry.oracle_connection_type.as_deref(), Some("sid"));
 
         let service_retry = oracle_alternate_connect_config(
             &retry,
-            "Agent RPC error (-1): ORA-12541: host xxx port 1521 中没有监听程序",
+            "Agent RPC error (-1): ORA-12505: listener does not currently know of SID given",
         )
         .expect("SID listener errors should allow service-name retry");
         assert_eq!(service_retry.oracle_connection_type.as_deref(), Some("service_name"));
+
+        assert!(oracle_alternate_connect_config(&config, "ORA-12541: TNS:no listener").is_none());
     }
 
     #[test]
@@ -1146,7 +1218,17 @@ mod tests {
         assert!(oracle_alternate_connect_config(&config, "ORA-01017: invalid username/password").is_none());
 
         config.driver_profile = Some("oracle-10g".to_string());
-        assert!(oracle_alternate_connect_config(&config, "ORA-12541: TNS:no listener").is_none());
+        assert!(oracle_alternate_connect_config(&config, "ORA-12514: listener does not know service").is_none());
+    }
+
+    #[test]
+    fn oracle_alternate_descriptor_retry_skips_custom_connection_strings() {
+        let mut config = mysql_config(Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+        config.driver_profile = Some("oracle".to_string());
+        config.connection_string = Some("jdbc:oracle:thin:@//oracle.example.com:1521/ORCL".to_string());
+
+        assert!(oracle_alternate_connect_config(&config, "ORA-12514: listener does not know service").is_none());
     }
 
     #[test]
@@ -1459,7 +1541,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_client_session_pool_removes_session_scoped_duckdb_pool() {
+    async fn duckdb_client_session_reuses_base_pool_to_avoid_file_locks() {
         let (state, dir) = test_app_state().await;
         let db_path = dir.join("session.duckdb");
         let mut config = mysql_config(None);
@@ -1470,13 +1552,42 @@ mod tests {
         config.port = 0;
 
         state.configs.write().await.insert(config.id.clone(), config.clone());
+        let base_pool_key = state.get_or_create_pool("duckdb-conn", None).await.unwrap();
         let pool_key = state.get_or_create_pool_for_session("duckdb-conn", Some("main"), Some("tab-1")).await.unwrap();
-        assert_eq!(pool_key, "duckdb-conn:session:tab-1");
+        assert_eq!(pool_key, base_pool_key);
 
-        assert!(state.close_client_session_pool("duckdb-conn", Some("main"), "tab-1").await.unwrap());
+        assert!(!state.close_client_session_pool("duckdb-conn", Some("main"), "tab-1").await.unwrap());
 
         let conns = state.connections.read().await;
+        assert!(conns.contains_key("duckdb-conn"));
         assert!(!conns.contains_key("duckdb-conn:session:tab-1"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn close_database_pool_removes_database_and_session_scoped_pools_only() {
+        let (state, dir) = test_app_state().await;
+        let mut config = mysql_config(None);
+        config.id = "conn".to_string();
+        state.configs.write().await.insert(config.id.clone(), config);
+        let pool = crate::db::sqlite::connect_path(":memory:").await.unwrap();
+
+        {
+            let mut conns = state.connections.write().await;
+            conns.insert("conn".to_string(), PoolKind::Sqlite(pool.clone()));
+            conns.insert("conn:analytics".to_string(), PoolKind::Sqlite(pool.clone()));
+            conns.insert("conn:analytics:session:tab-1".to_string(), PoolKind::Sqlite(pool.clone()));
+            conns.insert("conn:billing".to_string(), PoolKind::Sqlite(pool));
+        }
+
+        assert!(state.close_database_pool("conn", Some("analytics")).await.unwrap());
+
+        let conns = state.connections.read().await;
+        assert!(conns.contains_key("conn"));
+        assert!(!conns.contains_key("conn:analytics"));
+        assert!(!conns.contains_key("conn:analytics:session:tab-1"));
+        assert!(conns.contains_key("conn:billing"));
 
         let _ = std::fs::remove_dir_all(dir);
     }

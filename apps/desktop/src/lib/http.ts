@@ -160,6 +160,10 @@ export async function disconnectDb(connectionId: string): Promise<void> {
   return post("/api/connection/disconnect", { connectionId });
 }
 
+export async function closeDatabaseConnection(connectionId: string, database: string): Promise<boolean> {
+  return post("/api/connection/close-database", { connectionId, database });
+}
+
 export async function saveConnections(configs: ConnectionConfig[]): Promise<void> {
   return post("/api/connection/save", { configs });
 }
@@ -815,7 +819,7 @@ export async function loadAiConfig(): Promise<AiConfig | null> {
 }
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
-  return { show_tray_icon: true };
+  return { show_tray_icon: true, icon_theme: "default" };
 }
 
 export async function saveDesktopSettings(_settings: DesktopSettings): Promise<void> {

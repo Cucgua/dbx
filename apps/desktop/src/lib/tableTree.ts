@@ -1,5 +1,7 @@
 import type { ObjectInfo, TableInfo, TreeNode, TreeNodeType } from "@/types/database";
 
+const databaseObjectNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 export function normalizeDatabaseObjectName(name: string): string {
   return name.trim();
 }
@@ -17,23 +19,289 @@ export function buildTableTreeNodes({
   schema?: string;
   tables: TableInfo[];
 }): TreeNode[] {
-  return tables.flatMap((table) => {
+  const entries = tables.flatMap((table) => {
     const name = normalizeDatabaseObjectName(table.name);
     if (!name) return [];
+    const objectType = normalizeObjectType(table.table_type);
+    const childSchema = schema;
     return [
-      {
-        id: `${nodeId}:${name}`,
-        label: name,
-        type: table.table_type === "VIEW" ? ("view" as const) : ("table" as const),
-        comment: table.comment,
+      makeTableTreeEntry({
+        nodeId,
         connectionId,
         database,
-        schema,
-        isExpanded: false,
-        children: [],
-      },
+        schema: childSchema,
+        includeSchemaInId: false,
+        name,
+        objectType,
+        comment: table.comment,
+        parentSchema: table.parent_schema,
+        parentName: table.parent_name,
+      }),
     ];
   });
+
+  return buildPartitionTree(entries, connectionId, database);
+}
+
+type TableTreeEntry = {
+  key: string;
+  objectType: "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
+  schema?: string;
+  parentSchema?: string;
+  parentName?: string;
+  node: TreeNode;
+};
+
+function makeTableTreeEntry({
+  nodeId,
+  connectionId,
+  database,
+  schema,
+  includeSchemaInId,
+  name,
+  objectType,
+  comment,
+  parentSchema,
+  parentName,
+}: {
+  nodeId: string;
+  connectionId: string;
+  database: string;
+  schema?: string;
+  includeSchemaInId?: boolean;
+  name: string;
+  objectType: "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
+  comment?: string | null;
+  parentSchema?: string | null;
+  parentName?: string | null;
+}): TableTreeEntry {
+  const normalizedParentSchema = parentSchema ? normalizeDatabaseObjectName(parentSchema) : undefined;
+  const normalizedParentName = parentName ? normalizeDatabaseObjectName(parentName) : undefined;
+  const nodeIdSchemaSuffix = includeSchemaInId !== false && schema ? `${schema}:` : "";
+  const node: TreeNode = {
+    id: `${nodeId}:${nodeIdSchemaSuffix}${name}`,
+    label: name,
+    type: objectType === "VIEW" ? ("view" as const) : ("table" as const),
+    comment,
+    connectionId,
+    database,
+    schema,
+    isExpanded: false,
+    children: [],
+  };
+
+  return {
+    key: objectIdentityKey(objectType, schema, name),
+    objectType,
+    schema,
+    parentSchema: normalizedParentSchema,
+    parentName: normalizedParentName,
+    node,
+  };
+}
+
+function objectIdentityKey(objectType: string, schema: string | undefined, name: string) {
+  return `${objectType}\0${(schema || "").toLowerCase()}\0${name.toLowerCase()}`;
+}
+
+type PrefixSortInfo = {
+  rootName: string;
+  leadingSegments: number;
+};
+
+function nameSegments(name: string): string[] {
+  return name.toLowerCase().split("_").filter(Boolean);
+}
+
+function findSubsequence(haystack: readonly string[], needle: readonly string[]): number {
+  if (!needle.length || needle.length > haystack.length) return -1;
+
+  for (let start = 0; start <= haystack.length - needle.length; start += 1) {
+    let matched = true;
+    for (let offset = 0; offset < needle.length; offset += 1) {
+      if (haystack[start + offset] !== needle[offset]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return start;
+  }
+
+  return -1;
+}
+
+function buildPrefixSortIndex(names: readonly string[]): Map<string, PrefixSortInfo> {
+  const segmentsByName = new Map<string, string[]>();
+  const nameBySegmentKey = new Map<string, string>();
+  for (const name of names) {
+    const normalized = name.toLowerCase();
+    if (segmentsByName.has(normalized)) continue;
+
+    const segments = nameSegments(name);
+    segmentsByName.set(normalized, segments);
+    const segmentKey = segments.join("_");
+    if (!nameBySegmentKey.has(segmentKey)) nameBySegmentKey.set(segmentKey, normalized);
+  }
+
+  const resolved = new Map<string, PrefixSortInfo>();
+
+  const resolve = (name: string): PrefixSortInfo => {
+    const cached = resolved.get(name);
+    if (cached) return cached;
+
+    const segments = segmentsByName.get(name) ?? [];
+    let bestAnchor: { name: string; segmentCount: number; start: number } | undefined;
+
+    for (let segmentCount = segments.length - 1; segmentCount > 0 && !bestAnchor; segmentCount -= 1) {
+      for (let start = 0; start <= segments.length - segmentCount; start += 1) {
+        const candidateName = nameBySegmentKey.get(segments.slice(start, start + segmentCount).join("_"));
+        if (!candidateName || candidateName === name) continue;
+        bestAnchor = { name: candidateName, segmentCount, start };
+        break;
+      }
+    }
+
+    if (!bestAnchor) {
+      const info = { rootName: name, leadingSegments: 0 };
+      resolved.set(name, info);
+      return info;
+    }
+
+    const anchor = resolve(bestAnchor.name);
+    const rootSegments = segmentsByName.get(anchor.rootName) ?? [];
+    const rootStart = findSubsequence(segments, rootSegments);
+    const info = {
+      rootName: anchor.rootName,
+      leadingSegments: rootStart >= 0 ? rootStart : bestAnchor.start + anchor.leadingSegments,
+    };
+    resolved.set(name, info);
+    return info;
+  };
+
+  for (const name of segmentsByName.keys()) resolve(name);
+  return resolved;
+}
+
+function comparePrefixPriorityNames(left: string, right: string, index: ReadonlyMap<string, PrefixSortInfo>): number {
+  const leftName = left.toLowerCase();
+  const rightName = right.toLowerCase();
+  const leftInfo = index.get(leftName) ?? { rootName: leftName, leadingSegments: 0 };
+  const rightInfo = index.get(rightName) ?? { rootName: rightName, leadingSegments: 0 };
+
+  const rootCompared = databaseObjectNameCollator.compare(leftInfo.rootName, rightInfo.rootName);
+  if (rootCompared !== 0) return rootCompared;
+
+  if (leftInfo.leadingSegments !== rightInfo.leadingSegments) {
+    return leftInfo.leadingSegments - rightInfo.leadingSegments;
+  }
+
+  return databaseObjectNameCollator.compare(left, right);
+}
+
+export function createDatabaseObjectNameComparator(names: readonly string[]): (left: string, right: string) => number {
+  const index = buildPrefixSortIndex(names);
+  return (left, right) => comparePrefixPriorityNames(left, right, index);
+}
+
+export function sortDatabaseObjectsByPrefixPriority<T>(items: readonly T[], getName: (item: T) => string): T[] {
+  const compareNames = createDatabaseObjectNameComparator(items.map(getName));
+  return [...items].sort((left, right) => compareNames(getName(left), getName(right)));
+}
+
+function buildPartitionTree(entries: TableTreeEntry[], connectionId: string, database: string): TreeNode[] {
+  const orderedEntries = sortDatabaseObjectsByPrefixPriority(entries, (entry) => entry.node.label);
+  const byKey = new Map<string, TableTreeEntry>();
+  for (const entry of orderedEntries) {
+    byKey.set(entry.key, entry);
+  }
+
+  const childrenByParent = new Map<string, TableTreeEntry[]>();
+  const childKeys = new Set<string>();
+  for (const entry of orderedEntries) {
+    if (entry.objectType !== "TABLE" || !entry.parentName) continue;
+    const parentSchema = entry.parentSchema || entry.schema;
+    const parentKey = objectIdentityKey("TABLE", parentSchema, entry.parentName);
+    const parent = byKey.get(parentKey);
+    if (!parent || parent.key === entry.key) continue;
+    const children = childrenByParent.get(parent.key) ?? [];
+    children.push(entry);
+    childrenByParent.set(parent.key, children);
+    childKeys.add(entry.key);
+  }
+
+  const materialize = (entry: TableTreeEntry): TreeNode => {
+    const partitionChildren = childrenByParent.get(entry.key);
+    if (!partitionChildren?.length) return entry.node;
+
+    const partitionGroup: TreeNode = {
+      id: `${entry.node.id}:__partitions`,
+      label: "tree.partitions",
+      type: "group-partitions",
+      connectionId,
+      database,
+      schema: entry.schema,
+      tableName: entry.node.label,
+      objectCount: partitionChildren.length,
+      isExpanded: false,
+      children: partitionChildren.map(materialize),
+    };
+    entry.node.children = [partitionGroup];
+    entry.node.hiddenChildren = [partitionGroup];
+    return entry.node;
+  };
+
+  return orderedEntries.filter((entry) => !childKeys.has(entry.key)).map(materialize);
+}
+
+function partitionGroupChildren(node: TreeNode): TreeNode[] {
+  const children = node.children?.filter((child) => child.type === "group-partitions") ?? [];
+  if (children.length) return children;
+  return node.hiddenChildren?.filter((child) => child.type === "group-partitions") ?? [];
+}
+
+export function tablePartitionGroups(node: TreeNode): TreeNode[] {
+  return partitionGroupChildren(node);
+}
+
+export function hasTablePartitionGroups(node: TreeNode): boolean {
+  return partitionGroupChildren(node).length > 0;
+}
+
+function buildObjectTreeEntries({
+  nodeId,
+  connectionId,
+  database,
+  schema,
+  objects,
+  objectType,
+}: {
+  nodeId: string;
+  connectionId: string;
+  database: string;
+  schema?: string;
+  objects: ObjectInfo[];
+  objectType: "TABLE" | "VIEW";
+}): TreeNode[] {
+  const entries = objects.flatMap((obj) => {
+    const name = normalizeDatabaseObjectName(obj.name);
+    if (!name) return [];
+    const childSchema = obj.schema ? normalizeDatabaseObjectName(obj.schema) : schema;
+    return [
+      makeTableTreeEntry({
+        nodeId,
+        connectionId,
+        database,
+        schema: childSchema,
+        name,
+        objectType,
+        comment: obj.comment,
+        parentSchema: obj.parent_schema,
+        parentName: obj.parent_name,
+      }),
+    ];
+  });
+
+  return buildPartitionTree(entries, connectionId, database);
 }
 
 export function buildSimpleObjectTreeNodes({
@@ -50,7 +318,8 @@ export function buildSimpleObjectTreeNodes({
   objects: ObjectInfo[];
 }): TreeNode[] {
   const seen = new Set<string>();
-  const nodes: TreeNode[] = [];
+  const tableEntries: TableTreeEntry[] = [];
+  const viewNodes: TreeNode[] = [];
 
   for (const obj of objects) {
     const objectType = normalizeObjectType(obj.object_type);
@@ -64,20 +333,28 @@ export function buildSimpleObjectTreeNodes({
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
-    nodes.push({
-      id: `${nodeId}:${childSchema ? `${childSchema}:` : ""}${name}`,
-      label: name,
-      type: objectType === "VIEW" ? ("view" as const) : ("table" as const),
-      comment: obj.comment,
+    const entry = makeTableTreeEntry({
+      nodeId,
       connectionId,
       database,
       schema: childSchema,
-      isExpanded: false,
-      children: [],
+      name,
+      objectType,
+      comment: obj.comment,
+      parentSchema: obj.parent_schema,
+      parentName: obj.parent_name,
     });
+    if (objectType === "TABLE") {
+      tableEntries.push(entry);
+    } else {
+      viewNodes.push(entry.node);
+    }
   }
 
-  return nodes;
+  return [
+    ...buildPartitionTree(tableEntries, connectionId, database),
+    ...sortDatabaseObjectsByPrefixPriority(viewNodes, (node) => node.label),
+  ];
 }
 
 function normalizeObjectType(type: string): "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION" {
@@ -160,6 +437,29 @@ export function buildGroupedObjectTreeNodes({
     const items = buckets.get(def.objectType);
     if (!items?.length) continue;
     const isExpandable = def.childType === "table" || def.childType === "view";
+    const children = isExpandable
+      ? buildObjectTreeEntries({
+          nodeId: `${nodeId}:${def.key}`,
+          connectionId,
+          database,
+          schema,
+          objects: items,
+          objectType: def.objectType as "TABLE" | "VIEW",
+        })
+      : sortDatabaseObjectsByPrefixPriority(items, (obj) => obj.name).map((obj) => {
+          const childSchema = obj.schema ? normalizeDatabaseObjectName(obj.schema) : schema;
+          return {
+            id: `${nodeId}:${def.key}:${childSchema ? `${childSchema}:` : ""}${obj.name}`,
+            label: obj.name,
+            type: def.childType,
+            comment: obj.comment,
+            connectionId,
+            database,
+            schema: childSchema,
+            isExpanded: false,
+            children: undefined,
+          };
+        });
     groups.push({
       id: `${nodeId}:${def.key}`,
       label: def.label,
@@ -169,20 +469,7 @@ export function buildGroupedObjectTreeNodes({
       schema,
       objectCount: items.length,
       isExpanded: false,
-      children: items.map((obj) => {
-        const childSchema = obj.schema ? normalizeDatabaseObjectName(obj.schema) : schema;
-        return {
-          id: `${nodeId}:${def.key}:${childSchema ? `${childSchema}:` : ""}${obj.name}`,
-          label: obj.name,
-          type: def.childType,
-          comment: obj.comment,
-          connectionId,
-          database,
-          schema: childSchema,
-          isExpanded: false,
-          children: isExpandable ? [] : undefined,
-        };
-      }),
+      children,
     });
   }
   return groups;

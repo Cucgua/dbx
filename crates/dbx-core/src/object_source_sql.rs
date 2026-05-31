@@ -125,7 +125,7 @@ pub fn build_executable_object_source_statements(input: EditableObjectSourceSqlI
         return Ok(vec![replace_sqlserver_create_with_alter(source)]);
     }
 
-    if matches!(input.database_type, DatabaseType::Postgres | DatabaseType::Gaussdb)
+    if matches!(input.database_type, DatabaseType::Postgres | DatabaseType::Gaussdb | DatabaseType::OpenGauss)
         && input.object_type == ObjectSourceKind::View
     {
         return Ok(vec![format!(
@@ -211,6 +211,7 @@ fn is_postgres_like(database_type: DatabaseType) -> bool {
         DatabaseType::Postgres
             | DatabaseType::Redshift
             | DatabaseType::Gaussdb
+            | DatabaseType::OpenGauss
             | DatabaseType::Kingbase
             | DatabaseType::Highgo
             | DatabaseType::Vastbase
@@ -411,6 +412,22 @@ mod tests {
     fn postgres_view_body_opens_as_create_or_replace_view() {
         let sql = build_executable_object_source_sql(EditableObjectSourceSqlInput {
             database_type: DatabaseType::Postgres,
+            object_type: ObjectSourceKind::View,
+            schema: Some("public".to_string()),
+            name: "active users".to_string(),
+            source: " SELECT id, name FROM users WHERE active ".to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            sql,
+            "CREATE OR REPLACE VIEW \"public\".\"active users\" AS\nSELECT id, name FROM users WHERE active;"
+        );
+    }
+
+    #[test]
+    fn opengauss_view_body_opens_as_create_or_replace_view() {
+        let sql = build_executable_object_source_sql(EditableObjectSourceSqlInput {
+            database_type: DatabaseType::OpenGauss,
             object_type: ObjectSourceKind::View,
             schema: Some("public".to_string()),
             name: "active users".to_string(),

@@ -3,7 +3,7 @@ use tauri::State;
 
 pub use dbx_core::agent_connection::{
     agent_connect_params, mongo_legacy_error_with_auth_hint, oracle_alternate_connect_config,
-    should_retry_oracle_with_10g_driver,
+    oracle_auth_fallback_profiles, should_retry_oracle_with_10g_driver,
 };
 pub use dbx_core::connection::{
     connection_url_for_endpoint, expand_tilde, metadata_connection_config, probe_connection_endpoint,
@@ -57,16 +57,32 @@ async fn test_agent_connection(
                     format!("{err}\n\nFallback with alternate Oracle descriptor failed: {alternate_err}")
                 })?;
         } else if should_retry_oracle_with_10g_driver(config, &err) {
-            state
-                .agent_manager
-                .call_daemon_method::<serde_json::Value>(
-                    &config.db_type,
-                    Some("oracle-10g"),
-                    AgentMethod::TestConnection,
-                    connect_params,
-                )
-                .await
-                .map_err(|fallback_err| format!("{err}\n\nFallback with oracle-10g driver failed: {fallback_err}"))?;
+            let mut fallback_errors = Vec::new();
+            let mut connected = false;
+            for profile in oracle_auth_fallback_profiles(config, &err) {
+                match state
+                    .agent_manager
+                    .call_daemon_method::<serde_json::Value>(
+                        &config.db_type,
+                        Some(profile),
+                        AgentMethod::TestConnection,
+                        connect_params.clone(),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        connected = true;
+                        break;
+                    }
+                    Err(fallback_err) => fallback_errors.push(format!("{profile}: {fallback_err}")),
+                }
+            }
+            if !connected {
+                return Err(format!(
+                    "{err}\n\nFallback with legacy Oracle drivers failed: {}",
+                    fallback_errors.join("\n")
+                ));
+            }
         } else {
             return Err(err);
         }
@@ -102,12 +118,28 @@ async fn connect_agent_pool(
                     format!("{err}\n\nFallback with alternate Oracle descriptor failed: {alternate_err}")
                 })?;
         } else if should_retry_oracle_with_10g_driver(config, &err) {
-            let mut fallback_client = state.agent_manager.spawn(&config.db_type, Some("oracle-10g")).await?;
-            fallback_client
-                .call_method::<serde_json::Value>(AgentMethod::Connect, connect_params)
-                .await
-                .map_err(|fallback_err| format!("{err}\n\nFallback with oracle-10g driver failed: {fallback_err}"))?;
-            client = fallback_client;
+            let mut fallback_errors = Vec::new();
+            let mut connected_client = None;
+            for profile in oracle_auth_fallback_profiles(config, &err) {
+                match state.agent_manager.spawn(&config.db_type, Some(profile)).await {
+                    Ok(mut fallback_client) => {
+                        match fallback_client
+                            .call_method::<serde_json::Value>(AgentMethod::Connect, connect_params.clone())
+                            .await
+                        {
+                            Ok(_) => {
+                                connected_client = Some(fallback_client);
+                                break;
+                            }
+                            Err(fallback_err) => fallback_errors.push(format!("{profile}: {fallback_err}")),
+                        }
+                    }
+                    Err(fallback_err) => fallback_errors.push(format!("{profile}: {fallback_err}")),
+                }
+            }
+            client = connected_client.ok_or_else(|| {
+                format!("{err}\n\nFallback with legacy Oracle drivers failed: {}", fallback_errors.join("\n"))
+            })?;
         } else {
             return Err(err);
         }
@@ -528,6 +560,17 @@ pub async fn disconnect_db(state: State<'_, Arc<AppState>>, connection_id: Strin
     drop(conns);
     state.reset_connection_transport(&connection_id).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn close_database_connection(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    database: String,
+) -> Result<bool, String> {
+    let database = database.trim();
+    let database = if database.is_empty() { None } else { Some(database) };
+    state.close_database_pool(&connection_id, database).await
 }
 
 #[tauri::command]

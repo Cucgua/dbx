@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ConnectionConfig } from "@dbx-app/node-core";
-import { connectionSummary, csvTable, errorPayload, formatErrorMessage, mdTable } from "../src/cli-format.js";
+import { connectionSummary, csvTable, errorPayload, formatCell, formatErrorMessage, mdTable } from "../src/cli-format.js";
 
 const connection: ConnectionConfig = {
   id: "1",
@@ -35,6 +35,11 @@ test("formats markdown tables", () => {
 
   assert.match(table, /Name/);
   assert.match(table, /postgres/);
+});
+
+test("formats database cell values with shared formatter", () => {
+  assert.equal(formatCell(null), "NULL");
+  assert.equal(formatCell({ ok: true }), "{\"ok\":true}");
 });
 
 test("builds stable error payloads", () => {

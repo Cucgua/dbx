@@ -1,4 +1,4 @@
-import { shallowRef, onBeforeUnmount, type ShallowRef, createApp } from "vue";
+import { shallowRef, onBeforeUnmount, type ShallowRef, createApp, watch } from "vue";
 import { EditorState, Compartment } from "@codemirror/state";
 import {
   EditorView,
@@ -12,10 +12,21 @@ import { vscodeSelectionLayer } from "@/lib/codemirrorVscodeSelectionLayer";
 import { json } from "@codemirror/lang-json";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { bracketMatching } from "@codemirror/language";
-import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
+import {
+  EDITOR_FONT_FAMILY_CSS_VAR,
+  EDITOR_FONT_SIZE_CSS_VAR,
+  loadEditorTheme,
+  editorFontTheme,
+} from "@/lib/editorThemes";
 import { shortcutToCodeMirrorKey } from "@/lib/shortcutRegistry";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { isJsonColumnType } from "@/lib/cellDetailPresentation";
+import {
+  clampEditorFontSize,
+  createEditorZoomCommitScheduler,
+  fontSizeFromGestureScale,
+  fontSizeFromWheelDelta,
+} from "@/lib/editorZoom";
 import i18n from "@/i18n";
 import EditorSearchPanel from "@/components/editor/EditorSearchPanel.vue";
 import type { EditorTheme } from "@/stores/settingsStore";
@@ -42,6 +53,10 @@ export interface UseCellDetailEditorReturn {
   view: Readonly<ShallowRef<EditorView | null>>;
 }
 
+interface CellDetailEditorGestureEvent extends Event {
+  scale?: number;
+}
+
 function looksLikeJsonString(text: string): boolean {
   const trimmed = text.trim();
   return trimmed.startsWith("{") || trimmed.startsWith("[");
@@ -55,15 +70,99 @@ function shouldUseJsonMode(columnType?: string, value?: string): boolean {
 
 export function useCellDetailEditor(options: UseCellDetailEditorOptions): UseCellDetailEditorReturn {
   const view = shallowRef<EditorView | null>(null) as ShallowRef<EditorView | null>;
+  const settingsStore = useSettingsStore();
   const languageComp = new Compartment();
   const themeComp = new Compartment();
   const fontThemeComp = new Compartment();
 
   let destroyed = false;
   let currentIsJson = false;
+  let liveFontSize = clampEditorFontSize(options.fontSize());
+  let gestureStartFontSize = liveFontSize;
+  let isGestureZooming = false;
+  let pendingFontReconfig: { size: number; family: string } | null = null;
+  let fontReconfigScheduled = false;
   let searchApp: ReturnType<typeof createApp> | null = null;
   let searchInstance: InstanceType<typeof EditorSearchPanel> | null = null;
   let wrapperEl: HTMLDivElement | null = null;
+
+  const zoomCommitScheduler = createEditorZoomCommitScheduler((fontSize) => {
+    if (settingsStore.editorSettings.fontSize === fontSize) return;
+    settingsStore.updateEditorSettings({ fontSize });
+  });
+
+  function syncEditorFontCssVars(fontSize = liveFontSize, fontFamily = options.fontFamily()) {
+    if (!wrapperEl) return;
+    wrapperEl.style.setProperty(EDITOR_FONT_SIZE_CSS_VAR, `${clampEditorFontSize(fontSize)}px`);
+    wrapperEl.style.setProperty(EDITOR_FONT_FAMILY_CSS_VAR, fontFamily);
+  }
+
+  function reconfigureFontTheme(size: number, family: string) {
+    const editor = view.value;
+    if (!editor) return;
+    editor.dispatch({
+      effects: fontThemeComp.reconfigure(editorFontTheme(EditorView, size, family, { scrollable: false })),
+    });
+  }
+
+  function scheduleFontThemeReconfig(size: number, family: string) {
+    pendingFontReconfig = { size, family };
+    if (fontReconfigScheduled) return;
+    fontReconfigScheduled = true;
+    requestAnimationFrame(() => {
+      fontReconfigScheduled = false;
+      const pending = pendingFontReconfig;
+      if (!pending || destroyed) return;
+      pendingFontReconfig = null;
+      reconfigureFontTheme(pending.size, pending.family);
+    });
+  }
+
+  function applyLiveFontSize(size: number) {
+    const next = clampEditorFontSize(size);
+    if (liveFontSize === next) return;
+    liveFontSize = next;
+    syncEditorFontCssVars(next);
+    scheduleFontThemeReconfig(next, options.fontFamily());
+  }
+
+  function onEditorGestureStart(event: CellDetailEditorGestureEvent) {
+    event.preventDefault();
+    isGestureZooming = true;
+    gestureStartFontSize = liveFontSize;
+  }
+
+  function onEditorGestureChange(event: CellDetailEditorGestureEvent) {
+    if (typeof event.scale !== "number") return;
+    event.preventDefault();
+    applyLiveFontSize(fontSizeFromGestureScale(gestureStartFontSize, event.scale));
+  }
+
+  function onEditorGestureEnd(event: Event) {
+    event.preventDefault();
+    isGestureZooming = false;
+    zoomCommitScheduler.flush(liveFontSize);
+  }
+
+  watch(
+    [() => options.fontSize(), () => options.fontFamily(), () => options.editorTheme(), () => options.appAppearance()],
+    async ([fontSize, fontFamily, editorTheme, appearance]) => {
+      const editor = view.value;
+      if (!editor || destroyed) return;
+      if (!isGestureZooming && !zoomCommitScheduler.hasPendingCommit()) {
+        liveFontSize = clampEditorFontSize(fontSize);
+      }
+      syncEditorFontCssVars(liveFontSize, fontFamily);
+      const theme = await loadEditorTheme(editorTheme, appearance);
+      if (!view.value || destroyed) return;
+      view.value.dispatch({
+        effects: [
+          themeComp.reconfigure(theme),
+          fontThemeComp.reconfigure(editorFontTheme(EditorView, liveFontSize, fontFamily, { scrollable: false })),
+        ],
+      });
+    },
+  );
 
   async function create(parent: HTMLElement, initialValue: string, columnType?: string): Promise<void> {
     if (destroyed) return;
@@ -72,8 +171,9 @@ export function useCellDetailEditor(options: UseCellDetailEditorOptions): UseCel
     currentIsJson = shouldUseJsonMode(columnType, doc);
 
     const theme = await loadEditorTheme(options.editorTheme(), options.appAppearance());
-    const fontTheme = editorFontTheme(EditorView, options.fontSize(), options.fontFamily(), { scrollable: false });
-    const shortcuts = useSettingsStore().editorSettings.shortcuts;
+    liveFontSize = clampEditorFontSize(options.fontSize());
+    const fontTheme = editorFontTheme(EditorView, liveFontSize, options.fontFamily(), { scrollable: false });
+    const shortcuts = settingsStore.editorSettings.shortcuts;
 
     const state = EditorState.create({
       doc,
@@ -126,6 +226,14 @@ export function useCellDetailEditor(options: UseCellDetailEditorOptions): UseCel
           }
         }),
         EditorView.domEventHandlers({
+          wheel(event) {
+            if (!event.metaKey && !event.ctrlKey) return false;
+            event.preventDefault();
+            const next = fontSizeFromWheelDelta(liveFontSize, event.deltaY);
+            applyLiveFontSize(next);
+            zoomCommitScheduler.schedule(next);
+            return true;
+          },
           blur: () => {
             options.onBlur?.();
           },
@@ -137,7 +245,11 @@ export function useCellDetailEditor(options: UseCellDetailEditorOptions): UseCel
 
     wrapperEl = document.createElement("div");
     wrapperEl.style.cssText = "position: relative; width: 100%; height: 100%;";
+    wrapperEl.addEventListener("gesturestart", onEditorGestureStart);
+    wrapperEl.addEventListener("gesturechange", onEditorGestureChange);
+    wrapperEl.addEventListener("gestureend", onEditorGestureEnd);
     parent.appendChild(wrapperEl);
+    syncEditorFontCssVars(liveFontSize, options.fontFamily());
 
     view.value = new EditorView({ state, parent: wrapperEl });
 
@@ -188,6 +300,12 @@ export function useCellDetailEditor(options: UseCellDetailEditorOptions): UseCel
     searchInstance = null;
     view.value?.destroy();
     view.value = null;
+    zoomCommitScheduler.dispose();
+    if (wrapperEl) {
+      wrapperEl.removeEventListener("gesturestart", onEditorGestureStart);
+      wrapperEl.removeEventListener("gesturechange", onEditorGestureChange);
+      wrapperEl.removeEventListener("gestureend", onEditorGestureEnd);
+    }
     if (wrapperEl?.parentNode) {
       wrapperEl.parentNode.removeChild(wrapperEl);
     }

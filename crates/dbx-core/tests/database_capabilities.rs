@@ -61,6 +61,7 @@ fn maps_agent_database_types_to_driver_keys() {
     assert_eq!(agent_key(&DatabaseType::Gbase, None), Some("gbase"));
     assert_eq!(agent_key(&DatabaseType::Access, None), Some("access"));
     assert_eq!(agent_key(&DatabaseType::Oracle, None), Some("oracle"));
+    assert_eq!(agent_key(&DatabaseType::Oracle, Some("oracle-legacy")), Some("oracle-legacy"));
     assert_eq!(agent_key(&DatabaseType::Oracle, Some("oracle-10g")), Some("oracle-10g"));
     assert_eq!(agent_key(&DatabaseType::Postgres, None), None);
 }

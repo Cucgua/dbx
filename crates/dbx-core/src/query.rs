@@ -794,6 +794,15 @@ pub async fn execute_multi_core_with_options(
         || split_sql_statements(sql),
         |db_type| crate::sql::split_sql_statements_for_database(sql, db_type),
     );
+
+    let mysql_pool = {
+        let connections = state.connections.read().await;
+        match connections.get(&pool_key) {
+            Some(PoolKind::Mysql(pool, mode)) => Some((pool.clone(), *mode)),
+            _ => None,
+        }
+    };
+
     if statements.len() <= 1 {
         let single_sql = statements.into_iter().next().unwrap_or_default();
         let result = execute_sql_statement_with_options(
@@ -809,18 +818,14 @@ pub async fn execute_multi_core_with_options(
         return Ok(vec![result]);
     }
 
+    if let Some((pool, mode)) = mysql_pool {
+        return execute_multi_mysql(&pool, mode, &statements, cancel_token, options).await;
+    }
+
     let mut results = Vec::with_capacity(statements.len());
     for stmt in &statements {
         if is_canceled(&cancel_token) {
-            results.push(db::QueryResult {
-                columns: vec!["Error".to_string()],
-                rows: vec![vec![serde_json::Value::String(canceled_error())]],
-                affected_rows: 0,
-                execution_time_ms: 0,
-                truncated: false,
-                session_id: None,
-                has_more: false,
-            });
+            results.push(error_query_result(canceled_error()));
             break;
         }
         match execute_sql_statement_with_options(
@@ -836,20 +841,61 @@ pub async fn execute_multi_core_with_options(
         {
             Ok(r) => results.push(r),
             Err(e) => {
-                results.push(db::QueryResult {
-                    columns: vec!["Error".to_string()],
-                    rows: vec![vec![serde_json::Value::String(e)]],
-                    affected_rows: 0,
-                    execution_time_ms: 0,
-                    truncated: false,
-                    session_id: None,
-                    has_more: false,
-                });
+                results.push(error_query_result(e));
             }
         }
     }
 
     Ok(results)
+}
+
+async fn execute_multi_mysql(
+    pool: &db::mysql::MySqlPool,
+    mode: crate::connection::MysqlMode,
+    statements: &[String],
+    cancel_token: Option<CancellationToken>,
+    options: QueryExecutionOptions,
+) -> Result<Vec<db::QueryResult>, String> {
+    let query_timeout = resolve_query_timeout(options.timeout_secs);
+    let bare = mode == crate::connection::MysqlMode::Bare;
+    let max_rows = options.max_rows;
+    let mut conn = match db::mysql::get_conn_with_health_check(pool).await {
+        Ok(conn) => conn,
+        Err(err) => return Ok(vec![error_query_result(err)]),
+    };
+    let mut results = Vec::with_capacity(statements.len());
+
+    for stmt in statements {
+        if is_canceled(&cancel_token) {
+            results.push(error_query_result(canceled_error()));
+            break;
+        }
+
+        match wait_for_query_opt(
+            cancel_token.clone(),
+            query_timeout,
+            db::mysql::execute_query_on_conn_with_max_rows(&mut conn, stmt, bare, max_rows),
+        )
+        .await
+        {
+            Ok(result) => results.push(result),
+            Err(err) => results.push(error_query_result(err)),
+        }
+    }
+
+    Ok(results)
+}
+
+fn error_query_result(message: String) -> db::QueryResult {
+    db::QueryResult {
+        columns: vec!["Error".to_string()],
+        rows: vec![vec![serde_json::Value::String(message)]],
+        affected_rows: 0,
+        execution_time_ms: 0,
+        truncated: false,
+        session_id: None,
+        has_more: false,
+    }
 }
 
 async fn execute_multi_sqlserver(

@@ -92,7 +92,7 @@ See the [DBX CLI README](../cli/README.md) for command details.
 
 ## SQL Safety
 
-`dbx_execute_query` is read-only by default. To allow write statements such as `INSERT` or `UPDATE`, set:
+`dbx_execute_query` accepts multiple SQL statements and executes them one at a time after checking each statement. It is read-only by default. To allow write statements such as `INSERT` or `UPDATE`, set:
 
 ```bash
 DBX_MCP_ALLOW_WRITES=1
@@ -127,7 +127,7 @@ PostgreSQL, MySQL, SQLite, Doris, StarRocks, and Redshift queries run directly f
 ## Requirements
 
 - [DBX](https://github.com/t8y2/dbx) installed with at least one connection configured
-- Node.js 18+
+- Node.js 22.13.0 或更高版本
 
 ## License
 
@@ -213,7 +213,7 @@ dbx query local "select 1" --json
 
 ### SQL 安全
 
-`dbx_execute_query` 默认只读。若要允许 `INSERT`、`UPDATE` 等写操作，设置：
+`dbx_execute_query` 支持多条 SQL 语句，会逐条完成安全检查并依次执行。默认只读。若要允许 `INSERT`、`UPDATE` 等写操作，设置：
 
 ```bash
 DBX_MCP_ALLOW_WRITES=1
@@ -242,4 +242,4 @@ PostgreSQL、MySQL、SQLite、Doris、StarRocks、Redshift 查询可由 MCP Serv
 ### 系统要求
 
 - 已安装 [DBX](https://github.com/t8y2/dbx) 并配置了至少一个数据库连接
-- Node.js 18+
+- Node.js 22.13.0 or newer

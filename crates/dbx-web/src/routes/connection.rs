@@ -22,6 +22,13 @@ pub struct DisconnectRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CloseDatabaseConnectionRequest {
+    pub connection_id: String,
+    pub database: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveConnectionsRequest {
     pub configs: Vec<ConnectionConfig>,
 }
@@ -90,6 +97,15 @@ pub async fn disconnect_db(
     app.proxy_tunnels.stop_tunnel(&body.connection_id).await;
 
     Ok(Json(()))
+}
+
+pub async fn close_database_connection(
+    State(state): State<Arc<WebState>>,
+    Json(body): Json<CloseDatabaseConnectionRequest>,
+) -> Result<Json<bool>, AppError> {
+    let database = body.database.trim();
+    let database = if database.is_empty() { None } else { Some(database) };
+    state.app.close_database_pool(&body.connection_id, database).await.map(Json).map_err(AppError)
 }
 
 pub async fn save_connections(
@@ -192,6 +208,7 @@ mod tests {
             password_hash: RwLock::new(None),
             sessions: RwLock::new(HashSet::new()),
             sse_channels: RwLock::new(HashMap::new()),
+            sql_file_executions: RwLock::new(HashMap::new()),
             login_rate_limit: Mutex::new(LoginRateLimit { fail_count: 0, locked_until: None }),
         });
         (state, dir)

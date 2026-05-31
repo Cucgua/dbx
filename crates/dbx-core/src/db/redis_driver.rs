@@ -77,6 +77,7 @@ pub struct RedisClusterPool {
     pub connection: Mutex<ClusterConnection>,
     pub seed_nodes: Vec<RedisNodeEndpoint>,
     pub tls: bool,
+    pub tls_insecure: bool,
     pub username: String,
     pub password: String,
 }
@@ -111,7 +112,7 @@ pub async fn connect_sentinel(config: &ConnectionConfig) -> Result<redis::aio::M
     let nodes = redis_sentinel_nodes(config)?;
     let mut sentinel = Sentinel::build(nodes).map_err(|e| format!("Redis Sentinel connection failed: {e}"))?;
     let node_connection_info = SentinelNodeConnectionInfo {
-        tls_mode: if config.ssl { Some(TlsMode::Secure) } else { None },
+        tls_mode: redis_tls_mode(config.ssl, config.redis_tls_insecure()),
         redis_connection_info: Some(redis_connection_info(&config.username, &config.password, 0)),
     };
     let client = tokio::time::timeout(
@@ -130,7 +131,15 @@ pub async fn connect_cluster(config: &ConnectionConfig) -> Result<RedisClusterPo
     let cluster_nodes: Vec<ConnectionInfo> = seed_nodes
         .iter()
         .map(|endpoint| {
-            connection_info(&endpoint.host, endpoint.port, config.ssl, &config.username, &config.password, 0)
+            connection_info(
+                &endpoint.host,
+                endpoint.port,
+                config.ssl,
+                config.redis_tls_insecure(),
+                &config.username,
+                &config.password,
+                0,
+            )
         })
         .collect();
     let client = ClusterClient::new(cluster_nodes).map_err(|e| format!("Redis cluster connection failed: {e}"))?;
@@ -148,6 +157,7 @@ pub async fn connect_cluster(config: &ConnectionConfig) -> Result<RedisClusterPo
         connection: Mutex::new(con),
         seed_nodes,
         tls: config.ssl,
+        tls_insecure: config.redis_tls_insecure(),
         username: config.username.clone(),
         password: config.password.clone(),
     })
@@ -189,6 +199,7 @@ fn redis_sentinel_node_connection_info(config: &ConnectionConfig, endpoint: &str
         &host,
         port,
         config.redis_sentinel_tls,
+        config.redis_tls_insecure(),
         &config.redis_sentinel_username,
         &config.redis_sentinel_password,
         0,
@@ -226,13 +237,31 @@ fn redis_node_endpoints(
         .collect()
 }
 
-fn connection_info(host: &str, port: u16, tls: bool, username: &str, password: &str, db: i64) -> ConnectionInfo {
+fn connection_info(
+    host: &str,
+    port: u16,
+    tls: bool,
+    insecure: bool,
+    username: &str,
+    password: &str,
+    db: i64,
+) -> ConnectionInfo {
     let addr = if tls {
-        ConnectionAddr::TcpTls { host: host.to_string(), port, insecure: false, tls_params: None }
+        ConnectionAddr::TcpTls { host: host.to_string(), port, insecure, tls_params: None }
     } else {
         ConnectionAddr::Tcp(host.to_string(), port)
     };
     ConnectionInfo { addr, redis: redis_connection_info(username, password, db) }
+}
+
+fn redis_tls_mode(tls: bool, insecure: bool) -> Option<TlsMode> {
+    if !tls {
+        None
+    } else if insecure {
+        Some(TlsMode::Insecure)
+    } else {
+        Some(TlsMode::Secure)
+    }
 }
 
 fn redis_connection_info(username: &str, password: &str, db: i64) -> RedisConnectionInfo {
@@ -300,11 +329,13 @@ async fn connect_client(client: redis::Client) -> Result<redis::aio::Multiplexed
 pub async fn connect_direct_node(
     endpoint: &RedisNodeEndpoint,
     tls: bool,
+    insecure: bool,
     username: &str,
     password: &str,
 ) -> Result<redis::aio::MultiplexedConnection, String> {
-    let client = redis::Client::open(connection_info(&endpoint.host, endpoint.port, tls, username, password, 0))
-        .map_err(|e| format!("Redis connection failed: {e}"))?;
+    let client =
+        redis::Client::open(connection_info(&endpoint.host, endpoint.port, tls, insecure, username, password, 0))
+            .map_err(|e| format!("Redis connection failed: {e}"))?;
     connect_client(client).await
 }
 
@@ -427,7 +458,8 @@ pub async fn scan_cluster_keys_page(
     let total_keys = cluster_total_keys(pool, &master_nodes).await;
     for index in node_index..master_nodes.len() {
         let endpoint = &master_nodes[index];
-        let mut con = connect_direct_node(endpoint, pool.tls, &pool.username, &pool.password).await?;
+        let mut con =
+            connect_direct_node(endpoint, pool.tls, pool.tls_insecure, &pool.username, &pool.password).await?;
         let current_cursor = if index == node_index { node_cursor } else { 0 };
         let result = scan_keys_page(&mut con, current_cursor, pattern, count).await?;
         if !result.keys.is_empty() {
@@ -472,7 +504,8 @@ pub async fn scan_cluster_values_page(
     let total_keys = cluster_total_keys(pool, &master_nodes).await;
     for index in node_index..master_nodes.len() {
         let endpoint = &master_nodes[index];
-        let mut con = connect_direct_node(endpoint, pool.tls, &pool.username, &pool.password).await?;
+        let mut con =
+            connect_direct_node(endpoint, pool.tls, pool.tls_insecure, &pool.username, &pool.password).await?;
         let current_cursor = if index == node_index { node_cursor } else { 0 };
         let result = scan_values_page(&mut con, current_cursor, pattern, query, count).await?;
         if !result.keys.is_empty() {
@@ -498,13 +531,14 @@ pub async fn scan_cluster_values_page(
 }
 
 pub async fn cluster_master_nodes(pool: &RedisClusterPool) -> Result<Vec<RedisNodeEndpoint>, String> {
-    cluster_master_nodes_from_seeds(&pool.seed_nodes, pool.tls, &pool.username, &pool.password).await
+    cluster_master_nodes_from_seeds(&pool.seed_nodes, pool.tls, pool.tls_insecure, &pool.username, &pool.password).await
 }
 
 pub async fn flush_cluster(pool: &RedisClusterPool) -> Result<(), String> {
     let master_nodes = cluster_master_nodes(pool).await?;
     for endpoint in master_nodes {
-        let mut con = connect_direct_node(&endpoint, pool.tls, &pool.username, &pool.password).await?;
+        let mut con =
+            connect_direct_node(&endpoint, pool.tls, pool.tls_insecure, &pool.username, &pool.password).await?;
         flush_db(&mut con).await?;
     }
     Ok(())
@@ -513,7 +547,9 @@ pub async fn flush_cluster(pool: &RedisClusterPool) -> Result<(), String> {
 async fn cluster_total_keys(pool: &RedisClusterPool, master_nodes: &[RedisNodeEndpoint]) -> u64 {
     let mut total = 0;
     for endpoint in master_nodes {
-        let Ok(mut con) = connect_direct_node(endpoint, pool.tls, &pool.username, &pool.password).await else {
+        let Ok(mut con) =
+            connect_direct_node(endpoint, pool.tls, pool.tls_insecure, &pool.username, &pool.password).await
+        else {
             continue;
         };
         total += redis::cmd("DBSIZE").query_async::<u64>(&mut con).await.unwrap_or(0);
@@ -524,12 +560,13 @@ async fn cluster_total_keys(pool: &RedisClusterPool, master_nodes: &[RedisNodeEn
 async fn cluster_master_nodes_from_seeds(
     seed_nodes: &[RedisNodeEndpoint],
     tls: bool,
+    insecure: bool,
     username: &str,
     password: &str,
 ) -> Result<Vec<RedisNodeEndpoint>, String> {
     let mut last_error = None;
     for endpoint in seed_nodes {
-        let mut con = match connect_direct_node(endpoint, tls, username, password).await {
+        let mut con = match connect_direct_node(endpoint, tls, insecure, username, password).await {
             Ok(con) => con,
             Err(err) => {
                 last_error = Some(err);
@@ -1403,12 +1440,14 @@ fn parse_scan_members(raw: RedisRawValue) -> Result<(u64, Vec<serde_json::Value>
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_command, decode_cluster_cursor, encode_cluster_cursor, is_redis_json_type, parse_cluster_slots,
-        parse_command_argv, parse_database_count, parse_redis_endpoint, parse_scan_keys, parse_stream_entries,
-        redis_command_raw_to_json, redis_json_raw_to_json, redis_json_value_preview, redis_key_bytes_to_display,
-        redis_key_bytes_to_raw, redis_key_raw_to_bytes, redis_key_value_preview, redis_raw_to_json,
-        redis_value_contains_binary, redis_value_matches_query, RedisCommandSafety, RedisNodeEndpoint, RedisRawValue,
+        classify_command, connection_info, decode_cluster_cursor, encode_cluster_cursor, is_redis_json_type,
+        parse_cluster_slots, parse_command_argv, parse_database_count, parse_redis_endpoint, parse_scan_keys,
+        parse_stream_entries, redis_command_raw_to_json, redis_json_raw_to_json, redis_json_value_preview,
+        redis_key_bytes_to_display, redis_key_bytes_to_raw, redis_key_raw_to_bytes, redis_key_value_preview,
+        redis_raw_to_json, redis_value_contains_binary, redis_value_matches_query, RedisCommandSafety,
+        RedisNodeEndpoint, RedisRawValue,
     };
+    use redis::ConnectionAddr;
 
     fn bulk(value: &str) -> RedisRawValue {
         RedisRawValue::BulkString(value.as_bytes().to_vec())
@@ -1584,6 +1623,13 @@ mod tests {
         assert_eq!(parse_redis_endpoint("sentinel.local", 26379).unwrap(), ("sentinel.local".to_string(), 26379));
         assert_eq!(parse_redis_endpoint("[::1]:26380", 26379).unwrap(), ("::1".to_string(), 26380));
         assert_eq!(parse_redis_endpoint("::1", 26379).unwrap(), ("::1".to_string(), 26379));
+    }
+
+    #[test]
+    fn redis_connection_info_marks_tls_as_insecure_when_requested() {
+        let info = connection_info("cache.example.com", 6379, true, true, "default", "secret", 0);
+
+        assert!(matches!(info.addr, ConnectionAddr::TcpTls { insecure: true, .. }));
     }
 
     #[test]

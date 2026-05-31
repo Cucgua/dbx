@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from "vue";
+import { ref, computed, nextTick, watch, onBeforeUnmount } from "vue";
 import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 import { useI18n } from "vue-i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
@@ -58,7 +58,14 @@ import { uuid } from "@/lib/utils";
 import { resolveDefaultDatabase, resolveDefaultSchema } from "@/lib/defaultDatabase";
 import { canTreeNodeShowExpander, treeItemPaddingLeft } from "@/lib/sidebarTreeItemLayout";
 import { buildTableSelectSql } from "@/lib/tableSelectSql";
-import { editablePrimaryKeys, usesSyntheticRowIdKey } from "@/lib/tableEditing";
+import {
+  clearActiveTableReferencePayload,
+  createTableReferencePayload,
+  createTableReferenceDropEvent,
+  setActiveTableReferencePayload,
+  type QueryEditorTableReferencePayload,
+} from "@/lib/queryEditorTableDrop";
+import { editablePrimaryKeys } from "@/lib/tableEditing";
 import {
   supportsDatabaseCreation,
   supportsDatabaseSearch,
@@ -116,15 +123,18 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import LightTooltip from "@/components/ui/LightTooltip.vue";
 
 const { t } = useI18n();
 const labelRef = ref<HTMLElement>();
 const rowRef = ref<HTMLElement>();
-const isTruncated = computed(() => {
+function isLabelTruncated(): boolean {
   const el = labelRef.value;
-  return !!el && el.scrollWidth > el.clientWidth;
-});
+  if (!el) return false;
+  const style = window.getComputedStyle(el);
+  if (style.overflowX === "visible" || style.textOverflow !== "ellipsis") return false;
+  return el.scrollWidth - el.clientWidth > 2;
+}
 const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const savedSqlStore = useSavedSqlStore();
@@ -139,6 +149,7 @@ const props = defineProps<{
   depth: number;
   dragDisabled?: boolean;
   pendingRename?: boolean;
+  highlighted?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -211,6 +222,8 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: ScrollText, colorClass: "text-blue-500" };
     case "group-functions":
       return { icon: Braces, colorClass: "text-amber-500" };
+    case "group-partitions":
+      return { icon: node.isExpanded ? FolderOpen : FolderClosed, colorClass: "text-green-400" };
     default:
       return { icon: Database, colorClass: "text-muted-foreground" };
   }
@@ -225,6 +238,7 @@ const groupTypes: Set<TreeNodeType> = new Set([
   "group-views",
   "group-procedures",
   "group-functions",
+  "group-partitions",
   "saved-sql-root",
   "saved-sql-folder",
 ]);
@@ -256,8 +270,8 @@ function visibleLabel(node: TreeNode): string {
   return displayLabel(node);
 }
 
-function isTooltipDisabled(node: TreeNode): boolean {
-  return !isTruncated.value && visibleLabel(node) === displayLabel(node);
+function isTooltipDisabled(): boolean {
+  return !isLabelTruncated();
 }
 
 async function toggle() {
@@ -283,7 +297,8 @@ async function toggle() {
     node.type === "group-tables" ||
     node.type === "group-views" ||
     node.type === "group-procedures" ||
-    node.type === "group-functions"
+    node.type === "group-functions" ||
+    node.type === "group-partitions"
   ) {
     node.isExpanded = !node.isExpanded;
     emit("node-toggled", node, wasExpanded);
@@ -386,6 +401,12 @@ function runRowClickAction() {
 }
 
 function onClick(event: MouseEvent) {
+  if (suppressNextTableReferenceClick) {
+    suppressNextTableReferenceClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   connectionStore.selectedTreeNodeId = props.node.id;
   rowRef.value?.focus({ preventScroll: true });
   if (settingsStore.editorSettings.sidebarActivation === "double") return;
@@ -503,49 +524,57 @@ async function openData() {
     if (!config) throw new Error("Connection config not found");
 
     const querySchema = node.schema || node.database;
-    console.info("[DBX][openData:get-columns:start]", {
-      traceId,
-      database: node.database,
-      schema: querySchema,
-      table: node.label,
-      elapsed: elapsed(),
-    });
-    const columns = await api.getColumns(node.connectionId, node.database, querySchema, node.label);
-    console.info("[DBX][openData:get-columns:done]", {
-      traceId,
-      columnCount: columns.length,
-      primaryKeys: columns.filter((column) => column.is_primary_key).map((column) => column.name),
-      elapsed: elapsed(),
-    });
-    const pks = editablePrimaryKeys(config.db_type, columns);
     const limit = settingsStore.editorSettings.pageSize;
     const sql = await buildTableSelectSql({
       databaseType: config.db_type,
       schema: node.schema,
       tableName: node.label,
-      columns: columns.map((column) => column.name),
-      primaryKeys: pks,
+      columns: [],
+      primaryKeys: [],
       limit,
-      includeRowId: usesSyntheticRowIdKey(config.db_type, pks),
+      includeRowId: false,
     });
     console.info("[DBX][openData:sql-built]", {
       traceId,
-      primaryKeys: pks,
-      includeRowId: usesSyntheticRowIdKey(config.db_type, pks),
+      primaryKeys: [],
+      includeRowId: false,
       sql,
       elapsed: elapsed(),
     });
     queryStore.updateSql(tabId, sql);
-    queryStore.setTableMeta(tabId, {
-      schema: node.schema,
-      tableName: node.label,
-      columns,
-      primaryKeys: pks,
-    });
+
+    const loadTableMeta = async () => {
+      try {
+        console.info("[DBX][openData:get-columns:start]", {
+          traceId,
+          database: node.database,
+          schema: querySchema,
+          table: node.label,
+          elapsed: elapsed(),
+        });
+        const columns = await api.getColumns(node.connectionId, node.database, querySchema, node.label);
+        console.info("[DBX][openData:get-columns:done]", {
+          traceId,
+          columnCount: columns.length,
+          primaryKeys: columns.filter((column) => column.is_primary_key).map((column) => column.name),
+          elapsed: elapsed(),
+        });
+        const pks = editablePrimaryKeys(config.db_type, columns);
+        queryStore.setTableMeta(tabId, {
+          schema: node.schema,
+          tableName: node.label,
+          columns,
+          primaryKeys: pks,
+        });
+      } catch (error) {
+        console.warn("[DBX][openData:get-columns:error]", { traceId, elapsed: elapsed(), error });
+      }
+    };
 
     console.info("[DBX][openData:execute:start]", { traceId, tabId, elapsed: elapsed() });
     await queryStore.executeTabSql(tabId, sql);
     console.info("[DBX][openData:execute:done]", { traceId, tabId, elapsed: elapsed() });
+    void loadTableMeta();
   } catch (e: any) {
     console.error("[DBX][openData:error]", { traceId, elapsed: elapsed(), error: e });
     queryStore.setErrorResult(tabId, e);
@@ -1402,6 +1431,17 @@ function disconnectConnection() {
   }
 }
 
+async function closeDatabaseConnection() {
+  const node = props.node;
+  if (node.type !== "database" || !node.connectionId || node.database == null) return;
+  try {
+    await connectionStore.closeDatabaseConnection(node.connectionId, node.database);
+    toast(t("connection.databaseConnectionClosed", { name: node.label }), 2000);
+  } catch (e: any) {
+    toast(t("connection.saveFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
 function openTransfer() {
   if (props.node.connectionId) {
     connectionStore.transferSource = {
@@ -1592,6 +1632,18 @@ const isConnected = computed(
     !!props.node.connectionId &&
     connectionStore.connectedIds.has(props.node.connectionId),
 );
+const canCloseDatabaseConnection = computed(
+  () =>
+    props.node.type === "database" &&
+    !!props.node.connectionId &&
+    props.node.database != null &&
+    connectionStore.isTreeNodeChildrenLoaded(props.node.id),
+);
+const nodeIconClass = computed(() => {
+  const infoClass = getIconInfo(props.node)?.colorClass;
+  if (props.node.type !== "database") return infoClass;
+  return canCloseDatabaseConnection.value ? infoClass : "text-muted-foreground/65";
+});
 const canConfigureVisibleDatabases = computed(() => {
   if (props.node.type !== "connection" || !props.node.connectionId) return false;
   return connectionStore.getConfig(props.node.connectionId)?.db_type !== "elasticsearch";
@@ -1804,6 +1856,106 @@ const showDropInside = computed(
   () => dragState.active && dragState.targetId === props.node.id && dragState.dropPosition === "inside",
 );
 const isDragging = computed(() => dragState.active && dragState.draggedId === props.node.id);
+const TABLE_REFERENCE_DRAG_THRESHOLD = 5;
+const TABLE_REFERENCE_DRAGGING_CLASS = "dbx-table-reference-dragging";
+const canDragTableReference = computed(
+  () =>
+    !props.dragDisabled &&
+    (props.node.type === "table" || props.node.type === "view") &&
+    !!props.node.connectionId &&
+    props.node.database != null,
+);
+
+let pendingTableReferenceDrag: {
+  payload: QueryEditorTableReferencePayload;
+  startX: number;
+  startY: number;
+} | null = null;
+let draggingTableReferencePayload: QueryEditorTableReferencePayload | null = null;
+let suppressNextTableReferenceClick = false;
+
+function tableReferenceDragPayload(): QueryEditorTableReferencePayload | null {
+  if (!canDragTableReference.value) return null;
+  const payload = createTableReferencePayload({
+    connectionId: props.node.connectionId,
+    database: props.node.database,
+    schema: props.node.schema,
+    tableName: props.node.label,
+    databaseType: currentDatabaseType(),
+  });
+  return payload;
+}
+
+function startTableReferenceDrag(payload: QueryEditorTableReferencePayload) {
+  draggingTableReferencePayload = payload;
+  setActiveTableReferencePayload(payload);
+  document.getSelection()?.removeAllRanges();
+  document.body.style.cursor = "copy";
+}
+
+function finishTableReferenceDrag() {
+  clearActiveTableReferencePayload(draggingTableReferencePayload);
+  pendingTableReferenceDrag = null;
+  draggingTableReferencePayload = null;
+  document.body.classList.remove(TABLE_REFERENCE_DRAGGING_CLASS);
+  document.body.style.cursor = "";
+  document.removeEventListener("mousemove", onTableReferenceMouseMove, true);
+  document.removeEventListener("mouseup", onTableReferenceMouseUp, true);
+}
+
+function onTableReferenceMouseMove(event: MouseEvent) {
+  if (!pendingTableReferenceDrag && !draggingTableReferencePayload) return;
+  if (pendingTableReferenceDrag && !draggingTableReferencePayload) {
+    const dx = event.clientX - pendingTableReferenceDrag.startX;
+    const dy = event.clientY - pendingTableReferenceDrag.startY;
+    if (Math.abs(dx) < TABLE_REFERENCE_DRAG_THRESHOLD && Math.abs(dy) < TABLE_REFERENCE_DRAG_THRESHOLD) return;
+    startTableReferenceDrag(pendingTableReferenceDrag.payload);
+  }
+  if (draggingTableReferencePayload) {
+    event.preventDefault();
+    document.getSelection()?.removeAllRanges();
+  }
+}
+
+function onTableReferenceMouseUp(event: MouseEvent) {
+  const payload = draggingTableReferencePayload;
+  if (payload) {
+    suppressNextTableReferenceClick = true;
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    if (target instanceof Element && target.closest("[data-query-editor-root]")) {
+      window.dispatchEvent(
+        createTableReferenceDropEvent({
+          payload,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        }),
+      );
+    }
+  }
+  finishTableReferenceDrag();
+}
+
+function startTableReferenceMouseDrag(event: MouseEvent) {
+  if (event.button !== 0) return;
+  const payload = tableReferenceDragPayload();
+  if (!payload) return;
+  event.preventDefault();
+  document.getSelection()?.removeAllRanges();
+  document.body.classList.add(TABLE_REFERENCE_DRAGGING_CLASS);
+  pendingTableReferenceDrag = { payload, startX: event.clientX, startY: event.clientY };
+  document.addEventListener("mousemove", onTableReferenceMouseMove, true);
+  document.addEventListener("mouseup", onTableReferenceMouseUp, true);
+}
+
+function onRowMouseDown(event: MouseEvent) {
+  if (isDraggable.value) {
+    startDrag(event, props.node.id, props.node.type);
+  } else if (canDragTableReference.value) {
+    startTableReferenceMouseDrag(event);
+  }
+}
+
+onBeforeUnmount(() => finishTableReferenceDrag());
 
 // ---- CustomContextMenu ----
 
@@ -1854,14 +2006,12 @@ function treeItemMenuItems(): ContextMenuItem[] {
     }
     items.push({ label: "", separator: true });
     if (availableGroups.value.length > 0 || currentGroupId.value) {
-      const groupChildren: ContextMenuItem[] = [
-        ...availableGroups.value.map((group: { id: string; name: string }) => ({
-          label: group.name,
-          action: () => moveToGroup(group.id),
-          icon: FolderOpen,
-          disabled: group.id === currentGroupId.value,
-        })),
-      ];
+      const groupChildren: ContextMenuItem[] = availableGroups.value.map((group: { id: string; name: string }) => ({
+        label: group.name,
+        action: () => moveToGroup(group.id),
+        icon: FolderOpen,
+        disabled: group.id === currentGroupId.value,
+      }));
       if (currentGroupId.value) {
         groupChildren.push({ label: "", separator: true });
         groupChildren.push({ label: t("connectionGroup.ungrouped"), action: () => moveToGroup(null) });
@@ -1941,6 +2091,10 @@ function treeItemMenuItems(): ContextMenuItem[] {
     items.push({ label: t("diff.title"), action: openSchemaDiff, icon: ArrowRightLeft });
     items.push({ label: t("dataCompare.title"), action: openDataCompare, icon: ArrowRightLeft });
     items.push({ label: t("contextMenu.exportDatabase"), action: openDatabaseExport, icon: Download });
+    if (canCloseDatabaseConnection.value) {
+      items.push({ label: "", separator: true });
+      items.push({ label: t("contextMenu.closeDatabaseConnection"), action: closeDatabaseConnection, icon: Unplug });
+    }
     if (canDropDatabase.value || canDropSchema.value) {
       items.push({ label: "", separator: true });
     }
@@ -2076,7 +2230,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
       });
       items.push({ label: "", separator: true });
     }
-    if (node.type !== "saved-sql-root" && node.type !== "saved-sql-folder") {
+    if (node.type !== "saved-sql-root" && node.type !== "saved-sql-folder" && node.type !== "group-partitions") {
       items.push({ label: t("contextMenu.refreshChildren"), action: refresh, icon: RefreshCw });
     }
     return items;
@@ -2119,13 +2273,14 @@ function treeItemMenuItems(): ContextMenuItem[] {
           'rounded-none': connectionColor && !isSelected,
           'rounded-sm': !connectionColor && !isSelected,
           'tree-item-active rounded-md': isSelected,
+          'tree-item-highlight': highlighted,
         }"
         :tabindex="isSelected ? 0 : -1"
         :style="rowStyle"
         @click="onClick"
         @dblclick="onDoubleClick"
         @keydown="onKeydown"
-        @mousedown="isDraggable ? startDrag($event, node.id, node.type) : undefined"
+        @mousedown="onRowMouseDown"
         @mousemove="isDropTarget ? updateTarget($event, node.id, node.type) : undefined"
         @mouseleave="clearTarget(node.id)"
       >
@@ -2159,8 +2314,8 @@ function treeItemMenuItems(): ContextMenuItem[] {
         <component
           v-else
           :is="getIconInfo(node)?.icon || Database"
-          class="w-3.5 h-3.5 shrink-0"
-          :class="getIconInfo(node)?.colorClass"
+          class="w-3.5 h-3.5 shrink-0 transition-colors"
+          :class="nodeIconClass"
         />
         <input
           v-if="isRenamingGroup"
@@ -2172,18 +2327,16 @@ function treeItemMenuItems(): ContextMenuItem[] {
           @keydown.escape.prevent="isRenamingGroup = false"
           @click.stop
         />
-        <Tooltip v-else :disabled="isTooltipDisabled(node)">
-          <TooltipTrigger as-child>
-            <span ref="labelRef" class="min-w-0 flex-1 truncate">{{ visibleLabel(node) }}</span>
-          </TooltipTrigger>
-          <TooltipContent side="right" :side-offset="8">{{ displayLabel(node) }}</TooltipContent>
-        </Tooltip>
+        <LightTooltip v-else :text="displayLabel(node)" :disabled="isTooltipDisabled" side="right" :side-offset="8">
+          <span ref="labelRef" class="min-w-0 flex-1 truncate">{{ visibleLabel(node) }}</span>
+        </LightTooltip>
         <span
           v-if="
             (node.type === 'group-tables' ||
               node.type === 'group-views' ||
               node.type === 'group-procedures' ||
-              node.type === 'group-functions') &&
+              node.type === 'group-functions' ||
+              node.type === 'group-partitions') &&
             node.objectCount != null
           "
           class="text-muted-foreground text-[10px] shrink-0"
@@ -2527,10 +2680,21 @@ function treeItemMenuItems(): ContextMenuItem[] {
 }
 
 /* Focused: soft blue */
-.sidebar-tree:focus-within .tree-item-active {
+.tree-item-active:focus {
   background-color: oklch(0.91 0.03 250) !important;
 }
-:root.dark .sidebar-tree:focus-within .tree-item-active {
+:root.dark .tree-item-active:focus {
   background-color: oklch(0.35 0.06 250) !important;
+}
+
+/* Locate highlight: instant amber, then fade on removal */
+.tree-item-highlight {
+  background-color: oklch(0.92 0.08 85) !important;
+  transition: background-color 0.8s ease-out 0.6s;
+}
+
+:root.dark .tree-item-highlight {
+  background-color: oklch(0.42 0.12 80) !important;
+  transition: background-color 0.8s ease-out 0.6s;
 }
 </style>

@@ -38,11 +38,23 @@ export interface AiConfig {
 
 export interface DesktopSettings {
   show_tray_icon: boolean;
+  icon_theme: DesktopIconTheme;
 }
+
+export type DesktopIconTheme = "default" | "black";
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   show_tray_icon: true,
+  icon_theme: "default",
 };
+
+function normalizeDesktopSettings(settings: Partial<DesktopSettings> | null | undefined): DesktopSettings {
+  const iconTheme = settings?.icon_theme === "black" ? "black" : DEFAULT_DESKTOP_SETTINGS.icon_theme;
+  return {
+    show_tray_icon: settings?.show_tray_icon ?? DEFAULT_DESKTOP_SETTINGS.show_tray_icon,
+    icon_theme: iconTheme,
+  };
+}
 
 export interface AiProviderPreset extends Omit<AiConfig, "apiKey"> {
   label: string;
@@ -169,6 +181,9 @@ export type EditorTheme =
   | "duotone-dark"
   | "xcode";
 
+const STRUCTURE_EDITOR_DENSITIES = ["compact", "standard", "comfortable"] as const;
+export type StructureEditorDensity = (typeof STRUCTURE_EDITOR_DENSITIES)[number];
+
 export interface EditorSettings {
   fontFamily: string;
   fontSize: number;
@@ -183,6 +198,9 @@ export interface EditorSettings {
   mongoViewMode: "document" | "table";
   showColumnCommentsInHeader: boolean;
   compactColumnHeaderActions: boolean;
+  structureEditorDensity: StructureEditorDensity;
+  tableInfoDrawerWidth: number;
+  cellDetailDrawerWidth: number;
   shortcuts: ShortcutSettings;
   sidebarActivation: SidebarActivation;
   sidebarObjectDisplay: "grouped" | "simple";
@@ -241,6 +259,9 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   mongoViewMode: "document",
   showColumnCommentsInHeader: false,
   compactColumnHeaderActions: true,
+  structureEditorDensity: "compact",
+  tableInfoDrawerWidth: 320,
+  cellDetailDrawerWidth: 320,
   shortcuts: normalizeShortcutSettings(),
   sidebarActivation: "single",
   sidebarObjectDisplay: "grouped",
@@ -268,6 +289,17 @@ const MAX_UI_SCALE = 2;
 function normalizeUiScale(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_EDITOR_SETTINGS.uiScale;
   return Math.min(MAX_UI_SCALE, Math.max(MIN_UI_SCALE, Math.round(value * 100) / 100));
+}
+
+function normalizeDrawerWidth(value: unknown, min: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(900, Math.max(min, Math.round(value)));
+}
+
+function normalizeStructureEditorDensity(value: unknown): StructureEditorDensity {
+  return STRUCTURE_EDITOR_DENSITIES.includes(value as StructureEditorDensity)
+    ? (value as StructureEditorDensity)
+    : DEFAULT_EDITOR_SETTINGS.structureEditorDensity;
 }
 
 function normalizeColumnFormatters(value: unknown): Record<string, ColumnFormatterConfig> {
@@ -333,6 +365,17 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
       settings.showColumnCommentsInHeader ?? DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader,
     compactColumnHeaderActions:
       settings.compactColumnHeaderActions ?? DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions,
+    structureEditorDensity: normalizeStructureEditorDensity(settings.structureEditorDensity),
+    tableInfoDrawerWidth: normalizeDrawerWidth(
+      settings.tableInfoDrawerWidth,
+      240,
+      DEFAULT_EDITOR_SETTINGS.tableInfoDrawerWidth,
+    ),
+    cellDetailDrawerWidth: normalizeDrawerWidth(
+      settings.cellDetailDrawerWidth,
+      260,
+      DEFAULT_EDITOR_SETTINGS.cellDetailDrawerWidth,
+    ),
     shortcuts: normalizeShortcutSettings(settings.shortcuts),
     sidebarActivation:
       settings.sidebarActivation === "single" || settings.sidebarActivation === "double"
@@ -402,7 +445,7 @@ export const useSettingsStore = defineStore("settings", () => {
 
   async function initDesktopSettings() {
     if (isDesktopSettingsLoaded.value) return;
-    desktopSettings.value = await api.loadDesktopSettings().catch(() => ({ ...DEFAULT_DESKTOP_SETTINGS }));
+    desktopSettings.value = normalizeDesktopSettings(await api.loadDesktopSettings().catch(() => null));
     isDesktopSettingsLoaded.value = true;
   }
 
@@ -412,9 +455,9 @@ export const useSettingsStore = defineStore("settings", () => {
       ...desktopSettings.value,
       ...partial,
     };
-    desktopSettings.value = next;
+    desktopSettings.value = normalizeDesktopSettings(next);
     try {
-      await api.saveDesktopSettings(next);
+      await api.saveDesktopSettings(desktopSettings.value);
     } catch (error) {
       desktopSettings.value = previous;
       throw error;
@@ -483,6 +526,12 @@ export const useSettingsStore = defineStore("settings", () => {
       editorSettings.value.showColumnCommentsInHeader = partial.showColumnCommentsInHeader;
     if (partial.compactColumnHeaderActions !== undefined)
       editorSettings.value.compactColumnHeaderActions = partial.compactColumnHeaderActions;
+    if (partial.structureEditorDensity !== undefined)
+      editorSettings.value.structureEditorDensity = normalizeStructureEditorDensity(partial.structureEditorDensity);
+    if (partial.tableInfoDrawerWidth !== undefined)
+      editorSettings.value.tableInfoDrawerWidth = normalizeDrawerWidth(partial.tableInfoDrawerWidth, 240, 320);
+    if (partial.cellDetailDrawerWidth !== undefined)
+      editorSettings.value.cellDetailDrawerWidth = normalizeDrawerWidth(partial.cellDetailDrawerWidth, 260, 320);
     if (partial.shortcuts !== undefined) editorSettings.value.shortcuts = normalizeShortcutSettings(partial.shortcuts);
     if (partial.sidebarActivation !== undefined) editorSettings.value.sidebarActivation = partial.sidebarActivation;
     if (partial.sidebarObjectDisplay !== undefined)

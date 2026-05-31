@@ -35,6 +35,13 @@ test("treats TDengine databases as schema tree roots and agent driver databases"
   assert.equal(supportsDriverManagement("tdengine"), true);
 });
 
+test("treats XuguDB as a schema-aware agent driver database", () => {
+  assert.equal(TREE_SCHEMA_TYPES.has("xugu"), true);
+  assert.equal(SCHEMA_AWARE_TYPES.has("xugu"), true);
+  assert.equal(supportsDatabaseSearch("xugu"), true);
+  assert.equal(supportsDriverManagement("xugu"), true);
+});
+
 test("treats Access as a local single-database agent driver", () => {
   assert.equal(SCHEMA_AWARE_TYPES.has("access"), false);
   assert.equal(supportsDriverManagement("access"), true);
@@ -197,9 +204,11 @@ test("describes feature support through capability helpers", () => {
   assert.equal(supportsTableTruncate("duckdb"), false);
 });
 
-test("schema-aware database nodes do not open an object browser tab", () => {
+test("object browser entry follows database tree shape", () => {
   assert.equal(supportsObjectBrowserTreeNode("postgres", "database"), false);
   assert.equal(supportsObjectBrowserTreeNode("postgres", "schema"), true);
+  assert.equal(supportsObjectBrowserTreeNode("sqlserver", "database"), true);
+  assert.equal(supportsObjectBrowserTreeNode("sqlserver", "schema"), true);
   assert.equal(supportsObjectBrowserTreeNode("mysql", "database"), true);
   assert.equal(supportsObjectBrowserTreeNode("mongodb", "database"), false);
 });

@@ -152,7 +152,12 @@ mod tests {
         let manager = test_manager("profile-key");
 
         assert_eq!(AgentManager::db_type_to_agent_key(&DatabaseType::Oracle, Some("oracle-10g")), Some("oracle-10g"));
+        assert_eq!(
+            AgentManager::db_type_to_agent_key(&DatabaseType::Oracle, Some("oracle-legacy")),
+            Some("oracle-legacy")
+        );
         assert_eq!(AgentManager::db_type_to_agent_key(&DatabaseType::Oracle, None), Some("oracle"));
+        manager.stop_daemon_by_key("oracle-legacy").await;
         manager.stop_daemon_by_key("oracle-10g").await;
     }
 }

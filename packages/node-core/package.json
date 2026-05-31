@@ -1,6 +1,6 @@
 {
   "name": "@dbx-app/node-core",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Shared Node.js database and DBX connection utilities for DBX CLI and MCP server",
   "type": "module",
   "engines": {
@@ -16,6 +16,8 @@
     "./connections": "./dist/connections.js",
     "./database": "./dist/database.js",
     "./diagnostics": "./dist/diagnostics.js",
+    "./entrypoint": "./dist/entrypoint.js",
+    "./format": "./dist/format.js",
     "./paths": "./dist/paths.js",
     "./schema-context": "./dist/schema-context.js",
     "./sql-safety": "./dist/sql-safety.js"

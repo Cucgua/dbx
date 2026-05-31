@@ -194,6 +194,7 @@ pub enum DatabaseType {
     Kylin,
     Sundb,
     Tdengine,
+    Xugu,
     #[serde(rename = "iris")]
     Iris,
     Jdbc,
@@ -308,6 +309,10 @@ impl ConnectionConfig {
             && self.redis_connection_mode.as_deref().is_some_and(|mode| mode.eq_ignore_ascii_case("cluster"))
     }
 
+    pub fn redis_tls_insecure(&self) -> bool {
+        self.db_type == DatabaseType::Redis && redis_url_params_enable_insecure(self.url_params.as_deref())
+    }
+
     pub fn connection_url(&self) -> String {
         self.connection_url_with_host(&self.host, self.port)
     }
@@ -329,10 +334,12 @@ impl ConnectionConfig {
             DatabaseType::Access => self.host.clone(),
             DatabaseType::Redis => {
                 let scheme = if self.ssl { "rediss" } else { "redis" };
-                format!("{scheme}://{host}:{port}/")
+                let fragment = self.redis_tls_insecure_fragment();
+                format!("{scheme}://{host}:{port}/{fragment}")
             }
             DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => {
-                format!("mysql://{host}:{port}{db_part}?{params}")
+                let suffix = if params.is_empty() { String::new() } else { format!("?{params}") };
+                format!("mysql://{host}:{port}{db_part}{suffix}")
             }
             DatabaseType::Postgres | DatabaseType::Redshift => {
                 let suffix = if params.is_empty() { String::new() } else { format!("?{params}") };
@@ -400,6 +407,7 @@ impl ConnectionConfig {
             DatabaseType::Kylin => format!("kylin://{host}:{port}{db_part}"),
             DatabaseType::Sundb => format!("sundb://{host}:{port}{db_part}"),
             DatabaseType::Tdengine => format!("tdengine://{host}:{port}{db_part}"),
+            DatabaseType::Xugu => format!("xugu://{host}:{port}{db_part}"),
             DatabaseType::Iris => format!("iris://{host}:{port}{db_part}"),
             DatabaseType::Jdbc => "jdbc:<redacted>".to_string(),
         }
@@ -420,16 +428,18 @@ impl ConnectionConfig {
             DatabaseType::Access => self.host.clone(),
             DatabaseType::Redis => {
                 let scheme = if self.ssl { "rediss" } else { "redis" };
+                let fragment = self.redis_tls_insecure_fragment();
                 if self.username.is_empty() && self.password.is_empty() {
-                    format!("{scheme}://{host}:{port}/")
+                    format!("{scheme}://{host}:{port}/{fragment}")
                 } else if self.username.is_empty() {
-                    format!("{scheme}://:{password}@{host}:{port}/")
+                    format!("{scheme}://:{password}@{host}:{port}/{fragment}")
                 } else {
-                    format!("{scheme}://{username}:{password}@{host}:{port}/")
+                    format!("{scheme}://{username}:{password}@{host}:{port}/{fragment}")
                 }
             }
             DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks => {
-                format!("mysql://{}:{}@{host}:{port}{db_part}?{params}", username, password)
+                let suffix = if params.is_empty() { String::new() } else { format!("?{params}") };
+                format!("mysql://{}:{}@{host}:{port}{db_part}{suffix}", username, password)
             }
             DatabaseType::Postgres | DatabaseType::Redshift => {
                 let suffix = if params.is_empty() { String::new() } else { format!("?{params}") };
@@ -560,6 +570,9 @@ impl ConnectionConfig {
             DatabaseType::Tdengine => {
                 format!("tdengine://{}:{}@{host}:{port}{db_part}", username, password)
             }
+            DatabaseType::Xugu => {
+                format!("xugu://{}:{}@{host}:{port}{db_part}", username, password)
+            }
             DatabaseType::Iris => {
                 format!("iris://{}:{}@{host}:{port}{db_part}", username, password)
             }
@@ -572,31 +585,11 @@ impl ConnectionConfig {
     fn normalized_url_params(&self) -> String {
         let value = self.url_params.as_deref().unwrap_or("").trim();
         if self.needs_bare_mysql() {
-            let v = value.trim_start_matches('?');
-            let filtered: Vec<&str> = v
-                .split('&')
-                .filter(|p| !p.is_empty() && !p.starts_with("charset=") && !p.starts_with("ssl-mode=preferred"))
-                .collect();
-            return if filtered.is_empty() {
-                "ssl-mode=disabled".to_string()
-            } else {
-                format!("ssl-mode=disabled&{}", filtered.join("&"))
-            };
+            return normalize_bare_mysql_url_params(value);
         }
         match self.db_type {
             DatabaseType::Mysql => normalize_mysql_url_params(value, self.ssl, self.ca_cert_path.trim().is_empty()),
-            DatabaseType::Doris | DatabaseType::StarRocks => {
-                let v = value.trim_start_matches('?');
-                let filtered: Vec<&str> = v
-                    .split('&')
-                    .filter(|p| !p.is_empty() && !p.starts_with("charset=") && !p.starts_with("ssl-mode=preferred"))
-                    .collect();
-                if filtered.is_empty() {
-                    "ssl-mode=disabled".to_string()
-                } else {
-                    format!("ssl-mode=disabled&{}", filtered.join("&"))
-                }
-            }
+            DatabaseType::Doris | DatabaseType::StarRocks => normalize_bare_mysql_url_params(value),
             DatabaseType::Postgres | DatabaseType::Redshift => normalize_postgres_url_params(value, self.ssl),
             DatabaseType::MongoDb => value.trim_start_matches('?').to_string(),
             _ => value.trim_start_matches('?').to_string(),
@@ -606,12 +599,52 @@ impl ConnectionConfig {
     pub fn clickhouse_uses_tls(&self) -> bool {
         self.ssl || url_params_contains_flag(self.url_params.as_deref(), "secure", "true")
     }
+
+    fn redis_tls_insecure_fragment(&self) -> &'static str {
+        if self.ssl && self.redis_tls_insecure() {
+            "#insecure"
+        } else {
+            ""
+        }
+    }
+}
+
+fn redis_url_params_enable_insecure(params: Option<&str>) -> bool {
+    params.unwrap_or("").trim().trim_start_matches('?').split(['&', ';']).any(|part| {
+        let part = part.trim();
+        if part.is_empty() {
+            return false;
+        }
+        let Some((key, value)) = part.split_once('=') else {
+            return part.eq_ignore_ascii_case("insecure");
+        };
+        let key = key.trim();
+        matches!(key.to_ascii_lowercase().as_str(), "insecure" | "tls_insecure" | "accept_invalid_certs")
+            && matches!(value.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes" | "insecure")
+    })
 }
 
 fn url_params_contains_flag(params: Option<&str>, key: &str, expected: &str) -> bool {
     params.unwrap_or("").trim().trim_start_matches('?').split(['&', ';']).filter_map(|part| part.split_once('=')).any(
         |(part_key, value)| part_key.trim().eq_ignore_ascii_case(key) && value.trim().eq_ignore_ascii_case(expected),
     )
+}
+
+fn normalize_bare_mysql_url_params(value: &str) -> String {
+    value
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|part| {
+            !part.is_empty()
+                && !url_param_key_is(part, "charset")
+                && !url_param_key_is(part, "ssl-mode")
+                && !url_param_key_is(part, "sslmode")
+                && !url_param_key_is(part, "require_ssl")
+                && !url_param_key_is(part, "verify_ca")
+                && !url_param_key_is(part, "verify_identity")
+        })
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 fn normalize_mysql_url_params(value: &str, force_tls: bool, accept_invalid_certs: bool) -> String {
@@ -811,6 +844,11 @@ pub fn parse_jdbc_host_port(url: &str) -> Option<(String, u16)> {
     if let Some(after) = rest.strip_prefix("oracle:") {
         let at_pos = after.find('@')?;
         let after_at = &after[at_pos + 1..];
+        if after_at.trim_start().starts_with('(') {
+            let host = oracle_descriptor_value(after_at, "HOST")?;
+            let port = oracle_descriptor_value(after_at, "PORT")?;
+            return Some((host, port.parse().ok()?));
+        }
         let after_at = after_at.strip_prefix("//").unwrap_or(after_at);
         let host_port = after_at.split(&['/', ':', '?'][..]).next()?;
         let port_str = after_at.strip_prefix(host_port)?.strip_prefix(':')?.split(&[':', '/', ';', '?'][..]).next()?;
@@ -843,12 +881,45 @@ pub fn parse_jdbc_host_port(url: &str) -> Option<(String, u16)> {
 }
 
 pub fn rewrite_jdbc_url_host(url: &str, new_host: &str, new_port: u16) -> String {
+    let normalized_url = url.to_ascii_uppercase();
+    if normalized_url.starts_with("JDBC:ORACLE:")
+        && normalized_url.contains("(HOST=")
+        && normalized_url.contains("(PORT=")
+    {
+        return rewrite_oracle_descriptor_host(url, new_host, new_port);
+    }
+
     let Some((old_host, old_port)) = parse_jdbc_host_port(url) else {
         return url.to_string();
     };
     let old_authority = format!("{old_host}:{old_port}");
     let new_authority = format!("{new_host}:{new_port}");
     url.replacen(&old_authority, &new_authority, 1)
+}
+
+fn oracle_descriptor_value(descriptor: &str, key: &str) -> Option<String> {
+    let key = format!("({key}=");
+    let start = descriptor.to_ascii_uppercase().find(&key)?;
+    let value_start = start + key.len();
+    let value_end = descriptor[value_start..].find(')')? + value_start;
+    Some(descriptor[value_start..value_end].trim().to_string())
+}
+
+fn rewrite_oracle_descriptor_host(url: &str, new_host: &str, new_port: u16) -> String {
+    let rewritten_host = replace_oracle_descriptor_value(url, "HOST", new_host);
+    replace_oracle_descriptor_value(&rewritten_host, "PORT", &new_port.to_string())
+}
+
+fn replace_oracle_descriptor_value(input: &str, key: &str, value: &str) -> String {
+    let token = format!("({key}=");
+    let Some(start) = input.to_ascii_uppercase().find(&token) else {
+        return input.to_string();
+    };
+    let value_start = start + token.len();
+    let Some(value_end) = input[value_start..].find(')').map(|offset| value_start + offset) else {
+        return input.to_string();
+    };
+    format!("{}{}{}", &input[..value_start], value, &input[value_end..])
 }
 
 fn encode_url_part(value: &str) -> String {
@@ -1065,7 +1136,32 @@ mod tests {
         config.driver_profile = Some("oceanbase".to_string());
 
         assert!(config.needs_bare_mysql());
-        assert_eq!(config.connection_url(), "mysql://user%40tenant%23cluster:secret@10.1.2.3:2883?ssl-mode=disabled");
+        assert_eq!(config.connection_url(), "mysql://user%40tenant%23cluster:secret@10.1.2.3:2883");
+    }
+
+    #[test]
+    fn starrocks_profile_omits_mysql_ssl_mode_param() {
+        let mut config = mysql_config("root", "secret", Some("analytics"));
+        config.driver_profile = Some("starrocks".to_string());
+        config.url_params = Some(
+            "ssl-mode=disabled&sslmode=required&require_ssl=true&verify_ca=false&verify_identity=false&charset=utf8mb4"
+                .to_string(),
+        );
+
+        assert!(config.needs_bare_mysql());
+        assert_eq!(config.connection_url(), "mysql://root:secret@10.1.2.3:2883/analytics");
+    }
+
+    #[test]
+    fn starrocks_profile_keeps_non_mysql_tls_params() {
+        let mut config = mysql_config("root", "secret", Some("analytics"));
+        config.driver_profile = Some("starrocks".to_string());
+        config.url_params = Some("connect_timeout=10&sessionVariables=query_timeout=60".to_string());
+
+        assert_eq!(
+            config.connection_url(),
+            "mysql://root:secret@10.1.2.3:2883/analytics?connect_timeout=10&sessionVariables=query_timeout=60"
+        );
     }
 
     #[test]
@@ -1402,6 +1498,26 @@ mod tests {
     }
 
     #[test]
+    fn redis_tls_insecure_url_params_append_insecure_fragment() {
+        let mut config = mysql_config("default", "secret", Some("0"));
+        config.db_type = DatabaseType::Redis;
+        config.ssl = true;
+        config.url_params = Some("insecure=true".to_string());
+
+        assert_eq!(config.connection_url(), "rediss://default:secret@10.1.2.3:2883/#insecure");
+        assert_eq!(config.redacted_connection_url(), "rediss://10.1.2.3:2883/#insecure");
+    }
+
+    #[test]
+    fn redis_insecure_url_params_do_not_affect_plain_tcp() {
+        let mut config = mysql_config("default", "secret", Some("0"));
+        config.db_type = DatabaseType::Redis;
+        config.url_params = Some("insecure=true".to_string());
+
+        assert_eq!(config.connection_url(), "redis://default:secret@10.1.2.3:2883/");
+    }
+
+    #[test]
     fn redacted_mongodb_url_keeps_custom_params_without_credentials() {
         let mut config = mongodb_config("root", "secret", Some("admin"));
         config.url_params = Some("authSource=admin&authMechanism=SCRAM-SHA-1".to_string());
@@ -1525,6 +1641,27 @@ mod tests {
         let (h, p) = super::parse_jdbc_host_port("jdbc:oracle:thin:@//orahost:1521/service").unwrap();
         assert_eq!(h, "orahost");
         assert_eq!(p, 1521);
+    }
+
+    #[test]
+    fn parse_jdbc_host_port_oracle_descriptor() {
+        let (h, p) = super::parse_jdbc_host_port(
+            "jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=orahost)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=orcl)))",
+        )
+        .unwrap();
+        assert_eq!(h, "orahost");
+        assert_eq!(p, 1521);
+    }
+
+    #[test]
+    fn rewrite_jdbc_url_host_oracle_descriptor() {
+        let url =
+            "jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=orahost)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=orcl)))";
+
+        assert_eq!(
+            super::rewrite_jdbc_url_host(url, "127.0.0.1", 11521),
+            "jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=127.0.0.1)(PORT=11521))(CONNECT_DATA=(SERVICE_NAME=orcl)))"
+        );
     }
 
     #[test]

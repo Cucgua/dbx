@@ -77,9 +77,13 @@ pub fn mongo_legacy_error_with_auth_hint(err: &str) -> String {
 }
 
 fn oracle_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> String {
+    if let Some(connection_string) = config.connection_string.as_deref().filter(|value| !value.trim().is_empty()) {
+        return crate::models::connection::rewrite_jdbc_url_host(connection_string.trim(), host, port);
+    }
+
     let database = database.trim();
     if database.is_empty() {
-        return config.connection_string.as_deref().unwrap_or("").to_string();
+        return String::new();
     }
 
     if config.oracle_connect_method == OracleConnectMethod::Sid
@@ -108,18 +112,36 @@ fn postgres_like_agent_jdbc_connection_string(
 }
 
 pub fn should_retry_oracle_with_10g_driver(config: &ConnectionConfig, err: &str) -> bool {
+    !oracle_auth_fallback_profiles(config, err).is_empty()
+}
+
+pub fn oracle_auth_fallback_profiles(config: &ConnectionConfig, err: &str) -> Vec<&'static str> {
     if config.db_type != DatabaseType::Oracle {
-        return false;
-    }
-    if config.driver_profile.as_deref() == Some("oracle-10g") {
-        return false;
+        return Vec::new();
     }
     let normalized = err.to_lowercase();
-    normalized.contains("ora-12541") || normalized.contains("no listener") || err.contains("没有监听程序")
+    if !normalized.contains("ora-28040") && !normalized.contains("no matching authentication protocol") {
+        return Vec::new();
+    }
+    match config.driver_profile.as_deref() {
+        Some("oracle-10g") => Vec::new(),
+        Some("oracle-legacy") => vec!["oracle-10g"],
+        _ => vec!["oracle-legacy", "oracle-10g"],
+    }
 }
 
 pub fn oracle_alternate_connect_config(config: &ConnectionConfig, err: &str) -> Option<ConnectionConfig> {
-    if !should_retry_oracle_with_10g_driver(config, err) {
+    if config.db_type != DatabaseType::Oracle {
+        return None;
+    }
+    if config.driver_profile.as_deref() == Some("oracle-10g") {
+        return None;
+    }
+    if config.connection_string.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+        return None;
+    }
+    let normalized = err.to_lowercase();
+    if !normalized.contains("ora-12505") && !normalized.contains("ora-12514") {
         return None;
     }
 
@@ -255,15 +277,64 @@ mod tests {
     }
 
     #[test]
+    fn oracle_url_preserves_custom_jdbc_descriptor_and_rewrites_host_port() {
+        let mut cfg = config(DatabaseType::Oracle, Some("ORCL"));
+        cfg.host = "oracle.example.com".to_string();
+        cfg.port = 1521;
+        cfg.connection_string = Some(
+            "jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=oracle.example.com)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=ORCL)))"
+                .to_string(),
+        );
+
+        let params = agent_connect_params(&cfg, "127.0.0.1", 11521, "ORCL");
+
+        assert_eq!(
+            params["connection_string"],
+            "jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=127.0.0.1)(PORT=11521))(CONNECT_DATA=(SERVICE_NAME=ORCL)))"
+        );
+    }
+
+    #[test]
     fn oracle_listener_errors_can_switch_descriptor() {
         let mut cfg = config(DatabaseType::Oracle, Some("ORCL"));
         cfg.driver_profile = Some("oracle".to_string());
         cfg.oracle_connection_type = Some("service_name".to_string());
 
-        let retry = oracle_alternate_connect_config(&cfg, "ORA-12541: TNS:no listener").unwrap();
+        let retry = oracle_alternate_connect_config(&cfg, "ORA-12514: listener does not know service").unwrap();
 
         assert_eq!(retry.oracle_connection_type.as_deref(), Some("sid"));
         assert!(oracle_alternate_connect_config(&retry, "ORA-01017: invalid username/password").is_none());
+        assert!(oracle_alternate_connect_config(&cfg, "ORA-12541: TNS:no listener").is_none());
+    }
+
+    #[test]
+    fn oracle_auth_errors_use_legacy_then_10g_fallbacks() {
+        let mut cfg = config(DatabaseType::Oracle, Some("ORCL"));
+        cfg.driver_profile = Some("oracle".to_string());
+
+        assert_eq!(
+            oracle_auth_fallback_profiles(&cfg, "ORA-28040: No matching authentication protocol"),
+            vec!["oracle-legacy", "oracle-10g"]
+        );
+
+        cfg.driver_profile = Some("oracle-legacy".to_string());
+        assert_eq!(
+            oracle_auth_fallback_profiles(&cfg, "ORA-28040: No matching authentication protocol"),
+            vec!["oracle-10g"]
+        );
+
+        cfg.driver_profile = Some("oracle-10g".to_string());
+        assert!(oracle_auth_fallback_profiles(&cfg, "ORA-28040: No matching authentication protocol").is_empty());
+    }
+
+    #[test]
+    fn oracle_custom_connection_string_skips_alternate_descriptor_retry() {
+        let mut cfg = config(DatabaseType::Oracle, Some("ORCL"));
+        cfg.driver_profile = Some("oracle".to_string());
+        cfg.oracle_connection_type = Some("service_name".to_string());
+        cfg.connection_string = Some("jdbc:oracle:thin:@//oracle.example.com:1521/ORCL".to_string());
+
+        assert!(oracle_alternate_connect_config(&cfg, "ORA-12514: listener does not know service").is_none());
     }
 
     #[test]

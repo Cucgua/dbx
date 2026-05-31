@@ -1,6 +1,6 @@
 use crate::connection::{AppState, MysqlMode, PoolKind};
 use crate::db;
-use crate::models::connection::DatabaseType;
+use crate::models::connection::{ConnectionConfig, DatabaseType};
 use std::future::Future;
 
 macro_rules! extract_pool {
@@ -77,7 +77,13 @@ pub fn duckdb_query_tables_in_database_with_attached(
     ).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map((database.as_str(), schema), |row| {
-            Ok(db::TableInfo { name: row.get::<_, String>(0)?, table_type: row.get::<_, String>(1)?, comment: None })
+            Ok(db::TableInfo {
+                name: row.get::<_, String>(0)?,
+                table_type: row.get::<_, String>(1)?,
+                comment: None,
+                parent_schema: None,
+                parent_name: None,
+            })
         })
         .map_err(|e| e.to_string())?;
     Ok(rows.filter_map(|r| r.ok()).collect())
@@ -446,7 +452,16 @@ async fn list_tables_once(
 }
 
 fn collection_names_to_tables(names: Vec<String>, table_type: &str) -> Vec<db::TableInfo> {
-    names.into_iter().map(|name| db::TableInfo { name, table_type: table_type.to_string(), comment: None }).collect()
+    names
+        .into_iter()
+        .map(|name| db::TableInfo {
+            name,
+            table_type: table_type.to_string(),
+            comment: None,
+            parent_schema: None,
+            parent_name: None,
+        })
+        .collect()
 }
 
 fn filter_table_infos(tables: Vec<db::TableInfo>, filter: Option<&str>, limit: Option<usize>) -> Vec<db::TableInfo> {
@@ -547,6 +562,8 @@ async fn list_objects_once(
                         comment: table.comment,
                         created_at: None,
                         updated_at: None,
+                        parent_schema: table.parent_schema,
+                        parent_name: table.parent_name,
                     })
                     .collect())
             })
@@ -594,6 +611,8 @@ async fn list_objects_once(
                     comment: table.comment,
                     created_at: None,
                     updated_at: None,
+                    parent_schema: table.parent_schema,
+                    parent_name: table.parent_name,
                 })
                 .collect())
         }
@@ -837,13 +856,29 @@ pub async fn get_table_ddl_core(
 
     let connections = state.connections.read().await;
     let pool = connections.get(&pool_key).ok_or("Pool not found")?;
+    let db_config = connection_config(state, connection_id).await;
 
     match pool {
         PoolKind::Mysql(p, _) => mysql_ddl(p, table).await,
+        PoolKind::Postgres(p) if db_config.as_ref().is_some_and(is_opengauss_family_config) => {
+            match opengauss_table_ddl(p, schema, table).await {
+                Ok(ddl) => Ok(ddl),
+                Err(_) => pg_ddl(p, schema, table).await,
+            }
+        }
         PoolKind::Postgres(p) => pg_ddl(p, schema, table).await,
         PoolKind::Sqlite(p) => sqlite_ddl(p, table).await,
         _ => Err("DDL not supported for this database type".to_string()),
     }
+}
+
+async fn connection_config(state: &AppState, connection_id: &str) -> Option<ConnectionConfig> {
+    state.configs.read().await.get(connection_id).cloned()
+}
+
+fn is_opengauss_family_config(config: &ConnectionConfig) -> bool {
+    matches!(config.db_type, DatabaseType::OpenGauss | DatabaseType::Gaussdb)
+        || matches!(config.driver_profile.as_deref(), Some("opengauss" | "gaussdb"))
 }
 
 fn sql_string(value: &str) -> String {
@@ -888,7 +923,15 @@ pub fn sqlserver_object_source_sql(schema: &str, name: &str, kind: &db::ObjectSo
 pub fn postgres_object_source_sql(schema: &str, name: &str, kind: &db::ObjectSourceKind) -> String {
     match kind {
         db::ObjectSourceKind::View => {
-            format!("SELECT pg_get_viewdef('{}.{}'::regclass, true)", pg_ident(schema), pg_ident(name))
+            format!(
+                "SELECT pg_get_viewdef(c.oid, 0) \
+                 FROM pg_catalog.pg_class c \
+                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = {} AND c.relname = {} AND c.relkind IN ('v','m') \
+                 ORDER BY c.oid LIMIT 1",
+                sql_string(schema),
+                sql_string(name)
+            )
         }
         db::ObjectSourceKind::Procedure | db::ObjectSourceKind::Function => {
             let prokind = if matches!(kind, db::ObjectSourceKind::Procedure) { "p" } else { "f" };
@@ -934,6 +977,17 @@ pub fn mysql_object_source_sql(name: &str, kind: &db::ObjectSourceKind) -> Strin
         db::ObjectSourceKind::Procedure => format!("SHOW CREATE PROCEDURE {}", mysql_ident(name)),
         db::ObjectSourceKind::Function => format!("SHOW CREATE FUNCTION {}", mysql_ident(name)),
     }
+}
+
+pub fn postgres_view_source_fallback_sql(schema: &str, name: &str) -> String {
+    format!(
+        "SELECT definition \
+         FROM pg_catalog.pg_views \
+         WHERE schemaname = {} AND viewname = {} \
+         LIMIT 1",
+        sql_string(schema),
+        sql_string(name)
+    )
 }
 
 fn first_string_cell(result: db::QueryResult) -> Result<String, String> {
@@ -1001,9 +1055,7 @@ pub async fn get_object_source_core(
         } else {
             match connections.get(&pool_key).ok_or("Pool not found")? {
                 PoolKind::Mysql(pool, _) => mysql_object_source(pool, name, &object_type).await?,
-                PoolKind::Postgres(pool) => first_string_cell(
-                    db::postgres::execute_query(pool, &postgres_object_source_sql(schema, name, &object_type)).await?,
-                )?,
+                PoolKind::Postgres(pool) => postgres_object_source(pool, schema, name, &object_type).await?,
                 PoolKind::Sqlite(pool) => first_string_cell(
                     db::sqlite::execute_query(pool, &sqlite_object_source_sql(name, &object_type)).await?,
                 )?,
@@ -1029,6 +1081,26 @@ pub async fn get_object_source_core(
     })
 }
 
+async fn postgres_object_source(
+    pool: &deadpool_postgres::Pool,
+    schema: &str,
+    name: &str,
+    object_type: &db::ObjectSourceKind,
+) -> Result<String, String> {
+    let sql = postgres_object_source_sql(schema, name, object_type);
+    match db::postgres::execute_query(pool, &sql).await.and_then(first_string_cell) {
+        Ok(source) => Ok(source),
+        Err(primary_err) if matches!(object_type, db::ObjectSourceKind::View) => {
+            let fallback_sql = postgres_view_source_fallback_sql(schema, name);
+            db::postgres::execute_query(pool, &fallback_sql)
+                .await
+                .and_then(first_string_cell)
+                .map_err(|fallback_err| format!("{primary_err}; fallback failed: {fallback_err}"))
+        }
+        Err(err) => Err(err),
+    }
+}
+
 #[cfg(test)]
 mod object_source_tests {
     use super::*;
@@ -1046,11 +1118,30 @@ mod object_source_tests {
     fn builds_postgres_object_source_sql_for_views_and_functions() {
         assert_eq!(
             postgres_object_source_sql("public", "active_users", &ObjectSourceKind::View),
-            "SELECT pg_get_viewdef('\"public\".\"active_users\"'::regclass, true)"
+            "SELECT pg_get_viewdef(c.oid, 0) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'active_users' AND c.relkind IN ('v','m') ORDER BY c.oid LIMIT 1"
         );
         assert_eq!(
             postgres_object_source_sql("public", "recalc_score", &ObjectSourceKind::Function),
             "SELECT pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = 'recalc_score' AND p.prokind = 'f' ORDER BY p.oid LIMIT 1"
+        );
+    }
+
+    #[test]
+    fn builds_postgres_view_source_sql_without_regclass_cast() {
+        let sql = postgres_object_source_sql("tenant's schema", "active users", &ObjectSourceKind::View);
+
+        assert!(!sql.contains("::regclass"));
+        assert!(sql.contains("pg_get_viewdef(c.oid, 0)"));
+        assert!(sql.contains("n.nspname = 'tenant''s schema'"));
+        assert!(sql.contains("c.relname = 'active users'"));
+        assert!(sql.contains("c.relkind IN ('v','m')"));
+    }
+
+    #[test]
+    fn builds_postgres_view_source_fallback_sql_from_pg_views() {
+        assert_eq!(
+            postgres_view_source_fallback_sql("tenant's schema", "active users"),
+            "SELECT definition FROM pg_catalog.pg_views WHERE schemaname = 'tenant''s schema' AND viewname = 'active users' LIMIT 1"
         );
     }
 
@@ -1092,6 +1183,14 @@ mod ddl_tests {
 
         assert!(ddl.contains("COMMENT ON COLUMN \"public\".\"users\".\"display_name\" IS 'User''s display name';"));
     }
+
+    #[test]
+    fn opengauss_table_ddl_uses_native_tabledef_function() {
+        assert_eq!(
+            opengauss_table_ddl_sql("tenant's schema", "active users"),
+            "SELECT pg_get_tabledef('\"tenant''s schema\".\"active users\"')"
+        );
+    }
 }
 
 pub async fn mysql_ddl(pool: &db::mysql::MySqlPool, table: &str) -> Result<String, String> {
@@ -1124,6 +1223,15 @@ pub async fn sqlite_ddl(pool: &db::sqlite::SqliteHandle, table: &str) -> Result<
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+pub async fn opengauss_table_ddl(pool: &deadpool_postgres::Pool, schema: &str, table: &str) -> Result<String, String> {
+    first_string_cell(db::postgres::execute_query(pool, &opengauss_table_ddl_sql(schema, table)).await?)
+}
+
+pub fn opengauss_table_ddl_sql(schema: &str, table: &str) -> String {
+    let qualified_name = format!("{}.{}", pg_ident(schema), pg_ident(table));
+    format!("SELECT pg_get_tabledef({})", sql_string(&qualified_name))
 }
 
 pub async fn pg_ddl(pool: &deadpool_postgres::Pool, schema: &str, table: &str) -> Result<String, String> {

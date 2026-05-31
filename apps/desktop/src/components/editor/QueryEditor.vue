@@ -25,6 +25,17 @@ import {
 import { extractIdentifierAt, isSqlKeyword, matchTable } from "@/lib/sqlNavigation";
 import { lineColumnToOffset, parseSqlErrorLocation } from "@/lib/sqlDiagnostics";
 import {
+  DBX_TABLE_REFERENCE_MIME,
+  DBX_TABLE_REFERENCE_DROP_EVENT,
+  activeTableReferencePayloadValue,
+  clearActiveTableReferencePayload,
+  hasTableReferencePayloadType,
+  parseTableReferencePayload,
+  tableReferenceInsertText,
+  type QueryEditorTableReferenceDropDetail,
+  type QueryEditorTableReferencePayload,
+} from "@/lib/queryEditorTableDrop";
+import {
   EDITOR_FONT_FAMILY_CSS_VAR,
   EDITOR_FONT_SIZE_CSS_VAR,
   loadEditorTheme,
@@ -47,7 +58,7 @@ import {
   type SqlSemanticDiagnostic,
 } from "@/lib/sqlSemanticDiagnostics";
 import type { SqlCompletionColumn } from "@/lib/sqlCompletion";
-import type { SqlReferenceAnalysis, SqlTableReference, SqlTextSpan } from "@/types/database";
+import type { DatabaseType, SqlReferenceAnalysis, SqlTableReference, SqlTextSpan } from "@/types/database";
 import { vscodeSelectionLayer } from "@/lib/codemirrorVscodeSelectionLayer";
 
 const props = defineProps<{
@@ -55,6 +66,7 @@ const props = defineProps<{
   connectionId?: string;
   database?: string;
   schema?: string;
+  databaseType?: DatabaseType;
   dialect?: "mysql" | "postgres" | "sqlserver";
   formatDialect?: SqlFormatDialect;
   formatRequestId?: number;
@@ -724,6 +736,59 @@ async function formatCurrentSql() {
   }
 }
 
+function droppedTableReference(event: DragEvent) {
+  return (
+    activeTableReferencePayloadValue() ??
+    parseTableReferencePayload(event.dataTransfer?.getData(DBX_TABLE_REFERENCE_MIME))
+  );
+}
+
+function hasDroppedTableReference(event: DragEvent) {
+  return !!activeTableReferencePayloadValue() || hasTableReferencePayloadType(event.dataTransfer?.types);
+}
+
+function insertTableReferencePayload(
+  currentView: EditorViewType,
+  payload: QueryEditorTableReferencePayload,
+  coords?: { clientX: number; clientY: number },
+): boolean {
+  if (props.readOnly) return false;
+  const insertText = tableReferenceInsertText(payload, props.databaseType);
+  const dropPos = coords ? currentView.posAtCoords({ x: coords.clientX, y: coords.clientY }) : null;
+  const selection = currentView.state.selection.main;
+  const from = dropPos ?? selection.from;
+  const to = dropPos == null && !selection.empty ? selection.to : from;
+  currentView.dispatch({
+    changes: { from, to, insert: insertText },
+    selection: { anchor: from + insertText.length },
+    scrollIntoView: true,
+    userEvent: "input.drop",
+  });
+  clearActiveTableReferencePayload(payload);
+  currentView.focus();
+  return true;
+}
+
+function insertDroppedTableReference(currentView: EditorViewType, event: DragEvent): boolean {
+  const payload = droppedTableReference(event);
+  if (!payload) return false;
+
+  event.preventDefault();
+  event.stopPropagation();
+  return insertTableReferencePayload(currentView, payload, { clientX: event.clientX, clientY: event.clientY });
+}
+
+function onTableReferenceDropEvent(event: Event) {
+  const currentView = view.value;
+  if (!currentView || props.readOnly || !(event instanceof CustomEvent)) return;
+  const detail = event.detail as QueryEditorTableReferenceDropDetail | undefined;
+  if (!detail?.payload) return;
+  const target = document.elementFromPoint(detail.clientX, detail.clientY);
+  if (target instanceof Element && editorRef.value?.contains(target)) {
+    insertTableReferencePayload(currentView, detail.payload, detail);
+  }
+}
+
 let completionEpoch = 0;
 let completionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1260,6 +1325,15 @@ onMounted(async () => {
         }),
       ),
       EditorView.domEventHandlers({
+        dragover(event) {
+          if (props.readOnly || !hasDroppedTableReference(event)) return false;
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+          return true;
+        },
+        drop(event, currentView) {
+          return insertDroppedTableReference(currentView, event);
+        },
         wheel(event) {
           if (!event.metaKey && !event.ctrlKey) return false;
           event.preventDefault();
@@ -1407,6 +1481,7 @@ onMounted(async () => {
   view.value = new EditorView({ state, parent: editorRef.value });
   syncContextMenuState(view.value);
   syncEditorFontCssVars(liveFontSize.value, ss.fontFamily);
+  window.addEventListener(DBX_TABLE_REFERENCE_DROP_EVENT, onTableReferenceDropEvent);
 
   cachedTables = [];
   scheduleSemanticDiagnostics();
@@ -1521,6 +1596,7 @@ watch(
 onBeforeUnmount(() => {
   zoomCommitScheduler.dispose();
   if (semanticDiagnosticTimer) clearTimeout(semanticDiagnosticTimer);
+  window.removeEventListener(DBX_TABLE_REFERENCE_DROP_EVENT, onTableReferenceDropEvent);
   view.value?.destroy();
 });
 

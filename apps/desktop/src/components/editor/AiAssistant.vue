@@ -33,13 +33,8 @@ import {
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import LightDropdown from "@/components/ui/LightDropdown.vue";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTheme } from "@/composables/useTheme";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -166,6 +161,27 @@ const activePlaceholder = computed(
   () => `${t(`ai.placeholders.${activeAction.value}`)} ${t("ai.tableMentionPlaceholderHint")}`,
 );
 const activeModeHint = computed(() => t(`ai.modeHints.${assistantMode.value}`));
+const assistantModeItems = computed(() => [
+  {
+    value: "ask",
+    label: t("ai.modes.ask"),
+    title: t("ai.modeHints.ask"),
+    icon: MessageSquarePlus,
+  },
+  {
+    value: "agent",
+    label: t("ai.modes.agent"),
+    title: t("ai.modeHints.agent"),
+    icon: Bot,
+  },
+]);
+const actionMenuItems = computed(() =>
+  actionButtons.map((button) => ({
+    value: button.action,
+    label: t(button.key),
+    icon: button.icon,
+  })),
+);
 const aiCodeAppearance = computed(() => (isDark.value ? "dark" : "light"));
 
 const { databaseOptions: allDbOptions, loadDatabaseOptions } = useDatabaseOptions();
@@ -674,7 +690,9 @@ const messageRenderer = computed(() => {
       class="flex items-center gap-2 border-b px-3 shrink-0"
       :class="settings.editorSettings.appLayout === 'classic' ? 'h-9' : 'h-10'"
     >
-      <span class="flex-1 truncate text-xs font-medium">{{ chatTitle }}</span>
+      <span class="flex flex-1 self-stretch items-center truncate text-xs font-medium" data-tauri-drag-region>
+        {{ chatTitle }}
+      </span>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat" :title="t('ai.newChat')">
         <MessageSquarePlus class="h-3.5 w-3.5" />
       </Button>
@@ -954,78 +972,19 @@ const messageRenderer = computed(() => {
           @keydown="onPromptKeydown"
         />
         <div class="flex items-center gap-1.5">
-          <DropdownMenu>
-            <DropdownMenuTrigger as-child>
-              <button
-                class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                :title="activeModeHint"
-              >
-                <component :is="assistantMode === 'agent' ? Bot : MessageSquarePlus" class="h-3 w-3" />
-                <span>{{ t(`ai.modes.${assistantMode}`) }}</span>
-                <svg
-                  class="h-3 w-3 opacity-50"
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem class="text-xs gap-1.5" :title="t('ai.modeHints.ask')" @click="assistantMode = 'ask'">
-                <Check class="h-3 w-3 shrink-0" :class="{ 'opacity-0': assistantMode !== 'ask' }" />
-                <MessageSquarePlus class="h-3 w-3 shrink-0 text-muted-foreground" />
-                <span>{{ t("ai.modes.ask") }}</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                class="text-xs gap-1.5"
-                :title="t('ai.modeHints.agent')"
-                @click="assistantMode = 'agent'"
-              >
-                <Check class="h-3 w-3 shrink-0" :class="{ 'opacity-0': assistantMode !== 'agent' }" />
-                <Bot class="h-3 w-3 shrink-0 text-muted-foreground" />
-                <span>{{ t("ai.modes.agent") }}</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <DropdownMenu>
-            <DropdownMenuTrigger as-child>
-              <button
-                class="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <component :is="actionButtons.find((b) => b.action === activeAction)?.icon" class="h-3 w-3" />
-                <span>{{ t(`ai.actions.${activeAction}`) }}</span>
-                <svg
-                  class="h-3 w-3 opacity-50"
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" class="w-max min-w-0">
-              <DropdownMenuItem
-                v-for="btn in actionButtons"
-                :key="btn.action"
-                class="text-xs gap-1.5"
-                @click="selectAction(btn.action)"
-              >
-                <component :is="btn.icon" class="h-3 w-3" />
-                <span>{{ t(btn.key) }}</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <LightDropdown
+            v-model="assistantMode"
+            :items="assistantModeItems"
+            :aria-label="activeModeHint"
+            item-class="text-xs px-2"
+          />
+          <LightDropdown
+            :model-value="activeAction"
+            :items="actionMenuItems"
+            content-class="w-max min-w-0"
+            item-class="text-xs px-2"
+            @update:model-value="(value) => selectAction(value as AiAction)"
+          />
           <span class="flex-1" />
           <button
             v-if="isGenerating"

@@ -18,6 +18,12 @@ export type ActiveTabSidebarTarget =
   | {
       type: "saved-sql-file";
       savedSqlId: string;
+    }
+  | {
+      type: "query-context";
+      connectionId: string;
+      database: string;
+      schema?: string;
     };
 
 export function activeTabSidebarTarget(tab: QueryTab | undefined | null): ActiveTabSidebarTarget | null {
@@ -50,6 +56,16 @@ export function activeTabSidebarTarget(tab: QueryTab | undefined | null): Active
     };
   }
 
+  if (tab.mode === "query") {
+    if (!tab.connectionId || !tab.database) return null;
+    return {
+      type: "query-context",
+      connectionId: tab.connectionId,
+      database: tab.database,
+      schema: tab.schema,
+    };
+  }
+
   return null;
 }
 
@@ -58,7 +74,7 @@ function schemaMatches(node: TreeNode, schema: string | undefined): boolean {
   return (node.schema || "") === schema;
 }
 
-function matchesTarget(node: TreeNode, target: ActiveTabSidebarTarget): boolean {
+export function matchesTarget(node: TreeNode, target: ActiveTabSidebarTarget): boolean {
   if (target.type === "saved-sql-file") {
     return node.type === "saved-sql-file" && node.savedSqlId === target.savedSqlId;
   }
@@ -70,6 +86,18 @@ function matchesTarget(node: TreeNode, target: ActiveTabSidebarTarget): boolean 
       node.database === target.database &&
       node.label === target.collectionName
     );
+  }
+
+  if (target.type === "query-context") {
+    if (target.schema) {
+      return (
+        node.type === "schema" &&
+        node.connectionId === target.connectionId &&
+        node.database === target.database &&
+        node.label === target.schema
+      );
+    }
+    return node.type === "database" && node.connectionId === target.connectionId && node.label === target.database;
   }
 
   return (
@@ -120,4 +148,29 @@ export function scrollTopForSidebarNode(options: {
   if (rowTop < viewportTop) return rowTop;
   if (rowBottom > viewportBottom) return Math.max(0, rowBottom - options.viewportHeight);
   return options.currentScrollTop;
+}
+
+export function findNodePathForActiveTab(
+  tab: QueryTab | undefined | null,
+  treeNodes: readonly TreeNode[],
+): TreeNode[] | null {
+  const target = activeTabSidebarTarget(tab);
+  if (!target) return null;
+  return findPath(treeNodes, (node) => matchesTarget(node, target));
+}
+
+function findPath(
+  nodes: readonly TreeNode[],
+  predicate: (node: TreeNode) => boolean,
+  path: TreeNode[] = [],
+): TreeNode[] | null {
+  for (const node of nodes) {
+    const currentPath = [...path, node];
+    if (predicate(node)) return currentPath;
+    if (node.children) {
+      const result = findPath(node.children, predicate, currentPath);
+      if (result) return result;
+    }
+  }
+  return null;
 }

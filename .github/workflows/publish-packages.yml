@@ -6,6 +6,11 @@ on:
       tag:
         description: 'Release tag (e.g. v0.3.10)'
         required: true
+      open_homebrew_pr:
+        description: 'Open a Homebrew/homebrew-cask bump PR'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -97,38 +102,27 @@ jobs:
 
           cat > Casks/dbx.rb <<'RUBY_EOF'
           cask "dbx" do
+            arch arm: "aarch64", intel: "x64"
+
             version "__VERSION__"
+            sha256 arm:   "__SHA_ARM64__",
+                   intel: "__SHA_X64__"
 
-            on_arm do
-              url "https://github.com/__OWNER__/__APP__/releases/download/v#{version}/__PRODUCT___#{version}_aarch64.dmg",
-                  verified: "github.com/__OWNER__/__APP__/"
-              sha256 "__SHA_ARM64__"
-            end
-
-            on_intel do
-              url "https://github.com/__OWNER__/__APP__/releases/download/v#{version}/__PRODUCT___#{version}_x64.dmg",
-                  verified: "github.com/__OWNER__/__APP__/"
-              sha256 "__SHA_X64__"
-            end
-
+            url "https://github.com/__OWNER__/__APP__/releases/download/v#{version}/__PRODUCT___#{version}_#{arch}.dmg",
+                verified: "github.com/__OWNER__/__APP__/"
             name "DBX"
-            desc "Open-source database management tool"
-            homepage "https://github.com/__OWNER__/__APP__"
+            desc "Database management tool"
+            homepage "https://dbxio.com/"
 
-            livecheck do
-              url :url
-              strategy :github_latest
-            end
-
-            depends_on macos: ">= :big_sur"
+            depends_on macos: :big_sur
 
             app "DBX.app"
 
             zap trash: [
               "~/Library/Application Support/com.dbx.app",
               "~/Library/Caches/com.dbx.app",
-              "~/Library/Preferences/com.dbx.app.plist",
               "~/Library/Logs/com.dbx.app",
+              "~/Library/Preferences/com.dbx.app.plist",
             ]
           end
           RUBY_EOF
@@ -267,6 +261,43 @@ jobs:
             --prerelease=false \
             --latest
           echo "::notice::Release ${TAG} promoted from prerelease to latest release"
+
+  homebrew-cask-pr:
+    name: Open Homebrew Cask PR
+    needs: [promote-release]
+    if: ${{ github.event.inputs.open_homebrew_pr == 'true' }}
+    runs-on: macos-latest
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="$(echo "${TAG}" | xargs)"
+          VERSION="${TAG#v}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Tag '${TAG}' does not look like a semver version."
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Open Homebrew cask bump PR
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
+        run: |
+          if [[ -z "${HOMEBREW_GITHUB_API_TOKEN}" ]]; then
+            echo "::error::Set HOMEBREW_GITHUB_API_TOKEN to a GitHub token that can fork and push to Homebrew/homebrew-cask."
+            exit 1
+          fi
+
+          brew update
+          brew tap homebrew/cask
+          brew bump-cask-pr dbx --version "${{ steps.version.outputs.version }}" --no-browse
 
   notify-qq:
     name: QQ Notify

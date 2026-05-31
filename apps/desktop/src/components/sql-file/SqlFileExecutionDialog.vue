@@ -97,6 +97,17 @@ const progressPercent = computed(() => {
   if (current <= 0) return running.value ? 8 : 0;
   return Math.min(95, Math.max(8, Math.round((attempted / current) * 100)));
 });
+const previewLineCount = computed(() => preview.value?.preview.split(/\r\n|\r|\n/).length ?? 0);
+const previewLineNumbers = computed(() => Array.from({ length: previewLineCount.value }, (_, index) => index + 1));
+const previewIsTruncated = computed(() => {
+  if (!preview.value) return false;
+  return preview.value.sizeBytes > preview.value.preview.length;
+});
+const previewLineSummary = computed(() =>
+  previewIsTruncated.value
+    ? t("sqlFile.previewingFirstLines", { count: previewLineCount.value })
+    : t("sqlFile.previewingLines", { count: previewLineCount.value }),
+);
 
 function connectionIconType(id: string) {
   const config = store.getConfig(id);
@@ -393,7 +404,7 @@ watch(
 
 <template>
   <Dialog :open="open" @update:open="handleOpenChange">
-    <DialogScrollContent class="sm:max-w-[620px] min-w-0 overflow-hidden" :trap-focus="false" @interact-outside.prevent>
+    <DialogScrollContent class="sm:max-w-[860px] min-w-0 overflow-hidden" :trap-focus="false" @interact-outside.prevent>
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
           <FileCode class="w-4 h-4" />
@@ -428,18 +439,31 @@ watch(
             </Button>
           </div>
 
-          <div v-if="preview" class="min-w-0 max-w-full border rounded-md overflow-hidden">
+          <div v-if="preview" class="min-w-0 max-w-full overflow-hidden rounded-md border">
             <div class="flex items-center justify-between gap-3 px-3 py-2 text-xs border-b bg-muted/40">
               <div class="min-w-0 flex items-center gap-2">
                 <FileCode class="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <span class="font-medium truncate">{{ preview.fileName }}</span>
               </div>
-              <span class="text-muted-foreground shrink-0">{{ formatBytes(preview.sizeBytes) }}</span>
+              <div class="flex shrink-0 items-center gap-2 text-muted-foreground">
+                <span>{{ previewLineSummary }}</span>
+                <span class="h-3 w-px bg-border" />
+                <span>{{ formatBytes(preview.sizeBytes) }}</span>
+              </div>
             </div>
-            <pre
-              class="max-h-40 max-w-full overflow-auto p-3 text-xs font-mono whitespace-pre bg-muted/15"
-              v-html="highlight(preview.preview)"
-            ></pre>
+            <div
+              class="sql-file-preview-viewer flex min-h-56 max-h-[min(42vh,360px)] max-w-full overflow-auto bg-muted/15 text-xs"
+            >
+              <div
+                class="sticky left-0 z-10 select-none border-r bg-background/95 px-2 py-3 text-right font-mono leading-5 text-muted-foreground/70"
+              >
+                <div v-for="lineNumber in previewLineNumbers" :key="lineNumber">{{ lineNumber }}</div>
+              </div>
+              <pre
+                class="min-w-max flex-1 p-3 font-mono leading-5 whitespace-pre"
+                v-html="highlight(preview.preview)"
+              ></pre>
+            </div>
           </div>
         </div>
 

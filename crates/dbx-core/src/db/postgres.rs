@@ -248,16 +248,30 @@ async fn execute_select_prepared(
     start: Instant,
     row_limit: usize,
 ) -> Result<QueryResult, tokio_postgres::Error> {
+    let prepared_start = Instant::now();
     let stmt = client.prepare_cached(sql).await?;
+    log::info!(
+        "[postgres][select:prepare_cached:done] elapsed_ms={} total_ms={}",
+        prepared_start.elapsed().as_millis(),
+        start.elapsed().as_millis()
+    );
     let columns: Vec<String> = stmt.columns().iter().map(|c| c.name().to_string()).collect();
     let column_types: Vec<String> = stmt.columns().iter().map(|c| c.type_().name().to_string()).collect();
 
     let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+    let query_start = Instant::now();
     let stream = client.query_raw(&stmt, params).await?;
+    log::info!(
+        "[postgres][select:query_raw:done] elapsed_ms={} total_ms={} column_count={}",
+        query_start.elapsed().as_millis(),
+        start.elapsed().as_millis(),
+        columns.len()
+    );
     tokio::pin!(stream);
     let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::new();
     let mut truncated = false;
 
+    let rows_start = Instant::now();
     while let Some(row_result) = stream.next().await {
         if result_rows.len() >= row_limit {
             truncated = true;
@@ -270,6 +284,13 @@ async fn execute_select_prepared(
                 .collect(),
         );
     }
+    log::info!(
+        "[postgres][select:rows:done] elapsed_ms={} total_ms={} row_count={} truncated={}",
+        rows_start.elapsed().as_millis(),
+        start.elapsed().as_millis(),
+        result_rows.len(),
+        truncated
+    );
 
     Ok(QueryResult {
         columns,
@@ -707,6 +728,8 @@ pub async fn list_tables(pool: &Pool, schema: &str) -> Result<Vec<TableInfo>, St
             name: row.get::<_, String>(0),
             table_type: row.get::<_, String>(1),
             comment: row.try_get::<_, Option<String>>(2).ok().flatten().filter(|s| !s.is_empty()),
+            parent_schema: row.try_get::<_, Option<String>>(3).ok().flatten().filter(|s| !s.is_empty()),
+            parent_name: row.try_get::<_, Option<String>>(4).ok().flatten().filter(|s| !s.is_empty()),
         })
         .collect())
 }
@@ -716,9 +739,14 @@ fn postgres_tables_sql() -> &'static str {
          CASE c.relkind WHEN 'r' THEN 'BASE TABLE' WHEN 'v' THEN 'VIEW' \
            WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN TABLE' \
            WHEN 'p' THEN 'BASE TABLE' END AS table_type, \
-         obj_description(c.oid) AS table_comment \
+         obj_description(c.oid) AS table_comment, \
+         pn.nspname AS parent_schema, \
+         pc.relname AS parent_name \
          FROM pg_catalog.pg_class c \
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+         LEFT JOIN pg_catalog.pg_inherits i ON i.inhrelid = c.oid \
+         LEFT JOIN pg_catalog.pg_class pc ON pc.oid = i.inhparent \
+         LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace \
          WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
          ORDER BY c.relname"
 }
@@ -738,9 +766,14 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
            THEN pg_xact_commit_timestamp(c.xmin)::text END, \
          stat.modification::text \
        ) AS updated_at, \
+       pn.nspname AS parent_schema, \
+       pc.relname AS parent_name, \
        CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
      FROM pg_catalog.pg_class c \
      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+     LEFT JOIN pg_catalog.pg_inherits i ON i.inhrelid = c.oid \
+     LEFT JOIN pg_catalog.pg_class pc ON pc.oid = i.inhparent \
+     LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace \
      LEFT JOIN LATERAL pg_stat_file( \
        CASE WHEN c.relkind IN ('r','m','f','p') THEN pg_relation_filepath(c.oid) END, true \
      ) stat ON true \
@@ -752,6 +785,8 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
        NULL::text AS created_at, \
        CASE WHEN current_setting('track_commit_timestamp', true) = 'on' \
          THEN pg_xact_commit_timestamp(p.xmin)::text END AS updated_at, \
+       NULL::text AS parent_schema, \
+       NULL::text AS parent_name, \
        CASE p.prokind WHEN 'p' THEN 2 ELSE 3 END AS sort_order \
      FROM pg_catalog.pg_proc p \
      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
@@ -768,9 +803,14 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
        obj_description(c.oid) AS object_comment, \
        NULL::text AS created_at, \
        NULL::text AS updated_at, \
+       pn.nspname AS parent_schema, \
+       pc.relname AS parent_name, \
        CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
      FROM pg_catalog.pg_class c \
      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+     LEFT JOIN pg_catalog.pg_inherits i ON i.inhrelid = c.oid \
+     LEFT JOIN pg_catalog.pg_class pc ON pc.oid = i.inhparent \
+     LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace \
      WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
      UNION ALL \
      SELECT p.proname AS object_name, \
@@ -778,6 +818,8 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
        obj_description(p.oid) AS object_comment, \
        NULL::text AS created_at, \
        NULL::text AS updated_at, \
+       NULL::text AS parent_schema, \
+       NULL::text AS parent_name, \
        CASE p.prokind WHEN 'p' THEN 2 ELSE 3 END AS sort_order \
      FROM pg_catalog.pg_proc p \
      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
@@ -805,6 +847,8 @@ pub async fn list_objects(pool: &Pool, schema: &str) -> Result<Vec<ObjectInfo>, 
             comment: row.try_get::<_, Option<String>>(2).ok().flatten().filter(|s| !s.is_empty()),
             created_at: row.try_get::<_, Option<String>>(3).ok().flatten().filter(|s| !s.is_empty()),
             updated_at: row.try_get::<_, Option<String>>(4).ok().flatten().filter(|s| !s.is_empty()),
+            parent_schema: row.try_get::<_, Option<String>>(5).ok().flatten().filter(|s| !s.is_empty()),
+            parent_name: row.try_get::<_, Option<String>>(6).ok().flatten().filter(|s| !s.is_empty()),
         })
         .collect())
 }
@@ -927,13 +971,40 @@ pub async fn execute_query_with_schema_and_max_rows(
     sql: &str,
     max_rows: Option<usize>,
 ) -> Result<QueryResult, String> {
+    let start = Instant::now();
+    let checkout_start = Instant::now();
     let client = pool.get().await.map_err(|e| e.to_string())?;
+    log::info!(
+        "[postgres][execute_with_schema:pool:done] elapsed_ms={} total_ms={} schema={}",
+        checkout_start.elapsed().as_millis(),
+        start.elapsed().as_millis(),
+        schema
+    );
+    let set_schema_start = Instant::now();
     client.execute(&format!("SET search_path TO {}", pg_quote_ident(schema)), &[]).await.map_err(pg_error_to_string)?;
+    log::info!(
+        "[postgres][execute_with_schema:set-search-path:done] elapsed_ms={} total_ms={}",
+        set_schema_start.elapsed().as_millis(),
+        start.elapsed().as_millis()
+    );
 
+    let query_start = Instant::now();
     let result = execute_query_with_max_rows_inner(&client, sql, max_rows).await;
+    log::info!(
+        "[postgres][execute_with_schema:query:done] elapsed_ms={} total_ms={} ok={}",
+        query_start.elapsed().as_millis(),
+        start.elapsed().as_millis(),
+        result.is_ok()
+    );
 
     // Always reset search_path so the connection is clean when returned to the pool
+    let reset_start = Instant::now();
     let _ = client.execute("RESET search_path", &[]).await;
+    log::info!(
+        "[postgres][execute_with_schema:reset-search-path:done] elapsed_ms={} total_ms={}",
+        reset_start.elapsed().as_millis(),
+        start.elapsed().as_millis()
+    );
 
     result
 }
@@ -1349,6 +1420,9 @@ mod tests {
         assert!(sql.contains("table_name"));
         assert!(sql.contains("table_type"));
         assert!(sql.contains("table_comment"));
+        assert!(sql.contains("pg_catalog.pg_inherits"));
+        assert!(sql.contains("parent_schema"));
+        assert!(sql.contains("parent_name"));
         assert!(sql.contains("$1"));
         assert!(sql.contains("BASE TABLE"));
         assert!(sql.contains("VIEW"));
@@ -1361,6 +1435,9 @@ mod tests {
         let sql = list_objects_sql(true);
         assert!(sql.contains("pg_catalog.pg_class"));
         assert!(sql.contains("pg_catalog.pg_proc"));
+        assert!(sql.contains("pg_catalog.pg_inherits"));
+        assert!(sql.contains("parent_schema"));
+        assert!(sql.contains("parent_name"));
         assert!(sql.contains("pg_stat_file"));
         assert!(sql.contains("pg_xact_commit_timestamp"));
         assert!(sql.contains("'PROCEDURE'"));

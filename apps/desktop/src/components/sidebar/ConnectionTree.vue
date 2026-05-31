@@ -1,15 +1,29 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from "vue";
+import { ref, computed, nextTick, watch, type Component } from "vue";
 import { useI18n } from "vue-i18n";
-import { Search, X, ListFilter, Check, FolderPlus } from "lucide-vue-next";
+import {
+  Search,
+  X,
+  ListFilter,
+  FolderPlus,
+  Crosshair,
+  Server,
+  Database,
+  FolderTree,
+  Table2,
+  Eye,
+  RotateCcw,
+} from "lucide-vue-next";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
-import type { TreeNode, TreeNodeType } from "@/types/database";
+import type { QueryTab, TreeNode, TreeNodeType } from "@/types/database";
 import { filterSidebarTree } from "@/lib/sidebarSearchTree";
 import { isCancelSearchShortcut } from "@/lib/keyboardShortcuts";
+import { usesTreeSchemaMode } from "@/lib/databaseFeatureSupport";
 import {
   findSidebarNodeForActiveTab,
+  findNodePathForActiveTab,
   scrollTopForSidebarNode,
   shouldScrollActiveSidebarSelection,
 } from "@/lib/sidebarActiveTabTarget";
@@ -26,14 +40,7 @@ import {
 import TreeItem from "./TreeItem.vue";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
+import LightDropdown from "@/components/ui/LightDropdown.vue";
 
 const { t } = useI18n();
 const store = useConnectionStore();
@@ -80,13 +87,30 @@ const SEARCH_SCOPE_TO_NODE_TYPES: Record<SearchScope, TreeNodeType[]> = {
 
 const searchScopeOptions = computed(() => {
   return [
-    { scope: "connection", label: t("sidebar.searchScopeConnection") },
-    { scope: "database", label: t("sidebar.searchScopeDatabase") },
-    { scope: "schema", label: t("sidebar.searchScopeSchema") },
-    { scope: "table", label: t("sidebar.searchScopeTable") },
-    { scope: "view", label: t("sidebar.searchScopeView") },
-  ] as const satisfies ReadonlyArray<{ scope: SearchScope; label: string }>;
+    { scope: "connection", label: t("sidebar.searchScopeConnection"), icon: Server },
+    { scope: "database", label: t("sidebar.searchScopeDatabase"), icon: Database },
+    { scope: "schema", label: t("sidebar.searchScopeSchema"), icon: FolderTree },
+    { scope: "table", label: t("sidebar.searchScopeTable"), icon: Table2 },
+    { scope: "view", label: t("sidebar.searchScopeView"), icon: Eye },
+  ] as const satisfies ReadonlyArray<{ scope: SearchScope; label: string; icon: Component }>;
 });
+const searchScopeMenuItems = computed(() => [
+  ...searchScopeOptions.value.map((item) => ({
+    value: item.scope,
+    label: item.label,
+    icon: item.icon,
+  })),
+  ...(hasSearchScopeFilter.value
+    ? [
+        {
+          value: "__clear",
+          label: t("sidebar.clearFilter"),
+          icon: RotateCcw,
+          separatorBefore: true,
+        },
+      ]
+    : []),
+]);
 
 const hasSearchScopeFilter = computed(() => selectedSearchScopes.value.length > 0);
 const searchableNodeTypes = computed<Set<TreeNodeType> | undefined>(() => {
@@ -100,10 +124,6 @@ const searchableNodeTypes = computed<Set<TreeNodeType> | undefined>(() => {
   return types;
 });
 
-function isSearchScopeSelected(scope: SearchScope) {
-  return selectedSearchScopes.value.includes(scope);
-}
-
 function toggleSearchScope(scope: SearchScope) {
   const idx = selectedSearchScopes.value.indexOf(scope);
   if (idx >= 0) {
@@ -111,6 +131,14 @@ function toggleSearchScope(scope: SearchScope) {
   } else {
     selectedSearchScopes.value.push(scope);
   }
+}
+
+function selectSearchScopeMenuItem(value: string) {
+  if (value === "__clear") {
+    clearSearchScopeFilter();
+    return;
+  }
+  toggleSearchScope(value as SearchScope);
 }
 
 function clearSearchScopeFilter() {
@@ -137,10 +165,168 @@ const useVirtualTree = computed(() => shouldVirtualizeFlatTree(flatNodes.value.l
 const activeTab = computed(() => queryStore.tabs.find((tab) => tab.id === queryStore.activeTabId));
 
 const pendingRenameGroupId = ref<string | null>(null);
+const highlightedNodeId = ref<string | null>(null);
+let highlightTimer: number | undefined;
 
-function createNewGroup() {
+async function scrollToSidebarNode(nodeId: string) {
+  await nextTick();
+
+  const index = flatNodes.value.findIndex((item) => item.id === nodeId);
+  const scroller = currentTreeScroller();
+  if (!scroller || index < 0) return;
+
+  const nextScrollTop = scrollTopForSidebarNode({
+    index,
+    currentScrollTop: scroller.scrollTop,
+    viewportHeight: scroller.clientHeight,
+  });
+  if (nextScrollTop !== scroller.scrollTop) {
+    scroller.scrollTop = nextScrollTop;
+  }
+}
+
+async function createNewGroup() {
   const groupId = store.createConnectionGroup(t("connectionGroup.newGroupDefault"));
   pendingRenameGroupId.value = groupId;
+  store.selectedTreeNodeId = groupId;
+
+  if (isFiltering.value) {
+    searchQuery.value = "";
+    deferredSearchQuery.value = "";
+    clearSearchScopeFilter();
+  }
+
+  await scrollToSidebarNode(groupId);
+  store.selectedTreeNodeId = groupId;
+}
+
+async function locateActiveTabInSidebar() {
+  const tab = activeTab.value;
+  if (!tab) return;
+
+  const connId = tab.connectionId;
+
+  // Reconnect if the connection was disconnected (children are cleared on disconnect)
+  if (connId && !store.connectedIds.has(connId)) {
+    const config = store.getConfig(connId);
+    if (!config) return;
+    try {
+      await store.connect(config);
+    } catch {
+      return;
+    }
+  }
+
+  // Ensure the tree is loaded deep enough to contain the target node
+  await ensureTreeLoadedForTab(tab);
+
+  // Clear any active search filter so the node is visible
+  if (isFiltering.value) {
+    searchQuery.value = "";
+    deferredSearchQuery.value = "";
+    clearSearchScopeFilter();
+  }
+
+  const nodePath = findNodePathForActiveTab(tab, store.treeNodes);
+  if (!nodePath) return;
+
+  for (const ancestor of nodePath) {
+    if (!ancestor.isExpanded) {
+      ancestor.isExpanded = true;
+    }
+  }
+
+  await nextTick();
+
+  const match = findSidebarNodeForActiveTab(tab, flatNodes.value);
+  if (!match) return;
+
+  store.selectedTreeNodeId = match.id;
+  await nextTick();
+
+  window.clearTimeout(highlightTimer);
+  highlightedNodeId.value = match.id;
+  highlightTimer = window.setTimeout(() => {
+    highlightedNodeId.value = null;
+  }, 1800);
+
+  await scrollToSidebarNode(match.id);
+}
+
+async function ensureTreeLoadedForTab(tab: QueryTab) {
+  const connId = tab.connectionId;
+  if (!connId) return;
+
+  const config = store.getConfig(connId);
+  if (!config) return;
+
+  // Ensure databases are loaded under the connection
+  const connNode = store.treeNodes.find((n) => n.id === connId);
+  if (connNode && (!connNode.children || connNode.children.length === 0)) {
+    try {
+      if (config.db_type === "redis") {
+        await store.loadRedisDatabases(connId);
+      } else if (config.db_type === "mongodb" || config.db_type === "elasticsearch") {
+        await store.loadMongoDatabases(connId);
+      } else {
+        await store.loadDatabases(connId);
+      }
+    } catch {
+      return;
+    }
+  }
+
+  if (!tab.database) return;
+
+  // Find the database node
+  const dbNode = findDatabaseNode(store.treeNodes, connId, tab.database);
+  if (!dbNode || (dbNode.children && dbNode.children.length > 0)) return;
+
+  // Load database contents
+  try {
+    if (config.db_type === "sqlserver") {
+      await store.loadSqlServerDatabaseObjects(connId, tab.database);
+    } else if (usesTreeSchemaMode(config.db_type)) {
+      await store.loadSchemas(connId, tab.database);
+      // If we have a schema, also load tables under that schema
+      if (tab.schema) {
+        const schemaNode = findSchemaNode(store.treeNodes, connId, tab.database, tab.schema);
+        if (schemaNode && (!schemaNode.children || schemaNode.children.length === 0)) {
+          await store.loadTables(connId, tab.database, tab.schema);
+        }
+      }
+    } else {
+      await store.loadTables(connId, tab.database);
+    }
+  } catch {
+    // Node just won't have children loaded
+  }
+}
+
+function findDatabaseNode(nodes: TreeNode[], connId: string, database: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.type === "database" && node.connectionId === connId && node.database === database) {
+      return node;
+    }
+    if (node.children) {
+      const found = findDatabaseNode(node.children, connId, database);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findSchemaNode(nodes: TreeNode[], connId: string, database: string, schema: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.type === "schema" && node.connectionId === connId && node.database === database && node.label === schema) {
+      return node;
+    }
+    if (node.children) {
+      const found = findSchemaNode(node.children, connId, database, schema);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 function onSearchToggle(node: TreeNode) {
@@ -263,43 +449,44 @@ defineExpose({ focusSearch });
         </div>
         <button
           class="shrink-0 h-6 w-6 flex items-center justify-center rounded border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+          :title="t('sidebar.locateActiveTab')"
+          @click="locateActiveTabInSidebar"
+        >
+          <Crosshair class="h-3.5 w-3.5" />
+        </button>
+        <button
+          class="shrink-0 h-6 w-6 flex items-center justify-center rounded border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
           :title="t('connectionGroup.createGroup')"
           @click="createNewGroup"
         >
           <FolderPlus class="h-3.5 w-3.5" />
         </button>
-        <DropdownMenu v-if="searchScopeOptions.length > 0">
-          <DropdownMenuTrigger as-child>
-            <button
-              class="shrink-0 h-6 w-6 flex items-center justify-center rounded border border-border hover:bg-accent"
-              :class="hasSearchScopeFilter ? 'text-primary bg-primary/10 border-primary/30' : 'text-muted-foreground'"
-              :title="t('sidebar.filterByType')"
-            >
-              <ListFilter class="h-3.5 w-3.5" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" class="w-48">
-            <DropdownMenuLabel class="text-xs">{{ t("sidebar.filterByType") }}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              v-for="item in searchScopeOptions"
-              :key="item.scope"
-              class="gap-2"
-              :class="isSearchScopeSelected(item.scope) ? 'bg-primary/10 text-primary' : ''"
-              @select.prevent="toggleSearchScope(item.scope)"
-            >
-              <Check v-if="isSearchScopeSelected(item.scope)" class="h-3.5 w-3.5 shrink-0 text-primary" />
-              <span v-else class="h-3.5 w-3.5 shrink-0" />
-              <span class="flex-1 truncate">{{ item.label }}</span>
-            </DropdownMenuItem>
-            <template v-if="hasSearchScopeFilter">
-              <DropdownMenuSeparator />
-              <DropdownMenuItem @select.prevent="clearSearchScopeFilter">
-                <span class="text-xs text-muted-foreground">{{ t("sidebar.clearFilter") }}</span>
-              </DropdownMenuItem>
-            </template>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <LightDropdown
+          v-if="searchScopeOptions.length > 0"
+          model-value=""
+          :items="searchScopeMenuItems"
+          :selected-values="selectedSearchScopes"
+          :aria-label="t('sidebar.filterByType')"
+          :label="t('sidebar.filterByType')"
+          :trigger-title="t('sidebar.filterByType')"
+          :trigger-icon="ListFilter"
+          :trigger-class="
+            [
+              'shrink-0 h-6 w-6 flex items-center justify-center rounded border border-border hover:bg-accent',
+              hasSearchScopeFilter ? 'text-primary bg-primary/10 border-primary/30' : 'text-muted-foreground',
+            ].join(' ')
+          "
+          trigger-icon-class="h-3.5 w-3.5"
+          item-icon-class="h-3.5 w-3.5"
+          content-class="w-max min-w-0"
+          selected-item-class="bg-primary/10 text-primary"
+          selected-check-class="text-primary"
+          :show-trigger-label="false"
+          :show-chevron="false"
+          :close-on-select="false"
+          align="end"
+          @update:model-value="selectSearchScopeMenuItem"
+        />
       </div>
     </div>
     <RecycleScroller
@@ -321,6 +508,7 @@ defineExpose({ focusSearch });
           :depth="item.depth"
           :drag-disabled="isFiltering"
           :pending-rename="pendingRenameGroupId === item.node.id"
+          :highlighted="highlightedNodeId === item.node.id"
           @node-toggled="onNodeToggled"
           @search-toggle="onSearchToggle"
           @rename-started="pendingRenameGroupId = null"
@@ -339,6 +527,7 @@ defineExpose({ focusSearch });
         :depth="item.depth"
         :drag-disabled="isFiltering"
         :pending-rename="pendingRenameGroupId === item.node.id"
+        :highlighted="highlightedNodeId === item.id"
         @node-toggled="onNodeToggled"
         @search-toggle="onSearchToggle"
         @rename-started="pendingRenameGroupId = null"

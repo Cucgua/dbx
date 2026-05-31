@@ -176,6 +176,7 @@ const driverProfiles: Record<
   sqlserver: { type: "sqlserver", port: 1433, user: "sa", label: "SQL Server", icon: "sqlserver" },
   oracle: { type: "oracle", port: 1521, user: "system", label: "Oracle", icon: "oracle" },
   oracle_oci: { type: "oracle", port: 1521, user: "system", label: "Oracle OCI (11g)", icon: "oracle" },
+  "oracle-legacy": { type: "oracle", port: 1521, user: "system", label: "Oracle Legacy", icon: "oracle" },
   "oracle-10g": { type: "oracle", port: 1521, user: "system", label: "Oracle 10g", icon: "oracle" },
   elasticsearch: {
     type: "elasticsearch",
@@ -263,6 +264,7 @@ const driverProfiles: Record<
   sundb: { type: "sundb", port: 22000, user: "root", label: "SunDB", icon: "sundb" },
   jdbc: { type: "jdbc", port: 0, user: "", label: "JDBC", icon: "jdbc" },
   tdengine: { type: "tdengine", port: 6041, user: "root", label: "TDengine", icon: "tdengine" },
+  xugu: { type: "xugu", port: 5138, user: "", label: "虚谷 XuguDB", icon: "xugu" },
   iris: { type: "iris", port: 1972, user: "_SYSTEM", label: "IRIS", icon: "iris" },
   custom_mysql: {
     type: "mysql",
@@ -480,6 +482,7 @@ const iconTypeMap: Record<string, string> = {
   sqlserver: "sqlserver",
   oracle: "oracle",
   oracle_oci: "oracle",
+  "oracle-legacy": "oracle",
   "oracle-10g": "oracle",
   elasticsearch: "elasticsearch",
   mariadb: "mariadb",
@@ -509,6 +512,7 @@ const iconTypeMap: Record<string, string> = {
   redshift: "redshift",
   cockroachdb: "cockroachdb",
   tdengine: "tdengine",
+  xugu: "xugu",
   dm: "dm",
   h2: "h2",
   snowflake: "snowflake",
@@ -578,6 +582,7 @@ const dbOptions = [
   { value: "bigquery", label: "BigQuery" },
   { value: "kylin", label: "Kylin" },
   { value: "sundb", label: "SunDB" },
+  { value: "xugu", label: "虚谷 XuguDB" },
   { value: "iris", label: "IRIS" },
   { value: "jdbc", label: "JDBC" },
   { value: "custom_mysql", label: "Custom (MySQL)" },
@@ -684,6 +689,12 @@ const postgresClientKeyPath = computed({
   get: () => getUrlParam(form.value.url_params, "sslkey"),
   set: (value: string) => {
     form.value.url_params = setUrlParam(form.value.url_params, "sslkey", value);
+  },
+});
+const redisTlsInsecure = computed({
+  get: () => getUrlParam(form.value.url_params, "insecure").toLowerCase() === "true",
+  set: (value: boolean) => {
+    form.value.url_params = setUrlParam(form.value.url_params, "insecure", value ? "true" : "");
   },
 });
 const canUseSsh = computed(() => form.value.db_type !== "sqlite" && form.value.db_type !== "access");
@@ -1980,7 +1991,7 @@ function openExternalUrl(url: string) {
                   </div>
 
                   <div v-if="form.db_type === 'oracle'" class="grid grid-cols-4 items-center gap-4">
-                    <Label class="text-right text-xs">连接方式</Label>
+                    <Label class="text-right text-xs">{{ t("connection.mode") }}</Label>
                     <div
                       class="col-span-3 grid h-8 grid-cols-2 overflow-hidden rounded-md border border-input bg-muted/30 p-0.5"
                     >
@@ -1998,7 +2009,7 @@ function openExternalUrl(url: string) {
                           form.oracle_connect_method = 'service_name';
                         "
                       >
-                        服务名
+                        {{ t("connection.serviceNameOnly") }}
                       </button>
                       <button
                         type="button"
@@ -2022,25 +2033,29 @@ function openExternalUrl(url: string) {
                   <div v-if="shouldShowAgentDriverInstallHint" class="grid grid-cols-4 items-center gap-4">
                     <span />
                     <p class="col-span-3 text-xs text-muted-foreground">
-                      需要在顶部导航栏「<a
+                      {{ t("connection.driverInstallHintPrefix")
+                      }}<a
                         class="underline cursor-pointer text-primary hover:text-primary/80"
                         @click="emit('openDriverStore')"
-                        >驱动管理</a
-                      >」中安装对应的驱动才能连接。
+                        >{{ t("toolbar.driverManager") }}</a
+                      >{{ t("connection.driverInstallHintSuffix") }}
                     </p>
                   </div>
 
                   <div v-if="form.db_type === 'oracle'" class="grid grid-cols-4 items-center gap-4">
-                    <Label class="text-right text-xs">版本</Label>
+                    <Label class="text-right text-xs">{{ t("connection.version") }}</Label>
                     <Select
-                      :model-value="selectedType === 'oracle-10g' ? 'oracle-10g' : 'oracle'"
+                      :model-value="
+                        selectedType === 'oracle-legacy' || selectedType === 'oracle-10g' ? selectedType : 'oracle'
+                      "
                       @update:model-value="(val) => applyProfile(String(val), true)"
                     >
                       <SelectTrigger class="col-span-3 h-8 text-sm">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="oracle">Oracle 11g+</SelectItem>
+                        <SelectItem value="oracle">Oracle 19c+</SelectItem>
+                        <SelectItem value="oracle-legacy">Oracle 11g-19c</SelectItem>
                         <SelectItem value="oracle-10g">Oracle 10g</SelectItem>
                       </SelectContent>
                     </Select>
@@ -2088,6 +2103,16 @@ function openExternalUrl(url: string) {
                   <label class="col-span-3 flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" v-model="form.ssl" class="mr-0" />
                     <span class="text-xs text-muted-foreground">{{ t("connection.sslEnable") }}</span>
+                  </label>
+                </div>
+
+                <div v-if="form.db_type === 'redis'" class="grid grid-cols-4 items-start gap-4">
+                  <Label class="text-right text-xs">{{ t("connection.redisTlsInsecure") }}</Label>
+                  <label class="col-span-3 flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" v-model="redisTlsInsecure" class="mr-0 mt-0.5" :disabled="!form.ssl" />
+                    <span class="text-xs leading-5 text-muted-foreground">
+                      {{ t("connection.redisTlsInsecureHint") }}
+                    </span>
                   </label>
                 </div>
 
