@@ -816,6 +816,14 @@ export async function aiRawChat(_request: AiRawChatRequest): Promise<AiRawChatRe
   throw new Error("Web mode does not support AI tool calls yet.");
 }
 
+export async function aiRawChatStream(
+  _sessionId: string,
+  _request: AiRawChatRequest,
+  _onChunk: (chunk: AiStreamChunk) => void,
+): Promise<AiRawChatResponse> {
+  throw new Error("Web mode does not support AI streaming tool calls yet.");
+}
+
 export async function aiStream(
   sessionId: string,
   request: AiCompletionRequest,

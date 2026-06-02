@@ -185,6 +185,18 @@ pub struct AiRawToolCall {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiRawToolCallDelta {
+    pub index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments_delta: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiRawChatResponse {
     pub content: String,
     pub tool_calls: Vec<AiRawToolCall>,
@@ -197,6 +209,8 @@ pub struct AiStreamChunk {
     pub delta: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_delta: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_delta: Option<AiRawToolCallDelta>,
     pub done: bool,
 }
 
@@ -335,6 +349,111 @@ pub fn openai_stream_reasoning(event: &serde_json::Value) -> Option<&str> {
         .filter(|text| !text.is_empty())
 }
 
+pub fn openai_stream_tool_call_deltas(event: &serde_json::Value) -> Vec<AiRawToolCallDelta> {
+    event["choices"]
+        .get(0)
+        .and_then(|choice| choice["delta"]["tool_calls"].as_array())
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(|call| {
+                    let index = call["index"].as_u64()? as usize;
+                    let function = &call["function"];
+                    Some(AiRawToolCallDelta {
+                        index,
+                        id: call["id"].as_str().map(ToString::to_string),
+                        name: function["name"].as_str().map(ToString::to_string),
+                        arguments_delta: function["arguments"].as_str().map(ToString::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[derive(Debug, Default)]
+struct OpenAiStreamToolCallAccumulator {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+#[derive(Debug, Default)]
+pub struct OpenAiRawChatStreamAccumulator {
+    content: String,
+    reasoning_content: String,
+    tool_calls: Vec<OpenAiStreamToolCallAccumulator>,
+}
+
+impl OpenAiRawChatStreamAccumulator {
+    pub fn push_content(&mut self, delta: &str) {
+        self.content.push_str(delta);
+    }
+
+    pub fn push_reasoning(&mut self, delta: &str) {
+        self.reasoning_content.push_str(delta);
+    }
+
+    pub fn push_tool_call_delta(&mut self, delta: &AiRawToolCallDelta) {
+        while self.tool_calls.len() <= delta.index {
+            self.tool_calls.push(OpenAiStreamToolCallAccumulator::default());
+        }
+        let call = &mut self.tool_calls[delta.index];
+        if let Some(id) = &delta.id {
+            call.id = id.clone();
+        }
+        if let Some(name) = &delta.name {
+            call.name = name.clone();
+        }
+        if let Some(arguments_delta) = &delta.arguments_delta {
+            call.arguments.push_str(arguments_delta);
+        }
+    }
+
+    pub fn finish(self) -> AiRawChatResponse {
+        let tool_calls = self
+            .tool_calls
+            .into_iter()
+            .filter(|call| !call.name.is_empty())
+            .map(|call| AiRawToolCall {
+                id: call.id,
+                name: call.name,
+                arguments: call.arguments,
+            })
+            .collect::<Vec<_>>();
+        let mut raw_message = json!({
+            "role": "assistant",
+            "content": self.content,
+        });
+        if !self.reasoning_content.is_empty() {
+            raw_message["reasoning_content"] = json!(self.reasoning_content);
+        }
+        if !tool_calls.is_empty() {
+            raw_message["tool_calls"] = json!(
+                tool_calls
+                    .iter()
+                    .map(|call| {
+                        json!({
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.name,
+                                "arguments": call.arguments,
+                            },
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        AiRawChatResponse {
+            content: raw_message["content"].as_str().unwrap_or_default().to_string(),
+            tool_calls,
+            raw_message,
+        }
+    }
+}
+
 pub fn responses_stream_text(event: &serde_json::Value) -> Option<&str> {
     match event["type"].as_str() {
         Some("response.output_text.delta") => event["delta"].as_str(),
@@ -371,6 +490,57 @@ fn add_responses_reasoning_options(body: &mut serde_json::Value, config: &AiConf
             "summary": "auto",
         });
     }
+}
+
+fn openai_compatible_temperature(config: &AiConfig, requested: Option<f32>) -> Option<f32> {
+    if matches!(config.provider, AiProvider::Deepseek) && config.enable_thinking {
+        return None;
+    }
+    Some(requested.unwrap_or(0.2))
+}
+
+fn add_openai_compatible_sampling_options(body: &mut serde_json::Value, config: &AiConfig, temperature: Option<f32>) {
+    if let Some(temperature) = openai_compatible_temperature(config, temperature) {
+        body["temperature"] = json!(temperature);
+    }
+}
+
+fn add_openai_compatible_thinking_options(body: &mut serde_json::Value, config: &AiConfig) {
+    if matches!(config.provider, AiProvider::Deepseek) {
+        if config.enable_thinking {
+            body["reasoning_effort"] = json!("high");
+        }
+        body["thinking"] = json!({
+            "type": if config.enable_thinking { "enabled" } else { "disabled" },
+        });
+        return;
+    }
+
+    if !config.enable_thinking {
+        body["extra_body"] = json!({
+            "chat_template_kwargs": { "enable_thinking": false }
+        });
+    }
+}
+
+fn build_openai_compatible_chat_body(
+    config: &AiConfig,
+    messages: serde_json::Value,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    stream: bool,
+) -> serde_json::Value {
+    let mut body = json!({
+        "model": config.model,
+        "messages": messages,
+        "max_tokens": max_tokens.unwrap_or(2048),
+    });
+    if stream {
+        body["stream"] = json!(true);
+    }
+    add_openai_compatible_sampling_options(&mut body, config, temperature);
+    add_openai_compatible_thinking_options(&mut body, config);
+    body
 }
 
 pub fn gemini_text(data: &serde_json::Value) -> String {
@@ -580,17 +750,13 @@ pub async fn call_openai_compatible(client: &reqwest::Client, request: AiComplet
     let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
     messages.extend(request.messages.iter().map(|message| json!({ "role": message.role, "content": message.content })));
 
-    let mut body_obj = json!({
-        "model": request.config.model,
-        "messages": messages,
-        "max_tokens": request.max_tokens.unwrap_or(2048),
-        "temperature": request.temperature.unwrap_or(0.2),
-    });
-    if !request.config.enable_thinking {
-        body_obj["extra_body"] = json!({
-            "chat_template_kwargs": { "enable_thinking": false }
-        });
-    }
+    let body_obj = build_openai_compatible_chat_body(
+        &request.config,
+        json!(messages),
+        request.max_tokens,
+        request.temperature,
+        false,
+    );
 
     let res = client
         .post(resolve_endpoint(&request.config))
@@ -625,20 +791,16 @@ pub async fn call_openai_raw_chat(
     let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
     messages.extend(request.messages);
 
-    let mut body_obj = json!({
-        "model": request.config.model,
-        "messages": messages,
-        "max_tokens": request.max_tokens.unwrap_or(2048),
-        "temperature": request.temperature.unwrap_or(0.2),
-    });
+    let mut body_obj = build_openai_compatible_chat_body(
+        &request.config,
+        json!(messages),
+        request.max_tokens,
+        request.temperature,
+        false,
+    );
     if !request.tools.is_empty() {
         body_obj["tools"] = json!(request.tools);
         body_obj["tool_choice"] = request.tool_choice.unwrap_or_else(|| json!("auto"));
-    }
-    if !request.config.enable_thinking {
-        body_obj["extra_body"] = json!({
-            "chat_template_kwargs": { "enable_thinking": false }
-        });
     }
 
     let res = client
@@ -817,6 +979,28 @@ pub async fn raw_chat(request: &AiRawChatRequest) -> Result<AiRawChatResponse, S
     call_openai_raw_chat(&client, request.clone()).await
 }
 
+pub async fn raw_chat_stream(
+    session_id: &str,
+    request: &AiRawChatRequest,
+    cancelled: &Notify,
+    on_chunk: impl Fn(AiStreamChunk),
+) -> Result<AiRawChatResponse, String> {
+    if !matches!(request.config.provider, AiProvider::Deepseek) {
+        return Err("AI raw chat streaming is currently enabled only for DeepSeek provider".to_string());
+    }
+    if request.config.api_style != AiApiStyle::Completions {
+        return Err("AI tool calls currently require chat/completions API style".to_string());
+    }
+    if matches!(request.config.provider, AiProvider::Claude | AiProvider::Gemini) {
+        return Err("AI tool calls currently require an OpenAI-compatible chat endpoint".to_string());
+    }
+    validate_config(&request.config)?;
+
+    let stream_timeout = if request.config.enable_thinking { 600 } else { 120 };
+    let client = build_ai_http_client(&request.config, stream_timeout)?;
+    stream_openai_raw_chat(&client, session_id, request, cancelled, &on_chunk).await
+}
+
 // ---------------------------------------------------------------------------
 // Streaming
 // ---------------------------------------------------------------------------
@@ -906,6 +1090,7 @@ async fn stream_claude(
                                 session_id: session_id.to_string(),
                                 delta: text.to_string(),
                                 reasoning_delta: None,
+                                tool_call_delta: None,
                                 done: false,
                             });
                         }
@@ -922,6 +1107,7 @@ async fn stream_claude(
         session_id: session_id.to_string(),
         delta: String::new(),
         reasoning_delta: None,
+        tool_call_delta: None,
         done: true,
     });
 
@@ -940,18 +1126,13 @@ async fn stream_openai(
     let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
     messages.extend(request.messages.iter().map(|m| json!({ "role": m.role, "content": m.content })));
 
-    let mut body_obj = json!({
-        "model": request.config.model,
-        "messages": messages,
-        "max_tokens": request.max_tokens.unwrap_or(2048),
-        "temperature": request.temperature.unwrap_or(0.2),
-        "stream": true,
-    });
-    if !request.config.enable_thinking {
-        body_obj["extra_body"] = json!({
-            "chat_template_kwargs": { "enable_thinking": false }
-        });
-    }
+    let body_obj = build_openai_compatible_chat_body(
+        &request.config,
+        json!(messages),
+        request.max_tokens,
+        request.temperature,
+        true,
+    );
 
     let res = client
         .post(resolve_endpoint(&request.config))
@@ -993,6 +1174,7 @@ async fn stream_openai(
                                 session_id: session_id.to_string(),
                                 delta: String::new(),
                                 reasoning_delta: Some(reasoning.to_string()),
+                                tool_call_delta: None,
                                 done: false,
                             });
                         }
@@ -1001,6 +1183,7 @@ async fn stream_openai(
                                 session_id: session_id.to_string(),
                                 delta: text.to_string(),
                                 reasoning_delta: None,
+                                tool_call_delta: None,
                                 done: false,
                             });
                         }
@@ -1017,10 +1200,121 @@ async fn stream_openai(
         session_id: session_id.to_string(),
         delta: String::new(),
         reasoning_delta: None,
+        tool_call_delta: None,
         done: true,
     });
 
     Ok(())
+}
+
+async fn stream_openai_raw_chat(
+    client: &reqwest::Client,
+    session_id: &str,
+    request: &AiRawChatRequest,
+    cancelled: &Notify,
+    on_chunk: &impl Fn(AiStreamChunk),
+) -> Result<AiRawChatResponse, String> {
+    let headers = maybe_bearer_headers(&request.config)?;
+
+    let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
+    messages.extend(request.messages.clone());
+
+    let mut body_obj = build_openai_compatible_chat_body(
+        &request.config,
+        json!(messages),
+        request.max_tokens,
+        request.temperature,
+        true,
+    );
+    if !request.tools.is_empty() {
+        body_obj["tools"] = json!(request.tools);
+        body_obj["tool_choice"] = request.tool_choice.clone().unwrap_or_else(|| json!("auto"));
+    }
+
+    let res = client
+        .post(resolve_endpoint(&request.config))
+        .headers(headers)
+        .json(&body_obj)
+        .send()
+        .await
+        .map_err(|e| format!("AI request failed: {e}"))?;
+
+    if !res.status().is_success() {
+        let data: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        return Err(extract_error(&data).unwrap_or_else(|| "API error".to_string()));
+    }
+
+    let mut byte_stream = res.bytes_stream();
+    let mut buf = String::new();
+    let mut accumulator = OpenAiRawChatStreamAccumulator::default();
+
+    loop {
+        tokio::select! {
+            chunk = byte_stream.next() => {
+                let Some(chunk) = chunk else { break };
+                let chunk = chunk.map_err(|e| e.to_string())?;
+                buf.push_str(&String::from_utf8_lossy(&chunk));
+
+                let mut finished = false;
+                while let Some(pos) = buf.find('\n') {
+                    let line = buf[..pos].to_string();
+                    buf = buf[pos + 1..].to_string();
+
+                    let Some(data) = stream_data_payload(&line) else { continue };
+                    if data == "[DONE]" {
+                        finished = true;
+                        break;
+                    }
+
+                    if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(reasoning) = openai_stream_reasoning(&event) {
+                            accumulator.push_reasoning(reasoning);
+                            on_chunk(AiStreamChunk {
+                                session_id: session_id.to_string(),
+                                delta: String::new(),
+                                reasoning_delta: Some(reasoning.to_string()),
+                                tool_call_delta: None,
+                                done: false,
+                            });
+                        }
+                        if let Some(text) = openai_stream_text(&event) {
+                            accumulator.push_content(text);
+                            on_chunk(AiStreamChunk {
+                                session_id: session_id.to_string(),
+                                delta: text.to_string(),
+                                reasoning_delta: None,
+                                tool_call_delta: None,
+                                done: false,
+                            });
+                        }
+                        for delta in openai_stream_tool_call_deltas(&event) {
+                            accumulator.push_tool_call_delta(&delta);
+                            on_chunk(AiStreamChunk {
+                                session_id: session_id.to_string(),
+                                delta: String::new(),
+                                reasoning_delta: None,
+                                tool_call_delta: Some(delta),
+                                done: false,
+                            });
+                        }
+                    }
+                }
+
+                if finished { break; }
+            }
+            _ = cancelled.notified() => { break; }
+        }
+    }
+
+    on_chunk(AiStreamChunk {
+        session_id: session_id.to_string(),
+        delta: String::new(),
+        reasoning_delta: None,
+        tool_call_delta: None,
+        done: true,
+    });
+
+    Ok(accumulator.finish())
 }
 
 async fn stream_responses_api(
@@ -1081,6 +1375,7 @@ async fn stream_responses_api(
                                 session_id: session_id.to_string(),
                                 delta: String::new(),
                                 reasoning_delta: Some(reasoning.to_string()),
+        tool_call_delta: None,
                                 done: false,
                             });
                         }
@@ -1089,6 +1384,7 @@ async fn stream_responses_api(
                                 session_id: session_id.to_string(),
                                 delta: text.to_string(),
                                 reasoning_delta: None,
+        tool_call_delta: None,
                                 done: false,
                             });
                         }
@@ -1105,6 +1401,7 @@ async fn stream_responses_api(
         session_id: session_id.to_string(),
         delta: String::new(),
         reasoning_delta: None,
+        tool_call_delta: None,
         done: true,
     });
 
@@ -1174,6 +1471,7 @@ async fn stream_gemini(
                                 session_id: session_id.to_string(),
                                 delta: text,
                                 reasoning_delta: None,
+        tool_call_delta: None,
                                 done: false,
                             });
                         }
@@ -1188,6 +1486,7 @@ async fn stream_gemini(
         session_id: session_id.to_string(),
         delta: String::new(),
         reasoning_delta: None,
+        tool_call_delta: None,
         done: true,
     });
 
@@ -1249,9 +1548,10 @@ pub fn load_config(path: &Path) -> Result<Option<AiConfig>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_ai_http_client, gemini_text, parse_model_list_response, resolve_endpoint, resolve_model_list_endpoint,
-        responses_stream_reasoning, responses_stream_text, should_request_responses_reasoning_summary, validate_config,
-        AiApiStyle, AiConfig, AiModelInfo, AiProvider,
+        build_ai_http_client, build_openai_compatible_chat_body, gemini_text, openai_stream_tool_call_deltas,
+        parse_model_list_response, resolve_endpoint, resolve_model_list_endpoint, responses_stream_reasoning,
+        responses_stream_text, should_request_responses_reasoning_summary, validate_config, AiApiStyle, AiConfig,
+        AiModelInfo, AiProvider, OpenAiRawChatStreamAccumulator,
     };
 
     #[test]
@@ -1444,5 +1744,132 @@ mod tests {
         config.enable_thinking = true;
         config.model = "gpt-4o-mini".to_string();
         assert!(!should_request_responses_reasoning_summary(&config));
+    }
+
+    #[test]
+    fn deepseek_thinking_payload_is_provider_scoped() {
+        let deepseek = AiConfig {
+            provider: AiProvider::Deepseek,
+            api_key: "key".to_string(),
+            endpoint: "https://api.deepseek.com/v1".to_string(),
+            model: "deepseek-v4-pro".to_string(),
+            api_style: AiApiStyle::Completions,
+            proxy_enabled: false,
+            proxy_url: String::new(),
+            enable_thinking: true,
+            schema_research: Default::default(),
+        };
+        let body = build_openai_compatible_chat_body(
+            &deepseek,
+            serde_json::json!([{ "role": "user", "content": "hi" }]),
+            Some(16),
+            Some(0.2),
+            true,
+        );
+
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["reasoning_effort"], "high");
+        assert!(body.get("temperature").is_none());
+        assert_eq!(body["stream"], true);
+
+        let qwen = AiConfig {
+            provider: AiProvider::Qwen,
+            api_key: "key".to_string(),
+            endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string(),
+            model: "qwen-plus".to_string(),
+            api_style: AiApiStyle::Completions,
+            proxy_enabled: false,
+            proxy_url: String::new(),
+            enable_thinking: true,
+            schema_research: Default::default(),
+        };
+        let body = build_openai_compatible_chat_body(
+            &qwen,
+            serde_json::json!([{ "role": "user", "content": "hi" }]),
+            None,
+            Some(0.15),
+            false,
+        );
+
+        assert_eq!(body["temperature"], 0.15);
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn qwen_disable_thinking_keeps_existing_extra_body_shape() {
+        let qwen = AiConfig {
+            provider: AiProvider::Qwen,
+            api_key: "key".to_string(),
+            endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string(),
+            model: "qwen-plus".to_string(),
+            api_style: AiApiStyle::Completions,
+            proxy_enabled: false,
+            proxy_url: String::new(),
+            enable_thinking: false,
+            schema_research: Default::default(),
+        };
+        let body = build_openai_compatible_chat_body(
+            &qwen,
+            serde_json::json!([{ "role": "user", "content": "hi" }]),
+            None,
+            None,
+            false,
+        );
+
+        assert_eq!(body["temperature"], 0.2);
+        assert_eq!(body["extra_body"]["chat_template_kwargs"]["enable_thinking"], false);
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn aggregates_streamed_tool_call_and_reasoning_into_raw_message() {
+        let reasoning = serde_json::json!({
+            "choices": [{ "delta": { "reasoning_content": "need schema" } }]
+        });
+        let call_start = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "dbx_search_schema",
+                            "arguments": "{\"query\":"
+                        }
+                    }]
+                }
+            }]
+        });
+        let call_end = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": { "arguments": "\"review\"}" }
+                    }]
+                }
+            }]
+        });
+
+        let mut accumulator = OpenAiRawChatStreamAccumulator::default();
+        accumulator.push_reasoning(super::openai_stream_reasoning(&reasoning).unwrap());
+        for delta in openai_stream_tool_call_deltas(&call_start) {
+            accumulator.push_tool_call_delta(&delta);
+        }
+        for delta in openai_stream_tool_call_deltas(&call_end) {
+            accumulator.push_tool_call_delta(&delta);
+        }
+        let response = accumulator.finish();
+
+        assert_eq!(response.content, "");
+        assert_eq!(response.tool_calls.len(), 1);
+        assert_eq!(response.tool_calls[0].id, "call_1");
+        assert_eq!(response.tool_calls[0].name, "dbx_search_schema");
+        assert_eq!(response.tool_calls[0].arguments, "{\"query\":\"review\"}");
+        assert_eq!(response.raw_message["reasoning_content"], "need schema");
+        assert_eq!(response.raw_message["tool_calls"][0]["function"]["arguments"], "{\"query\":\"review\"}");
     }
 }

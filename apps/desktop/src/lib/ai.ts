@@ -272,6 +272,7 @@ export async function runAiStream(
     onColumnChoiceRequest,
     onEvent,
     mainNodeId,
+    onDelta,
   ).catch(() => undefined);
   if (toolResult != null) {
     emitAiWorkflowEvent(onEvent, {
@@ -280,7 +281,7 @@ export async function runAiStream(
       status: "success",
       description: isZh ? "工具链路已完成" : "Tool loop completed",
     });
-    await emitBufferedText(toolResult, onDelta);
+    if (toolResult) await emitBufferedText(toolResult, onDelta);
     return;
   }
 
@@ -496,12 +497,13 @@ async function runAiToolLoop(
   onColumnChoiceRequest?: AiColumnChoiceRequestHandler,
   onEvent?: AiWorkflowEventHandler,
   mainNodeId?: string,
+  onDelta?: (delta: string) => void,
 ): Promise<string | undefined> {
   if (!supportsAiSchemaToolLoop(input.config, input.context)) return undefined;
 
   const isZh = currentLocale() === "zh-CN";
   const messages: any[] = userMessages.map((message) => ({ role: message.role, content: message.content }));
-  const tools = buildAiSchemaTools();
+  const tools = buildAiSchemaTools({ includeLoadTableSchema: false });
   const budget = createAiSchemaToolBudget();
   let pendingEvidenceGate: SchemaResearchEvidenceGate | undefined;
   let evidenceGateInstructionUsed = false;
@@ -515,18 +517,26 @@ async function runAiToolLoop(
         description: isZh ? `主模型正在决定下一步（第 ${round + 1} 轮）` : `Main model is deciding the next step (round ${round + 1})`,
       });
     }
-    const response = await api.aiRawChat({
-      config: input.config,
-      systemPrompt: buildToolSystemPrompt(input.action, input.context, input.mode),
-      messages,
-      tools,
-      toolChoice: "auto",
-      maxTokens,
-      temperature,
-    });
+    const response = await runRawChatForToolLoop(
+      {
+        config: input.config,
+        systemPrompt: buildToolSystemPrompt(input.action, input.context, input.mode),
+        messages,
+        tools,
+        toolChoice: "auto",
+        maxTokens,
+        temperature,
+      },
+      {
+        mainNodeId,
+        onEvent,
+        onReasoningDelta,
+        onDelta,
+      },
+    );
     const assistantMessage = normalizeRawAssistantMessage(response.rawMessage, response.content, response.toolCalls);
     messages.push(assistantMessage);
-    const reasoningContent = rawMessageReasoningContent(response.rawMessage);
+    const reasoningContent = response.__reasoningStreamed ? "" : rawMessageReasoningContent(response.rawMessage);
     if (reasoningContent) {
       if (mainNodeId) emitAiWorkflowEvent(onEvent, { type: "node.delta", nodeId: mainNodeId, delta: `${reasoningContent}\n\n` });
       onReasoningDelta?.(`${reasoningContent}\n\n`);
@@ -554,7 +564,7 @@ async function runAiToolLoop(
         evidenceGateInstructionUsed = true;
         continue;
       }
-      return response.content;
+      return response.__contentStreamed ? "" : response.content;
     }
 
     for (const call of response.toolCalls) {
@@ -627,15 +637,101 @@ async function runAiToolLoop(
       ? "工具调用预算已用完。请只基于已经返回的工具结果生成最终 SQL；如果信息不足，请明确说明缺少哪些表或字段。"
       : "The tool-call budget is exhausted. Generate the final SQL only from returned tool results; if information is insufficient, state which tables or columns are missing.",
   });
-  const finalResponse = await api.aiRawChat({
-    config: input.config,
-    systemPrompt: buildToolSystemPrompt(input.action, input.context, input.mode),
-    messages,
-    tools: [],
-    maxTokens,
-    temperature,
-  });
-  return finalResponse.content;
+  const finalResponse = await runRawChatForToolLoop(
+    {
+      config: input.config,
+      systemPrompt: buildToolSystemPrompt(input.action, input.context, input.mode),
+      messages,
+      tools: [],
+      maxTokens,
+      temperature,
+    },
+    {
+      mainNodeId,
+      onEvent,
+      onReasoningDelta,
+      onDelta,
+    },
+  );
+  return finalResponse.__contentStreamed ? "" : finalResponse.content;
+}
+
+type AiRawChatToolLoopResponse = api.AiRawChatResponse & {
+  __contentStreamed?: boolean;
+  __reasoningStreamed?: boolean;
+};
+
+async function runRawChatForToolLoop(
+  request: api.AiRawChatRequest,
+  hooks: {
+    mainNodeId?: string;
+    onEvent?: AiWorkflowEventHandler;
+    onReasoningDelta?: (delta: string) => void;
+    onDelta?: (delta: string) => void;
+  },
+): Promise<AiRawChatToolLoopResponse> {
+  if (!supportsDeepSeekRawChatStream(request.config)) {
+    return api.aiRawChat(request);
+  }
+
+  const sid = uuid();
+  const canStreamContentLive = request.tools.length === 0;
+  let contentStreamed = false;
+  let reasoningStreamed = false;
+  let sawToolCall = false;
+  let response: api.AiRawChatResponse;
+  try {
+    response = await api.aiRawChatStream(sid, request, (chunk) => {
+      if (chunk.done) return;
+      if (chunk.reasoning_delta) {
+        reasoningStreamed = true;
+        emitAiWorkflowEvent(hooks.onEvent, {
+          type: "node.delta",
+          nodeId: hooks.mainNodeId || sid,
+          delta: chunk.reasoning_delta,
+        });
+        hooks.onReasoningDelta?.(chunk.reasoning_delta);
+      }
+      if (chunk.tool_call_delta) {
+        sawToolCall = true;
+        emitAiWorkflowEvent(hooks.onEvent, {
+          type: "node.update",
+          nodeId: hooks.mainNodeId || sid,
+          status: "loading",
+          description: currentLocale() === "zh-CN" ? "模型正在准备工具调用参数" : "Model is preparing tool-call arguments",
+        });
+      }
+      if (chunk.delta && canStreamContentLive && !sawToolCall) {
+        contentStreamed = true;
+        hooks.onDelta?.(chunk.delta);
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    const description =
+      currentLocale() === "zh-CN"
+        ? `DeepSeek 流式工具调用不可用，已退回非流式工具调用${message ? `：${message}` : ""}`
+        : `DeepSeek streaming tool calls are unavailable; falling back to non-streaming tool calls${
+            message ? `: ${message}` : ""
+          }`;
+    emitAiWorkflowEvent(hooks.onEvent, {
+      type: "node.update",
+      nodeId: hooks.mainNodeId || sid,
+      status: "loading",
+      description,
+    });
+    return api.aiRawChat(request);
+  }
+
+  return {
+    ...response,
+    __contentStreamed: contentStreamed && response.toolCalls.length === 0,
+    __reasoningStreamed: reasoningStreamed,
+  };
+}
+
+function supportsDeepSeekRawChatStream(config: AiConfig): boolean {
+  return config.provider === "deepseek" && config.apiStyle === "completions";
 }
 
 function rawMessageReasoningContent(rawMessage: unknown): string {
@@ -1003,8 +1099,8 @@ export function buildSchemaResearchEvidenceGateInstruction(
     return isZh
       ? [
           "Schema Research 返回 partial，证据不足，不能直接生成最终 SQL。",
-          "必须继续调用更窄的 dbx_schema_research_task，或调用 dbx_search_schema、dbx_find_columns、dbx_search_table_columns、dbx_get_column_details、dbx_load_table_schema、dbx_get_related_tables 补齐实时证据；如果仍无法确定，调用用户选择/关系确认工具。",
-          "最终 SQL 只能使用 verified 字段，或随后通过 dbx_get_column_details/dbx_load_table_schema 实时核对过的字段。",
+          "必须继续调用更窄的 dbx_schema_research_task，或调用 dbx_search_schema、dbx_find_columns、dbx_search_table_columns、dbx_get_column_details、dbx_get_related_tables 补齐实时证据；如果仍无法确定，调用用户选择/关系确认工具。",
+          "最终 SQL 只能使用 verified 字段，或随后通过 dbx_get_column_details 实时核对过的字段。",
           `摘要：${gate.summary}`,
           uncertaintyText,
         ]
@@ -1012,8 +1108,8 @@ export function buildSchemaResearchEvidenceGateInstruction(
           .join("\n")
       : [
           "Schema Research returned partial evidence. Do not generate final SQL yet.",
-          "You must continue with a narrower dbx_schema_research_task or call dbx_search_schema, dbx_find_columns, dbx_search_table_columns, dbx_get_column_details, dbx_load_table_schema, or dbx_get_related_tables to complete real-time evidence. If still uncertain, call a user-choice or relation-confirmation tool.",
-          "Final SQL may use only verified columns or columns later verified through dbx_get_column_details/dbx_load_table_schema.",
+          "You must continue with a narrower dbx_schema_research_task or call dbx_search_schema, dbx_find_columns, dbx_search_table_columns, dbx_get_column_details, or dbx_get_related_tables to complete real-time evidence. If still uncertain, call a user-choice or relation-confirmation tool.",
+          "Final SQL may use only verified columns or columns later verified through dbx_get_column_details.",
           `Summary: ${gate.summary}`,
           uncertaintyText,
         ]
@@ -1111,12 +1207,12 @@ function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAss
         ...buildActionPromptLines(action, isZh),
         "当前没有预加载完整 Schema。只有工具返回的实时表结构、当前表上下文、用户明确 @table 提到的表可以作为最终 SQL 的表列依据。",
         "复杂查表、找字段、判断多表关系时，优先调用 dbx_schema_research_task，让 Schema Research 子任务消化低级工具结果并返回压缩证据；不要让主对话直接吃大量候选表/字段结果。",
-        "dbx_schema_research_task 返回的 promptSummary 是给你生成最终 SQL 用的压缩证据；最终 SQL 只能使用其中已 verified 的字段，或你随后通过 dbx_get_column_details/dbx_load_table_schema 实时核对过的字段。",
+        "dbx_schema_research_task 返回的 promptSummary 是给你生成最终 SQL 用的压缩证据；最终 SQL 只能使用其中已 verified 的字段，或你随后通过 dbx_get_column_details 实时核对过的字段。",
         "你可以按需调用工具检索 Schema，而不是预先获得完整 Schema。dbx_search_schema 使用 Schema 智能索引；如果当前 schema 未分析或搜索结果不足，改用 dbx_list_tables 和 dbx_find_columns。",
         "当用户用中文业务词查表或字段时，工具 query 要同时包含原始中文词和可能的英文业务词、表名/字段名片段，例如：评价 review rating comment feedback score。",
         "当问题涉及当前上下文未提供的表、字段或关系时，优先调用 dbx_search_schema；没有索引或需要按字段名精确查找时调用 dbx_find_columns；需要浏览候选表时调用 dbx_list_tables。",
-        "拿到候选表后，若不能确定用户想要哪张表，调用 dbx_request_table_choice 让用户确认。确认表后，优先调用 dbx_search_table_columns 在该表内做字段级向量召回，只拿字段摘要；不要直接为了判断字段相关性调用重型 dbx_load_table_schema。",
-        "字段摘要只用于候选判断。准备把字段写入最终 SQL 的 SELECT、WHERE、JOIN、GROUP BY、ORDER BY、INSERT 或 UPDATE 前，必须调用 dbx_get_column_details 获取这些字段的实时详情，或复用当前仍有效的字段详情证据。只有确实需要整表字段、索引和外键时才调用 dbx_load_table_schema。",
+        "拿到候选表后，若不能确定用户想要哪张表，调用 dbx_request_table_choice 让用户确认。确认表后，优先调用 dbx_search_table_columns 在该表内做字段级向量召回，只拿字段摘要。",
+        "字段摘要只用于候选判断。准备把字段写入最终 SQL 的 SELECT、WHERE、JOIN、GROUP BY、ORDER BY、INSERT 或 UPDATE 前，必须调用 dbx_get_column_details 获取这些字段的实时详情，或复用当前仍有效的字段详情证据。",
         "拿到字段候选后，若不能确定用户想要哪个字段，调用 dbx_request_column_choice 让用户确认；用户选择或手动输入后，仍要以实时字段详情核对字段存在性。",
         "只有当用户明确要求沉淀/记住某个业务词到表或字段的映射，或用户刚刚通过表/字段选择器确认了映射并同意沉淀时，才可以调用 dbx_save_schema_enrichment。禁止保存模型自己猜测的映射。",
         "需要 JOIN 两张表时，先调用 dbx_get_related_tables 查看真实外键或已知关系；如果没有可靠关系，不要猜测，调用 dbx_request_relation 让用户确认字段对应关系。联合键或多字段关联必须使用多个 candidatePairs，并在最终 JOIN 中用 AND 使用用户确认的全部 columnPairs。",
@@ -1131,12 +1227,12 @@ function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAss
         ...buildActionPromptLines(action, isZh),
         "A complete schema is not preloaded. Only tool-returned real-time schemas, current table context, and explicit @table mentions may be used as table/column facts for final SQL.",
         "For complex table search, column search, or multi-table relation research, prefer dbx_schema_research_task so the Schema Research subtask digests low-level tool results and returns compact evidence. Avoid feeding large candidate table/column payloads directly into the main conversation.",
-        "The promptSummary returned by dbx_schema_research_task is compact evidence for final SQL generation. Final SQL may use only columns marked verified there, or columns you subsequently verify with dbx_get_column_details/dbx_load_table_schema.",
+        "The promptSummary returned by dbx_schema_research_task is compact evidence for final SQL generation. Final SQL may use only columns marked verified there, or columns you subsequently verify with dbx_get_column_details.",
         "You may call tools to retrieve schema on demand instead of receiving the full schema upfront. dbx_search_schema uses the smart schema index; if the schema is not indexed or results are insufficient, use dbx_list_tables and dbx_find_columns.",
         "When a Chinese business term is used to search tables or columns, include the original Chinese term plus likely English business terms and identifier fragments in tool queries, for example: 评价 review rating comment feedback score.",
         "When the request needs tables, columns, or relationships not already in context, prefer dbx_search_schema; use dbx_find_columns for precise column-name searches or when no index exists; use dbx_list_tables to browse candidates.",
-        "After candidate tables are found, call dbx_request_table_choice if you cannot determine which table the user means. After the user chooses or manually enters a table, prefer dbx_search_table_columns to run vector column retrieval inside that table and get lightweight column summaries; do not call heavy dbx_load_table_schema just to judge column relevance.",
-        "Column summaries are only candidates. Before putting a column in final SQL SELECT, WHERE, JOIN, GROUP BY, ORDER BY, INSERT, or UPDATE, call dbx_get_column_details for real-time details or reuse still-valid column-detail evidence. Call dbx_load_table_schema only when full columns, indexes, and foreign keys are truly needed.",
+        "After candidate tables are found, call dbx_request_table_choice if you cannot determine which table the user means. After the user chooses or manually enters a table, prefer dbx_search_table_columns to run vector column retrieval inside that table and get lightweight column summaries.",
+        "Column summaries are only candidates. Before putting a column in final SQL SELECT, WHERE, JOIN, GROUP BY, ORDER BY, INSERT, or UPDATE, call dbx_get_column_details for real-time details or reuse still-valid column-detail evidence.",
         "After column candidates are found, call dbx_request_column_choice if you cannot determine which column the user means. After the user chooses or manually enters columns, still verify them against real-time column details.",
         "Call dbx_save_schema_enrichment only when the user explicitly asks to save/remember a business term to table/column mapping, or when the user has just confirmed the mapping through a table/column choice UI and agreed to save it. Never save model-guessed mappings.",
         "Before joining two tables, call dbx_get_related_tables for real foreign keys or known relationships. If no reliable relation exists, do not guess; call dbx_request_relation so the user can confirm matching columns. For composite-key or multi-column relationships, provide multiple candidatePairs and use all user-confirmed columnPairs with AND in the final JOIN.",
@@ -1165,6 +1261,7 @@ export interface AiSchemaToolsOptions {
   includeResearchTask?: boolean;
   includeUserChoiceTools?: boolean;
   includeEnrichmentTool?: boolean;
+  includeLoadTableSchema?: boolean;
 }
 
 export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[] {
@@ -1632,9 +1729,11 @@ function filterAiSchemaTools(tools: unknown[], options: AiSchemaToolsOptions): u
   const includeResearchTask = options.includeResearchTask !== false;
   const includeUserChoiceTools = options.includeUserChoiceTools !== false;
   const includeEnrichmentTool = options.includeEnrichmentTool !== false;
+  const includeLoadTableSchema = options.includeLoadTableSchema !== false;
   return tools.filter((tool: any) => {
     const name = tool?.function?.name;
     if (!includeResearchTask && name === "dbx_schema_research_task") return false;
+    if (!includeLoadTableSchema && name === "dbx_load_table_schema") return false;
     if (
       !includeUserChoiceTools &&
       ["dbx_request_table_choice", "dbx_request_column_choice", "dbx_request_relation"].includes(name)
@@ -1754,17 +1853,23 @@ async function runSchemaResearchSubtask(
         ? `Schema Research 正在检索证据（第 ${usedRounds} 轮）`
         : `Schema Research is collecting evidence (round ${usedRounds})`,
     });
-    const response = await api.aiRawChat({
-      config: researchSettings.config,
-      systemPrompt: buildSchemaResearchSystemPrompt(input, args, limits),
-      messages,
-      tools,
-      toolChoice: "auto",
-      maxTokens: researchSettings.maxOutputTokens,
-      temperature: 0.05,
-    });
+    const response = await runRawChatForToolLoop(
+      {
+        config: researchSettings.config,
+        systemPrompt: buildSchemaResearchSystemPrompt(input, args, limits),
+        messages,
+        tools,
+        toolChoice: "auto",
+        maxTokens: researchSettings.maxOutputTokens,
+        temperature: 0.05,
+      },
+      {
+        mainNodeId: agentNodeId,
+        onEvent: hooks?.onEvent,
+      },
+    );
     messages.push(normalizeRawAssistantMessage(response.rawMessage, response.content, response.toolCalls));
-    const reasoningContent = rawMessageReasoningContent(response.rawMessage);
+    const reasoningContent = supportsDeepSeekRawChatStream(researchSettings.config) ? "" : rawMessageReasoningContent(response.rawMessage);
     if (reasoningContent) {
       emitAiWorkflowEvent(hooks?.onEvent, {
         type: "node.delta",
@@ -1841,14 +1946,20 @@ async function runSchemaResearchSubtask(
       ? "Schema Research 工具轮次已用完。请只基于已经返回的工具结果输出最终 JSON，不要再调用工具。"
       : "The schema research tool-round budget is exhausted. Return final JSON using only the tool results already returned. Do not call tools.",
   });
-  const finalResponse = await api.aiRawChat({
-    config: researchSettings.config,
-    systemPrompt: buildSchemaResearchSystemPrompt(input, args, limits),
-    messages,
-    tools: [],
-    maxTokens: researchSettings.maxOutputTokens,
-    temperature: 0.05,
-  });
+  const finalResponse = await runRawChatForToolLoop(
+    {
+      config: researchSettings.config,
+      systemPrompt: buildSchemaResearchSystemPrompt(input, args, limits),
+      messages,
+      tools: [],
+      maxTokens: researchSettings.maxOutputTokens,
+      temperature: 0.05,
+    },
+    {
+      mainNodeId: agentNodeId,
+      onEvent: hooks?.onEvent,
+    },
+  );
 
   const result = withSchemaResearchBudget(
     parseSchemaResearchTaskResultText(finalResponse.content, limits),

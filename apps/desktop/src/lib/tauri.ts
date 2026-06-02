@@ -245,6 +245,13 @@ export interface AiRawToolCall {
   arguments: string;
 }
 
+export interface AiRawToolCallDelta {
+  index: number;
+  id?: string;
+  name?: string;
+  argumentsDelta?: string;
+}
+
 export interface AiRawChatResponse {
   content: string;
   toolCalls: AiRawToolCall[];
@@ -294,6 +301,7 @@ export interface AiStreamChunk {
   session_id: string;
   delta: string;
   reasoning_delta?: string;
+  tool_call_delta?: AiRawToolCallDelta;
   done: boolean;
 }
 
@@ -310,6 +318,25 @@ export async function aiStream(
   });
   try {
     await invoke("ai_stream", { sessionId, request });
+  } catch (e) {
+    unlisten();
+    throw e;
+  }
+}
+
+export async function aiRawChatStream(
+  sessionId: string,
+  request: AiRawChatRequest,
+  onChunk: (chunk: AiStreamChunk) => void,
+): Promise<AiRawChatResponse> {
+  const unlisten: UnlistenFn = await listen<AiStreamChunk>("ai-stream-chunk", (event) => {
+    if (event.payload.session_id === sessionId) {
+      onChunk(event.payload);
+      if (event.payload.done) unlisten();
+    }
+  });
+  try {
+    return await invoke("ai_raw_chat_stream", { sessionId, request });
   } catch (e) {
     unlisten();
     throw e;

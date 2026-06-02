@@ -208,11 +208,6 @@ const chatTitle = computed(() => {
 
 const promptMentionChips = computed(() => selectedMentions.value);
 
-const isWaitingForFirstDelta = computed(() => {
-  const last = messages.value[messages.value.length - 1];
-  return isGenerating.value && last?.role === "assistant" && !last.content && !last.reasoning && !last.timeline?.length;
-});
-
 const activePlaceholder = computed(
   () => `${t(`ai.placeholders.${activeAction.value}`)} ${t("ai.tableMentionPlaceholderHint")}`,
 );
@@ -1319,11 +1314,6 @@ const messageRenderer = computed(() => {
             </div>
           </div>
         </template>
-
-        <div v-if="isWaitingForFirstDelta" class="flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 class="h-3.5 w-3.5 animate-spin" />
-          <span>{{ t("ai.thinking") }}</span>
-        </div>
 
         <div v-if="pendingTableChoice" class="rounded-md border border-blue-500/35 bg-blue-500/10 p-2 text-xs">
           <div class="mb-1.5 flex min-w-0 items-center gap-1.5 font-medium text-blue-800 dark:text-blue-200">

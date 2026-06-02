@@ -146,6 +146,7 @@ export const buildDataCompareSyncPlan = forward("buildDataCompareSyncPlan");
 // AI
 export const aiComplete = forward("aiComplete");
 export const aiRawChat = forward("aiRawChat");
+export const aiRawChatStream = forward("aiRawChatStream");
 export const aiStream = forward("aiStream");
 export const aiCancelStream = forward("aiCancelStream");
 export const aiTestConnection = forward("aiTestConnection");
@@ -257,6 +258,7 @@ export type {
   AiRawChatRequest,
   AiRawChatResponse,
   AiRawToolCall,
+  AiRawToolCallDelta,
   AiTimelineItem,
   AiToolTrace,
   AiStreamChunk,

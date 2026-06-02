@@ -35,6 +35,23 @@ pub async fn ai_raw_chat(request: AiRawChatRequest) -> Result<AiRawChatResponse,
 }
 
 #[tauri::command]
+pub async fn ai_raw_chat_stream(
+    app: AppHandle,
+    session_id: String,
+    request: AiRawChatRequest,
+) -> Result<AiRawChatResponse, String> {
+    let cancelled = dbx_core::ai::register_stream(&session_id).await;
+
+    let result = dbx_core::ai::raw_chat_stream(&session_id, &request, &cancelled, |chunk| {
+        let _ = app.emit("ai-stream-chunk", &chunk);
+    })
+    .await;
+
+    dbx_core::ai::unregister_stream(&session_id).await;
+    result
+}
+
+#[tauri::command]
 pub async fn ai_stream(app: AppHandle, session_id: String, request: AiCompletionRequest) -> Result<(), String> {
     let cancelled = dbx_core::ai::register_stream(&session_id).await;
 
