@@ -44,6 +44,7 @@ import {
   Braces,
   Code2,
   ListFilter,
+  Sparkles,
 } from "lucide-vue-next";
 import CustomContextMenu, { type ContextMenuItem } from "@/components/ui/CustomContextMenu.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -124,6 +125,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import LightTooltip from "@/components/ui/LightTooltip.vue";
+import type { SchemaRagScopeRequest, SchemaRagStatus } from "@/lib/schemaRag";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 
 const { t } = useI18n();
 const labelRef = ref<HTMLElement>();
@@ -707,9 +710,162 @@ const showFlushRedisDbConfirm = ref(false);
 const showCreateSchemaDialog = ref(false);
 const createSchemaName = ref("");
 const showDropSchemaConfirm = ref(false);
+const showSchemaRagStatusDialog = ref(false);
+const schemaRagStatus = ref<SchemaRagStatus | null>(null);
+const schemaRagStatusLoading = ref(false);
+const schemaRagStatusError = ref("");
+const schemaRagProgress = ref("");
+const schemaRagBusy = ref<"" | "analyze" | "delete">("");
 
 // --- Procedure / Function Management ---
 const showDropObjectConfirm = ref(false);
+
+function schemaRagScopeForNode(node = props.node): SchemaRagScopeRequest | null {
+  if (!node.connectionId || !hasTreeNodeDatabaseContext(node)) return null;
+  if (node.type === "schema" && node.schema) {
+    return {
+      connectionId: node.connectionId,
+      database: node.database,
+      schema: node.schema,
+    };
+  }
+  if (node.type !== "database") return null;
+  const config = nodeConfig.value;
+  if (usesTreeSchemaMode(config?.db_type)) return null;
+  return {
+    connectionId: node.connectionId,
+    database: node.database,
+    schema: node.database || "main",
+  };
+}
+
+function formatSchemaRagProgress(progress: any): string {
+  switch (progress.stage) {
+    case "scan_table":
+      return t("contextMenu.schemaRagProgressScan", {
+        done: progress.done,
+        total: progress.total,
+        table: progress.table || "",
+      });
+    case "build_documents":
+      return t("contextMenu.schemaRagProgressBuildDocuments");
+    case "embedding_queued":
+      return t("contextMenu.schemaRagProgressEmbeddingQueued", {
+        total: progress.total,
+        batches: progress.batchTotal || 0,
+        concurrency: progress.concurrency || 1,
+      });
+    case "embedding_request":
+      return t("contextMenu.schemaRagProgressEmbeddingRequest", {
+        batch: progress.batch || 0,
+        batches: progress.batchTotal || 0,
+        done: progress.done,
+        total: progress.total,
+        size: progress.batchSize || 0,
+        concurrency: progress.concurrency || 1,
+        inFlight: progress.inFlight || 0,
+      });
+    case "embedding_done":
+      return t("contextMenu.schemaRagProgressEmbeddingDone", {
+        batch: progress.batch || 0,
+        batches: progress.batchTotal || 0,
+        done: progress.done,
+        total: progress.total,
+        concurrency: progress.concurrency || 1,
+        inFlight: progress.inFlight || 0,
+      });
+    case "embedding_failed":
+      return t("contextMenu.schemaRagProgressEmbeddingFailed", {
+        batch: progress.batch || 0,
+        batches: progress.batchTotal || 0,
+      });
+    case "write_index":
+      return t("contextMenu.schemaRagProgressWrite");
+    case "finished":
+      return t("contextMenu.schemaRagProgressFinished");
+    default:
+      return progress.message || t("contextMenu.schemaRagProgress", {
+        done: progress.done,
+        total: progress.total,
+        table: progress.table || "",
+      });
+  }
+}
+
+async function analyzeSchemaRag() {
+  const scope = schemaRagScopeForNode();
+  if (!scope) return;
+  if (!window.confirm(t("contextMenu.schemaRagAnalyzeConfirm"))) return;
+  schemaRagBusy.value = "analyze";
+  schemaRagProgress.value = "";
+  showSchemaRagStatusDialog.value = true;
+  schemaRagStatusLoading.value = false;
+  schemaRagStatusError.value = "";
+  let unlisten: UnlistenFn | undefined;
+  try {
+    await connectionStore.ensureConnected(scope.connectionId);
+    unlisten = await api.listenSchemaRagProgress((progress) => {
+      if (
+        progress.connectionId !== scope.connectionId ||
+        progress.database !== scope.database ||
+        progress.schema !== scope.schema
+      ) {
+        return;
+      }
+      schemaRagProgress.value = formatSchemaRagProgress(progress);
+    });
+    const result = await api.analyzeSchemaRag(scope);
+    schemaRagStatus.value = {
+      indexed: true,
+      manifest: result.manifest,
+      indexPath: result.indexPath,
+    };
+    toast(
+      t("contextMenu.schemaRagAnalyzeSuccess", {
+        tables: result.manifest.tableCount,
+        columns: result.manifest.columnCount,
+      }),
+      4000,
+    );
+  } catch (e: any) {
+    toast(t("contextMenu.schemaRagOperationFailed", { message: e?.message || String(e) }), 6000);
+  } finally {
+    unlisten?.();
+    schemaRagBusy.value = "";
+  }
+}
+
+async function openSchemaRagStatus() {
+  const scope = schemaRagScopeForNode();
+  if (!scope) return;
+  showSchemaRagStatusDialog.value = true;
+  schemaRagStatusLoading.value = true;
+  schemaRagStatusError.value = "";
+  try {
+    schemaRagStatus.value = await api.loadSchemaRagStatus(scope);
+  } catch (e: any) {
+    schemaRagStatus.value = null;
+    schemaRagStatusError.value = e?.message || String(e);
+  } finally {
+    schemaRagStatusLoading.value = false;
+  }
+}
+
+async function deleteSchemaRagIndex() {
+  const scope = schemaRagScopeForNode();
+  if (!scope) return;
+  if (!window.confirm(t("contextMenu.schemaRagDeleteConfirm", { name: scope.schema }))) return;
+  schemaRagBusy.value = "delete";
+  try {
+    const deleted = await api.deleteSchemaRagIndex(scope);
+    schemaRagStatus.value = deleted ? null : schemaRagStatus.value;
+    toast(deleted ? t("contextMenu.schemaRagDeleteSuccess") : t("contextMenu.schemaRagNoIndex"), 3000);
+  } catch (e: any) {
+    toast(t("contextMenu.schemaRagOperationFailed", { message: e?.message || String(e) }), 6000);
+  } finally {
+    schemaRagBusy.value = "";
+  }
+}
 
 function dropObjectSqlOptions(): DropObjectSqlOptions | null {
   const node = props.node;
@@ -2085,6 +2241,28 @@ function treeItemMenuItems(): ContextMenuItem[] {
     if (canOpenDatabaseSearch.value) {
       items.push({ label: t("databaseSearch.open"), action: openDatabaseSearch, icon: Search });
     }
+    if (schemaRagScopeForNode(node)) {
+      items.push({ label: "", separator: true });
+      items.push({
+        label: t("contextMenu.schemaRagAnalyze"),
+        action: analyzeSchemaRag,
+        icon: Sparkles,
+        disabled: schemaRagBusy.value === "analyze",
+      });
+      items.push({
+        label: t("contextMenu.schemaRagStatus"),
+        action: openSchemaRagStatus,
+        icon: Search,
+        disabled: schemaRagStatusLoading.value,
+      });
+      items.push({
+        label: t("contextMenu.schemaRagDelete"),
+        action: deleteSchemaRagIndex,
+        icon: Trash2,
+        disabled: schemaRagBusy.value === "delete",
+        variant: "destructive" as const,
+      });
+    }
     items.push({ label: t("contextMenu.refreshChildren"), action: refresh, icon: RefreshCw });
     items.push({ label: "", separator: true });
     items.push({ label: t("transfer.dataTransfer"), action: openTransfer, icon: ArrowRightLeft });
@@ -2668,6 +2846,59 @@ function treeItemMenuItems(): ContextMenuItem[] {
     :confirm-label="t('contextMenu.dropSchema')"
     @confirm="confirmDropSchema"
   />
+
+  <Dialog v-model:open="showSchemaRagStatusDialog">
+    <DialogContent class="sm:max-w-[480px]">
+      <DialogHeader>
+        <DialogTitle>{{ t("contextMenu.schemaRagStatusTitle", { name: node.label }) }}</DialogTitle>
+      </DialogHeader>
+      <div class="space-y-3 text-sm">
+        <div v-if="schemaRagStatusLoading" class="flex items-center gap-2 text-muted-foreground">
+          <Loader2 class="h-4 w-4 animate-spin" />
+          {{ t("common.loading") }}
+        </div>
+        <p v-else-if="schemaRagStatusError" class="text-destructive">{{ schemaRagStatusError }}</p>
+        <div v-else-if="schemaRagStatus?.indexed && schemaRagStatus.manifest" class="space-y-2">
+          <div class="grid grid-cols-2 gap-2 rounded-md border bg-muted/20 p-3 text-xs">
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagAnalyzedAt") }}</div>
+              <div>{{ new Date(schemaRagStatus.manifest.analyzedAt).toLocaleString() }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagModel") }}</div>
+              <div class="truncate" :title="schemaRagStatus.manifest.embeddingModel">
+                {{ schemaRagStatus.manifest.embeddingModel }}
+              </div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagTableCount") }}</div>
+              <div>{{ schemaRagStatus.manifest.tableCount }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagColumnCount") }}</div>
+              <div>{{ schemaRagStatus.manifest.columnCount }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagIndexCount") }}</div>
+              <div>{{ schemaRagStatus.manifest.indexCount }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagForeignKeyCount") }}</div>
+              <div>{{ schemaRagStatus.manifest.foreignKeyCount }}</div>
+            </div>
+          </div>
+          <div class="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
+            {{ schemaRagStatus.indexPath }}
+          </div>
+        </div>
+        <p v-else class="text-muted-foreground">{{ t("contextMenu.schemaRagNoIndex") }}</p>
+        <p v-if="schemaRagProgress" class="text-xs text-muted-foreground">{{ schemaRagProgress }}</p>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" @click="showSchemaRagStatusDialog = false">{{ t("common.close") }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <style>

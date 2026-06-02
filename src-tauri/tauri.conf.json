@@ -36,6 +36,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/dbx-schema-rag-sidecar"
+    ],
     "fileAssociations": [
       {
         "ext": ["sql"],

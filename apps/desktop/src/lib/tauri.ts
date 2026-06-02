@@ -60,6 +60,36 @@ import type {
   TableAdminSqlOptions,
 } from "@/lib/dbAdminSql";
 import type { BuildDatabaseSqlExportOptions, BuildExportInsertStatementsOptions } from "@/lib/databaseExport";
+import type {
+  AnalyzeSchemaRagRequest,
+  AnalyzeSchemaRagResponse,
+  SaveSchemaRagEnrichmentRequest,
+  SaveSchemaRagEnrichmentResponse,
+  SchemaRagColumnSearchResult,
+  SchemaRagConfig,
+  SchemaRagProgressEvent,
+  SchemaRagScopeRequest,
+  SchemaRagSearchResult,
+  SchemaRagStatus,
+  SearchSchemaRagRequest,
+  SearchTableColumnsRagRequest,
+} from "@/lib/schemaRag";
+export type {
+  AnalyzeSchemaRagRequest,
+  AnalyzeSchemaRagResponse,
+  SaveSchemaRagEnrichmentRequest,
+  SaveSchemaRagEnrichmentResponse,
+  SchemaRagBusinessAliasInput,
+  SchemaRagColumnSearchResult,
+  SchemaRagConfig,
+  SchemaRagManifest,
+  SchemaRagProgressEvent,
+  SchemaRagScopeRequest,
+  SchemaRagSearchResult,
+  SchemaRagStatus,
+  SearchSchemaRagRequest,
+  SearchTableColumnsRagRequest,
+} from "@/lib/schemaRag";
 
 export interface AgentDriverInfo {
   db_type: string;
@@ -208,6 +238,44 @@ export interface AiCompletionRequest {
   temperature?: number;
 }
 
+export interface AiRawToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface AiRawChatResponse {
+  content: string;
+  toolCalls: AiRawToolCall[];
+  rawMessage: unknown;
+}
+
+export interface AiToolTrace {
+  id: string;
+  name: string;
+  arguments: string;
+  status: "running" | "success" | "error";
+  summary?: string;
+  children?: AiToolTrace[];
+}
+
+export interface AiTimelineItem {
+  id: string;
+  kind: "reasoning" | "tool";
+  reasoning?: string;
+  toolTrace?: AiToolTrace;
+}
+
+export interface AiRawChatRequest {
+  config: AiConfig;
+  systemPrompt: string;
+  messages: unknown[];
+  tools: unknown[];
+  toolChoice?: unknown;
+  maxTokens?: number;
+  temperature?: number;
+}
+
 export interface AiModelInfo {
   id: string;
   displayName?: string;
@@ -215,6 +283,10 @@ export interface AiModelInfo {
 
 export async function aiComplete(request: AiCompletionRequest): Promise<string> {
   return invoke("ai_complete", { request });
+}
+
+export async function aiRawChat(request: AiRawChatRequest): Promise<AiRawChatResponse> {
+  return invoke("ai_raw_chat", { request });
 }
 
 export interface AiStreamChunk {
@@ -357,6 +429,8 @@ export interface AiChatMessage {
   role: string;
   content: string;
   reasoning?: string;
+  toolTraces?: AiToolTrace[];
+  timeline?: AiTimelineItem[];
 }
 
 export interface AiConversation {
@@ -411,6 +485,44 @@ export async function loadSchemaCache<T = unknown>(cacheKey: string): Promise<T 
 
 export async function deleteSchemaCachePrefix(prefix: string): Promise<void> {
   return invoke("delete_schema_cache_prefix", { prefix });
+}
+
+export async function saveSchemaRagConfig(config: SchemaRagConfig): Promise<void> {
+  return invoke("save_schema_rag_config", { config });
+}
+
+export async function loadSchemaRagConfig(): Promise<SchemaRagConfig | null> {
+  return invoke("load_schema_rag_config");
+}
+
+export async function analyzeSchemaRag(request: AnalyzeSchemaRagRequest): Promise<AnalyzeSchemaRagResponse> {
+  return invoke("analyze_schema_rag", { request });
+}
+
+export async function searchSchemaRag(request: SearchSchemaRagRequest): Promise<SchemaRagSearchResult> {
+  return invoke("search_schema_rag", { request });
+}
+
+export async function searchTableColumnsRag(request: SearchTableColumnsRagRequest): Promise<SchemaRagColumnSearchResult> {
+  return invoke("search_table_columns_rag", { request });
+}
+
+export async function saveSchemaRagEnrichment(
+  request: SaveSchemaRagEnrichmentRequest,
+): Promise<SaveSchemaRagEnrichmentResponse> {
+  return invoke("save_schema_rag_enrichment", { request });
+}
+
+export async function loadSchemaRagStatus(request: SchemaRagScopeRequest): Promise<SchemaRagStatus> {
+  return invoke("load_schema_rag_status", { request });
+}
+
+export async function deleteSchemaRagIndex(request: SchemaRagScopeRequest): Promise<boolean> {
+  return invoke("delete_schema_rag_index", { request });
+}
+
+export async function listenSchemaRagProgress(handler: (progress: SchemaRagProgressEvent) => void): Promise<UnlistenFn> {
+  return listen<SchemaRagProgressEvent>("schema-rag-progress", (event) => handler(event.payload));
 }
 
 export async function listTables(

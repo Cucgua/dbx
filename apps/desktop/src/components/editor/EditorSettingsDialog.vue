@@ -36,10 +36,12 @@ import {
   DEFAULT_EDITOR_SETTINGS,
   DEFAULT_APP_SETTINGS,
   DEFAULT_DESKTOP_SETTINGS,
+  normalizeSchemaResearchModelConfig,
   type AiProvider,
   type AiApiStyle,
   type EditorTheme,
   type DesktopIconTheme,
+  type SchemaResearchModelConfig,
 } from "@/stores/settingsStore";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
@@ -75,6 +77,12 @@ import AiProviderLogo from "@/components/icons/AiProviderLogo.vue";
 import AppLogo from "@/components/icons/AppLogo.vue";
 import type { AppThemeAppearance } from "@/lib/appTheme";
 import { useConnectionStore } from "@/stores/connectionStore";
+import {
+  DEFAULT_SCHEMA_RAG_CONFIG,
+  normalizeSchemaRagApiKey,
+  normalizeSchemaRagConfig,
+  type SchemaRagConfig,
+} from "@/lib/schemaRag";
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
@@ -728,6 +736,7 @@ watch(
       newPassword.value = "";
       confirmNewPassword.value = "";
       await settingsStore.initAiConfig();
+      await settingsStore.initSchemaRagConfig();
       await settingsStore.initDesktopSettings();
       editShowTrayIcon.value = settingsStore.desktopSettings.show_tray_icon;
       void refreshMcpHttpStatus();
@@ -735,6 +744,7 @@ watch(
       webdavPassword.value = "";
       await refreshWebDavPasswordStatus();
       syncAiEditState();
+      syncSchemaRagEditState();
     }
   },
   { immediate: true },
@@ -805,6 +815,34 @@ const aiEditApiStyle = ref<AiApiStyle>(settingsStore.aiConfig.apiStyle || "compl
 const aiEditProxyEnabled = ref(!!settingsStore.aiConfig.proxyEnabled);
 const aiEditProxyUrl = ref(settingsStore.aiConfig.proxyUrl || "");
 const aiEditEnableThinking = ref(settingsStore.aiConfig.enableThinking ?? true);
+const schemaResearchEnabled = ref(settingsStore.aiConfig.schemaResearch?.enabled ?? true);
+const schemaResearchUseMainModel = ref(settingsStore.aiConfig.schemaResearch?.useMainModel ?? true);
+const schemaResearchProvider = ref<AiProvider>(settingsStore.aiConfig.schemaResearch?.provider ?? settingsStore.aiConfig.provider);
+const schemaResearchApiKey = ref(settingsStore.aiConfig.schemaResearch?.apiKey ?? settingsStore.aiConfig.apiKey);
+const schemaResearchEndpoint = ref(settingsStore.aiConfig.schemaResearch?.endpoint ?? settingsStore.aiConfig.endpoint);
+const schemaResearchModel = ref(settingsStore.aiConfig.schemaResearch?.model ?? settingsStore.aiConfig.model);
+const schemaResearchApiStyle = ref<AiApiStyle>(
+  settingsStore.aiConfig.schemaResearch?.apiStyle ?? settingsStore.aiConfig.apiStyle ?? "completions",
+);
+const schemaResearchProxyEnabled = ref(
+  settingsStore.aiConfig.schemaResearch?.proxyEnabled ?? !!settingsStore.aiConfig.proxyEnabled,
+);
+const schemaResearchProxyUrl = ref(settingsStore.aiConfig.schemaResearch?.proxyUrl ?? settingsStore.aiConfig.proxyUrl ?? "");
+const schemaResearchMaxToolRounds = ref(String(settingsStore.aiConfig.schemaResearch?.maxToolRounds ?? 4));
+const schemaResearchMaxOutputTokens = ref(String(settingsStore.aiConfig.schemaResearch?.maxOutputTokens ?? 1800));
+const schemaRagEmbeddingProvider = ref(settingsStore.schemaRagConfig.embeddingProvider);
+const schemaRagEmbeddingEndpoint = ref(settingsStore.schemaRagConfig.embeddingEndpoint);
+const schemaRagEmbeddingModel = ref(settingsStore.schemaRagConfig.embeddingModel);
+const schemaRagEmbeddingApiKey = ref(settingsStore.schemaRagConfig.embeddingApiKey);
+const schemaRagEmbeddingDimension = ref(String(settingsStore.schemaRagConfig.embeddingDimension));
+const schemaRagEmbeddingBatchSize = ref(String(settingsStore.schemaRagConfig.embeddingBatchSize));
+const schemaRagEmbeddingConcurrency = ref(String(settingsStore.schemaRagConfig.embeddingConcurrency));
+const schemaRagRerankProvider = ref(settingsStore.schemaRagConfig.rerankProvider);
+const schemaRagRerankEndpoint = ref(settingsStore.schemaRagConfig.rerankEndpoint);
+const schemaRagRerankModel = ref(settingsStore.schemaRagConfig.rerankModel);
+const schemaRagRerankApiKey = ref(settingsStore.schemaRagConfig.rerankApiKey);
+const schemaRagProxyEnabled = ref(settingsStore.schemaRagConfig.proxyEnabled);
+const schemaRagProxyUrl = ref(settingsStore.schemaRagConfig.proxyUrl);
 
 const aiModelOptions = ref<AiModelInfo[]>([]);
 const aiModelLoading = ref(false);
@@ -857,7 +895,7 @@ function aiModelConfigSignature() {
 }
 
 function currentAiEditConfig() {
-  return {
+  const mainConfig = {
     provider: aiEditProvider.value,
     apiKey: aiEditApiKey.value,
     endpoint: aiEditEndpoint.value,
@@ -867,6 +905,67 @@ function currentAiEditConfig() {
     proxyUrl: aiEditProxyUrl.value,
     enableThinking: aiEditEnableThinking.value,
   };
+  return {
+    ...mainConfig,
+    schemaResearch: currentSchemaResearchModelEditConfig(mainConfig),
+  };
+}
+
+function currentSchemaResearchModelEditConfig(
+  mainConfig = {
+    provider: aiEditProvider.value,
+    apiKey: aiEditApiKey.value,
+    endpoint: aiEditEndpoint.value,
+    model: aiEditModel.value,
+    apiStyle: aiEditApiStyle.value,
+    proxyEnabled: aiEditProxyEnabled.value,
+    proxyUrl: aiEditProxyUrl.value,
+  },
+): SchemaResearchModelConfig {
+  return normalizeSchemaResearchModelConfig(
+    {
+      enabled: schemaResearchEnabled.value,
+      useMainModel: schemaResearchUseMainModel.value,
+      provider: schemaResearchProvider.value,
+      apiKey: schemaResearchApiKey.value,
+      endpoint: schemaResearchEndpoint.value,
+      model: schemaResearchModel.value,
+      apiStyle: schemaResearchApiStyle.value,
+      proxyEnabled: schemaResearchProxyEnabled.value,
+      proxyUrl: schemaResearchProxyUrl.value,
+      maxToolRounds: Number(schemaResearchMaxToolRounds.value),
+      maxOutputTokens: Number(schemaResearchMaxOutputTokens.value),
+    },
+    mainConfig,
+  );
+}
+
+function currentSchemaRagEditConfig(): SchemaRagConfig {
+  const embeddingEndpoint = schemaRagEmbeddingEndpoint.value.trim();
+  const rerankEndpoint = schemaRagRerankEndpoint.value.trim();
+  return normalizeSchemaRagConfig({
+    embeddingProvider: schemaRagEmbeddingProvider.value.trim() || DEFAULT_SCHEMA_RAG_CONFIG.embeddingProvider,
+    embeddingEndpoint,
+    embeddingModel: schemaRagEmbeddingModel.value.trim(),
+    embeddingApiKey: normalizeSchemaRagApiKey(
+      schemaRagEmbeddingApiKey.value,
+      embeddingEndpoint,
+      settingsStore.schemaRagConfig.embeddingApiKey,
+    ),
+    embeddingDimension: Number(schemaRagEmbeddingDimension.value),
+    embeddingBatchSize: Number(schemaRagEmbeddingBatchSize.value),
+    embeddingConcurrency: Number(schemaRagEmbeddingConcurrency.value),
+    rerankProvider: schemaRagRerankProvider.value.trim() || DEFAULT_SCHEMA_RAG_CONFIG.rerankProvider,
+    rerankEndpoint,
+    rerankModel: schemaRagRerankModel.value.trim(),
+    rerankApiKey: normalizeSchemaRagApiKey(
+      schemaRagRerankApiKey.value,
+      rerankEndpoint,
+      settingsStore.schemaRagConfig.rerankApiKey,
+    ),
+    proxyEnabled: schemaRagProxyEnabled.value,
+    proxyUrl: schemaRagProxyUrl.value.trim(),
+  });
 }
 
 function normalizeAiModelOptions(models: AiModelInfo[]): AiModelInfo[] {
@@ -943,9 +1042,42 @@ function syncAiEditState() {
   aiEditProxyEnabled.value = !!settingsStore.aiConfig.proxyEnabled;
   aiEditProxyUrl.value = settingsStore.aiConfig.proxyUrl || "";
   aiEditEnableThinking.value = settingsStore.aiConfig.enableThinking ?? true;
+  syncSchemaResearchModelEditState();
   aiTestResult.value = "";
   aiTestError.value = "";
   clearAiModelOptions();
+}
+
+function syncSchemaResearchModelEditState() {
+  const config = settingsStore.aiConfig.schemaResearch;
+  schemaResearchEnabled.value = config?.enabled ?? true;
+  schemaResearchUseMainModel.value = config?.useMainModel ?? true;
+  schemaResearchProvider.value = config?.provider ?? settingsStore.aiConfig.provider;
+  schemaResearchApiKey.value = config?.apiKey ?? settingsStore.aiConfig.apiKey;
+  schemaResearchEndpoint.value = config?.endpoint ?? settingsStore.aiConfig.endpoint;
+  schemaResearchModel.value = config?.model ?? settingsStore.aiConfig.model;
+  schemaResearchApiStyle.value = config?.apiStyle ?? settingsStore.aiConfig.apiStyle ?? "completions";
+  schemaResearchProxyEnabled.value = config?.proxyEnabled ?? !!settingsStore.aiConfig.proxyEnabled;
+  schemaResearchProxyUrl.value = config?.proxyUrl ?? settingsStore.aiConfig.proxyUrl ?? "";
+  schemaResearchMaxToolRounds.value = String(config?.maxToolRounds ?? 4);
+  schemaResearchMaxOutputTokens.value = String(config?.maxOutputTokens ?? 1800);
+}
+
+function syncSchemaRagEditState() {
+  const config = settingsStore.schemaRagConfig;
+  schemaRagEmbeddingProvider.value = config.embeddingProvider;
+  schemaRagEmbeddingEndpoint.value = config.embeddingEndpoint;
+  schemaRagEmbeddingModel.value = config.embeddingModel;
+  schemaRagEmbeddingApiKey.value = config.embeddingApiKey;
+  schemaRagEmbeddingDimension.value = String(config.embeddingDimension);
+  schemaRagEmbeddingBatchSize.value = String(config.embeddingBatchSize);
+  schemaRagEmbeddingConcurrency.value = String(config.embeddingConcurrency);
+  schemaRagRerankProvider.value = config.rerankProvider;
+  schemaRagRerankEndpoint.value = config.rerankEndpoint;
+  schemaRagRerankModel.value = config.rerankModel;
+  schemaRagRerankApiKey.value = config.rerankApiKey;
+  schemaRagProxyEnabled.value = config.proxyEnabled;
+  schemaRagProxyUrl.value = config.proxyUrl;
 }
 
 function aiSelectProvider(provider: AiProvider) {
@@ -957,8 +1089,18 @@ function aiSelectProvider(provider: AiProvider) {
   clearAiModelOptions();
 }
 
+function schemaResearchSelectProvider(provider: AiProvider) {
+  schemaResearchProvider.value = provider;
+  schemaResearchEndpoint.value = AI_PROVIDER_PRESETS[provider].endpoint;
+  schemaResearchModel.value = AI_PROVIDER_PRESETS[provider].model;
+  schemaResearchApiStyle.value = AI_PROVIDER_PRESETS[provider].apiStyle;
+  if (!AI_PROVIDER_PRESETS[provider].requiresApiKey) schemaResearchApiKey.value = "";
+}
+
 function aiHasChanges(): boolean {
-  return (
+  const currentSchemaRag = currentSchemaRagEditConfig();
+  const currentSchemaResearch = currentSchemaResearchModelEditConfig();
+  const aiChanged =
     aiEditProvider.value !== settingsStore.aiConfig.provider ||
     aiEditApiKey.value !== settingsStore.aiConfig.apiKey ||
     aiEditEndpoint.value !== settingsStore.aiConfig.endpoint ||
@@ -966,12 +1108,19 @@ function aiHasChanges(): boolean {
     aiEditApiStyle.value !== (settingsStore.aiConfig.apiStyle || "completions") ||
     aiEditProxyEnabled.value !== !!settingsStore.aiConfig.proxyEnabled ||
     aiEditProxyUrl.value !== (settingsStore.aiConfig.proxyUrl || "") ||
-    aiEditEnableThinking.value !== (settingsStore.aiConfig.enableThinking ?? true)
-  );
+    aiEditEnableThinking.value !== (settingsStore.aiConfig.enableThinking ?? true) ||
+    JSON.stringify(currentSchemaResearch) !==
+      JSON.stringify(settingsStore.aiConfig.schemaResearch ?? currentSchemaResearch);
+  const schemaRagChanged =
+    isDesktop && JSON.stringify(currentSchemaRag) !== JSON.stringify(settingsStore.schemaRagConfig);
+  return aiChanged || schemaRagChanged;
 }
 
-function aiApplySettings() {
+async function aiApplySettings() {
   settingsStore.updateAiConfig(currentAiEditConfig());
+  if (isDesktop) await settingsStore.updateSchemaRagConfig(currentSchemaRagEditConfig());
+  syncAiEditState();
+  syncSchemaRagEditState();
 }
 
 async function aiTestConn() {
@@ -1924,6 +2073,319 @@ watch(
                     placeholder="socks5://127.0.0.1:7890"
                     :disabled="!aiEditProxyEnabled"
                   />
+                </div>
+              </div>
+
+              <Separator v-if="isDesktop" />
+
+              <div v-if="isDesktop" class="space-y-3">
+                <div class="space-y-1">
+                  <Label class="text-sm">{{ t("ai.schemaResearchTitle") }}</Label>
+                  <p class="text-xs text-muted-foreground">{{ t("ai.schemaResearchHint") }}</p>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaResearchEnabled") }}</Label>
+                  <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <input v-model="schemaResearchEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
+                    {{ schemaResearchEnabled ? t("ai.schemaResearchEnabledOn") : t("ai.schemaResearchEnabledOff") }}
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaResearchUseMainModel") }}</Label>
+                  <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      v-model="schemaResearchUseMainModel"
+                      type="checkbox"
+                      class="h-4 w-4 shrink-0 accent-primary"
+                      :disabled="!schemaResearchEnabled"
+                    />
+                    {{ t("ai.schemaResearchUseMainModelHint") }}
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("settings.aiProvider") }}</Label>
+                  <Select
+                    :model-value="schemaResearchProvider"
+                    :disabled="!schemaResearchEnabled || schemaResearchUseMainModel"
+                    @update:model-value="(value: any) => schemaResearchSelectProvider(value as AiProvider)"
+                  >
+                    <SelectTrigger class="col-span-2 h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="preset in aiProviderOptions" :key="preset.provider" :value="preset.provider">
+                        <div class="flex items-center gap-2">
+                          <AiProviderLogo
+                            :provider="preset.provider"
+                            :label="preset.label"
+                            :icon-slug="preset.iconSlug"
+                            class="h-4 w-4"
+                          />
+                          <span>{{ preset.label }}</span>
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">API Key</Label>
+                  <Input
+                    v-model="schemaResearchApiKey"
+                    type="password"
+                    name="schema-research-api-key"
+                    autocomplete="new-password"
+                    class="col-span-2 h-8 text-xs"
+                    :disabled="!schemaResearchEnabled || schemaResearchUseMainModel"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">Endpoint</Label>
+                  <Input
+                    v-model="schemaResearchEndpoint"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    placeholder="https://api.openai.com/v1"
+                    :disabled="!schemaResearchEnabled || schemaResearchUseMainModel"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.model") }}</Label>
+                  <Input
+                    v-model="schemaResearchModel"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    :disabled="!schemaResearchEnabled || schemaResearchUseMainModel"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">API</Label>
+                  <div class="col-span-2 flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      class="h-8 flex-1 text-xs"
+                      :class="{
+                        'border-blue-300 border-2 ring-2 ring-blue-300/50':
+                          schemaResearchApiStyle === 'completions',
+                      }"
+                      :disabled="!schemaResearchEnabled || schemaResearchUseMainModel"
+                      @click="schemaResearchApiStyle = 'completions'"
+                      >/chat/completions</Button
+                    >
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      class="h-8 flex-1 text-xs"
+                      :class="{
+                        'border-blue-300 border-2 ring-2 ring-blue-300/50': schemaResearchApiStyle === 'responses',
+                      }"
+                      :disabled="!schemaResearchEnabled || schemaResearchUseMainModel"
+                      @click="schemaResearchApiStyle = 'responses'"
+                      >/responses</Button
+                    >
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.proxy") }}</Label>
+                  <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      v-model="schemaResearchProxyEnabled"
+                      type="checkbox"
+                      class="h-4 w-4 shrink-0 accent-primary"
+                      :disabled="!schemaResearchEnabled || schemaResearchUseMainModel"
+                    />
+                    {{ t("ai.schemaResearchProxyEnable") }}
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.proxyUrl") }}</Label>
+                  <Input
+                    v-model="schemaResearchProxyUrl"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    placeholder="socks5://127.0.0.1:7890"
+                    :disabled="!schemaResearchEnabled || schemaResearchUseMainModel || !schemaResearchProxyEnabled"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaResearchMaxToolRounds") }}</Label>
+                  <Input
+                    v-model="schemaResearchMaxToolRounds"
+                    autocomplete="off"
+                    inputmode="numeric"
+                    class="col-span-2 h-8 text-xs"
+                    :disabled="!schemaResearchEnabled"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaResearchMaxOutputTokens") }}</Label>
+                  <Input
+                    v-model="schemaResearchMaxOutputTokens"
+                    autocomplete="off"
+                    inputmode="numeric"
+                    class="col-span-2 h-8 text-xs"
+                    :disabled="!schemaResearchEnabled"
+                  />
+                </div>
+
+                <div class="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                  {{ t("ai.schemaResearchNotice") }}
+                </div>
+              </div>
+
+              <Separator v-if="isDesktop" />
+
+              <div v-if="isDesktop" class="space-y-3">
+                <div class="space-y-1">
+                  <Label class="text-sm">{{ t("ai.schemaRagTitle") }}</Label>
+                  <p class="text-xs text-muted-foreground">{{ t("ai.schemaRagHint") }}</p>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaRagEmbeddingProvider") }}</Label>
+                  <Select v-model="schemaRagEmbeddingProvider">
+                    <SelectTrigger class="col-span-2 h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai-compatible">OpenAI Compatible</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">Endpoint</Label>
+                  <Input
+                    v-model="schemaRagEmbeddingEndpoint"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    placeholder="https://api.openai.com/v1"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.model") }}</Label>
+                  <Input v-model="schemaRagEmbeddingModel" autocomplete="off" class="col-span-2 h-8 text-xs" />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">API Key</Label>
+                  <Input
+                    v-model="schemaRagEmbeddingApiKey"
+                    type="password"
+                    name="schema-rag-embedding-api-key"
+                    autocomplete="new-password"
+                    class="col-span-2 h-8 text-xs"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaRagDimension") }}</Label>
+                  <Input
+                    v-model="schemaRagEmbeddingDimension"
+                    autocomplete="off"
+                    inputmode="numeric"
+                    class="col-span-2 h-8 text-xs"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaRagBatchSize") }}</Label>
+                  <Input
+                    v-model="schemaRagEmbeddingBatchSize"
+                    autocomplete="off"
+                    inputmode="numeric"
+                    class="col-span-2 h-8 text-xs"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaRagConcurrency") }}</Label>
+                  <Input
+                    v-model="schemaRagEmbeddingConcurrency"
+                    autocomplete="off"
+                    inputmode="numeric"
+                    class="col-span-2 h-8 text-xs"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaRagRerankProvider") }}</Label>
+                  <Select v-model="schemaRagRerankProvider">
+                    <SelectTrigger class="col-span-2 h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{{ t("ai.schemaRagRerankNone") }}</SelectItem>
+                      <SelectItem value="openai-compatible">OpenAI Compatible</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaRagRerankEndpoint") }}</Label>
+                  <Input
+                    v-model="schemaRagRerankEndpoint"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    :disabled="schemaRagRerankProvider === 'none'"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaRagRerankModel") }}</Label>
+                  <Input
+                    v-model="schemaRagRerankModel"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    :disabled="schemaRagRerankProvider === 'none'"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.schemaRagRerankApiKey") }}</Label>
+                  <Input
+                    v-model="schemaRagRerankApiKey"
+                    type="password"
+                    name="schema-rag-rerank-api-key"
+                    autocomplete="new-password"
+                    class="col-span-2 h-8 text-xs"
+                    :disabled="schemaRagRerankProvider === 'none'"
+                  />
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.proxy") }}</Label>
+                  <label class="col-span-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <input v-model="schemaRagProxyEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
+                    {{ t("ai.schemaRagProxyEnable") }}
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-3 items-center gap-3">
+                  <Label class="text-right text-xs">{{ t("ai.proxyUrl") }}</Label>
+                  <Input
+                    v-model="schemaRagProxyUrl"
+                    autocomplete="off"
+                    class="col-span-2 h-8 text-xs"
+                    placeholder="socks5://127.0.0.1:7890"
+                    :disabled="!schemaRagProxyEnabled"
+                  />
+                </div>
+
+                <div class="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                  {{ t("ai.schemaRagPrivacyNotice") }}
                 </div>
               </div>
             </section>

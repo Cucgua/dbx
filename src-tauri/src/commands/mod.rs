@@ -22,6 +22,7 @@ pub mod saved_sql;
 pub mod schema;
 pub mod schema_cache;
 pub mod schema_diff;
+pub mod schema_rag;
 pub mod settings;
 pub mod sql_file;
 pub mod system_fonts;

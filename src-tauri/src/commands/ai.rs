@@ -30,6 +30,11 @@ pub async fn ai_complete(request: AiCompletionRequest) -> Result<String, String>
 }
 
 #[tauri::command]
+pub async fn ai_raw_chat(request: AiRawChatRequest) -> Result<AiRawChatResponse, String> {
+    dbx_core::ai::raw_chat(&request).await
+}
+
+#[tauri::command]
 pub async fn ai_stream(app: AppHandle, session_id: String, request: AiCompletionRequest) -> Result<(), String> {
     let cancelled = dbx_core::ai::register_stream(&session_id).await;
 

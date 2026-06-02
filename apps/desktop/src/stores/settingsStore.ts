@@ -13,6 +13,11 @@ import { normalizeSidebarHiddenTablePrefixes } from "@/lib/sidebarTableNameDispl
 import type { SidebarActivation } from "@/lib/treeNodeClick";
 import type { SqlSnippet } from "@/types/database";
 import { DEFAULT_SQL_SNIPPETS } from "@/lib/sqlCompletion";
+import {
+  DEFAULT_SCHEMA_RAG_CONFIG,
+  normalizeSchemaRagConfig,
+  type SchemaRagConfig,
+} from "@/lib/schemaRag";
 
 export type AiProvider =
   | "claude"
@@ -34,6 +39,21 @@ export interface AiConfig {
   proxyEnabled?: boolean;
   proxyUrl?: string;
   enableThinking?: boolean;
+  schemaResearch?: SchemaResearchModelConfig;
+}
+
+export interface SchemaResearchModelConfig {
+  enabled: boolean;
+  useMainModel: boolean;
+  provider: AiProvider;
+  apiKey: string;
+  endpoint: string;
+  model: string;
+  apiStyle: AiApiStyle;
+  proxyEnabled: boolean;
+  proxyUrl: string;
+  maxToolRounds: number;
+  maxOutputTokens: number;
 }
 
 export interface DesktopSettings {
@@ -146,7 +166,7 @@ const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = Object.from
 export function normalizeAiConfig(config: Partial<AiConfig> | null | undefined): AiConfig {
   const provider =
     config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : inferAiProviderFromConfig(config);
-  return {
+  const baseConfig = {
     ...defaultConfigs[provider],
     apiKey: config?.apiKey ?? "",
     ...config,
@@ -156,6 +176,40 @@ export function normalizeAiConfig(config: Partial<AiConfig> | null | undefined):
     proxyUrl: config?.proxyUrl ?? "",
     enableThinking: config?.enableThinking ?? true,
   };
+  return {
+    ...baseConfig,
+    schemaResearch: normalizeSchemaResearchModelConfig(config?.schemaResearch, baseConfig),
+  };
+}
+
+export function normalizeSchemaResearchModelConfig(
+  config: Partial<SchemaResearchModelConfig> | null | undefined,
+  mainConfig: Pick<AiConfig, "provider" | "apiKey" | "endpoint" | "model" | "apiStyle" | "proxyEnabled" | "proxyUrl">,
+): SchemaResearchModelConfig {
+  const provider =
+    config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : mainConfig.provider;
+  const defaults = defaultConfigs[provider];
+  const useMainModel = config?.useMainModel ?? true;
+  const source = useMainModel ? mainConfig : config;
+  return {
+    enabled: config?.enabled ?? true,
+    useMainModel,
+    provider,
+    apiKey: source?.apiKey ?? "",
+    endpoint: source?.endpoint ?? defaults.endpoint,
+    model: source?.model ?? defaults.model,
+    apiStyle: source?.apiStyle ?? defaults.apiStyle,
+    proxyEnabled: !!source?.proxyEnabled,
+    proxyUrl: source?.proxyUrl ?? "",
+    maxToolRounds: normalizeSchemaResearchPositiveInt(config?.maxToolRounds, 1, 8, 4),
+    maxOutputTokens: normalizeSchemaResearchPositiveInt(config?.maxOutputTokens, 512, 8000, 1800),
+  };
+}
+
+function normalizeSchemaResearchPositiveInt(value: unknown, min: number, max: number, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
 }
 
 function inferAiProviderFromConfig(config: Partial<AiConfig> | null | undefined): AiProvider {
@@ -435,7 +489,9 @@ function saveEditorSettings(settings: EditorSettings) {
 
 export const useSettingsStore = defineStore("settings", () => {
   const aiConfig = ref<AiConfig>(normalizeAiConfig({ provider: "claude" }));
+  const schemaRagConfig = ref<SchemaRagConfig>(normalizeSchemaRagConfig(DEFAULT_SCHEMA_RAG_CONFIG));
   const isAiConfigLoaded = ref(false);
+  const isSchemaRagConfigLoaded = ref(false);
   const isAppSettingsLoaded = ref(false);
   const desktopSettings = ref<DesktopSettings>({ ...DEFAULT_DESKTOP_SETTINGS });
   const isDesktopSettingsLoaded = ref(false);
@@ -485,6 +541,21 @@ export const useSettingsStore = defineStore("settings", () => {
     }
     Object.assign(aiConfig.value, config);
     api.saveAiConfig(aiConfig.value).catch(() => {});
+  }
+
+  async function initSchemaRagConfig() {
+    if (isSchemaRagConfigLoaded.value) return;
+    const saved = await api.loadSchemaRagConfig().catch(() => {
+      isSchemaRagConfigLoaded.value = false;
+      return null;
+    });
+    schemaRagConfig.value = normalizeSchemaRagConfig(saved);
+    isSchemaRagConfigLoaded.value = saved !== null;
+  }
+
+  async function updateSchemaRagConfig(config: Partial<SchemaRagConfig>) {
+    schemaRagConfig.value = normalizeSchemaRagConfig(config);
+    await api.saveSchemaRagConfig(schemaRagConfig.value);
   }
 
   async function initAppSettings() {
@@ -589,11 +660,15 @@ export const useSettingsStore = defineStore("settings", () => {
 
   return {
     aiConfig,
+    schemaRagConfig,
     isAiConfigLoaded,
+    isSchemaRagConfigLoaded,
     isAppSettingsLoaded,
     initAiConfig,
+    initSchemaRagConfig,
     initAppSettings,
     updateAiConfig,
+    updateSchemaRagConfig,
     updateAppSettings,
     isConfigured,
     editorSettings,

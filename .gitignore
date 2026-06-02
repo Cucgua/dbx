@@ -19,6 +19,7 @@ docs/out/
 docs/.source/
 docs/superpowers/
 src-tauri/*.dylib
+src-tauri/binaries/
 
 # OS files
 .DS_Store

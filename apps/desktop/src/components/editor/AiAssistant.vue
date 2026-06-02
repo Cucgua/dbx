@@ -32,6 +32,7 @@ import {
   TestTube,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import LightDropdown from "@/components/ui/LightDropdown.vue";
@@ -43,7 +44,17 @@ import { connectionIconType } from "@/lib/connectionPresentation";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { useQueryStore } from "@/stores/queryStore";
 import { useToast } from "@/composables/useToast";
-import { buildAiContext, runAiStream, type AiAction } from "@/lib/ai";
+import {
+  buildAiContext,
+  runAiStream,
+  type AiAction,
+  type AiColumnChoiceRequest,
+  type AiColumnChoiceResult,
+  type AiRelationRequest,
+  type AiRelationToolResult,
+  type AiTableChoiceRequest,
+  type AiTableChoiceResult,
+} from "@/lib/ai";
 import { buildAiAgentPlan } from "@/lib/aiAgentPlan";
 import { buildAiAgentStepItems, type AiAgentStepItem, type AiAgentStepTone } from "@/lib/aiAgentStepPresentation";
 import { createAiShikiCodeHighlighter, type AiCodeHighlighter } from "@/lib/aiCodeHighlighter";
@@ -58,7 +69,7 @@ import {
   listTables,
   type AiConversation,
 } from "@/lib/api";
-import type { AiMessage } from "@/lib/api";
+import type { AiMessage, AiTimelineItem, AiToolTrace } from "@/lib/api";
 import type { ConnectionConfig, QueryTab, TableInfo } from "@/types/database";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
@@ -79,6 +90,8 @@ interface ChatMessage {
   content: string;
   reasoning?: string;
   isThinking?: boolean;
+  toolTraces?: AiToolTrace[];
+  timeline?: AiTimelineItem[];
   agentSteps?: AiAgentStepItem[];
 }
 
@@ -100,6 +113,7 @@ const isGenerating = ref(false);
 const scrollRef = ref<InstanceType<typeof ScrollArea> | null>(null);
 const activeAction = ref<AiAction>("generate");
 const assistantMode = ref<"ask" | "agent">("ask");
+const includeWorkspaceContext = ref(true);
 const currentSessionId = ref("");
 const conversationId = ref("");
 const conversations = ref<AiConversation[]>([]);
@@ -114,6 +128,36 @@ interface AiMentionCandidate {
   tableType: string;
 }
 
+interface PendingRelationColumnPair {
+  id: string;
+  leftColumn: string;
+  rightColumn: string;
+}
+
+interface PendingRelationConfirmation {
+  request: AiRelationRequest;
+  pairs: PendingRelationColumnPair[];
+  joinType: "inner" | "left" | "right" | "full";
+  resolve: (result: AiRelationToolResult) => void;
+}
+
+interface PendingTableChoice {
+  request: AiTableChoiceRequest;
+  selectedKey: string;
+  manualMode: boolean;
+  manualSchema: string;
+  manualTable: string;
+  resolve: (result: AiTableChoiceResult) => void;
+}
+
+interface PendingColumnChoice {
+  request: AiColumnChoiceRequest;
+  selectedColumns: string[];
+  manualMode: boolean;
+  manualColumns: string;
+  resolve: (result: AiColumnChoiceResult) => void;
+}
+
 const mentionOpen = ref(false);
 const mentionLoading = ref(false);
 const mentionError = ref("");
@@ -122,8 +166,12 @@ const mentionSelectedIndex = ref(0);
 const mentionCandidates = ref<AiMentionCandidate[]>([]);
 const mentionCache = ref<Record<string, AiMentionCandidate[]>>({});
 const selectedMentions = ref<AiTableMention[]>([]);
+const pendingRelation = ref<PendingRelationConfirmation | null>(null);
+const pendingTableChoice = ref<PendingTableChoice | null>(null);
+const pendingColumnChoice = ref<PendingColumnChoice | null>(null);
 let mentionTimer: ReturnType<typeof setTimeout> | undefined;
 let mentionRequestId = 0;
+let generationCancelled = false;
 
 const actionButtons: { action: AiAction; icon: any; key: string }[] = [
   { action: "generate", icon: Wand2, key: "ai.actions.generate" },
@@ -154,7 +202,7 @@ const promptMentionChips = computed(() => selectedMentions.value);
 
 const isWaitingForFirstDelta = computed(() => {
   const last = messages.value[messages.value.length - 1];
-  return isGenerating.value && last?.role === "assistant" && !last.content && !last.reasoning;
+  return isGenerating.value && last?.role === "assistant" && !last.content && !last.reasoning && !last.timeline?.length;
 });
 
 const activePlaceholder = computed(
@@ -234,8 +282,286 @@ function appendAssistantReasoning(assistantIdx: number, delta: string) {
   const msg = messages.value[assistantIdx];
   if (!msg.reasoning) msg.reasoning = "";
   msg.reasoning += delta;
+  const timeline = msg.timeline ? [...msg.timeline] : [];
+  const last = timeline[timeline.length - 1];
+  if (last?.kind === "reasoning") {
+    timeline[timeline.length - 1] = { ...last, reasoning: `${last.reasoning || ""}${delta}` };
+  } else {
+    timeline.push({ id: uuid(), kind: "reasoning", reasoning: delta });
+  }
+  msg.timeline = timeline;
   msg.isThinking = true;
   scrollToBottom();
+}
+
+function appendAssistantToolTrace(assistantIdx: number, trace: AiToolTrace) {
+  const msg = messages.value[assistantIdx];
+  msg.isThinking = false;
+  const traces = msg.toolTraces ? [...msg.toolTraces] : [];
+  const existingIndex = traces.findIndex((item) => item.id === trace.id);
+  if (existingIndex >= 0) {
+    traces[existingIndex] = trace;
+  } else {
+    traces.push(trace);
+  }
+  msg.toolTraces = traces;
+  const timeline = msg.timeline ? [...msg.timeline] : [];
+  const timelineIndex = timeline.findIndex((item) => item.kind === "tool" && item.toolTrace?.id === trace.id);
+  const item: AiTimelineItem = { id: `tool-${trace.id}`, kind: "tool", toolTrace: trace };
+  if (timelineIndex >= 0) {
+    timeline[timelineIndex] = item;
+  } else {
+    timeline.push(item);
+  }
+  msg.timeline = timeline;
+  scrollToBottom();
+}
+
+function isActiveReasoningTimelineItem(msg: ChatMessage, item: AiTimelineItem): boolean {
+  if (!msg.isThinking || item.kind !== "reasoning") return false;
+  const timeline = msg.timeline || [];
+  return timeline[timeline.length - 1]?.id === item.id;
+}
+
+function toolStatusLabelKey(status: AiToolTrace["status"]): string {
+  if (status === "running") return "ai.toolRunning";
+  if (status === "success") return "ai.toolSucceeded";
+  return "ai.toolFailed";
+}
+
+function tableChoiceKey(schema: string, table: string): string {
+  return `${schema}.${table}`.toLowerCase();
+}
+
+function requestTableChoice(request: AiTableChoiceRequest): Promise<AiTableChoiceResult> {
+  return new Promise((resolve) => {
+    const first = request.candidates[0];
+    pendingTableChoice.value = {
+      request,
+      selectedKey: first ? tableChoiceKey(first.schema, first.table) : "",
+      manualMode: false,
+      manualSchema: first?.schema || props.tab?.schema || props.tab?.database || "",
+      manualTable: "",
+      resolve,
+    };
+    scrollToBottom();
+  });
+}
+
+function setPendingTableCandidate(schema: string, table: string) {
+  const pending = pendingTableChoice.value;
+  if (!pending) return;
+  pending.manualMode = false;
+  pending.selectedKey = tableChoiceKey(schema, table);
+}
+
+function setPendingTableManualMode(manualMode: boolean) {
+  const pending = pendingTableChoice.value;
+  if (!pending) return;
+  pending.manualMode = manualMode;
+}
+
+function confirmPendingTableChoice() {
+  const pending = pendingTableChoice.value;
+  if (!pending) return;
+  if (pending.manualMode) {
+    const parsed = parseManualTableInput(pending.manualSchema, pending.manualTable);
+    if (!parsed.table) return;
+    pending.resolve({
+      confirmed: true,
+      selectedTable: { ...parsed, source: "manual" },
+    });
+    pendingTableChoice.value = null;
+    return;
+  }
+  const selected = pending.request.candidates.find(
+    (candidate) => tableChoiceKey(candidate.schema, candidate.table) === pending.selectedKey,
+  );
+  if (!selected) return;
+  pending.resolve({
+    confirmed: true,
+    selectedTable: {
+      schema: selected.schema,
+      table: selected.table,
+      source: "candidate",
+    },
+  });
+  pendingTableChoice.value = null;
+}
+
+function skipPendingTableChoice() {
+  const pending = pendingTableChoice.value;
+  if (!pending) return;
+  pending.resolve({
+    confirmed: false,
+    skipped: true,
+    cancelled: generationCancelled,
+    message: "User skipped table choice.",
+  });
+  pendingTableChoice.value = null;
+}
+
+function parseManualTableInput(defaultSchema: string, tableInput: string): { schema: string; table: string } {
+  const raw = tableInput.trim();
+  const dot = raw.indexOf(".");
+  if (dot > 0 && dot < raw.length - 1) {
+    return { schema: raw.slice(0, dot).trim(), table: raw.slice(dot + 1).trim() };
+  }
+  return { schema: defaultSchema.trim() || props.tab?.schema || props.tab?.database || "", table: raw };
+}
+
+function requestColumnChoice(request: AiColumnChoiceRequest): Promise<AiColumnChoiceResult> {
+  return new Promise((resolve) => {
+    const first = request.candidates[0]?.column || "";
+    pendingColumnChoice.value = {
+      request,
+      selectedColumns: first ? [first] : [],
+      manualMode: false,
+      manualColumns: "",
+      resolve,
+    };
+    scrollToBottom();
+  });
+}
+
+function isPendingColumnSelected(column: string): boolean {
+  return pendingColumnChoice.value?.selectedColumns.includes(column) ?? false;
+}
+
+function togglePendingColumnChoice(column: string) {
+  const pending = pendingColumnChoice.value;
+  if (!pending) return;
+  pending.manualMode = false;
+  if (!pending.request.multiple) {
+    pending.selectedColumns = [column];
+    return;
+  }
+  pending.selectedColumns = pending.selectedColumns.includes(column)
+    ? pending.selectedColumns.filter((item) => item !== column)
+    : [...pending.selectedColumns, column];
+}
+
+function setPendingColumnManualMode(manualMode: boolean) {
+  const pending = pendingColumnChoice.value;
+  if (!pending) return;
+  pending.manualMode = manualMode;
+}
+
+function confirmPendingColumnChoice() {
+  const pending = pendingColumnChoice.value;
+  if (!pending) return;
+  const selectedColumns = pending.manualMode
+    ? parseManualColumns(pending.manualColumns, pending.request.multiple).map((column) => ({
+        column,
+        source: "manual" as const,
+      }))
+    : pending.selectedColumns.map((column) => ({ column, source: "candidate" as const }));
+  if (!selectedColumns.length) return;
+  pending.resolve({
+    confirmed: true,
+    selectedColumns,
+  });
+  pendingColumnChoice.value = null;
+}
+
+function skipPendingColumnChoice() {
+  const pending = pendingColumnChoice.value;
+  if (!pending) return;
+  pending.resolve({
+    confirmed: false,
+    skipped: true,
+    cancelled: generationCancelled,
+    message: "User skipped column choice.",
+  });
+  pendingColumnChoice.value = null;
+}
+
+function parseManualColumns(input: string, multiple: boolean): string[] {
+  const unique = new Set<string>();
+  for (const value of input.split(/[,;\n]+/)) {
+    const column = value.trim();
+    if (column) unique.add(column);
+    if (!multiple && unique.size) break;
+  }
+  return [...unique];
+}
+
+function requestRelationConfirmation(request: AiRelationRequest): Promise<AiRelationToolResult> {
+  return new Promise((resolve) => {
+    const modelCandidates = request.candidates.filter((candidate) => candidate.source === "model");
+    const defaultCandidates = modelCandidates.length ? modelCandidates : request.candidates.slice(0, 1);
+    const candidatePairs = defaultCandidates.length
+      ? defaultCandidates.map((candidate) => ({
+          id: uuid(),
+          leftColumn: candidate.leftColumn,
+          rightColumn: candidate.rightColumn,
+        }))
+      : [
+          {
+            id: uuid(),
+            leftColumn: request.left.columns[0]?.name || "",
+            rightColumn: request.right.columns[0]?.name || "",
+          },
+        ];
+    pendingRelation.value = {
+      request,
+      pairs: candidatePairs,
+      joinType: "left",
+      resolve,
+    };
+    scrollToBottom();
+  });
+}
+
+function addRelationPair() {
+  const pending = pendingRelation.value;
+  if (!pending) return;
+  pending.pairs.push({
+    id: uuid(),
+    leftColumn: pending.request.left.columns[0]?.name || "",
+    rightColumn: pending.request.right.columns[0]?.name || "",
+  });
+}
+
+function removeRelationPair(id: string) {
+  const pending = pendingRelation.value;
+  if (!pending || pending.pairs.length <= 1) return;
+  pending.pairs = pending.pairs.filter((pair) => pair.id !== id);
+}
+
+function confirmPendingRelation() {
+  const pending = pendingRelation.value;
+  if (!pending) return;
+  const columnPairs = pending.pairs
+    .map((pair) => ({ leftColumn: pair.leftColumn, rightColumn: pair.rightColumn }))
+    .filter((pair) => pair.leftColumn && pair.rightColumn);
+  if (!columnPairs.length) return;
+  pending.resolve({
+    confirmed: true,
+    relation: {
+      leftSchema: pending.request.left.schema,
+      leftTable: pending.request.left.table,
+      rightSchema: pending.request.right.schema,
+      rightTable: pending.request.right.table,
+      columnPairs,
+      operator: "=",
+      joinType: pending.joinType,
+      source: "user",
+    },
+  });
+  pendingRelation.value = null;
+}
+
+function skipPendingRelation() {
+  const pending = pendingRelation.value;
+  if (!pending) return;
+  pending.resolve({
+    confirmed: false,
+    skipped: true,
+    cancelled: generationCancelled,
+    message: "User skipped relation confirmation.",
+  });
+  pendingRelation.value = null;
 }
 
 const expandedReasoning = ref<Set<number>>(new Set());
@@ -509,6 +835,7 @@ async function send() {
 
   const requestedAction = activeAction.value;
   const requestedMode = assistantMode.value;
+  generationCancelled = false;
   isGenerating.value = true;
   messages.value.push({ role: "assistant", content: "" });
   const assistantIdx = messages.value.length - 1;
@@ -517,7 +844,14 @@ async function send() {
   try {
     const context = await buildAiContext(props.tab, props.connection, {
       mentionedTables,
+      instruction: displayText,
+      preloadCandidateSchema: !supportsSchemaToolLoop(props.tab, props.connection),
     });
+    if (!includeWorkspaceContext.value) {
+      context.currentSql = "";
+      context.lastError = undefined;
+      context.lastResultPreview = undefined;
+    }
     const history: AiMessage[] = messages.value.slice(0, -2).map((m) => ({
       role: m.role,
       content: m.content,
@@ -538,6 +872,12 @@ async function send() {
       (reasoningDelta) => {
         appendAssistantReasoning(assistantIdx, reasoningDelta);
       },
+      (trace) => {
+        appendAssistantToolTrace(assistantIdx, trace);
+      },
+      requestRelationConfirmation,
+      requestTableChoice,
+      requestColumnChoice,
     );
   } catch (e: any) {
     messages.value[assistantIdx].content = `Error: ${e.message || e}`;
@@ -552,8 +892,10 @@ async function send() {
       assistantContent: msg?.content || "",
       connection: props.connection,
     });
-    if (msg && requestedMode === "agent") msg.agentSteps = buildAiAgentStepItems(agentPlan);
-    if (agentPlan.handoffSql) emit("requestAutoExecuteSql", agentPlan.handoffSql);
+    if (!generationCancelled) {
+      if (msg && requestedMode === "agent") msg.agentSteps = buildAiAgentStepItems(agentPlan);
+      if (agentPlan.handoffSql) emit("requestAutoExecuteSql", agentPlan.handoffSql);
+    }
     activeAction.value = "generate";
     currentSessionId.value = "";
     persistConversation();
@@ -561,7 +903,25 @@ async function send() {
   }
 }
 
+function supportsSchemaToolLoop(tab: QueryTab, connection: ConnectionConfig): boolean {
+  if (["redis", "mongodb"].includes(connection.db_type)) return false;
+  if (settings.aiConfig.apiStyle !== "completions") return false;
+  if (["claude", "gemini"].includes(settings.aiConfig.provider)) return false;
+  if (!isSchemaAware(connection.db_type)) return true;
+  return !!tab.schema || !!tab.tableMeta?.schema;
+}
+
 async function cancelStream() {
+  generationCancelled = true;
+  if (pendingTableChoice.value) {
+    skipPendingTableChoice();
+  }
+  if (pendingColumnChoice.value) {
+    skipPendingColumnChoice();
+  }
+  if (pendingRelation.value) {
+    skipPendingRelation();
+  }
   if (currentSessionId.value) {
     await aiCancelStream(currentSessionId.value).catch(() => {});
   }
@@ -608,6 +968,8 @@ async function persistConversation() {
       role: m.role,
       content: m.content,
       ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+      ...(m.toolTraces?.length ? { toolTraces: m.toolTraces } : {}),
+      ...(m.timeline?.length ? { timeline: m.timeline } : {}),
     })),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -625,9 +987,20 @@ function selectConversation(conv: AiConversation) {
     role: m.role as "user" | "assistant",
     content: m.content,
     reasoning: m.reasoning,
+    toolTraces: m.toolTraces,
+    timeline: m.timeline || buildLegacyTimeline(m.reasoning, m.toolTraces),
   }));
   showConversationList.value = false;
   scrollToBottom();
+}
+
+function buildLegacyTimeline(reasoning?: string, toolTraces?: AiToolTrace[]): AiTimelineItem[] | undefined {
+  const items: AiTimelineItem[] = [];
+  if (reasoning) items.push({ id: uuid(), kind: "reasoning", reasoning });
+  for (const trace of toolTraces || []) {
+    items.push({ id: `tool-${trace.id}`, kind: "tool", toolTrace: trace });
+  }
+  return items.length ? items : undefined;
 }
 
 async function deleteConversation(id: string) {
@@ -693,6 +1066,13 @@ const messageRenderer = computed(() => {
       <span class="flex flex-1 self-stretch items-center truncate text-xs font-medium" data-tauri-drag-region>
         {{ chatTitle }}
       </span>
+      <label
+        class="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+        :title="t('ai.includeWorkspaceContextHint')"
+      >
+        <input v-model="includeWorkspaceContext" type="checkbox" class="h-3.5 w-3.5 shrink-0 accent-primary" />
+        <span>{{ t("ai.includeWorkspaceContext") }}</span>
+      </label>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat" :title="t('ai.newChat')">
         <MessageSquarePlus class="h-3.5 w-3.5" />
       </Button>
@@ -761,31 +1141,84 @@ const messageRenderer = computed(() => {
             </div>
           </div>
 
-          <div v-else-if="msg.content || msg.reasoning || msg.isThinking" class="flex">
+          <div v-else-if="msg.content || msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking" class="flex">
             <div class="max-w-[95%] rounded-lg bg-muted px-3 py-2 text-xs leading-relaxed">
-              <div v-if="msg.reasoning || msg.isThinking" class="mb-2">
-                <button
-                  class="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                  @click="toggleReasoning(i)"
-                >
-                  <ChevronRight
-                    class="h-3 w-3 transition-transform duration-200"
-                    :class="{ 'rotate-90': expandedReasoning.has(i) || msg.isThinking }"
-                  />
-                  <Loader2 v-if="msg.isThinking" class="h-3 w-3 animate-spin" />
-                  <span>{{ t("ai.reasoningProcess") }}</span>
-                </button>
-                <div
-                  class="overflow-hidden transition-all duration-200 ease-in-out"
-                  :style="{
-                    maxHeight: expandedReasoning.has(i) || msg.isThinking ? '20000px' : '0px',
-                    opacity: expandedReasoning.has(i) || msg.isThinking ? '1' : '0',
-                  }"
-                >
+              <div v-if="msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking" class="mb-2">
+                <div class="space-y-1.5">
                   <div
-                    class="mt-1.5 pl-4 border-l-2 border-muted-foreground/20 text-[11px] text-muted-foreground whitespace-pre-wrap"
+                    v-for="item in msg.timeline || buildLegacyTimeline(msg.reasoning, msg.toolTraces) || []"
+                    :key="item.id"
                   >
-                    {{ msg.reasoning }}
+                    <div v-if="item.kind === 'reasoning'" class="rounded border border-border/50 bg-background/35 px-2 py-1.5">
+                      <button
+                        class="flex w-full items-center gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                        @click="toggleReasoning(i)"
+                      >
+                        <ChevronRight
+                          class="h-3 w-3 shrink-0 transition-transform duration-200"
+                          :class="{ 'rotate-90': expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) }"
+                        />
+                        <Loader2 v-if="isActiveReasoningTimelineItem(msg, item)" class="h-3 w-3 shrink-0 animate-spin" />
+                        <span>{{ t("ai.reasoningProcess") }}</span>
+                      </button>
+                      <div
+                        class="overflow-hidden transition-all duration-200 ease-in-out"
+                        :style="{
+                          maxHeight: expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) ? '12000px' : '0px',
+                          opacity: expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) ? '1' : '0',
+                        }"
+                      >
+                        <div class="mt-1 whitespace-pre-wrap pl-4 text-[11px] text-muted-foreground">
+                          {{ item.reasoning }}
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      v-else-if="item.toolTrace"
+                      class="rounded border border-border/60 bg-background/55 px-2 py-1.5 text-muted-foreground"
+                    >
+                      <div class="flex min-w-0 items-center gap-1.5">
+                        <Loader2 v-if="item.toolTrace.status === 'running'" class="h-3 w-3 shrink-0 animate-spin" />
+                        <Check
+                          v-else-if="item.toolTrace.status === 'success'"
+                          class="h-3 w-3 shrink-0 text-emerald-500"
+                        />
+                        <AlertTriangle v-else class="h-3 w-3 shrink-0 text-amber-500" />
+                        <span class="shrink-0 font-medium text-foreground/75">{{ t("ai.toolCall") }}</span>
+                        <span class="truncate font-mono">{{ item.toolTrace.name }}</span>
+                        <span class="shrink-0 text-[10px] opacity-70">{{ t(toolStatusLabelKey(item.toolTrace.status)) }}</span>
+                      </div>
+                      <div v-if="item.toolTrace.arguments" class="mt-1 break-words font-mono text-[10px] opacity-80">
+                        {{ item.toolTrace.arguments }}
+                      </div>
+                      <div v-if="item.toolTrace.summary" class="mt-1 whitespace-pre-wrap text-[10px] opacity-90">
+                        {{ item.toolTrace.summary }}
+                      </div>
+                      <div v-if="item.toolTrace.children?.length" class="mt-2 space-y-1 border-l border-border/70 pl-2">
+                        <div
+                          v-for="childTrace in item.toolTrace.children"
+                          :key="childTrace.id"
+                          class="rounded border border-border/45 bg-background/40 px-2 py-1"
+                        >
+                          <div class="flex min-w-0 items-center gap-1.5">
+                            <Check
+                              v-if="childTrace.status === 'success'"
+                              class="h-3 w-3 shrink-0 text-emerald-500"
+                            />
+                            <AlertTriangle v-else class="h-3 w-3 shrink-0 text-amber-500" />
+                            <span class="shrink-0 text-[10px] text-foreground/70">{{ t("ai.toolCall") }}</span>
+                            <span class="truncate font-mono text-[10px]">{{ childTrace.name }}</span>
+                            <span class="shrink-0 text-[10px] opacity-70">{{ t(toolStatusLabelKey(childTrace.status)) }}</span>
+                          </div>
+                          <div v-if="childTrace.arguments" class="mt-1 break-words font-mono text-[10px] opacity-75">
+                            {{ childTrace.arguments }}
+                          </div>
+                          <div v-if="childTrace.summary" class="mt-1 whitespace-pre-wrap text-[10px] opacity-85">
+                            {{ childTrace.summary }}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -856,6 +1289,252 @@ const messageRenderer = computed(() => {
         <div v-if="isWaitingForFirstDelta" class="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 class="h-3.5 w-3.5 animate-spin" />
           <span>{{ t("ai.thinking") }}</span>
+        </div>
+
+        <div v-if="pendingTableChoice" class="rounded-md border border-blue-500/35 bg-blue-500/10 p-2 text-xs">
+          <div class="mb-1.5 flex min-w-0 items-center gap-1.5 font-medium text-blue-800 dark:text-blue-200">
+            <Table2 class="h-3.5 w-3.5 shrink-0" />
+            <span class="truncate">{{ t("ai.tableChoiceTitle") }}</span>
+          </div>
+          <div class="mb-2 text-[11px] text-muted-foreground">
+            {{ pendingTableChoice.request.question }}
+            <span v-if="pendingTableChoice.request.reason"> · {{ pendingTableChoice.request.reason }}</span>
+          </div>
+          <div v-if="!pendingTableChoice.manualMode" class="space-y-1.5">
+            <button
+              v-for="candidate in pendingTableChoice.request.candidates"
+              :key="`${candidate.schema}.${candidate.table}`"
+              type="button"
+              class="flex w-full min-w-0 items-start gap-2 rounded border px-2 py-1.5 text-left transition-colors"
+              :class="
+                tableChoiceKey(candidate.schema, candidate.table) === pendingTableChoice.selectedKey
+                  ? 'border-primary bg-primary/10 text-foreground'
+                  : 'border-border/70 bg-background/55 text-muted-foreground hover:bg-background'
+              "
+              @click="setPendingTableCandidate(candidate.schema, candidate.table)"
+            >
+              <Check
+                class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                :class="
+                  tableChoiceKey(candidate.schema, candidate.table) === pendingTableChoice.selectedKey
+                    ? 'text-primary'
+                    : 'text-transparent'
+                "
+              />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-mono text-[11px] text-foreground">
+                  {{ candidate.schema }}.{{ candidate.table }}
+                </span>
+                <span class="mt-0.5 block truncate text-[10px]">
+                  {{ [candidate.tableType, candidate.comment, candidate.reason].filter(Boolean).join(" · ") }}
+                </span>
+              </span>
+            </button>
+          </div>
+          <div v-else class="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)] gap-1.5">
+            <Input v-model="pendingTableChoice.manualSchema" class="h-7 text-xs" :placeholder="t('ai.manualSchema')" />
+            <Input v-model="pendingTableChoice.manualTable" class="h-7 text-xs" :placeholder="t('ai.manualTable')" />
+          </div>
+          <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <Button
+              v-if="pendingTableChoice.request.allowManual"
+              type="button"
+              variant="ghost"
+              size="sm"
+              class="h-7 px-2 text-xs"
+              @click="setPendingTableManualMode(!pendingTableChoice.manualMode)"
+            >
+              {{ pendingTableChoice.manualMode ? t("ai.backToCandidates") : t("ai.manualChoice") }}
+            </Button>
+            <span v-else />
+            <div class="flex flex-wrap items-center gap-1.5">
+              <Button type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="skipPendingTableChoice">
+                {{ t("ai.skipChoice") }}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                class="h-7 px-2 text-xs"
+                :disabled="pendingTableChoice.manualMode ? !pendingTableChoice.manualTable.trim() : !pendingTableChoice.selectedKey"
+                @click="confirmPendingTableChoice"
+              >
+                {{ t("ai.confirmChoice") }}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="pendingColumnChoice" class="rounded-md border border-blue-500/35 bg-blue-500/10 p-2 text-xs">
+          <div class="mb-1.5 flex min-w-0 items-center gap-1.5 font-medium text-blue-800 dark:text-blue-200">
+            <Table2 class="h-3.5 w-3.5 shrink-0" />
+            <span class="truncate">{{ t("ai.columnChoiceTitle") }}</span>
+          </div>
+          <div class="mb-2 text-[11px] text-muted-foreground">
+            <span class="font-mono">{{ pendingColumnChoice.request.schema }}.{{ pendingColumnChoice.request.table }}</span>
+            <span class="mx-1">·</span>
+            <span>{{ pendingColumnChoice.request.question }}</span>
+            <span v-if="pendingColumnChoice.request.reason"> · {{ pendingColumnChoice.request.reason }}</span>
+          </div>
+          <div v-if="!pendingColumnChoice.manualMode" class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            <button
+              v-for="candidate in pendingColumnChoice.request.candidates"
+              :key="candidate.column"
+              type="button"
+              class="flex min-w-0 items-start gap-2 rounded border px-2 py-1.5 text-left transition-colors"
+              :class="
+                isPendingColumnSelected(candidate.column)
+                  ? 'border-primary bg-primary/10 text-foreground'
+                  : 'border-border/70 bg-background/55 text-muted-foreground hover:bg-background'
+              "
+              @click="togglePendingColumnChoice(candidate.column)"
+            >
+              <Check
+                class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                :class="isPendingColumnSelected(candidate.column) ? 'text-primary' : 'text-transparent'"
+              />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-mono text-[11px] text-foreground">{{ candidate.column }}</span>
+                <span class="mt-0.5 block truncate text-[10px]">
+                  {{
+                    [
+                      candidate.dataType,
+                      candidate.primaryKey ? "PK" : "",
+                      candidate.nullable === false ? "NOT NULL" : "",
+                      candidate.comment,
+                      candidate.reason,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")
+                  }}
+                </span>
+              </span>
+            </button>
+          </div>
+          <Input
+            v-else
+            v-model="pendingColumnChoice.manualColumns"
+            class="h-7 text-xs"
+            :placeholder="t('ai.manualColumns')"
+          />
+          <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <Button
+              v-if="pendingColumnChoice.request.allowManual"
+              type="button"
+              variant="ghost"
+              size="sm"
+              class="h-7 px-2 text-xs"
+              @click="setPendingColumnManualMode(!pendingColumnChoice.manualMode)"
+            >
+              {{ pendingColumnChoice.manualMode ? t("ai.backToCandidates") : t("ai.manualChoice") }}
+            </Button>
+            <span v-else />
+            <div class="flex flex-wrap items-center gap-1.5">
+              <Button type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="skipPendingColumnChoice">
+                {{ t("ai.skipChoice") }}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                class="h-7 px-2 text-xs"
+                :disabled="
+                  pendingColumnChoice.manualMode
+                    ? !pendingColumnChoice.manualColumns.trim()
+                    : !pendingColumnChoice.selectedColumns.length
+                "
+                @click="confirmPendingColumnChoice"
+              >
+                {{ t("ai.confirmChoice") }}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="pendingRelation" class="rounded-md border border-amber-500/35 bg-amber-500/10 p-2 text-xs">
+          <div class="mb-1.5 flex min-w-0 items-center gap-1.5 font-medium text-amber-800 dark:text-amber-200">
+            <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
+            <span class="truncate">{{ t("ai.relationConfirmTitle") }}</span>
+          </div>
+          <div class="mb-2 text-[11px] text-muted-foreground">
+            <span class="font-mono">{{ pendingRelation.request.left.schema }}.{{ pendingRelation.request.left.table }}</span>
+            <span class="mx-1">↔</span>
+            <span class="font-mono">{{ pendingRelation.request.right.schema }}.{{ pendingRelation.request.right.table }}</span>
+            <span v-if="pendingRelation.request.reason"> · {{ pendingRelation.request.reason }}</span>
+          </div>
+          <div class="space-y-1.5">
+            <div
+              v-for="pair in pendingRelation.pairs"
+              :key="pair.id"
+              class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-1.5"
+            >
+              <Select v-model="pair.leftColumn">
+                <SelectTrigger class="h-7 min-w-0 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent class="max-h-64">
+                  <SelectItem
+                    v-for="column in pendingRelation.request.left.columns"
+                    :key="column.name"
+                    :value="column.name"
+                  >
+                    <span class="font-mono">{{ column.name }}</span>
+                    <span class="ml-1 text-[10px] text-muted-foreground">{{ column.dataType }}</span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <span class="text-muted-foreground">=</span>
+              <Select v-model="pair.rightColumn">
+                <SelectTrigger class="h-7 min-w-0 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent class="max-h-64">
+                  <SelectItem
+                    v-for="column in pendingRelation.request.right.columns"
+                    :key="column.name"
+                    :value="column.name"
+                  >
+                    <span class="font-mono">{{ column.name }}</span>
+                    <span class="ml-1 text-[10px] text-muted-foreground">{{ column.dataType }}</span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <button
+                type="button"
+                class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40"
+                :disabled="pendingRelation.pairs.length <= 1"
+                :title="t('common.delete')"
+                @click="removeRelationPair(pair.id)"
+              >
+                <X class="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <div class="flex min-w-0 flex-wrap items-center gap-1.5">
+              <span class="shrink-0 text-[11px] text-muted-foreground">{{ t("ai.joinType") }}</span>
+              <Select v-model="pendingRelation.joinType">
+                <SelectTrigger class="h-7 w-28 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="left">LEFT</SelectItem>
+                  <SelectItem value="inner">INNER</SelectItem>
+                  <SelectItem value="right">RIGHT</SelectItem>
+                  <SelectItem value="full">FULL</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="addRelationPair">
+                {{ t("ai.addRelationColumnPair") }}
+              </Button>
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <Button type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="skipPendingRelation">
+                {{ t("ai.skipRelationConfirm") }}
+              </Button>
+              <Button type="button" size="sm" class="h-7 px-2 text-xs" @click="confirmPendingRelation">
+                {{ t("ai.confirmRelation") }}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </ScrollArea>

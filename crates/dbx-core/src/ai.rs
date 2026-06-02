@@ -77,10 +77,73 @@ pub struct AiConfig {
     pub proxy_url: String,
     #[serde(default = "default_enable_thinking")]
     pub enable_thinking: bool,
+    #[serde(default)]
+    pub schema_research: SchemaResearchModelConfig,
 }
 
 fn default_enable_thinking() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaResearchModelConfig {
+    #[serde(default = "default_schema_research_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_schema_research_use_main_model")]
+    pub use_main_model: bool,
+    #[serde(default)]
+    pub provider: Option<AiProvider>,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub api_style: Option<AiApiStyle>,
+    #[serde(default)]
+    pub proxy_enabled: bool,
+    #[serde(default)]
+    pub proxy_url: String,
+    #[serde(default = "default_schema_research_max_tool_rounds")]
+    pub max_tool_rounds: u32,
+    #[serde(default = "default_schema_research_max_output_tokens")]
+    pub max_output_tokens: u32,
+}
+
+impl Default for SchemaResearchModelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_schema_research_enabled(),
+            use_main_model: default_schema_research_use_main_model(),
+            provider: None,
+            api_key: String::new(),
+            endpoint: String::new(),
+            model: String::new(),
+            api_style: None,
+            proxy_enabled: false,
+            proxy_url: String::new(),
+            max_tool_rounds: default_schema_research_max_tool_rounds(),
+            max_output_tokens: default_schema_research_max_output_tokens(),
+        }
+    }
+}
+
+fn default_schema_research_enabled() -> bool {
+    true
+}
+
+fn default_schema_research_use_main_model() -> bool {
+    true
+}
+
+fn default_schema_research_max_tool_rounds() -> u32 {
+    4
+}
+
+fn default_schema_research_max_output_tokens() -> u32 {
+    1800
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +164,34 @@ pub struct AiCompletionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRawChatRequest {
+    pub config: AiConfig,
+    pub system_prompt: String,
+    pub messages: Vec<serde_json::Value>,
+    pub tools: Vec<serde_json::Value>,
+    pub tool_choice: Option<serde_json::Value>,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRawToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRawChatResponse {
+    pub content: String,
+    pub tool_calls: Vec<AiRawToolCall>,
+    pub raw_message: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiStreamChunk {
     pub session_id: String,
     pub delta: String,
@@ -116,6 +207,10 @@ pub struct AiChatMessage {
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    #[serde(default, alias = "toolTraces", skip_serializing_if = "Option::is_none")]
+    pub tool_traces: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,7 +336,41 @@ pub fn openai_stream_reasoning(event: &serde_json::Value) -> Option<&str> {
 }
 
 pub fn responses_stream_text(event: &serde_json::Value) -> Option<&str> {
-    event["delta"].as_str().filter(|s| !s.is_empty())
+    match event["type"].as_str() {
+        Some("response.output_text.delta") => event["delta"].as_str(),
+        Some(event_type) if event_type.contains("reasoning") => None,
+        Some(_) => None,
+        None => event["delta"].as_str(),
+    }
+    .filter(|s| !s.is_empty())
+}
+
+pub fn responses_stream_reasoning(event: &serde_json::Value) -> Option<&str> {
+    match event["type"].as_str() {
+        Some("response.reasoning_summary_text.delta") => event["delta"].as_str(),
+        _ => None,
+    }
+    .filter(|s| !s.is_empty())
+}
+
+fn should_request_responses_reasoning_summary(config: &AiConfig) -> bool {
+    if !config.enable_thinking {
+        return false;
+    }
+    let model = config.model.to_ascii_lowercase();
+    model.starts_with("gpt-5")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+        || model.contains("reasoning")
+}
+
+fn add_responses_reasoning_options(body: &mut serde_json::Value, config: &AiConfig) {
+    if should_request_responses_reasoning_summary(config) {
+        body["reasoning"] = json!({
+            "summary": "auto",
+        });
+    }
 }
 
 pub fn gemini_text(data: &serde_json::Value) -> String {
@@ -480,15 +609,85 @@ pub async fn call_openai_compatible(client: &reqwest::Client, request: AiComplet
     Ok(data["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string())
 }
 
+pub async fn call_openai_raw_chat(
+    client: &reqwest::Client,
+    request: AiRawChatRequest,
+) -> Result<AiRawChatResponse, String> {
+    if request.config.api_style != AiApiStyle::Completions {
+        return Err("AI tool calls currently require chat/completions API style".to_string());
+    }
+    if matches!(request.config.provider, AiProvider::Claude | AiProvider::Gemini) {
+        return Err("AI tool calls currently require an OpenAI-compatible chat endpoint".to_string());
+    }
+    validate_config(&request.config)?;
+    let headers = maybe_bearer_headers(&request.config)?;
+
+    let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
+    messages.extend(request.messages);
+
+    let mut body_obj = json!({
+        "model": request.config.model,
+        "messages": messages,
+        "max_tokens": request.max_tokens.unwrap_or(2048),
+        "temperature": request.temperature.unwrap_or(0.2),
+    });
+    if !request.tools.is_empty() {
+        body_obj["tools"] = json!(request.tools);
+        body_obj["tool_choice"] = request.tool_choice.unwrap_or_else(|| json!("auto"));
+    }
+    if !request.config.enable_thinking {
+        body_obj["extra_body"] = json!({
+            "chat_template_kwargs": { "enable_thinking": false }
+        });
+    }
+
+    let res = client
+        .post(resolve_endpoint(&request.config))
+        .headers(headers)
+        .json(&body_obj)
+        .send()
+        .await
+        .map_err(|e| format!("AI request failed: {e}"))?;
+
+    let status = res.status();
+    let data: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(extract_error(&data).unwrap_or_else(|| format!("API error: {status}")));
+    }
+
+    let message = data["choices"].get(0).and_then(|choice| choice.get("message")).cloned().unwrap_or_default();
+    let content = message["content"].as_str().unwrap_or_default().to_string();
+    let tool_calls = message["tool_calls"]
+        .as_array()
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(|call| {
+                    let function = &call["function"];
+                    let name = function["name"].as_str()?.to_string();
+                    Some(AiRawToolCall {
+                        id: call["id"].as_str().unwrap_or_default().to_string(),
+                        name,
+                        arguments: function["arguments"].as_str().unwrap_or_default().to_string(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(AiRawChatResponse { content, tool_calls, raw_message: message })
+}
+
 pub async fn call_responses_api(client: &reqwest::Client, request: AiCompletionRequest) -> Result<String, String> {
     let headers = maybe_bearer_headers(&request.config)?;
 
-    let body = json!({
+    let mut body = json!({
         "model": request.config.model,
         "input": build_responses_input(&request.system_prompt, &request.messages),
         "max_output_tokens": request.max_tokens.unwrap_or(2048),
         "temperature": request.temperature.unwrap_or(0.2),
     });
+    add_responses_reasoning_options(&mut body, &request.config);
 
     let res = client
         .post(resolve_endpoint(&request.config))
@@ -611,6 +810,11 @@ pub async fn complete(request: &AiCompletionRequest) -> Result<String, String> {
             }
         }
     }
+}
+
+pub async fn raw_chat(request: &AiRawChatRequest) -> Result<AiRawChatResponse, String> {
+    let client = build_ai_http_client(&request.config, 60)?;
+    call_openai_raw_chat(&client, request.clone()).await
 }
 
 // ---------------------------------------------------------------------------
@@ -828,13 +1032,14 @@ async fn stream_responses_api(
 ) -> Result<(), String> {
     let headers = maybe_bearer_headers(&request.config)?;
 
-    let body = json!({
+    let mut body = json!({
         "model": request.config.model,
         "input": build_responses_input(&request.system_prompt, &request.messages),
         "max_output_tokens": request.max_tokens.unwrap_or(2048),
         "temperature": request.temperature.unwrap_or(0.2),
         "stream": true,
     });
+    add_responses_reasoning_options(&mut body, &request.config);
 
     let res = client
         .post(resolve_endpoint(&request.config))
@@ -871,6 +1076,14 @@ async fn stream_responses_api(
                     }
 
                     if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(reasoning) = responses_stream_reasoning(&event) {
+                            on_chunk(AiStreamChunk {
+                                session_id: session_id.to_string(),
+                                delta: String::new(),
+                                reasoning_delta: Some(reasoning.to_string()),
+                                done: false,
+                            });
+                        }
                         if let Some(text) = responses_stream_text(&event) {
                             on_chunk(AiStreamChunk {
                                 session_id: session_id.to_string(),
@@ -1037,7 +1250,8 @@ pub fn load_config(path: &Path) -> Result<Option<AiConfig>, String> {
 mod tests {
     use super::{
         build_ai_http_client, gemini_text, parse_model_list_response, resolve_endpoint, resolve_model_list_endpoint,
-        validate_config, AiApiStyle, AiConfig, AiModelInfo, AiProvider,
+        responses_stream_reasoning, responses_stream_text, should_request_responses_reasoning_summary, validate_config,
+        AiApiStyle, AiConfig, AiModelInfo, AiProvider,
     };
 
     #[test]
@@ -1054,6 +1268,10 @@ mod tests {
         assert_eq!(config.proxy_enabled, false);
         assert_eq!(config.proxy_url, "");
         assert_eq!(config.enable_thinking, true);
+        assert_eq!(config.schema_research.enabled, true);
+        assert_eq!(config.schema_research.use_main_model, true);
+        assert_eq!(config.schema_research.max_tool_rounds, 4);
+        assert_eq!(config.schema_research.max_output_tokens, 1800);
     }
 
     #[test]
@@ -1067,6 +1285,7 @@ mod tests {
             proxy_enabled: true,
             proxy_url: "not a proxy url".to_string(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
 
         let err = build_ai_http_client(&config, 1).unwrap_err();
@@ -1085,6 +1304,7 @@ mod tests {
             proxy_enabled: false,
             proxy_url: String::new(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
 
         assert_eq!(
@@ -1101,6 +1321,7 @@ mod tests {
             proxy_enabled: false,
             proxy_url: String::new(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
 
         assert_eq!(resolve_endpoint(&ollama), "http://localhost:11434/v1/chat/completions");
@@ -1118,6 +1339,7 @@ mod tests {
             proxy_enabled: false,
             proxy_url: String::new(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
         assert_eq!(resolve_model_list_endpoint(&openai).unwrap(), "https://api.openai.com/v1/models");
 
@@ -1130,6 +1352,7 @@ mod tests {
             proxy_enabled: false,
             proxy_url: String::new(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
         assert_eq!(resolve_model_list_endpoint(&claude).unwrap(), "https://api.anthropic.com/v1/models");
     }
@@ -1181,5 +1404,45 @@ mod tests {
         .unwrap();
 
         assert!(matches!(claude.provider, AiProvider::Claude));
+    }
+
+    #[test]
+    fn parses_responses_text_and_reasoning_deltas_separately() {
+        let text = serde_json::json!({
+            "type": "response.output_text.delta",
+            "delta": "SELECT 1;"
+        });
+        let reasoning = serde_json::json!({
+            "type": "response.reasoning_summary_text.delta",
+            "delta": "Checking table context"
+        });
+
+        assert_eq!(responses_stream_text(&text), Some("SELECT 1;"));
+        assert_eq!(responses_stream_text(&reasoning), None);
+        assert_eq!(responses_stream_reasoning(&reasoning), Some("Checking table context"));
+    }
+
+    #[test]
+    fn requests_reasoning_summary_for_responses_reasoning_models_only_when_enabled() {
+        let mut config = AiConfig {
+            provider: AiProvider::Openai,
+            api_key: "key".to_string(),
+            endpoint: "https://api.openai.com/v1/responses".to_string(),
+            model: "gpt-5.1".to_string(),
+            api_style: AiApiStyle::Responses,
+            proxy_enabled: false,
+            proxy_url: String::new(),
+            enable_thinking: true,
+            schema_research: Default::default(),
+        };
+
+        assert!(should_request_responses_reasoning_summary(&config));
+
+        config.enable_thinking = false;
+        assert!(!should_request_responses_reasoning_summary(&config));
+
+        config.enable_thinking = true;
+        config.model = "gpt-4o-mini".to_string();
+        assert!(!should_request_responses_reasoning_summary(&config));
     }
 }
