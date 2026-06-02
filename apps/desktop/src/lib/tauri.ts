@@ -22,6 +22,7 @@ import type {
   SavedSqlLibrary,
 } from "@/types/database";
 import type { AiConfig, AppSettings } from "@/stores/settingsStore";
+import type { AiWorkflowEvent } from "@/lib/aiWorkflowEvents";
 import type { QueryEditability } from "@/lib/sqlAnalysis";
 import type {
   DataGridColumnValueFilterConditionOptions,
@@ -431,6 +432,7 @@ export interface AiChatMessage {
   reasoning?: string;
   toolTraces?: AiToolTrace[];
   timeline?: AiTimelineItem[];
+  workflowEvents?: AiWorkflowEvent[];
 }
 
 export interface AiConversation {

@@ -17,10 +17,16 @@ import { aiTableMentionKey, type AiTableMention } from "@/lib/aiTableMentions";
 import { aiSkillForAction } from "@/lib/aiSkills";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
 import {
+  createAiWorkflowEvent,
+  type AiWorkflowEvent,
+  type AiWorkflowEventInput,
+} from "@/lib/aiWorkflowEvents";
+import {
   formatSchemaResearchTaskResultForPrompt,
   normalizeSchemaResearchTaskResult,
   parseSchemaResearchTaskResultText,
   type SchemaResearchResultLimits,
+  type SchemaResearchStatus,
   type SchemaResearchTaskResult,
 } from "@/lib/schemaResearch";
 
@@ -56,6 +62,25 @@ export interface AiRequestInput {
   mode?: AiAssistantMode;
   instruction: string;
   context: AiContext;
+}
+
+export interface SchemaResearchEvidenceGate {
+  status: Exclude<SchemaResearchStatus, "sufficient">;
+  summary: string;
+  uncertainties: Array<{ kind?: string; message?: string }>;
+  promptSummary?: string;
+}
+
+export type AiWorkflowEventHandler = (event: AiWorkflowEvent) => void;
+
+function emitAiWorkflowEvent(handler: AiWorkflowEventHandler | undefined, input: AiWorkflowEventInput) {
+  if (!handler) return;
+  handler(createAiWorkflowEvent(input));
+}
+
+interface AiSchemaToolWorkflowHooks {
+  onEvent?: AiWorkflowEventHandler;
+  parentNodeId?: string;
 }
 
 export interface AiRelationRequestColumn {
@@ -207,6 +232,7 @@ export async function runAiStream(
   onRelationRequest?: AiRelationRequestHandler,
   onTableChoiceRequest?: AiTableChoiceRequestHandler,
   onColumnChoiceRequest?: AiColumnChoiceRequestHandler,
+  onEvent?: AiWorkflowEventHandler,
 ): Promise<void> {
   const isZh = currentLocale() === "zh-CN";
   const skill = aiSkillForAction(input.action);
@@ -225,6 +251,14 @@ export async function runAiStream(
   const sid = sessionId || uuid();
   const params = actionParams(input.action);
   const maxTokens = input.config.enableThinking ? Math.max(params.maxTokens, 8192) : params.maxTokens;
+  const mainNodeId = uuid();
+  emitAiWorkflowEvent(onEvent, {
+    type: "node.start",
+    nodeId: mainNodeId,
+    kind: "model",
+    title: isZh ? "主模型分析" : "Main model reasoning",
+    status: "loading",
+  });
 
   const toolResult = await runAiToolLoop(
     input,
@@ -236,9 +270,17 @@ export async function runAiStream(
     onRelationRequest,
     onTableChoiceRequest,
     onColumnChoiceRequest,
+    onEvent,
+    mainNodeId,
   ).catch(() => undefined);
   if (toolResult != null) {
-    onDelta(toolResult);
+    emitAiWorkflowEvent(onEvent, {
+      type: "node.update",
+      nodeId: mainNodeId,
+      status: "success",
+      description: isZh ? "工具链路已完成" : "Tool loop completed",
+    });
+    await emitBufferedText(toolResult, onDelta);
     return;
   }
 
@@ -253,18 +295,51 @@ export async function runAiStream(
     },
     (chunk) => {
       if (!chunk.done) {
-        if (chunk.reasoning_delta) onReasoningDelta?.(chunk.reasoning_delta);
+        if (chunk.reasoning_delta) {
+          emitAiWorkflowEvent(onEvent, { type: "node.delta", nodeId: mainNodeId, delta: chunk.reasoning_delta });
+          onReasoningDelta?.(chunk.reasoning_delta);
+        }
         if (chunk.delta) onDelta(chunk.delta);
       }
     },
   );
+  emitAiWorkflowEvent(onEvent, {
+    type: "node.update",
+    nodeId: mainNodeId,
+    status: "success",
+    description: isZh ? "回答生成完成" : "Answer completed",
+  });
+}
+
+async function emitBufferedText(text: string, onDelta: (delta: string) => void): Promise<void> {
+  const chunks = chunkBufferedText(text);
+  for (const chunk of chunks) {
+    onDelta(chunk);
+    await new Promise((resolve) => setTimeout(resolve, 12));
+  }
+}
+
+function chunkBufferedText(text: string): string[] {
+  if (!text) return [];
+  const chunks: string[] = [];
+  let current = "";
+  for (const part of text.split(/(\s+|[，。！？、；：,.!?;:])/u)) {
+    if (!part) continue;
+    current += part;
+    if (current.length >= 24 || /[\n。！？.!?]/u.test(part)) {
+      chunks.push(current);
+      current = "";
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 const MAX_SCHEMA_RAG_RELATED_TABLES = 5;
-const MAX_AI_SCHEMA_SEARCH_CALLS = 3;
-const MAX_AI_SCHEMA_TABLE_LOADS = 8;
-const MAX_AI_TABLE_LIST_CALLS = 4;
-const MAX_AI_COLUMN_SEARCH_CALLS = 4;
+const MAX_AI_SCHEMA_SEARCH_CALLS = 10;
+const MAX_AI_SCHEMA_TABLE_LOADS = 10;
+const MAX_AI_TABLE_LIST_CALLS = 5;
+const MAX_AI_COLUMN_SEARCH_CALLS = 30;
 const MAX_AI_COLUMN_DETAIL_CALLS = 10;
 const MAX_AI_TABLE_CHOICE_REQUESTS = 3;
 const MAX_AI_COLUMN_CHOICE_REQUESTS = 5;
@@ -419,6 +494,8 @@ async function runAiToolLoop(
   onRelationRequest?: AiRelationRequestHandler,
   onTableChoiceRequest?: AiTableChoiceRequestHandler,
   onColumnChoiceRequest?: AiColumnChoiceRequestHandler,
+  onEvent?: AiWorkflowEventHandler,
+  mainNodeId?: string,
 ): Promise<string | undefined> {
   if (!supportsAiSchemaToolLoop(input.config, input.context)) return undefined;
 
@@ -426,8 +503,18 @@ async function runAiToolLoop(
   const messages: any[] = userMessages.map((message) => ({ role: message.role, content: message.content }));
   const tools = buildAiSchemaTools();
   const budget = createAiSchemaToolBudget();
+  let pendingEvidenceGate: SchemaResearchEvidenceGate | undefined;
+  let evidenceGateInstructionUsed = false;
 
   for (let round = 0; round < MAX_AI_TOOL_ROUNDS; round += 1) {
+    if (mainNodeId) {
+      emitAiWorkflowEvent(onEvent, {
+        type: "node.update",
+        nodeId: mainNodeId,
+        status: "loading",
+        description: isZh ? `主模型正在决定下一步（第 ${round + 1} 轮）` : `Main model is deciding the next step (round ${round + 1})`,
+      });
+    }
     const response = await api.aiRawChat({
       config: input.config,
       systemPrompt: buildToolSystemPrompt(input.action, input.context, input.mode),
@@ -440,10 +527,54 @@ async function runAiToolLoop(
     const assistantMessage = normalizeRawAssistantMessage(response.rawMessage, response.content, response.toolCalls);
     messages.push(assistantMessage);
     const reasoningContent = rawMessageReasoningContent(response.rawMessage);
-    if (reasoningContent) onReasoningDelta?.(`${reasoningContent}\n\n`);
-    if (!response.toolCalls.length) return response.content;
+    if (reasoningContent) {
+      if (mainNodeId) emitAiWorkflowEvent(onEvent, { type: "node.delta", nodeId: mainNodeId, delta: `${reasoningContent}\n\n` });
+      onReasoningDelta?.(`${reasoningContent}\n\n`);
+    }
+    if (!response.toolCalls.length) {
+      const gateInstruction = buildSchemaResearchEvidenceGateInstruction(pendingEvidenceGate, isZh);
+      if (gateInstruction) {
+        if (evidenceGateInstructionUsed) {
+          return buildSchemaResearchEvidenceGateFallbackResponse(pendingEvidenceGate, isZh);
+        }
+        messages.push({
+          role: "user",
+          content: gateInstruction,
+        });
+        if (mainNodeId) {
+          emitAiWorkflowEvent(onEvent, {
+            type: "node.update",
+            nodeId: mainNodeId,
+            status: pendingEvidenceGate?.status === "need_user_choice" ? "waiting" : "loading",
+            description: isZh
+              ? "Schema Research 证据不足，要求主模型继续检索或向用户确认"
+              : "Schema Research evidence is insufficient; asking the main model to continue or ask the user",
+          });
+        }
+        evidenceGateInstructionUsed = true;
+        continue;
+      }
+      return response.content;
+    }
 
     for (const call of response.toolCalls) {
+      const toolNodeId = call.id || uuid();
+      emitAiWorkflowEvent(onEvent, {
+        type: "tool.start",
+        nodeId: toolNodeId,
+        parentId: mainNodeId,
+        name: call.name,
+        arguments: formatSchemaToolArguments(call),
+      });
+      if (isUserChoiceSchemaTool(call.name)) {
+        emitAiWorkflowEvent(onEvent, {
+          type: "user.input.required",
+          nodeId: `${toolNodeId}:input`,
+          parentId: toolNodeId,
+          requestKind: userChoiceSchemaToolKind(call.name),
+          title: userChoiceSchemaToolTitle(call.name, isZh),
+        });
+      }
       onToolTrace?.(buildRunningSchemaToolTrace(call));
       const output = await executeAiSchemaToolCall(
         input,
@@ -454,10 +585,32 @@ async function runAiToolLoop(
         onRelationRequest,
         onTableChoiceRequest,
         onColumnChoiceRequest,
+        {
+          onEvent,
+          parentNodeId: toolNodeId,
+        },
       ).catch((error) => ({
         error: error?.message || String(error),
       }));
-      onToolTrace?.(buildCompletedSchemaToolTrace(call, output, isZh));
+      const completedTrace = buildCompletedSchemaToolTrace(call, output, isZh);
+      const nextEvidenceGate = mergeSchemaResearchEvidenceGate(pendingEvidenceGate, call.name, output);
+      if (nextEvidenceGate !== pendingEvidenceGate) evidenceGateInstructionUsed = false;
+      pendingEvidenceGate = nextEvidenceGate;
+      if (isUserChoiceSchemaTool(call.name)) {
+        emitAiWorkflowEvent(onEvent, {
+          type: "node.update",
+          nodeId: `${toolNodeId}:input`,
+          status: userChoiceSchemaToolResultStatus(completedTrace.status, output),
+          description: completedTrace.summary,
+        });
+      }
+      emitAiWorkflowEvent(onEvent, {
+        type: "tool.end",
+        nodeId: toolNodeId,
+        status: completedTrace.status === "error" ? "error" : "success",
+        summary: completedTrace.summary,
+      });
+      onToolTrace?.(completedTrace);
       if (isCancelledUserChoiceOutput(call.name, output)) return "";
       messages.push({
         role: "tool",
@@ -735,6 +888,189 @@ function isCancelledUserChoiceOutput(name: string, output: unknown): boolean {
     typeof output === "object" &&
     (output as Record<string, any>).cancelled === true
   );
+}
+
+function isUserChoiceSchemaTool(name: string): boolean {
+  return ["dbx_request_relation", "dbx_request_table_choice", "dbx_request_column_choice"].includes(name);
+}
+
+function userChoiceSchemaToolKind(name: string): "table" | "column" | "relation" {
+  if (name === "dbx_request_table_choice") return "table";
+  if (name === "dbx_request_column_choice") return "column";
+  return "relation";
+}
+
+function userChoiceSchemaToolTitle(name: string, isZh: boolean): string {
+  if (name === "dbx_request_table_choice") return isZh ? "等待用户选择表" : "Waiting for table choice";
+  if (name === "dbx_request_column_choice") return isZh ? "等待用户选择字段" : "Waiting for column choice";
+  return isZh ? "等待用户确认关系" : "Waiting for relation confirmation";
+}
+
+function userChoiceSchemaToolResultStatus(status: AiToolTrace["status"], output: unknown): "success" | "error" | "abort" {
+  if (status === "error") return "error";
+  if (output && typeof output === "object" && (output as Record<string, any>).cancelled === true) return "abort";
+  return "success";
+}
+
+function mergeSchemaResearchEvidenceGate(
+  current: SchemaResearchEvidenceGate | undefined,
+  toolName: string,
+  output: unknown,
+): SchemaResearchEvidenceGate | undefined {
+  if (toolName === "dbx_schema_research_task") {
+    return schemaResearchEvidenceGateFromToolOutput(output);
+  }
+  if (!current) return undefined;
+  if (current.status === "need_user_choice") {
+    return isUserChoiceSchemaTool(toolName) ? undefined : current;
+  }
+  return isSchemaEvidenceContinuationTool(toolName) ? undefined : current;
+}
+
+function schemaResearchEvidenceGateFromToolOutput(output: unknown): SchemaResearchEvidenceGate | undefined {
+  if (!output || typeof output !== "object") return undefined;
+  const data = output as Record<string, any>;
+  if (data.error) {
+    return {
+      status: "error",
+      summary: String(data.error),
+      uncertainties: [],
+    };
+  }
+  const status = String(data.status || "").trim() as SchemaResearchStatus;
+  if (status === "sufficient") return undefined;
+  if (!["partial", "need_user_choice", "not_found", "error"].includes(status)) return undefined;
+  const uncertainties = Array.isArray(data.uncertainties)
+    ? data.uncertainties
+        .map((item: unknown) => {
+          const uncertainty = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+          return {
+            kind: optionalToolString(uncertainty.kind),
+            message: optionalToolString(uncertainty.message),
+          };
+        })
+        .filter((item: { kind?: string; message?: string }) => item.kind || item.message)
+    : [];
+  return {
+    status,
+    summary: optionalToolString(data.summary) || `Schema Research returned ${status}.`,
+    uncertainties,
+    promptSummary: optionalToolString(data.promptSummary),
+  };
+}
+
+function isSchemaEvidenceContinuationTool(name: string): boolean {
+  return [
+    "dbx_search_schema",
+    "dbx_list_tables",
+    "dbx_find_columns",
+    "dbx_search_table_columns",
+    "dbx_get_column_details",
+    "dbx_load_table_schema",
+    "dbx_get_related_tables",
+    "dbx_request_table_choice",
+    "dbx_request_column_choice",
+    "dbx_request_relation",
+  ].includes(name);
+}
+
+export function buildSchemaResearchEvidenceGateInstruction(
+  gate: SchemaResearchEvidenceGate | undefined,
+  isZh: boolean,
+): string | undefined {
+  if (!gate) return undefined;
+  const uncertaintyText = formatSchemaResearchGateUncertainties(gate, isZh);
+  if (gate.status === "need_user_choice") {
+    return isZh
+      ? [
+          "Schema Research 返回 need_user_choice，不能直接生成最终 SQL。",
+          "必须调用 dbx_request_table_choice、dbx_request_column_choice 或 dbx_request_relation 让用户确认不确定的表、字段或关联关系。",
+          `摘要：${gate.summary}`,
+          uncertaintyText,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : [
+          "Schema Research returned need_user_choice. Do not generate final SQL yet.",
+          "You must call dbx_request_table_choice, dbx_request_column_choice, or dbx_request_relation so the user can confirm the uncertain table, column, or relationship.",
+          `Summary: ${gate.summary}`,
+          uncertaintyText,
+        ]
+          .filter(Boolean)
+          .join("\n");
+  }
+  if (gate.status === "partial") {
+    return isZh
+      ? [
+          "Schema Research 返回 partial，证据不足，不能直接生成最终 SQL。",
+          "必须继续调用更窄的 dbx_schema_research_task，或调用 dbx_search_schema、dbx_find_columns、dbx_search_table_columns、dbx_get_column_details、dbx_load_table_schema、dbx_get_related_tables 补齐实时证据；如果仍无法确定，调用用户选择/关系确认工具。",
+          "最终 SQL 只能使用 verified 字段，或随后通过 dbx_get_column_details/dbx_load_table_schema 实时核对过的字段。",
+          `摘要：${gate.summary}`,
+          uncertaintyText,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : [
+          "Schema Research returned partial evidence. Do not generate final SQL yet.",
+          "You must continue with a narrower dbx_schema_research_task or call dbx_search_schema, dbx_find_columns, dbx_search_table_columns, dbx_get_column_details, dbx_load_table_schema, or dbx_get_related_tables to complete real-time evidence. If still uncertain, call a user-choice or relation-confirmation tool.",
+          "Final SQL may use only verified columns or columns later verified through dbx_get_column_details/dbx_load_table_schema.",
+          `Summary: ${gate.summary}`,
+          uncertaintyText,
+        ]
+          .filter(Boolean)
+          .join("\n");
+  }
+  return isZh
+    ? [
+        `Schema Research 返回 ${gate.status}，不能编造表、字段或关系，也不能直接生成最终 SQL。`,
+        "请继续调用 schema 检索/详情工具寻找证据；如果没有足够候选，向用户说明缺少哪些表、字段或关系，让用户用 @table 或明确字段补充。",
+        `摘要：${gate.summary}`,
+        uncertaintyText,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : [
+        `Schema Research returned ${gate.status}. Do not invent tables, columns, or relationships, and do not generate final SQL yet.`,
+        "Continue with schema search/detail tools. If there are not enough candidates, explain which tables, columns, or relationships are missing and ask the user to provide an @table mention or explicit fields.",
+        `Summary: ${gate.summary}`,
+        uncertaintyText,
+      ]
+        .filter(Boolean)
+        .join("\n");
+}
+
+function buildSchemaResearchEvidenceGateFallbackResponse(gate: SchemaResearchEvidenceGate | undefined, isZh: boolean): string {
+  if (!gate) return "";
+  const uncertaintyText = formatSchemaResearchGateUncertainties(gate, isZh);
+  if (isZh) {
+    return [
+      "我还不能生成可靠 SQL，因为 Schema 证据没有达到可用标准。",
+      `当前状态：${gate.status}`,
+      `摘要：${gate.summary}`,
+      uncertaintyText,
+      "请用 @table 指定相关表，或确认候选表、字段、关联关系后我再生成 SQL。",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  return [
+    "I cannot generate reliable SQL yet because the schema evidence is not sufficient.",
+    `Current status: ${gate.status}`,
+    `Summary: ${gate.summary}`,
+    uncertaintyText,
+    "Please mention the relevant table with @table, or confirm the candidate tables, columns, and relationships before I generate SQL.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatSchemaResearchGateUncertainties(gate: SchemaResearchEvidenceGate, isZh: boolean): string {
+  if (!gate.uncertainties.length) return "";
+  const lines = gate.uncertainties
+    .slice(0, 4)
+    .map((item) => `- ${[item.kind, item.message].filter(Boolean).join(": ")}`)
+    .join("\n");
+  return `${isZh ? "不确定项" : "Uncertainties"}:\n${lines}`;
 }
 
 function safeParseToolArguments(rawArguments: string): Record<string, any> {
@@ -1314,6 +1650,7 @@ async function executeSchemaResearchTaskTool(
   input: AiRequestInput,
   parentBudget: AiSchemaToolBudget,
   args: Record<string, any>,
+  hooks?: AiSchemaToolWorkflowHooks,
 ): Promise<SchemaResearchTaskResult & { promptSummary: string; internalToolTraces?: AiToolTrace[] }> {
   const researchSettings = resolveSchemaResearchSettings(input.config);
   if (!researchSettings.enabled) {
@@ -1364,7 +1701,7 @@ async function executeSchemaResearchTaskTool(
   }
 
   const limits = schemaResearchLimits(args);
-  const { result, internalToolTraces } = await runSchemaResearchSubtask(input, args, limits, researchSettings);
+  const { result, internalToolTraces } = await runSchemaResearchSubtask(input, args, limits, researchSettings, hooks);
   const promptSummary = formatSchemaResearchTaskResultForPrompt(result, { isZh: currentLocale() === "zh-CN" });
   return {
     ...result,
@@ -1378,9 +1715,20 @@ async function runSchemaResearchSubtask(
   args: Record<string, any>,
   limits: SchemaResearchResultLimits,
   researchSettings: ResolvedSchemaResearchSettings,
+  hooks?: AiSchemaToolWorkflowHooks,
 ): Promise<{ result: SchemaResearchTaskResult; internalToolTraces: AiToolTrace[] }> {
   const context = input.context;
   const isZh = currentLocale() === "zh-CN";
+  const agentNodeId = uuid();
+  emitAiWorkflowEvent(hooks?.onEvent, {
+    type: "node.start",
+    nodeId: agentNodeId,
+    parentId: hooks?.parentNodeId,
+    kind: "agent",
+    title: isZh ? "Schema Research 子任务" : "Schema Research subtask",
+    description: String(args.task || "").trim(),
+    status: "loading",
+  });
   const messages: any[] = [
     {
       role: "user",
@@ -1398,6 +1746,14 @@ async function runSchemaResearchSubtask(
 
   for (let round = 0; round < researchSettings.maxToolRounds; round += 1) {
     usedRounds = round + 1;
+    emitAiWorkflowEvent(hooks?.onEvent, {
+      type: "node.update",
+      nodeId: agentNodeId,
+      status: "loading",
+      description: isZh
+        ? `Schema Research 正在检索证据（第 ${usedRounds} 轮）`
+        : `Schema Research is collecting evidence (round ${usedRounds})`,
+    });
     const response = await api.aiRawChat({
       config: researchSettings.config,
       systemPrompt: buildSchemaResearchSystemPrompt(input, args, limits),
@@ -1408,20 +1764,44 @@ async function runSchemaResearchSubtask(
       temperature: 0.05,
     });
     messages.push(normalizeRawAssistantMessage(response.rawMessage, response.content, response.toolCalls));
+    const reasoningContent = rawMessageReasoningContent(response.rawMessage);
+    if (reasoningContent) {
+      emitAiWorkflowEvent(hooks?.onEvent, {
+        type: "node.delta",
+        nodeId: agentNodeId,
+        delta: `${reasoningContent}\n\n`,
+      });
+    }
 
     if (!response.toolCalls.length) {
+      const result = withSchemaResearchBudget(
+        parseSchemaResearchTaskResultText(response.content, limits),
+        budget,
+        usedRounds,
+        limits,
+      );
+      emitSchemaResearchEvidenceEvents(hooks?.onEvent, agentNodeId, result, isZh);
+      emitAiWorkflowEvent(hooks?.onEvent, {
+        type: "node.update",
+        nodeId: agentNodeId,
+        status: schemaResearchWorkflowStatus(result.status),
+        description: result.summary,
+      });
       return {
-        result: withSchemaResearchBudget(
-          parseSchemaResearchTaskResultText(response.content, limits),
-          budget,
-          usedRounds,
-          limits,
-        ),
+        result,
         internalToolTraces,
       };
     }
 
     for (const call of response.toolCalls) {
+      const toolNodeId = call.id || uuid();
+      emitAiWorkflowEvent(hooks?.onEvent, {
+        type: "tool.start",
+        nodeId: toolNodeId,
+        parentId: agentNodeId,
+        name: call.name,
+        arguments: formatSchemaToolArguments(call),
+      });
       const output = isSchemaResearchSubtaskToolAllowed(call.name)
         ? await executeAiSchemaToolCall(
             input,
@@ -1429,9 +1809,23 @@ async function runSchemaResearchSubtask(
             budget,
             call.name,
             call.arguments,
+            undefined,
+            undefined,
+            undefined,
+            {
+              onEvent: hooks?.onEvent,
+              parentNodeId: toolNodeId,
+            },
           ).catch((error) => ({ error: error?.message || String(error) }))
         : { error: `Tool ${call.name} is not available inside schema research subtask.` };
-      internalToolTraces.push(buildCompletedSchemaToolTrace(call, output, isZh));
+      const completedTrace = buildCompletedSchemaToolTrace(call, output, isZh);
+      emitAiWorkflowEvent(hooks?.onEvent, {
+        type: "tool.end",
+        nodeId: toolNodeId,
+        status: completedTrace.status === "error" ? "error" : "success",
+        summary: completedTrace.summary,
+      });
+      internalToolTraces.push(completedTrace);
       messages.push({
         role: "tool",
         tool_call_id: call.id,
@@ -1456,15 +1850,50 @@ async function runSchemaResearchSubtask(
     temperature: 0.05,
   });
 
+  const result = withSchemaResearchBudget(
+    parseSchemaResearchTaskResultText(finalResponse.content, limits),
+    budget,
+    usedRounds,
+    limits,
+  );
+  emitSchemaResearchEvidenceEvents(hooks?.onEvent, agentNodeId, result, isZh);
+  emitAiWorkflowEvent(hooks?.onEvent, {
+    type: "node.update",
+    nodeId: agentNodeId,
+    status: schemaResearchWorkflowStatus(result.status),
+    description: result.summary,
+  });
+
   return {
-    result: withSchemaResearchBudget(
-      parseSchemaResearchTaskResultText(finalResponse.content, limits),
-      budget,
-      usedRounds,
-      limits,
-    ),
+    result,
     internalToolTraces,
   };
+}
+
+function schemaResearchWorkflowStatus(status: SchemaResearchStatus): "success" | "error" | "waiting" {
+  if (status === "error" || status === "not_found") return "error";
+  if (status === "need_user_choice") return "waiting";
+  return "success";
+}
+
+function emitSchemaResearchEvidenceEvents(
+  onEvent: AiWorkflowEventHandler | undefined,
+  parentNodeId: string,
+  result: SchemaResearchTaskResult,
+  isZh: boolean,
+) {
+  const tableCount = result.evidence.tables.length;
+  const relationCount = result.evidence.relations.length;
+  const uncertaintyCount = result.uncertainties.length;
+  emitAiWorkflowEvent(onEvent, {
+    type: "evidence",
+    nodeId: uuid(),
+    parentId: parentNodeId,
+    status: result.status,
+    summary: isZh
+      ? `${result.summary}。证据：${tableCount} 张表，${relationCount} 条关系，${uncertaintyCount} 个不确定项。`
+      : `${result.summary}. Evidence: ${tableCount} table(s), ${relationCount} relation(s), ${uncertaintyCount} uncertainty item(s).`,
+  });
 }
 
 interface ResolvedSchemaResearchSettings {
@@ -1788,10 +2217,11 @@ async function executeAiSchemaToolCall(
   onRelationRequest?: AiRelationRequestHandler,
   onTableChoiceRequest?: AiTableChoiceRequestHandler,
   onColumnChoiceRequest?: AiColumnChoiceRequestHandler,
+  hooks?: AiSchemaToolWorkflowHooks,
 ): Promise<unknown> {
   const args = parseToolArguments(rawArguments);
   if (name === "dbx_schema_research_task") {
-    return executeSchemaResearchTaskTool(input, budget, args);
+    return executeSchemaResearchTaskTool(input, budget, args, hooks);
   }
   if (name === "dbx_search_schema") {
     return executeSchemaSearchTool(context, budget, args);

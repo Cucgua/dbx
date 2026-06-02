@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { AiConfig } from "../../apps/desktop/src/stores/settingsStore";
 import type { AiContext } from "../../apps/desktop/src/lib/ai";
-import { buildAiSchemaTools, supportsAiSchemaToolLoop } from "../../apps/desktop/src/lib/ai";
+import { buildAiSchemaTools, buildSchemaResearchEvidenceGateInstruction, supportsAiSchemaToolLoop } from "../../apps/desktop/src/lib/ai";
 
 function completionsConfig(overrides: Partial<AiConfig> = {}): AiConfig {
   return {
@@ -113,4 +113,36 @@ test("schema research subtask tools exclude recursion, user UI, and enrichment",
       "dbx_get_related_tables",
     ],
   );
+});
+
+test("schema research partial evidence gate requires another lookup before final SQL", () => {
+  const instruction = buildSchemaResearchEvidenceGateInstruction(
+    {
+      status: "partial",
+      summary: "Found candidate review tables but order relation is unclear.",
+      uncertainties: [{ kind: "relation", message: "Need user/order join evidence." }],
+    },
+    true,
+  );
+
+  assert.match(instruction || "", /不能直接生成最终 SQL/);
+  assert.match(instruction || "", /继续调用/);
+  assert.match(instruction || "", /dbx_get_column_details/);
+  assert.match(instruction || "", /relation: Need user\/order join evidence/);
+});
+
+test("schema research user-choice gate requires a user confirmation tool", () => {
+  const instruction = buildSchemaResearchEvidenceGateInstruction(
+    {
+      status: "need_user_choice",
+      summary: "Two customer tables are plausible.",
+      uncertainties: [{ kind: "table", message: "Choose customer or customer_archive." }],
+    },
+    false,
+  );
+
+  assert.match(instruction || "", /Do not generate final SQL yet/);
+  assert.match(instruction || "", /dbx_request_table_choice/);
+  assert.match(instruction || "", /dbx_request_column_choice/);
+  assert.match(instruction || "", /dbx_request_relation/);
 });

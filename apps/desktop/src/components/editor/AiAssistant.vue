@@ -37,6 +37,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import LightDropdown from "@/components/ui/LightDropdown.vue";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import AiThoughtChain from "@/components/ai/AiThoughtChain.vue";
 import { useTheme } from "@/composables/useTheme";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -77,6 +78,11 @@ import { isSchemaAware } from "@/lib/databaseCapabilities";
 import { copyToClipboard } from "@/lib/clipboard";
 import { formatAiTableMention, parseAiTableMentions, type AiTableMention } from "@/lib/aiTableMentions";
 import { isAiPromptImeCompositionEvent, shouldSubmitAiPromptOnKeydown } from "@/lib/aiPromptKeyboard";
+import {
+  applyAiWorkflowEvent,
+  type AiThoughtNodeState,
+  type AiWorkflowEvent,
+} from "@/lib/aiWorkflowEvents";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -92,6 +98,8 @@ interface ChatMessage {
   isThinking?: boolean;
   toolTraces?: AiToolTrace[];
   timeline?: AiTimelineItem[];
+  workflowEvents?: AiWorkflowEvent[];
+  thoughtNodes?: AiThoughtNodeState[];
   agentSteps?: AiAgentStepItem[];
 }
 
@@ -314,6 +322,18 @@ function appendAssistantToolTrace(assistantIdx: number, trace: AiToolTrace) {
     timeline.push(item);
   }
   msg.timeline = timeline;
+  scrollToBottom();
+}
+
+function appendAssistantWorkflowEvent(assistantIdx: number, event: AiWorkflowEvent) {
+  const msg = messages.value[assistantIdx];
+  if (!msg) return;
+  msg.workflowEvents = [...(msg.workflowEvents || []), event];
+  msg.thoughtNodes = applyAiWorkflowEvent(msg.thoughtNodes || [], event);
+  msg.isThinking =
+    event.type !== "node.update" ||
+    event.status === "loading" ||
+    event.status === "waiting";
   scrollToBottom();
 }
 
@@ -878,6 +898,9 @@ async function send() {
       requestRelationConfirmation,
       requestTableChoice,
       requestColumnChoice,
+      (event) => {
+        appendAssistantWorkflowEvent(assistantIdx, event);
+      },
     );
   } catch (e: any) {
     messages.value[assistantIdx].content = `Error: ${e.message || e}`;
@@ -970,6 +993,7 @@ async function persistConversation() {
       ...(m.reasoning ? { reasoning: m.reasoning } : {}),
       ...(m.toolTraces?.length ? { toolTraces: m.toolTraces } : {}),
       ...(m.timeline?.length ? { timeline: m.timeline } : {}),
+      ...(m.workflowEvents?.length ? { workflowEvents: m.workflowEvents } : {}),
     })),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -989,6 +1013,8 @@ function selectConversation(conv: AiConversation) {
     reasoning: m.reasoning,
     toolTraces: m.toolTraces,
     timeline: m.timeline || buildLegacyTimeline(m.reasoning, m.toolTraces),
+    workflowEvents: m.workflowEvents,
+    thoughtNodes: replayWorkflowEvents(m.workflowEvents),
   }));
   showConversationList.value = false;
   scrollToBottom();
@@ -1001,6 +1027,11 @@ function buildLegacyTimeline(reasoning?: string, toolTraces?: AiToolTrace[]): Ai
     items.push({ id: `tool-${trace.id}`, kind: "tool", toolTrace: trace });
   }
   return items.length ? items : undefined;
+}
+
+function replayWorkflowEvents(events?: AiWorkflowEvent[]): AiThoughtNodeState[] | undefined {
+  if (!events?.length) return undefined;
+  return events.reduce<AiThoughtNodeState[]>((nodes, event) => applyAiWorkflowEvent(nodes, event), []);
 }
 
 async function deleteConversation(id: string) {
@@ -1141,9 +1172,10 @@ const messageRenderer = computed(() => {
             </div>
           </div>
 
-          <div v-else-if="msg.content || msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking" class="flex">
-            <div class="max-w-[95%] rounded-lg bg-muted px-3 py-2 text-xs leading-relaxed">
-              <div v-if="msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking" class="mb-2">
+          <div v-else-if="msg.content || msg.thoughtNodes?.length || msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking" class="flex">
+            <div class="max-w-[95%] text-xs leading-relaxed">
+              <AiThoughtChain v-if="msg.thoughtNodes?.length" :nodes="msg.thoughtNodes" class="mb-2" />
+              <div v-else-if="msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking" class="mb-2">
                 <div class="space-y-1.5">
                   <div
                     v-for="item in msg.timeline || buildLegacyTimeline(msg.reasoning, msg.toolTraces) || []"
@@ -1234,54 +1266,56 @@ const messageRenderer = computed(() => {
                   <span class="truncate">{{ t(step.labelKey) }}</span>
                 </span>
               </div>
-              <template v-for="(seg, j) in messageRenderer.render(msg.content)" :key="j">
-                <div v-if="seg.type === 'text'" class="ai-markdown whitespace-normal">
-                  <div v-html="seg.html" />
-                </div>
-                <div
-                  v-else
-                  class="my-2 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-700/50 dark:bg-zinc-900"
-                >
-                  <div
-                    class="flex items-center border-b border-zinc-200 px-3 py-1.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700/50 dark:text-zinc-400"
-                  >
-                    <component :is="seg.isSql ? Database : Terminal" class="h-3 w-3 mr-1.5" />
-                    <span>{{ seg.lang }}</span>
-                    <span class="flex-1" />
-                    <div class="flex items-center gap-1.5">
-                      <button
-                        v-if="seg.isSql"
-                        class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-                        :title="t('ai.executeSql')"
-                        @click="executeSql(seg.content)"
-                      >
-                        <Play class="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        v-if="seg.isSql"
-                        class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-                        :title="t('ai.apply')"
-                        @click="applySql(seg.content)"
-                      >
-                        <Replace class="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-                        :title="
-                          copiedIndex === `${i}-${j}` ? t('ai.copied') : t(seg.isSql ? 'ai.copySql' : 'ai.copyCode')
-                        "
-                        @click="copyCode(seg.content, `${i}-${j}`)"
-                      >
-                        <Check v-if="copiedIndex === `${i}-${j}`" class="h-3.5 w-3.5 text-green-400" />
-                        <Copy v-else class="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+              <div v-if="msg.content" class="rounded-lg bg-muted px-3 py-2">
+                <template v-for="(seg, j) in messageRenderer.render(msg.content)" :key="j">
+                  <div v-if="seg.type === 'text'" class="ai-markdown whitespace-normal">
+                    <div v-html="seg.html" />
                   </div>
-                  <pre
-                    class="ai-code-block whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-900 dark:text-zinc-100"
-                  ><code v-html="seg.html"></code></pre>
-                </div>
-              </template>
+                  <div
+                    v-else
+                    class="my-2 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-700/50 dark:bg-zinc-900"
+                  >
+                    <div
+                      class="flex items-center border-b border-zinc-200 px-3 py-1.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700/50 dark:text-zinc-400"
+                    >
+                      <component :is="seg.isSql ? Database : Terminal" class="h-3 w-3 mr-1.5" />
+                      <span>{{ seg.lang }}</span>
+                      <span class="flex-1" />
+                      <div class="flex items-center gap-1.5">
+                        <button
+                          v-if="seg.isSql"
+                          class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                          :title="t('ai.executeSql')"
+                          @click="executeSql(seg.content)"
+                        >
+                          <Play class="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          v-if="seg.isSql"
+                          class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                          :title="t('ai.apply')"
+                          @click="applySql(seg.content)"
+                        >
+                          <Replace class="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+                          :title="
+                            copiedIndex === `${i}-${j}` ? t('ai.copied') : t(seg.isSql ? 'ai.copySql' : 'ai.copyCode')
+                          "
+                          @click="copyCode(seg.content, `${i}-${j}`)"
+                        >
+                          <Check v-if="copiedIndex === `${i}-${j}`" class="h-3.5 w-3.5 text-green-400" />
+                          <Copy v-else class="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <pre
+                      class="ai-code-block whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-900 dark:text-zinc-100"
+                    ><code v-html="seg.html"></code></pre>
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
         </template>
