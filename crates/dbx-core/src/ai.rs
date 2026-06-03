@@ -173,6 +173,10 @@ pub struct AiRawChatRequest {
     pub tool_choice: Option<serde_json::Value>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,11 +419,7 @@ impl OpenAiRawChatStreamAccumulator {
             .tool_calls
             .into_iter()
             .filter(|call| !call.name.is_empty())
-            .map(|call| AiRawToolCall {
-                id: call.id,
-                name: call.name,
-                arguments: call.arguments,
-            })
+            .map(|call| AiRawToolCall { id: call.id, name: call.name, arguments: call.arguments })
             .collect::<Vec<_>>();
         let mut raw_message = json!({
             "role": "assistant",
@@ -429,21 +429,19 @@ impl OpenAiRawChatStreamAccumulator {
             raw_message["reasoning_content"] = json!(self.reasoning_content);
         }
         if !tool_calls.is_empty() {
-            raw_message["tool_calls"] = json!(
-                tool_calls
-                    .iter()
-                    .map(|call| {
-                        json!({
-                            "id": call.id,
-                            "type": "function",
-                            "function": {
-                                "name": call.name,
-                                "arguments": call.arguments,
-                            },
-                        })
+            raw_message["tool_calls"] = json!(tool_calls
+                .iter()
+                .map(|call| {
+                    json!({
+                        "id": call.id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        },
                     })
-                    .collect::<Vec<_>>()
-            );
+                })
+                .collect::<Vec<_>>());
         }
 
         AiRawChatResponse {
@@ -541,6 +539,65 @@ fn build_openai_compatible_chat_body(
     add_openai_compatible_sampling_options(&mut body, config, temperature);
     add_openai_compatible_thinking_options(&mut body, config);
     body
+}
+
+fn apply_raw_chat_request_options(body: &mut serde_json::Value, request: &AiRawChatRequest) {
+    if matches!(request.config.provider, AiProvider::Deepseek) {
+        if let Some(response_format) = &request.response_format {
+            body["response_format"] = response_format.clone();
+        }
+    }
+}
+
+fn is_schema_doc_debug_label(label: &str) -> bool {
+    matches!(label, "schema-doc-extraction" | "schema-doc-json-repair")
+}
+
+fn raw_chat_debug_label(request: &AiRawChatRequest) -> Option<&str> {
+    request.debug_label.as_deref().filter(|label| is_schema_doc_debug_label(label))
+}
+
+fn log_schema_doc_raw_chat_request(request: &AiRawChatRequest, body: &serde_json::Value) {
+    let Some(label) = raw_chat_debug_label(request) else {
+        return;
+    };
+    log_schema_doc_ai_json(label, "request", body);
+}
+
+fn log_schema_doc_raw_chat_response(request: &AiRawChatRequest, raw_message: &serde_json::Value) {
+    let Some(label) = raw_chat_debug_label(request) else {
+        return;
+    };
+    log_schema_doc_ai_json(label, "response", raw_message);
+}
+
+fn log_schema_doc_raw_chat_error(request: &AiRawChatRequest, data: &serde_json::Value) {
+    let Some(label) = raw_chat_debug_label(request) else {
+        return;
+    };
+    log_schema_doc_ai_json(label, "error", data);
+}
+
+fn log_schema_doc_ai_json(label: &str, phase: &str, value: &serde_json::Value) {
+    let text = serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
+    log_schema_doc_ai_text(label, phase, &text);
+}
+
+fn log_schema_doc_ai_text(label: &str, phase: &str, text: &str) {
+    const CHUNK_BYTES: usize = 8000;
+    if text.is_empty() {
+        log::info!("[schema-doc-ai][{label}][{phase}][1/1]");
+        return;
+    }
+    let chunks = text.as_bytes().chunks(CHUNK_BYTES).collect::<Vec<_>>();
+    for (index, chunk) in chunks.iter().enumerate() {
+        log::info!(
+            "[schema-doc-ai][{label}][{phase}][{}/{}]\n{}",
+            index + 1,
+            chunks.len(),
+            String::from_utf8_lossy(chunk)
+        );
+    }
 }
 
 pub fn gemini_text(data: &serde_json::Value) -> String {
@@ -789,7 +846,7 @@ pub async fn call_openai_raw_chat(
     let headers = maybe_bearer_headers(&request.config)?;
 
     let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
-    messages.extend(request.messages);
+    messages.extend(request.messages.clone());
 
     let mut body_obj = build_openai_compatible_chat_body(
         &request.config,
@@ -799,9 +856,11 @@ pub async fn call_openai_raw_chat(
         false,
     );
     if !request.tools.is_empty() {
-        body_obj["tools"] = json!(request.tools);
-        body_obj["tool_choice"] = request.tool_choice.unwrap_or_else(|| json!("auto"));
+        body_obj["tools"] = json!(request.tools.clone());
+        body_obj["tool_choice"] = request.tool_choice.clone().unwrap_or_else(|| json!("auto"));
     }
+    apply_raw_chat_request_options(&mut body_obj, &request);
+    log_schema_doc_raw_chat_request(&request, &body_obj);
 
     let res = client
         .post(resolve_endpoint(&request.config))
@@ -814,10 +873,12 @@ pub async fn call_openai_raw_chat(
     let status = res.status();
     let data: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
+        log_schema_doc_raw_chat_error(&request, &data);
         return Err(extract_error(&data).unwrap_or_else(|| format!("API error: {status}")));
     }
 
     let message = data["choices"].get(0).and_then(|choice| choice.get("message")).cloned().unwrap_or_default();
+    log_schema_doc_raw_chat_response(&request, &message);
     let content = message["content"].as_str().unwrap_or_default().to_string();
     let tool_calls = message["tool_calls"]
         .as_array()
@@ -1230,6 +1291,8 @@ async fn stream_openai_raw_chat(
         body_obj["tools"] = json!(request.tools);
         body_obj["tool_choice"] = request.tool_choice.clone().unwrap_or_else(|| json!("auto"));
     }
+    apply_raw_chat_request_options(&mut body_obj, request);
+    log_schema_doc_raw_chat_request(request, &body_obj);
 
     let res = client
         .post(resolve_endpoint(&request.config))
@@ -1241,6 +1304,7 @@ async fn stream_openai_raw_chat(
 
     if !res.status().is_success() {
         let data: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+        log_schema_doc_raw_chat_error(request, &data);
         return Err(extract_error(&data).unwrap_or_else(|| "API error".to_string()));
     }
 
@@ -1314,7 +1378,9 @@ async fn stream_openai_raw_chat(
         done: true,
     });
 
-    Ok(accumulator.finish())
+    let response = accumulator.finish();
+    log_schema_doc_raw_chat_response(request, &response.raw_message);
+    Ok(response)
 }
 
 async fn stream_responses_api(
@@ -1548,10 +1614,11 @@ pub fn load_config(path: &Path) -> Result<Option<AiConfig>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_ai_http_client, build_openai_compatible_chat_body, gemini_text, openai_stream_tool_call_deltas,
-        parse_model_list_response, resolve_endpoint, resolve_model_list_endpoint, responses_stream_reasoning,
-        responses_stream_text, should_request_responses_reasoning_summary, validate_config, AiApiStyle, AiConfig,
-        AiModelInfo, AiProvider, OpenAiRawChatStreamAccumulator,
+        apply_raw_chat_request_options, build_ai_http_client, build_openai_compatible_chat_body, gemini_text,
+        openai_stream_tool_call_deltas, parse_model_list_response, raw_chat_debug_label, resolve_endpoint,
+        resolve_model_list_endpoint, responses_stream_reasoning, responses_stream_text,
+        should_request_responses_reasoning_summary, validate_config, AiApiStyle, AiConfig, AiModelInfo, AiProvider,
+        AiRawChatRequest, OpenAiRawChatStreamAccumulator,
     };
 
     #[test]
@@ -1794,6 +1861,57 @@ mod tests {
         assert_eq!(body["temperature"], 0.15);
         assert!(body.get("thinking").is_none());
         assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn raw_chat_response_format_is_deepseek_scoped() {
+        let request = AiRawChatRequest {
+            config: AiConfig {
+                provider: AiProvider::Deepseek,
+                api_key: "key".to_string(),
+                endpoint: "https://api.deepseek.com/v1".to_string(),
+                model: "deepseek-chat".to_string(),
+                api_style: AiApiStyle::Completions,
+                proxy_enabled: false,
+                proxy_url: String::new(),
+                enable_thinking: true,
+                schema_research: Default::default(),
+            },
+            system_prompt: "Output JSON only.".to_string(),
+            messages: vec![serde_json::json!({ "role": "user", "content": "extract schema facts" })],
+            tools: vec![],
+            tool_choice: Some(serde_json::json!("none")),
+            max_tokens: Some(1024),
+            temperature: Some(0.0),
+            response_format: Some(serde_json::json!({ "type": "json_object" })),
+            debug_label: Some("schema-doc-extraction".to_string()),
+        };
+        let mut body = build_openai_compatible_chat_body(
+            &request.config,
+            serde_json::json!([{ "role": "system", "content": request.system_prompt.clone() }]),
+            request.max_tokens,
+            request.temperature,
+            false,
+        );
+        apply_raw_chat_request_options(&mut body, &request);
+
+        assert_eq!(body["response_format"]["type"], "json_object");
+        assert_eq!(raw_chat_debug_label(&request), Some("schema-doc-extraction"));
+
+        let mut openai_request = request.clone();
+        openai_request.config.provider = AiProvider::Openai;
+        let mut openai_body = build_openai_compatible_chat_body(
+            &openai_request.config,
+            serde_json::json!([{ "role": "user", "content": "extract schema facts" }]),
+            openai_request.max_tokens,
+            openai_request.temperature,
+            false,
+        );
+        apply_raw_chat_request_options(&mut openai_body, &openai_request);
+
+        assert!(openai_body.get("response_format").is_none());
+        openai_request.debug_label = Some("ordinary-chat".to_string());
+        assert_eq!(raw_chat_debug_label(&openai_request), None);
     }
 
     #[test]

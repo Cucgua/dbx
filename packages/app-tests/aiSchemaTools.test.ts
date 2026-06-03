@@ -4,11 +4,17 @@ import test from "node:test";
 import type { AiConfig } from "../../apps/desktop/src/stores/settingsStore";
 import type { AiContext } from "../../apps/desktop/src/lib/ai";
 import {
+  buildApiDocExtractionBatchesForTest,
+  buildApiDocExtractionUserPromptForTest,
   buildAiSchemaTools,
   buildSchemaResearchEvidenceGateInstruction,
   buildToolSystemPrompt,
+  parseApiDocExtractionJsonForTest,
+  schemaResearchSubtaskAllowedToolNamesForTest,
+  schemaDocRawChatOptionsForTest,
   supportsAiSchemaToolLoop,
 } from "../../apps/desktop/src/lib/ai";
+import type { ApiDocExtractionRequest } from "../../apps/desktop/src/lib/schemaDocIngestion";
 
 function completionsConfig(overrides: Partial<AiConfig> = {}): AiConfig {
   return {
@@ -118,6 +124,21 @@ test("schema research subtask tools exclude recursion, user UI, and enrichment",
   assert.match(graphTool?.function?.description || "", /Schema Graph|Kuzu|图/);
 });
 
+test("schema research subtask can execute every advertised schema research tool", () => {
+  const advertisedToolNames = toolNames(
+    buildAiSchemaTools({
+      scope: "schema_research",
+      includeResearchTask: false,
+      includeUserChoiceTools: false,
+      includeEnrichmentTool: false,
+    }),
+  );
+  const allowedToolNames = new Set(schemaResearchSubtaskAllowedToolNamesForTest());
+  for (const name of advertisedToolNames) {
+    assert.equal(allowedToolNames.has(name), true, `${name} is advertised but not executable`);
+  }
+});
+
 test("schema research partial evidence gate requires another lookup before final SQL", () => {
   const instruction = buildSchemaResearchEvidenceGateInstruction(
     {
@@ -163,4 +184,130 @@ test("schema research user-choice gate requires a user confirmation tool", () =>
   assert.match(instruction || "", /dbx_request_table_choice/);
   assert.match(instruction || "", /dbx_request_column_choice/);
   assert.match(instruction || "", /dbx_request_relation/);
+});
+
+test("api doc extraction parser accepts fenced JSON responses", () => {
+  const parsed = parseApiDocExtractionJsonForTest(`
+Here is the extraction:
+\`\`\`json
+{
+  "apiFields": [
+    { "name": "patientId", "meaning": "患者编号", "sectionId": "doc#section-1" }
+  ],
+  "businessConcepts": [],
+  "joinCandidates": [],
+  "errors": []
+}
+\`\`\`
+`);
+
+  assert.equal(parsed.apiFields[0].name, "patientId");
+});
+
+test("api doc extraction parser reports malformed JSON", () => {
+  assert.throws(
+    () =>
+      parseApiDocExtractionJsonForTest(`{
+  "apiFields": [
+    { "name": "patientId" }
+    { "name": "visitId" }
+  ],
+  "businessConcepts": [],
+  "joinCandidates": [],
+  "errors": []
+}`),
+    /Expected ',' or ']'/,
+  );
+});
+
+test("schema doc raw chat options enable DeepSeek JSON mode without affecting other providers", () => {
+  const deepseekOptions = schemaDocRawChatOptionsForTest(completionsConfig({ provider: "deepseek" }));
+  assert.equal(deepseekOptions.debugLabel, "schema-doc-extraction");
+  assert.deepEqual(deepseekOptions.responseFormat, { type: "json_object" });
+
+  const openaiOptions = schemaDocRawChatOptionsForTest(completionsConfig({ provider: "openai" }));
+  assert.equal(openaiOptions.debugLabel, "schema-doc-extraction");
+  assert.equal(openaiOptions.responseFormat, undefined);
+});
+
+test("schema doc extraction prompt includes a strict JSON output contract", () => {
+  const request: ApiDocExtractionRequest = {
+    sourceId: "api-doc:test",
+    sourcePath: "/docs/schema.md",
+    schema: "public",
+    sections: [
+      {
+        id: "api-doc:test#section-1",
+        titlePath: ["数据字典", "出生证申请表"],
+        text: "| 字段英文名 | 字段中文名 | 表英文名 |\n| APPLY_STATUS | 申请状态 | MC_BIRTH_APPLY |",
+      },
+    ],
+  };
+
+  const prompt = JSON.parse(buildApiDocExtractionUserPromptForTest(request));
+
+  assert.deepEqual(prompt.outputContract.topLevelKeys, [
+    "apiFields",
+    "businessConcepts",
+    "joinCandidates",
+    "errors",
+  ]);
+  assert.deepEqual(prompt.outputContract.apiFields.required, ["name", "meaning", "sectionId"]);
+  assert.deepEqual(prompt.outputContract.joinCandidates.required, [
+    "leftTable",
+    "leftColumns",
+    "rightTable",
+    "rightColumns",
+    "sectionId",
+  ]);
+  assert.match(prompt.outputContract.rules.join("\n"), /Top-level arrays must always be present/);
+  assert.match(prompt.outputExamples.apiFields[0].candidateColumn, /APPLY_STATUS/);
+});
+
+test("schema doc extraction batches sections and carries previous table context", () => {
+  const request: ApiDocExtractionRequest = {
+    sourceId: "api-doc:test",
+    sourcePath: "/docs/schema.md",
+    schema: "public",
+    sections: Array.from({ length: 7 }, (_, index) => ({
+      id: `api-doc:test#section-${index + 1}`,
+      titlePath: ["数据字典", `片段${index + 1}`],
+      text: `第 ${index + 1} 段字段说明`,
+    })),
+  };
+
+  const batches = buildApiDocExtractionBatchesForTest(request);
+
+  assert.deepEqual(
+    batches.map((batch) => batch.request.sections.map((section) => section.id)),
+    [
+      ["api-doc:test#section-1", "api-doc:test#section-2", "api-doc:test#section-3"],
+      ["api-doc:test#section-4", "api-doc:test#section-5", "api-doc:test#section-6"],
+      ["api-doc:test#section-7"],
+    ],
+  );
+  assert.deepEqual(batches.map((batch) => [batch.metadata.omittedBefore, batch.metadata.omittedAfter]), [
+    [false, true],
+    [true, true],
+    [true, false],
+  ]);
+
+  const prompt = JSON.parse(
+    buildApiDocExtractionUserPromptForTest(batches[1].request, {
+      ...batches[1].metadata,
+      previousContext: {
+        recentTables: ["public.mc_birth_apply"],
+        recentColumns: ["public.mc_birth_apply.apply_status"],
+      },
+    }),
+  );
+
+  assert.equal(prompt.batch.batchIndex, 2);
+  assert.equal(prompt.batch.batchCount, 3);
+  assert.equal(prompt.batch.totalSections, 7);
+  assert.equal(prompt.batch.omittedBefore, true);
+  assert.equal(prompt.batch.omittedAfter, true);
+  assert.deepEqual(prompt.previousContext.recentTables, ["public.mc_birth_apply"]);
+  assert.match(prompt.instructions.continuation, /previousContext/);
+  assert.match(prompt.instructions.outputCompaction, /Omit/i);
 });

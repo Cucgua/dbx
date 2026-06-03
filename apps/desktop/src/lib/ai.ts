@@ -16,11 +16,7 @@ import { resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import { aiTableMentionKey, type AiTableMention } from "@/lib/aiTableMentions";
 import { aiSkillForAction } from "@/lib/aiSkills";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
-import {
-  createAiWorkflowEvent,
-  type AiWorkflowEvent,
-  type AiWorkflowEventInput,
-} from "@/lib/aiWorkflowEvents";
+import { createAiWorkflowEvent, type AiWorkflowEvent, type AiWorkflowEventInput } from "@/lib/aiWorkflowEvents";
 import {
   formatSchemaResearchTaskResultForPrompt,
   normalizeSchemaResearchTaskResult,
@@ -522,7 +518,9 @@ async function runAiToolLoop(
         type: "node.update",
         nodeId: mainNodeId,
         status: "loading",
-        description: isZh ? `主模型正在决定下一步（第 ${round + 1} 轮）` : `Main model is deciding the next step (round ${round + 1})`,
+        description: isZh
+          ? `主模型正在决定下一步（第 ${round + 1} 轮）`
+          : `Main model is deciding the next step (round ${round + 1})`,
       });
     }
     const response = await runRawChatForToolLoop(
@@ -546,7 +544,8 @@ async function runAiToolLoop(
     messages.push(assistantMessage);
     const reasoningContent = response.__reasoningStreamed ? "" : rawMessageReasoningContent(response.rawMessage);
     if (reasoningContent) {
-      if (mainNodeId) emitAiWorkflowEvent(onEvent, { type: "node.delta", nodeId: mainNodeId, delta: `${reasoningContent}\n\n` });
+      if (mainNodeId)
+        emitAiWorkflowEvent(onEvent, { type: "node.delta", nodeId: mainNodeId, delta: `${reasoningContent}\n\n` });
       onReasoningDelta?.(`${reasoningContent}\n\n`);
     }
     if (!response.toolCalls.length) {
@@ -706,7 +705,8 @@ async function runRawChatForToolLoop(
           type: "node.update",
           nodeId: hooks.mainNodeId || sid,
           status: "loading",
-          description: currentLocale() === "zh-CN" ? "模型正在准备工具调用参数" : "Model is preparing tool-call arguments",
+          description:
+            currentLocale() === "zh-CN" ? "模型正在准备工具调用参数" : "Model is preparing tool-call arguments",
         });
       }
       if (chunk.delta && canStreamContentLive && !sawToolCall) {
@@ -742,27 +742,60 @@ function supportsDeepSeekRawChatStream(config: AiConfig): boolean {
   return config.provider === "deepseek" && config.apiStyle === "completions";
 }
 
+const API_DOC_EXTRACTION_SECTIONS_PER_BATCH = 3;
+
+interface ApiDocExtractionBatchMetadata {
+  batchIndex: number;
+  batchCount: number;
+  totalSections: number;
+  omittedBefore: boolean;
+  omittedAfter: boolean;
+  previousContext?: ApiDocExtractionContinuationContext;
+}
+
+interface ApiDocExtractionContinuationContext {
+  recentTables: string[];
+  recentColumns: string[];
+}
+
 function buildApiDocExtractionSystemPrompt(): string {
   const isZh = currentLocale() === "zh-CN";
   return isZh
     ? [
-        "你是 DBX API 文档 GraphRAG 抽取子任务模型。只输出 JSON，不要 Markdown。",
+        "你是 DBX 表结构/数据字典参考文档 GraphRAG 抽取子任务模型。只输出 JSON 对象，不要 Markdown。",
+        "用户文档可能是表结构文档、数据字典、字段说明、业务口径说明、Word/PDF 转 Markdown 后的随意表格，或任何跟数据库表、字段、关系有关的参考文档。",
         "你只能从用户提供的 Markdown 章节中抽取事实，不能标记 verified，不能编造文档里没有的表名或字段名。",
-        "如果文档只说明接口字段含义，没有数据库映射，就保留接口字段并让 candidateTable/candidateColumn 为 null。",
+        "如果文档只说明中文业务含义，没有明确英文表名或字段名，就保留业务词并让 candidateTable/candidateColumn 为 null。",
+        "如果当前批次开头缺少表名/表上下文，但 previousContext 提供了最近表名，并且当前字段明显延续上一批表格，可使用 previousContext 的表名作为 candidateTable。",
+        "尽量识别随意表格里的列含义，例如表中文名、表英文名、字段中文名、字段英文名、字段说明、数据类型、主键、外键、关联表。",
         "多字段关联必须使用 leftColumns/rightColumns 数组，左右数量必须一致。",
-        "输出 JSON 结构：{\"apiFields\":[],\"businessConcepts\":[],\"joinCandidates\":[],\"errors\":[]}",
+        "顶层 apiFields、businessConcepts、joinCandidates、errors 四个数组必须永远存在，即使为空数组。",
+        "数组元素只能使用用户提示 outputContract 中列出的字段；不要自创字段名，不要输出尾逗号或相邻对象漏逗号。",
+        "sectionId 必须来自输入 sections[].id；candidateTable/candidateColumn 必须保留文档中的原始英文标识，不要翻译或改写大小写。",
+        "输出必须精简：没有值的 key 不要输出；不要输出 null、空字符串、空数组字段；只保留必要字段。",
+        '输出 JSON 结构：{"apiFields":[],"businessConcepts":[],"joinCandidates":[],"errors":[]}',
       ].join("\n")
     : [
-        "You are the DBX API document GraphRAG extraction subtask model. Output JSON only, no Markdown.",
+        "You are the DBX table schema/data-dictionary reference document GraphRAG extraction subtask model. Output one JSON object only, no Markdown.",
+        "The document may be a schema document, data dictionary, column description sheet, business-rule note, Word/PDF-to-Markdown table, or any informal reference about database tables, columns, and relationships.",
         "Extract facts only from the supplied Markdown sections. Do not mark facts verified and do not invent table or column names absent from the document.",
-        "If the document gives only API field meaning without DB mapping, keep the API field and set candidateTable/candidateColumn to null.",
+        "If the document gives only business meaning without an explicit English table or column name, keep the business term and set candidateTable/candidateColumn to null.",
+        "If the current batch starts without table context but previousContext contains recent tables, and the fields clearly continue the previous table, use that table as candidateTable.",
+        "Recognize informal table columns such as Chinese table name, English table name, Chinese column name, English column name, description, data type, primary key, foreign key, and related table.",
         "Multi-column relationships must use leftColumns/rightColumns arrays with equal length.",
-        "Output JSON shape: {\"apiFields\":[],\"businessConcepts\":[],\"joinCandidates\":[],\"errors\":[]}",
+        "Top-level apiFields, businessConcepts, joinCandidates, and errors arrays must always be present, even when empty.",
+        "Array items may only use fields listed in outputContract. Do not invent field names, trailing commas, or adjacent objects without commas.",
+        "sectionId must come from input sections[].id. candidateTable/candidateColumn must preserve the original documented English identifiers without translation or case rewriting.",
+        "Keep output compact: omit keys with no value; do not emit null, empty string, or empty array properties; keep only necessary keys.",
+        'Output JSON shape: {"apiFields":[],"businessConcepts":[],"joinCandidates":[],"errors":[]}',
       ].join("\n");
 }
 
-function buildApiDocExtractionUserPrompt(request: ApiDocExtractionRequest): string {
-  const sections = request.sections.slice(0, 40).map((section) => ({
+function buildApiDocExtractionUserPrompt(
+  request: ApiDocExtractionRequest,
+  metadata: ApiDocExtractionBatchMetadata = apiDocSingleBatchMetadata(request),
+): string {
+  const sections = request.sections.map((section) => ({
     id: section.id,
     titlePath: section.titlePath,
     text: section.text,
@@ -772,19 +805,220 @@ function buildApiDocExtractionUserPrompt(request: ApiDocExtractionRequest): stri
       sourceId: request.sourceId,
       sourcePath: request.sourcePath,
       schema: request.schema,
+      batch: {
+        batchIndex: metadata.batchIndex,
+        batchCount: metadata.batchCount,
+        totalSections: metadata.totalSections,
+        omittedBefore: metadata.omittedBefore,
+        omittedAfter: metadata.omittedAfter,
+        note:
+          metadata.omittedBefore || metadata.omittedAfter
+            ? "This prompt contains only a slice of the full document. Do not infer facts from omitted chunks."
+            : "This prompt contains the full extraction slice for this document.",
+      },
+      previousContext: metadata.previousContext || { recentTables: [], recentColumns: [] },
       instructions: {
         apiFields:
-          "Return API request/response fields with meaning and optional candidateTable/candidateColumn if the document states or strongly implies a database mapping.",
+          "Return documented table/column fields with meaning and optional candidateTable/candidateColumn if the document states or strongly implies a database mapping.",
         businessConcepts:
-          "Return business terms or entities that may map to a table or column. Do not invent targets.",
-        joinCandidates:
-          "Return candidate table relationships only when the document contains evidence for both sides.",
+          "Return business terms, Chinese table names, or entities that may map to a table or column. Do not invent targets.",
+        joinCandidates: "Return candidate table relationships only when the document contains evidence for both sides.",
+        continuation:
+          "If this batch begins in the middle of a table and lacks table headers, inspect previousContext. Use previousContext only when the current fields clearly continue that same table.",
+        outputCompaction:
+          "Omit candidateSchema/candidateTable/candidateColumn/confidence/evidence/sectionId and any other optional key when there is no concrete value. Never output null or empty-string keys.",
+      },
+      outputContract: {
+        topLevelKeys: ["apiFields", "businessConcepts", "joinCandidates", "errors"],
+        apiFields: {
+          required: ["name", "meaning", "sectionId"],
+          optional: ["candidateSchema", "candidateTable", "candidateColumn", "confidence", "evidence"],
+          item: {
+            name: "Documented field name or business-facing field label. Prefer the explicit English column identifier when present.",
+            meaning: "Chinese/English business meaning, field comment, or concise description from the document.",
+            sectionId: "One of sections[].id from this prompt.",
+            candidateSchema: "Only when the document explicitly states a schema.",
+            candidateTable: "Original documented table identifier, for example MC_BIRTH_APPLY.",
+            candidateColumn: "Original documented column identifier, for example APPLY_STATUS.",
+            confidence: "Number from 0 to 1. Omit if unsure.",
+            evidence: "Short source phrase from the section. Omit if it would be empty.",
+          },
+        },
+        businessConcepts: {
+          required: ["term", "description", "sectionId"],
+          optional: ["candidateSchema", "candidateTable", "candidateColumn", "confidence", "evidence"],
+          item: {
+            term: "Business term, Chinese table name, entity name, metric name, or informal field/table label.",
+            description: "Meaning or business rule stated by the document.",
+            sectionId: "One of sections[].id from this prompt.",
+            candidateSchema: "Only when explicitly stated.",
+            candidateTable:
+              "Mapped table identifier only when stated or strongly implied by the same table row/header.",
+            candidateColumn:
+              "Mapped column identifier only when stated or strongly implied by the same table row/header.",
+            confidence: "Number from 0 to 1. Omit if unsure.",
+            evidence: "Short source phrase from the section. Omit if it would be empty.",
+          },
+        },
+        joinCandidates: {
+          required: ["leftTable", "leftColumns", "rightTable", "rightColumns", "sectionId"],
+          optional: ["leftSchema", "rightSchema", "relation", "confidence", "evidence"],
+          item: {
+            leftTable: "Original documented left/source table identifier.",
+            leftColumns: "Array of one or more documented left/source column identifiers.",
+            rightTable: "Original documented right/target table identifier.",
+            rightColumns:
+              "Array of one or more documented right/target column identifiers. Length must equal leftColumns length.",
+            sectionId: "One of sections[].id from this prompt.",
+            leftSchema: "Only when explicitly stated.",
+            rightSchema: "Only when explicitly stated.",
+            relation:
+              "Short relationship description, for example foreign_key, parent_child, lookup, same_business_key.",
+            confidence: "Number from 0 to 1. Omit if unsure.",
+            evidence: "Short source phrase from the section. Omit if it would be empty.",
+          },
+        },
+        errors: {
+          item: "Short string only for extraction warnings, truncation uncertainty, or document ambiguity. Use [] when there is no warning.",
+        },
+        rules: [
+          "Return exactly one valid JSON object and no Markdown fence.",
+          "Top-level arrays must always be present: apiFields, businessConcepts, joinCandidates, errors.",
+          "Do not output id, sourceId, extractedAt, status, verified, candidate, null, undefined, empty string, or empty optional arrays.",
+          "Do not output optional keys when their values are unknown.",
+          "Do not invent table or column identifiers that are absent from the supplied sections or previousContext continuation.",
+          "Before final output, mentally validate that JSON.parse(output) would succeed: every array element must be comma-separated and there must be no trailing commas.",
+        ],
+      },
+      outputExamples: {
+        apiFields: [
+          {
+            name: "APPLY_STATUS",
+            meaning: "申请状态",
+            sectionId: sections[0]?.id || "section-id-from-input",
+            candidateTable: "MC_BIRTH_APPLY",
+            candidateColumn: "APPLY_STATUS",
+            confidence: 0.86,
+            evidence: "字段英文名 APPLY_STATUS，字段中文名 申请状态，表英文名 MC_BIRTH_APPLY",
+          },
+        ],
+        businessConcepts: [
+          {
+            term: "出生证申请表",
+            description: "出生证申请相关业务表",
+            sectionId: sections[0]?.id || "section-id-from-input",
+            candidateTable: "MC_BIRTH_APPLY",
+            confidence: 0.82,
+            evidence: "表中文名 出生证申请表，表英文名 MC_BIRTH_APPLY",
+          },
+        ],
+        joinCandidates: [
+          {
+            leftTable: "MC_BIRTH_APPLY",
+            leftColumns: ["MOTHER_ID", "CHILD_ID"],
+            rightTable: "MC_BIRTH_CHILD",
+            rightColumns: ["MOTHER_ID", "CHILD_ID"],
+            sectionId: sections[0]?.id || "section-id-from-input",
+            relation: "same_business_key",
+            confidence: 0.78,
+            evidence: "MOTHER_ID + CHILD_ID 关联出生证申请与儿童信息",
+          },
+        ],
+        errors: [],
       },
       sections,
     },
     null,
     2,
   );
+}
+
+function apiDocSingleBatchMetadata(request: ApiDocExtractionRequest): ApiDocExtractionBatchMetadata {
+  return {
+    batchIndex: 1,
+    batchCount: 1,
+    totalSections: request.sections.length,
+    omittedBefore: false,
+    omittedAfter: false,
+  };
+}
+
+function buildApiDocExtractionBatches(request: ApiDocExtractionRequest): Array<{
+  request: ApiDocExtractionRequest;
+  metadata: ApiDocExtractionBatchMetadata;
+}> {
+  const batchCount = Math.max(1, Math.ceil(request.sections.length / API_DOC_EXTRACTION_SECTIONS_PER_BATCH));
+  const batches: Array<{ request: ApiDocExtractionRequest; metadata: ApiDocExtractionBatchMetadata }> = [];
+  for (let start = 0; start < request.sections.length; start += API_DOC_EXTRACTION_SECTIONS_PER_BATCH) {
+    const sections = request.sections.slice(start, start + API_DOC_EXTRACTION_SECTIONS_PER_BATCH);
+    const batchIndex = batches.length + 1;
+    batches.push({
+      request: { ...request, sections },
+      metadata: {
+        batchIndex,
+        batchCount,
+        totalSections: request.sections.length,
+        omittedBefore: start > 0,
+        omittedAfter: start + sections.length < request.sections.length,
+      },
+    });
+  }
+  if (!batches.length) {
+    batches.push({
+      request: { ...request, sections: [] },
+      metadata: apiDocSingleBatchMetadata(request),
+    });
+  }
+  return batches;
+}
+
+export function buildApiDocExtractionBatchesForTest(request: ApiDocExtractionRequest) {
+  return buildApiDocExtractionBatches(request);
+}
+
+export function buildApiDocExtractionUserPromptForTest(
+  request: ApiDocExtractionRequest,
+  metadata?: ApiDocExtractionBatchMetadata,
+): string {
+  return buildApiDocExtractionUserPrompt(request, metadata);
+}
+
+function buildApiDocExtractionJsonRepairSystemPrompt(): string {
+  const isZh = currentLocale() === "zh-CN";
+  return isZh
+    ? [
+        "你是 JSON 格式修复器。只输出合法 JSON 对象，不要 Markdown，不要解释。",
+        "只能修复语法格式，不能新增、删除或改写事实。",
+        '输出结构必须仍然是：{"apiFields":[],"businessConcepts":[],"joinCandidates":[],"errors":[]}',
+      ].join("\n")
+    : [
+        "You are a JSON syntax repair tool. Output one valid JSON object only. No Markdown and no explanation.",
+        "Repair syntax only. Do not add, remove, or rewrite factual content.",
+        'The output shape must remain: {"apiFields":[],"businessConcepts":[],"joinCandidates":[],"errors":[]}',
+      ].join("\n");
+}
+
+function buildApiDocExtractionJsonRepairPrompt(content: string, parseError: unknown): string {
+  const isZh = currentLocale() === "zh-CN";
+  const errorMessage = errorMessageText(parseError);
+  const clippedContent = clipTextMiddle(content, 24000);
+  return isZh
+    ? [
+        "下面是一次表结构/数据字典参考文档 GraphRAG 抽取的模型输出，但它不是合法 JSON。",
+        "请只修复 JSON 语法错误，保留原有事实、字段名、表名、证据和数组内容。",
+        "不要输出 Markdown 代码块，不要输出解释文字。",
+        `解析错误：${errorMessage || "unknown"}`,
+        "原始输出：",
+        clippedContent,
+      ].join("\n")
+    : [
+        "The following table schema/data-dictionary reference document GraphRAG extraction output is not valid JSON.",
+        "Repair JSON syntax only while preserving the original facts, field names, table names, evidence, and arrays.",
+        "Do not output Markdown fences and do not add explanatory text.",
+        `Parse error: ${errorMessage || "unknown"}`,
+        "Original output:",
+        clippedContent,
+      ].join("\n");
 }
 
 function normalizeApiDocExtractionResponse(
@@ -824,7 +1058,9 @@ function normalizeApiFieldFacts(
       const sectionId = normalizeExtractionSectionId(request, data.sectionId);
       if (!name || !sectionId) return null;
       const fact: SchemaRagApiFieldFact = {
-        id: optionalToolString(data.id) || `api-field:${request.sourceId}:${index + 1}:${hashLite(`${name}:${extractedAt}`)}`,
+        id:
+          optionalToolString(data.id) ||
+          `api-field:${request.sourceId}:${index + 1}:${hashLite(`${name}:${extractedAt}`)}`,
         sourceId: request.sourceId,
         sectionId,
         name,
@@ -855,7 +1091,9 @@ function normalizeBusinessConceptFacts(
       const sectionId = normalizeExtractionSectionId(request, data.sectionId);
       if (!term || !sectionId) return null;
       const fact: SchemaRagBusinessConceptFact = {
-        id: optionalToolString(data.id) || `api-concept:${request.sourceId}:${index + 1}:${hashLite(`${term}:${extractedAt}`)}`,
+        id:
+          optionalToolString(data.id) ||
+          `api-concept:${request.sourceId}:${index + 1}:${hashLite(`${term}:${extractedAt}`)}`,
         sourceId: request.sourceId,
         sectionId,
         term,
@@ -940,18 +1178,57 @@ function parseJsonObjectFromText(text: string): Record<string, any> {
   const trimmed = text.trim();
   if (!trimmed) return {};
   try {
-    return JSON.parse(trimmed);
-  } catch {
+    return assertJsonObject(JSON.parse(trimmed));
+  } catch (fullTextError) {
     const match = /\{[\s\S]*\}/.exec(trimmed);
-    if (!match) return {};
-    return JSON.parse(match[0]);
+    if (!match) throw fullTextError;
+    return assertJsonObject(JSON.parse(match[0]));
   }
+}
+
+export function parseApiDocExtractionJsonForTest(text: string): Record<string, any> {
+  return parseJsonObjectFromText(text);
+}
+
+type SchemaDocRawChatDebugLabel = "schema-doc-extraction" | "schema-doc-json-repair";
+
+function schemaDocRawChatOptions(
+  config: AiConfig,
+  debugLabel: SchemaDocRawChatDebugLabel = "schema-doc-extraction",
+): Pick<api.AiRawChatRequest, "debugLabel" | "responseFormat"> {
+  return {
+    debugLabel,
+    responseFormat: config.provider === "deepseek" ? { type: "json_object" } : undefined,
+  };
+}
+
+export function schemaDocRawChatOptionsForTest(
+  config: AiConfig,
+): Pick<api.AiRawChatRequest, "debugLabel" | "responseFormat"> {
+  return schemaDocRawChatOptions(config);
+}
+
+function assertJsonObject(value: unknown): Record<string, any> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Expected a JSON object.");
+  }
+  return value as Record<string, any>;
 }
 
 function rawMessageContent(rawMessage: unknown): string {
   if (!rawMessage || typeof rawMessage !== "object") return "";
   const content = (rawMessage as Record<string, unknown>).content;
   return typeof content === "string" ? content : "";
+}
+
+function errorMessageText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || "");
+}
+
+function clipTextMiddle(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const half = Math.floor(maxChars / 2);
+  return `${text.slice(0, half)}\n... DBX_JSON_REPAIR_INPUT_TRUNCATED ...\n${text.slice(-half)}`;
 }
 
 function hashLite(value: string): string {
@@ -974,19 +1251,194 @@ export async function extractApiDocGraphFactsWithSchemaResearch(
   if (!supportsSchemaResearchModel(researchSettings.config)) {
     throw new Error("Schema Research API doc extraction requires a /chat/completions-compatible provider.");
   }
+  const batches = buildApiDocExtractionBatches(request);
+  const batchExtractions: SchemaRagApiDocExtraction[] = [];
+  let previousContext: ApiDocExtractionContinuationContext = { recentTables: [], recentColumns: [] };
+
+  for (const batch of batches) {
+    const extraction = await extractApiDocGraphFactsBatchWithSchemaResearch(researchSettings, batch.request, {
+      ...batch.metadata,
+      previousContext,
+    });
+    batchExtractions.push(extraction);
+    previousContext = summarizeApiDocExtractionContinuationContext(batchExtractions);
+  }
+
+  return mergeApiDocExtractionBatches(request, batchExtractions);
+}
+
+async function extractApiDocGraphFactsBatchWithSchemaResearch(
+  researchSettings: ResolvedSchemaResearchSettings,
+  request: ApiDocExtractionRequest,
+  metadata: ApiDocExtractionBatchMetadata,
+): Promise<SchemaRagApiDocExtraction> {
   const response = await runRawChatForToolLoop(
     {
       config: researchSettings.config,
       systemPrompt: buildApiDocExtractionSystemPrompt(),
-      messages: [{ role: "user", content: buildApiDocExtractionUserPrompt(request) }],
+      messages: [{ role: "user", content: buildApiDocExtractionUserPrompt(request, metadata) }],
       tools: [],
       toolChoice: "none",
-      maxTokens: Math.min(researchSettings.maxOutputTokens, 4096),
+      maxTokens: researchSettings.maxOutputTokens,
       temperature: 0,
+      ...schemaDocRawChatOptions(researchSettings.config),
     },
     {},
   );
-  return normalizeApiDocExtractionResponse(request, response.content || rawMessageContent(response.rawMessage));
+  const content = response.content || rawMessageContent(response.rawMessage);
+  try {
+    return normalizeApiDocExtractionResponse(request, content);
+  } catch (parseError) {
+    const repairedContent = await repairApiDocExtractionJson(researchSettings, content, parseError);
+    try {
+      return normalizeApiDocExtractionResponse(request, repairedContent);
+    } catch (repairError) {
+      const originalMessage = errorMessageText(parseError);
+      const repairMessage = errorMessageText(repairError);
+      throw new Error(
+        `API document extraction returned invalid JSON${originalMessage ? `: ${originalMessage}` : ""}. JSON repair failed${
+          repairMessage ? `: ${repairMessage}` : ""
+        }`,
+      );
+    }
+  }
+}
+
+function mergeApiDocExtractionBatches(
+  request: ApiDocExtractionRequest,
+  extractions: SchemaRagApiDocExtraction[],
+): SchemaRagApiDocExtraction {
+  const extractedAt = new Date().toISOString();
+  const apiFields = uniqueBy(
+    extractions.flatMap((extraction) => extraction.apiFields),
+    (fact) =>
+      [
+        fact.sectionId,
+        fact.name,
+        fact.candidateSchema || "",
+        fact.candidateTable || "",
+        fact.candidateColumn || "",
+        fact.meaning,
+      ].join("\u0001"),
+  );
+  const businessConcepts = uniqueBy(
+    extractions.flatMap((extraction) => extraction.businessConcepts),
+    (fact) =>
+      [
+        fact.sectionId,
+        fact.term,
+        fact.candidateSchema || "",
+        fact.candidateTable || "",
+        fact.candidateColumn || "",
+        fact.description,
+      ].join("\u0001"),
+  );
+  const joinCandidates = uniqueBy(
+    extractions.flatMap((extraction) => extraction.joinCandidates),
+    (fact) =>
+      [
+        fact.sectionId,
+        fact.leftSchema,
+        fact.leftTable,
+        fact.leftColumns.join(","),
+        fact.rightSchema,
+        fact.rightTable,
+        fact.rightColumns.join(","),
+        fact.relation,
+      ].join("\u0001"),
+  );
+  const errors = extractions.flatMap((extraction) => extraction.errors).filter(Boolean);
+  return {
+    sourceId: request.sourceId,
+    extractedAt,
+    status: summarizeFrontendExtractionStatus(apiFields, businessConcepts, joinCandidates, errors),
+    apiFields,
+    businessConcepts,
+    joinCandidates,
+    errors,
+  };
+}
+
+function summarizeApiDocExtractionContinuationContext(
+  extractions: SchemaRagApiDocExtraction[],
+): ApiDocExtractionContinuationContext {
+  const recentTables: string[] = [];
+  const recentColumns: string[] = [];
+  for (const extraction of extractions.slice(-2)) {
+    for (const fact of extraction.apiFields) {
+      if (fact.candidateTable) {
+        pushRecentUnique(recentTables, tableRef(fact.candidateSchema, fact.candidateTable));
+      }
+      if (fact.candidateTable && fact.candidateColumn) {
+        pushRecentUnique(recentColumns, columnRef(fact.candidateSchema, fact.candidateTable, fact.candidateColumn));
+      }
+    }
+    for (const fact of extraction.businessConcepts) {
+      if (fact.candidateTable) {
+        pushRecentUnique(recentTables, tableRef(fact.candidateSchema, fact.candidateTable));
+      }
+      if (fact.candidateTable && fact.candidateColumn) {
+        pushRecentUnique(recentColumns, columnRef(fact.candidateSchema, fact.candidateTable, fact.candidateColumn));
+      }
+    }
+    for (const fact of extraction.joinCandidates) {
+      pushRecentUnique(recentTables, tableRef(fact.leftSchema, fact.leftTable));
+      pushRecentUnique(recentTables, tableRef(fact.rightSchema, fact.rightTable));
+    }
+  }
+  return {
+    recentTables: recentTables.slice(-8),
+    recentColumns: recentColumns.slice(-12),
+  };
+}
+
+function tableRef(schema: string | null | undefined, table: string): string {
+  return schema ? `${schema}.${table}` : table;
+}
+
+function columnRef(schema: string | null | undefined, table: string, column: string): string {
+  return `${tableRef(schema, table)}.${column}`;
+}
+
+function pushRecentUnique(values: string[], value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return;
+  const existing = values.findIndex((item) => item.toLowerCase() === trimmed.toLowerCase());
+  if (existing >= 0) values.splice(existing, 1);
+  values.push(trimmed);
+}
+
+function uniqueBy<T>(items: T[], keyOf: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
+async function repairApiDocExtractionJson(
+  researchSettings: ResolvedSchemaResearchSettings,
+  content: string,
+  parseError: unknown,
+): Promise<string> {
+  const response = await runRawChatForToolLoop(
+    {
+      config: researchSettings.config,
+      systemPrompt: buildApiDocExtractionJsonRepairSystemPrompt(),
+      messages: [{ role: "user", content: buildApiDocExtractionJsonRepairPrompt(content, parseError) }],
+      tools: [],
+      toolChoice: "none",
+      maxTokens: researchSettings.maxOutputTokens,
+      temperature: 0,
+      ...schemaDocRawChatOptions(researchSettings.config, "schema-doc-json-repair"),
+    },
+    {},
+  );
+  return response.content || rawMessageContent(response.rawMessage);
 }
 
 function rawMessageReasoningContent(rawMessage: unknown): string {
@@ -1163,14 +1615,18 @@ function formatSchemaToolResultSummary(name: string, output: unknown, isZh: bool
       .map((table) => [table.schema, table.name].filter(Boolean).join("."))
       .filter(Boolean)
       .join(", ");
-    return isZh ? `${tables.length} 张表${names ? `：${names}` : ""}` : `${tables.length} table(s)${names ? `: ${names}` : ""}`;
+    return isZh
+      ? `${tables.length} 张表${names ? `：${names}` : ""}`
+      : `${tables.length} table(s)${names ? `: ${names}` : ""}`;
   }
   if (name === "dbx_list_tables") {
     const tables = Array.isArray(data.tables) ? data.tables : [];
     const totalMatched = Number.isFinite(Number(data.totalMatched)) ? Number(data.totalMatched) : tables.length;
     const truncated = data.truncated === true && totalMatched > tables.length;
     if (truncated) {
-      return isZh ? `${tables.length}/${totalMatched} 张表，已截断` : `${tables.length}/${totalMatched} table(s), truncated`;
+      return isZh
+        ? `${tables.length}/${totalMatched} 张表，已截断`
+        : `${tables.length}/${totalMatched} table(s), truncated`;
     }
     return isZh ? `${tables.length} 张表` : `${tables.length} table(s)`;
   }
@@ -1215,7 +1671,8 @@ function formatSchemaToolResultSummary(name: string, output: unknown, isZh: bool
   if (name === "dbx_request_column_choice") {
     if (data.cancelled) return isZh ? "字段选择已取消" : "Column choice cancelled";
     const columns = Array.isArray(data.selectedColumns) ? data.selectedColumns : [];
-    if (data.confirmed) return isZh ? `用户选择 ${columns.length} 个字段` : `${columns.length} column(s) selected by user`;
+    if (data.confirmed)
+      return isZh ? `用户选择 ${columns.length} 个字段` : `${columns.length} column(s) selected by user`;
     return isZh ? "用户跳过字段选择" : "Column choice skipped";
   }
   if (name === "dbx_save_schema_enrichment") {
@@ -1273,7 +1730,10 @@ function userChoiceSchemaToolTitle(name: string, isZh: boolean): string {
   return isZh ? "等待用户确认关系" : "Waiting for relation confirmation";
 }
 
-function userChoiceSchemaToolResultStatus(status: AiToolTrace["status"], output: unknown): "success" | "error" | "abort" {
+function userChoiceSchemaToolResultStatus(
+  status: AiToolTrace["status"],
+  output: unknown,
+): "success" | "error" | "abort" {
   if (status === "error") return "error";
   if (output && typeof output === "object" && (output as Record<string, any>).cancelled === true) return "abort";
   return "success";
@@ -1400,7 +1860,10 @@ export function buildSchemaResearchEvidenceGateInstruction(
         .join("\n");
 }
 
-function buildSchemaResearchEvidenceGateFallbackResponse(gate: SchemaResearchEvidenceGate | undefined, isZh: boolean): string {
+function buildSchemaResearchEvidenceGateFallbackResponse(
+  gate: SchemaResearchEvidenceGate | undefined,
+  isZh: boolean,
+): string {
   if (!gate) return "";
   const uncertaintyText = formatSchemaResearchGateUncertainties(gate, isZh);
   if (isZh) {
@@ -1577,7 +2040,9 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             knownContext: {
               type: "object",
-              description: isZh ? "主模型已经知道但仍需子任务参考的上下文。" : "Context already known by the main model.",
+              description: isZh
+                ? "主模型已经知道但仍需子任务参考的上下文。"
+                : "Context already known by the main model.",
               properties: {
                 currentSql: { type: "string", description: isZh ? "当前 SQL，可为空。" : "Current SQL, optional." },
                 mentionedTables: {
@@ -1666,7 +2131,9 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
           properties: {
             schema: {
               type: "string",
-              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
+              description: isZh
+                ? "Schema 名称。省略时使用当前 schema。"
+                : "Schema name. Defaults to the current schema.",
             },
             keyword: {
               type: "string",
@@ -1698,7 +2165,9 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             schema: {
               type: "string",
-              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
+              description: isZh
+                ? "Schema 名称。省略时使用当前 schema。"
+                : "Schema name. Defaults to the current schema.",
             },
             limit: {
               type: "integer",
@@ -1731,11 +2200,15 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             allowManual: {
               type: "boolean",
-              description: isZh ? "是否允许用户选择都不是并手动输入表名。" : "Whether the user may choose none and manually enter a table.",
+              description: isZh
+                ? "是否允许用户选择都不是并手动输入表名。"
+                : "Whether the user may choose none and manually enter a table.",
             },
             candidates: {
               type: "array",
-              description: isZh ? "候选表列表，必须来自已有工具结果。" : "Candidate tables, all from previous tool results.",
+              description: isZh
+                ? "候选表列表，必须来自已有工具结果。"
+                : "Candidate tables, all from previous tool results.",
               items: {
                 type: "object",
                 properties: {
@@ -1766,9 +2239,14 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
           properties: {
             schema: {
               type: "string",
-              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
+              description: isZh
+                ? "Schema 名称。省略时使用当前 schema。"
+                : "Schema name. Defaults to the current schema.",
             },
-            table: { type: "string", description: isZh ? "已确认或候选的表名。" : "Confirmed or candidate table name." },
+            table: {
+              type: "string",
+              description: isZh ? "已确认或候选的表名。" : "Confirmed or candidate table name.",
+            },
             query: {
               type: "string",
               description: isZh
@@ -1804,7 +2282,9 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
           properties: {
             schema: {
               type: "string",
-              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
+              description: isZh
+                ? "Schema 名称。省略时使用当前 schema。"
+                : "Schema name. Defaults to the current schema.",
             },
             table: { type: "string", description: isZh ? "表名。" : "Table name." },
             columns: {
@@ -1864,18 +2344,25 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             allowManual: {
               type: "boolean",
-              description: isZh ? "是否允许用户选择都不是并手动输入字段名。" : "Whether the user may choose none and manually enter columns.",
+              description: isZh
+                ? "是否允许用户选择都不是并手动输入字段名。"
+                : "Whether the user may choose none and manually enter columns.",
             },
             candidates: {
               type: "array",
-              description: isZh ? "候选字段列表，必须来自已有工具结果。" : "Candidate columns, all from previous tool results.",
+              description: isZh
+                ? "候选字段列表，必须来自已有工具结果。"
+                : "Candidate columns, all from previous tool results.",
               items: {
                 type: "object",
                 properties: {
                   column: { type: "string", description: isZh ? "字段名。" : "Column name." },
                   dataType: { type: "string", description: isZh ? "字段类型。" : "Column data type." },
                   nullable: { type: "boolean", description: isZh ? "是否可空。" : "Whether the column is nullable." },
-                  primaryKey: { type: "boolean", description: isZh ? "是否主键。" : "Whether the column is a primary key." },
+                  primaryKey: {
+                    type: "boolean",
+                    description: isZh ? "是否主键。" : "Whether the column is a primary key.",
+                  },
                   comment: { type: "string", description: isZh ? "字段注释。" : "Column comment." },
                   score: { type: "number", description: isZh ? "候选分数。" : "Candidate score." },
                   reason: { type: "string", description: isZh ? "候选原因。" : "Candidate reason." },
@@ -1900,7 +2387,9 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
           properties: {
             schema: {
               type: "string",
-              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
+              description: isZh
+                ? "Schema 名称。省略时使用当前 schema。"
+                : "Schema name. Defaults to the current schema.",
             },
             table: { type: "string", description: isZh ? "表名。" : "Table name." },
           },
@@ -1926,7 +2415,15 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
                 properties: {
                   kind: {
                     type: "string",
-                    enum: ["table", "column", "api_doc_source", "api_doc_section", "api_field", "business_concept", "join_candidate"],
+                    enum: [
+                      "table",
+                      "column",
+                      "api_doc_source",
+                      "api_doc_section",
+                      "api_field",
+                      "business_concept",
+                      "join_candidate",
+                    ],
                   },
                   id: {
                     type: "string",
@@ -1993,16 +2490,22 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
                   },
                   schema: {
                     type: "string",
-                    description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to current schema.",
+                    description: isZh
+                      ? "Schema 名称。省略时使用当前 schema。"
+                      : "Schema name. Defaults to current schema.",
                   },
                   table: { type: "string", description: isZh ? "目标表名。" : "Target table name." },
                   column: {
                     type: "string",
-                    description: isZh ? "目标字段名。targetKind 为 column 时必填。" : "Target column name. Required for targetKind=column.",
+                    description: isZh
+                      ? "目标字段名。targetKind 为 column 时必填。"
+                      : "Target column name. Required for targetKind=column.",
                   },
                   note: {
                     type: "string",
-                    description: isZh ? "可选备注，说明确认来源或业务含义。" : "Optional note about the confirmation or business meaning.",
+                    description: isZh
+                      ? "可选备注，说明确认来源或业务含义。"
+                      : "Optional note about the confirmation or business meaning.",
                   },
                 },
                 required: ["term", "targetKind", "table"],
@@ -2206,7 +2709,9 @@ async function runSchemaResearchSubtask(
       },
     );
     messages.push(normalizeRawAssistantMessage(response.rawMessage, response.content, response.toolCalls));
-    const reasoningContent = supportsDeepSeekRawChatStream(researchSettings.config) ? "" : rawMessageReasoningContent(response.rawMessage);
+    const reasoningContent = supportsDeepSeekRawChatStream(researchSettings.config)
+      ? ""
+      : rawMessageReasoningContent(response.rawMessage);
     if (reasoningContent) {
       emitAiWorkflowEvent(hooks?.onEvent, {
         type: "node.delta",
@@ -2406,7 +2911,8 @@ function buildSchemaResearchSystemPrompt(
   limits: SchemaResearchResultLimits,
 ): string {
   const isZh = currentLocale() === "zh-CN";
-  const constraints = args.constraints && typeof args.constraints === "object" ? (args.constraints as Record<string, unknown>) : {};
+  const constraints =
+    args.constraints && typeof args.constraints === "object" ? (args.constraints as Record<string, unknown>) : {};
   const requireRelations = constraints.requireRelations === true;
   const allowUserChoice = constraints.allowUserChoice === true;
   const jsonContract = schemaResearchJsonContract(limits);
@@ -2445,7 +2951,9 @@ function buildSchemaResearchSystemPrompt(
           : "If candidates remain ambiguous, return status=partial rather than pretending certainty.",
         "Do not call user-choice tools, do not call enrichment tools, and do not invent tables, columns, or relations not present in tool results.",
         `Return at most ${limits.maxTables ?? MAX_SCHEMA_RESEARCH_TABLES} tables and ${limits.maxColumnsPerTable ?? MAX_SCHEMA_RESEARCH_COLUMNS_PER_TABLE} columns per table.`,
-        requireRelations ? "This task requires relation evidence; do not return sufficient if relations remain missing." : "",
+        requireRelations
+          ? "This task requires relation evidence; do not return sufficient if relations remain missing."
+          : "",
         "Output exactly one JSON object. No Markdown and no explanatory prefix/suffix.",
         jsonContract,
       ];
@@ -2482,7 +2990,10 @@ function buildSchemaResearchUserPrompt(
       currentSql: String((knownContext as Record<string, unknown>).currentSql || input.context.currentSql || "").trim(),
       mentionedTables: Array.isArray((knownContext as Record<string, unknown>).mentionedTables)
         ? (knownContext as Record<string, unknown>).mentionedTables
-        : input.context.tables.map((table) => ({ schema: table.schema || input.context.schema || "", table: table.name })),
+        : input.context.tables.map((table) => ({
+            schema: table.schema || input.context.schema || "",
+            table: table.name,
+          })),
     },
     null,
     2,
@@ -2519,7 +3030,8 @@ function schemaResearchJsonContract(limits: SchemaResearchResultLimits): string 
 }
 
 function schemaResearchLimits(args: Record<string, any>): SchemaResearchResultLimits {
-  const constraints = args.constraints && typeof args.constraints === "object" ? (args.constraints as Record<string, unknown>) : {};
+  const constraints =
+    args.constraints && typeof args.constraints === "object" ? (args.constraints as Record<string, unknown>) : {};
   return {
     maxTables: clampToolLimit(constraints.maxTables, 1, 6, MAX_SCHEMA_RESEARCH_TABLES),
     maxColumnsPerTable: clampToolLimit(constraints.maxColumnsPerTable, 1, 20, MAX_SCHEMA_RESEARCH_COLUMNS_PER_TABLE),
@@ -2559,16 +3071,23 @@ function withSchemaResearchBudget(
   );
 }
 
+const SCHEMA_RESEARCH_SUBTASK_ALLOWED_TOOL_NAMES = [
+  "dbx_search_schema",
+  "dbx_list_tables",
+  "dbx_find_columns",
+  "dbx_search_table_columns",
+  "dbx_get_column_details",
+  "dbx_load_table_schema",
+  "dbx_get_related_tables",
+  "dbx_expand_schema_graph",
+];
+
+export function schemaResearchSubtaskAllowedToolNamesForTest(): string[] {
+  return [...SCHEMA_RESEARCH_SUBTASK_ALLOWED_TOOL_NAMES];
+}
+
 function isSchemaResearchSubtaskToolAllowed(name: string): boolean {
-  return [
-    "dbx_search_schema",
-    "dbx_list_tables",
-    "dbx_find_columns",
-    "dbx_search_table_columns",
-    "dbx_get_column_details",
-    "dbx_load_table_schema",
-    "dbx_get_related_tables",
-  ].includes(name);
+  return SCHEMA_RESEARCH_SUBTASK_ALLOWED_TOOL_NAMES.includes(name);
 }
 
 function compactSchemaResearchToolOutput(name: string, output: unknown): unknown {
@@ -2854,7 +3373,9 @@ async function executeFindColumnsTool(
   const matches: Array<Record<string, unknown>> = [];
   for (const table of tables) {
     if (matches.length >= limit) break;
-    const columns = await api.getColumns(context.connectionId, context.database, schema, table.name).catch(() => [] as ColumnInfo[]);
+    const columns = await api
+      .getColumns(context.connectionId, context.database, schema, table.name)
+      .catch(() => [] as ColumnInfo[]);
     for (const column of columns) {
       const haystack = [table.name, table.comment, column.name, column.comment, column.data_type]
         .filter(Boolean)
@@ -2936,7 +3457,8 @@ async function executeSearchTableColumnsTool(
       table,
       query,
       columns: [],
-      message: "Current schema has not been analyzed. Use dbx_find_columns or dbx_get_column_details as a live metadata fallback.",
+      message:
+        "Current schema has not been analyzed. Use dbx_find_columns or dbx_get_column_details as a live metadata fallback.",
       budget: {
         columnSearches: budget.columnSearches,
         maxColumnSearches: MAX_AI_COLUMN_SEARCH_CALLS,
@@ -3158,7 +3680,10 @@ function parseColumnChoiceCandidates(value: unknown, columns: ColumnInfo[]): AiC
   return [...unique.values()].slice(0, MAX_AI_COLUMN_CHOICE_CANDIDATES);
 }
 
-function mergeColumnChoiceCandidates(candidates: AiColumnChoiceCandidate[], columns: ColumnInfo[]): AiColumnChoiceCandidate[] {
+function mergeColumnChoiceCandidates(
+  candidates: AiColumnChoiceCandidate[],
+  columns: ColumnInfo[],
+): AiColumnChoiceCandidate[] {
   if (candidates.length) return candidates.slice(0, MAX_AI_COLUMN_CHOICE_CANDIDATES);
   return columns.slice(0, MAX_AI_COLUMN_CHOICE_CANDIDATES).map((column) => ({
     column: column.name,
@@ -3272,7 +3797,9 @@ async function executeGetRelatedTablesTool(
   const schema = String(args.schema || context.schema || "").trim();
   const table = String(args.table || "").trim();
   if (!schema || !table) return { error: "schema and table are required" };
-  const foreignKeys = await api.listForeignKeys(context.connectionId, context.database, schema, table).catch(() => [] as ForeignKeyInfo[]);
+  const foreignKeys = await api
+    .listForeignKeys(context.connectionId, context.database, schema, table)
+    .catch(() => [] as ForeignKeyInfo[]);
   return {
     schema,
     table,
@@ -3330,21 +3857,22 @@ async function executeExpandSchemaGraphTool(context: AiContext, args: Record<str
     concepts: result.concepts.slice(0, 20),
     sourceEvidence: result.sourceEvidence.slice(0, 20),
     message:
-      result.verifiedMappings.length || result.candidateMappings.length || result.joinCandidates.length || result.concepts.length
+      result.verifiedMappings.length ||
+      result.candidateMappings.length ||
+      result.joinCandidates.length ||
+      result.concepts.length
         ? undefined
         : "No graph facts matched the provided seeds.",
   };
 }
 
-function normalizeSchemaGraphSeed(value: unknown):
-  | {
-      kind: "table" | "column" | "api_doc_source" | "api_doc_section" | "api_field" | "business_concept" | "join_candidate";
-      id?: string | null;
-      schema?: string | null;
-      table?: string | null;
-      column?: string | null;
-    }
-  | null {
+function normalizeSchemaGraphSeed(value: unknown): {
+  kind: "table" | "column" | "api_doc_source" | "api_doc_section" | "api_field" | "business_concept" | "join_candidate";
+  id?: string | null;
+  schema?: string | null;
+  table?: string | null;
+  column?: string | null;
+} | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
   const kind = String(raw.kind || "").trim();
@@ -3376,7 +3904,8 @@ async function executeRequestRelationTool(
   args: Record<string, any>,
   onRelationRequest?: AiRelationRequestHandler,
 ): Promise<unknown> {
-  if (!onRelationRequest) return { confirmed: false, skipped: true, message: "Relation confirmation UI is not available." };
+  if (!onRelationRequest)
+    return { confirmed: false, skipped: true, message: "Relation confirmation UI is not available." };
   if (!context.connectionId) return { error: "No active connection for relation confirmation." };
   if (budget.relationRequests >= MAX_AI_RELATION_REQUESTS) {
     return { error: `Relation confirmation budget exceeded (${MAX_AI_RELATION_REQUESTS}).` };
@@ -3455,10 +3984,16 @@ function suggestRelationCandidates(leftColumns: ColumnInfo[], rightColumns: Colu
   return [...unique.values()].slice(0, 6);
 }
 
-function parseRelationCandidatePairs(value: unknown, leftColumns: ColumnInfo[], rightColumns: ColumnInfo[]): AiRelationCandidatePair[] {
+function parseRelationCandidatePairs(
+  value: unknown,
+  leftColumns: ColumnInfo[],
+  rightColumns: ColumnInfo[],
+): AiRelationCandidatePair[] {
   if (!Array.isArray(value)) return [];
   const leftColumnNames = new Map(leftColumns.map((column) => [normalizeRelationColumnName(column.name), column.name]));
-  const rightColumnNames = new Map(rightColumns.map((column) => [normalizeRelationColumnName(column.name), column.name]));
+  const rightColumnNames = new Map(
+    rightColumns.map((column) => [normalizeRelationColumnName(column.name), column.name]),
+  );
   const candidates: AiRelationCandidatePair[] = [];
   for (const item of value) {
     if (!item || typeof item !== "object") continue;

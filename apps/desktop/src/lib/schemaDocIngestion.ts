@@ -1,8 +1,10 @@
 import type { SchemaRagApiDocExtraction } from "@/lib/schemaRag";
 
-const API_DOC_SECTION_TARGET_CHARS = 1600;
-const API_DOC_SECTION_MAX_CHARS = 2200;
-const API_DOC_SECTION_OVERLAP_CHARS = 180;
+const API_DOC_SECTION_TARGET_CHARS = 900;
+const API_DOC_SECTION_MAX_CHARS = 1300;
+const API_DOC_SECTION_OVERLAP_CHARS = 120;
+
+export const API_DOC_SECTION_MAX_CHARS_FOR_TEST = API_DOC_SECTION_MAX_CHARS;
 
 export interface ApiDocExtractionSection {
   id: string;
@@ -45,10 +47,7 @@ export async function apiDocSourceId(path: string): Promise<string> {
   return `api-doc:${hex}`;
 }
 
-export function emptyFailedApiDocExtraction(
-  sourceId: string,
-  error: string,
-): SchemaRagApiDocExtraction {
+export function emptyFailedApiDocExtraction(sourceId: string, error: string): SchemaRagApiDocExtraction {
   return {
     sourceId,
     extractedAt: new Date().toISOString(),
@@ -98,7 +97,7 @@ function pushMarkdownSection(
 ) {
   const text = lines.join("\n").trim();
   if (!text) return;
-  const path = titlePath.length ? titlePath : ["接口文档"];
+  const path = titlePath.length ? titlePath : ["参考文档"];
   for (const chunk of splitLongSectionByLine(text)) {
     sections.push({
       id: `${sourceId}#section-${sections.length + 1}`,
@@ -143,5 +142,8 @@ function splitLongSectionByLine(text: string): string[] {
 
 function overlapText(text: string): string {
   const chars = Array.from(text);
-  return chars.slice(Math.max(0, chars.length - API_DOC_SECTION_OVERLAP_CHARS)).join("").trim();
+  return chars
+    .slice(Math.max(0, chars.length - API_DOC_SECTION_OVERLAP_CHARS))
+    .join("")
+    .trim();
 }

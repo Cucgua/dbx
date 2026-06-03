@@ -294,6 +294,8 @@ export interface AiRawChatRequest {
   toolChoice?: unknown;
   maxTokens?: number;
   temperature?: number;
+  responseFormat?: unknown;
+  debugLabel?: string;
 }
 
 export interface AiModelInfo {
@@ -562,7 +564,9 @@ export async function searchSchemaRag(request: SearchSchemaRagRequest): Promise<
   return invoke("search_schema_rag", { request });
 }
 
-export async function searchTableColumnsRag(request: SearchTableColumnsRagRequest): Promise<SchemaRagColumnSearchResult> {
+export async function searchTableColumnsRag(
+  request: SearchTableColumnsRagRequest,
+): Promise<SchemaRagColumnSearchResult> {
   return invoke("search_table_columns_rag", { request });
 }
 
@@ -580,7 +584,9 @@ export async function deleteSchemaRagIndex(request: SchemaRagScopeRequest): Prom
   return invoke("delete_schema_rag_index", { request });
 }
 
-export async function listenSchemaRagProgress(handler: (progress: SchemaRagProgressEvent) => void): Promise<UnlistenFn> {
+export async function listenSchemaRagProgress(
+  handler: (progress: SchemaRagProgressEvent) => void,
+): Promise<UnlistenFn> {
   return listen<SchemaRagProgressEvent>("schema-rag-progress", (event) => handler(event.payload));
 }
 

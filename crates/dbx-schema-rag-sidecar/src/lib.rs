@@ -1858,6 +1858,119 @@ fn create_kuzu_enrichment_schema_if_missing(connection: &Connection<'_>) -> Resu
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct KuzuRelEdge {
+    from: String,
+    to: String,
+    properties: Vec<String>,
+}
+
+impl KuzuRelEdge {
+    fn new(from: impl Into<String>, to: impl Into<String>) -> Self {
+        Self {
+            from: from.into(),
+            to: to.into(),
+            properties: Vec::new(),
+        }
+    }
+
+    fn with_properties(from: impl Into<String>, to: impl Into<String>, properties: Vec<String>) -> Self {
+        Self {
+            from: from.into(),
+            to: to.into(),
+            properties,
+        }
+    }
+}
+
+fn copy_kuzu_rel_edges(
+    connection: &Connection<'_>,
+    rel_table: &str,
+    property_columns: &[&str],
+    edges: &[KuzuRelEdge],
+) -> Result<(), String> {
+    if edges.is_empty() {
+        return Ok(());
+    }
+
+    let mut csv = String::new();
+    for edge in edges {
+        if edge.properties.len() != property_columns.len() {
+            return Err(format!(
+                "Kuzu relation {rel_table} expected {} properties, got {}",
+                property_columns.len(),
+                edge.properties.len()
+            ));
+        }
+        csv.push_str(&csv_field(&edge.from));
+        csv.push(',');
+        csv.push_str(&csv_field(&edge.to));
+        for property in &edge.properties {
+            csv.push(',');
+            csv.push_str(&csv_field(property));
+        }
+        csv.push('\n');
+    }
+
+    let path = kuzu_rel_copy_temp_path(rel_table);
+    std::fs::write(&path, csv).map_err(|err| format!("write Kuzu relation copy file failed: {err}"))?;
+
+    let property_column_clause = if property_columns.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " ({})",
+            property_columns
+                .iter()
+                .map(|column| kuzu_identifier(column))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let query = format!(
+        "COPY {}{} FROM {} (IGNORE_ERRORS=true, HEADER=false);",
+        kuzu_identifier(rel_table),
+        property_column_clause,
+        kuzu_file_literal(&path)
+    );
+    let result = connection.query(&query).map_err(|err| {
+        format!(
+            "copy Kuzu relation {rel_table} from {} failed: {err}",
+            path.display()
+        )
+    });
+    let _ = std::fs::remove_file(&path);
+    result.map(|_| ())
+}
+
+fn kuzu_rel_copy_temp_path(rel_table: &str) -> PathBuf {
+    let sanitized = rel_table
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "dbx-kuzu-rel-{sanitized}-{}-{unique}.csv",
+        std::process::id()
+    ))
+}
+
+fn kuzu_identifier(value: &str) -> String {
+    format!("`{}`", value.replace('`', "``"))
+}
+
+fn kuzu_file_literal(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/").replace('"', "\\\"");
+    format!("\"{text}\"")
+}
+
+fn csv_field(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
 fn insert_kuzu_manifest(connection: &Connection<'_>, stored: &StoredSchemaRagIndex) -> Result<(), String> {
     let manifest = &stored.manifest;
     let mut statement = connection
@@ -1887,17 +2000,13 @@ fn insert_kuzu_tables(connection: &Connection<'_>, stored: &StoredSchemaRagIndex
             "CREATE (:TableNode {id: $id, schema_name: $schema_name, name: $name, table_type: $table_type, comment: $comment, ddl: $ddl});",
         )
         .map_err(|err| err.to_string())?;
-    let mut has_table_statement = connection
-        .prepare("MATCH (s:SchemaScope {id: $scopeId}), (t:TableNode {id: $tableId}) CREATE (s)-[:HAS_TABLE]->(t);")
-        .map_err(|err| err.to_string())?;
     let mut column_statement = connection
         .prepare(
             "CREATE (:ColumnNode {id: $id, schema_name: $schema_name, table_name: $table_name, name: $name, data_type: $data_type, is_nullable: $is_nullable, is_primary_key: $is_primary_key, comment: $comment});",
         )
         .map_err(|err| err.to_string())?;
-    let mut has_column_statement = connection
-        .prepare("MATCH (t:TableNode {id: $tableId}), (c:ColumnNode {id: $columnId}) CREATE (t)-[:HAS_COLUMN]->(c);")
-        .map_err(|err| err.to_string())?;
+    let mut has_table_edges = Vec::new();
+    let mut has_column_edges = Vec::new();
 
     let scope_id = kuzu_scope_id(&stored.manifest);
     for table in &stored.tables {
@@ -1915,12 +2024,7 @@ fn insert_kuzu_tables(connection: &Connection<'_>, stored: &StoredSchemaRagIndex
                 ],
             )
             .map_err(|err| err.to_string())?;
-        connection
-            .execute(
-                &mut has_table_statement,
-                vec![("scopeId", Value::String(scope_id.clone())), ("tableId", Value::String(table_id.clone()))],
-            )
-            .map_err(|err| err.to_string())?;
+        has_table_edges.push(KuzuRelEdge::new(scope_id.clone(), table_id.clone()));
         for column in &table.columns {
             let column_id = kuzu_column_id(&table.schema, &table.name, &column.name);
             connection
@@ -1938,14 +2042,11 @@ fn insert_kuzu_tables(connection: &Connection<'_>, stored: &StoredSchemaRagIndex
                     ],
                 )
                 .map_err(|err| err.to_string())?;
-            connection
-                .execute(
-                    &mut has_column_statement,
-                    vec![("tableId", Value::String(table_id.clone())), ("columnId", Value::String(column_id))],
-                )
-                .map_err(|err| err.to_string())?;
+            has_column_edges.push(KuzuRelEdge::new(table_id.clone(), column_id));
         }
     }
+    copy_kuzu_rel_edges(connection, "HAS_TABLE", &[], &has_table_edges)?;
+    copy_kuzu_rel_edges(connection, "HAS_COLUMN", &[], &has_column_edges)?;
     Ok(())
 }
 
@@ -1955,9 +2056,7 @@ fn insert_kuzu_indexes(connection: &Connection<'_>, stored: &StoredSchemaRagInde
             "CREATE (:IndexNode {id: $id, schema_name: $schema_name, table_name: $table_name, name: $name, columns: $columns, is_unique: $is_unique, is_primary: $is_primary, index_type: $index_type, comment: $comment});",
         )
         .map_err(|err| err.to_string())?;
-    let mut has_index_statement = connection
-        .prepare("MATCH (t:TableNode {id: $tableId}), (i:IndexNode {id: $indexId}) CREATE (t)-[:HAS_INDEX]->(i);")
-        .map_err(|err| err.to_string())?;
+    let mut has_index_edges = Vec::new();
     for table in &stored.tables {
         let table_id = kuzu_table_id(&table.schema, &table.name);
         for index in &table.indexes {
@@ -1978,14 +2077,10 @@ fn insert_kuzu_indexes(connection: &Connection<'_>, stored: &StoredSchemaRagInde
                     ],
                 )
                 .map_err(|err| err.to_string())?;
-            connection
-                .execute(
-                    &mut has_index_statement,
-                    vec![("tableId", Value::String(table_id.clone())), ("indexId", Value::String(index_id))],
-                )
-                .map_err(|err| err.to_string())?;
+            has_index_edges.push(KuzuRelEdge::new(table_id.clone(), index_id));
         }
     }
+    copy_kuzu_rel_edges(connection, "HAS_INDEX", &[], &has_index_edges)?;
     Ok(())
 }
 
@@ -1995,16 +2090,8 @@ fn insert_kuzu_documents(connection: &Connection<'_>, stored: &StoredSchemaRagIn
             "CREATE (:SchemaDocument {id: $id, kind: $kind, schema_name: $schema_name, table_name: $table_name, column_name: $column_name, data_type: $data_type, text_for_embedding: $text_for_embedding, embedding: $embedding, embedding_model: $embedding_model, embedding_dimension: $embedding_dimension});",
         )
         .map_err(|err| err.to_string())?;
-    let mut describes_table_statement = connection
-        .prepare(
-            "MATCH (d:SchemaDocument {id: $documentId}), (t:TableNode {id: $tableId}) CREATE (d)-[:DESCRIBES_TABLE]->(t);",
-        )
-        .map_err(|err| err.to_string())?;
-    let mut describes_column_statement = connection
-        .prepare(
-            "MATCH (d:SchemaDocument {id: $documentId}), (c:ColumnNode {id: $columnId}) CREATE (d)-[:DESCRIBES_COLUMN]->(c);",
-        )
-        .map_err(|err| err.to_string())?;
+    let mut describes_table_edges = Vec::new();
+    let mut describes_column_edges = Vec::new();
     for document in &stored.documents {
         connection
             .execute(
@@ -2027,22 +2114,14 @@ fn insert_kuzu_documents(connection: &Connection<'_>, stored: &StoredSchemaRagIn
             continue;
         }
         let table_id = kuzu_table_id(&document.schema, &document.table);
-        connection
-            .execute(
-                &mut describes_table_statement,
-                vec![("documentId", Value::String(document.id.clone())), ("tableId", Value::String(table_id))],
-            )
-            .map_err(|err| err.to_string())?;
+        describes_table_edges.push(KuzuRelEdge::new(document.id.clone(), table_id));
         if let Some(column) = &document.column {
             let column_id = kuzu_column_id(&document.schema, &document.table, column);
-            connection
-                .execute(
-                    &mut describes_column_statement,
-                    vec![("documentId", Value::String(document.id.clone())), ("columnId", Value::String(column_id))],
-                )
-                .map_err(|err| err.to_string())?;
+            describes_column_edges.push(KuzuRelEdge::new(document.id.clone(), column_id));
         }
     }
+    copy_kuzu_rel_edges(connection, "DESCRIBES_TABLE", &[], &describes_table_edges)?;
+    copy_kuzu_rel_edges(connection, "DESCRIBES_COLUMN", &[], &describes_column_edges)?;
     Ok(())
 }
 
@@ -2057,9 +2136,7 @@ fn insert_kuzu_api_doc_graph(connection: &Connection<'_>, stored: &StoredSchemaR
             "CREATE (:ApiDocSection {id: $id, source_id: $source_id, title_path: $title_path, text: $text, page: $page});",
         )
         .map_err(|err| err.to_string())?;
-    let mut has_section_statement = connection
-        .prepare("MATCH (s:ApiDocSource {id: $sourceId}), (section:ApiDocSection {id: $sectionId}) CREATE (s)-[:HAS_SECTION]->(section);")
-        .map_err(|err| err.to_string())?;
+    let mut has_section_edges = Vec::new();
 
     let mut inserted_sources = HashSet::new();
     for source in &stored.manifest.api_doc_sources {
@@ -2084,7 +2161,7 @@ fn insert_kuzu_api_doc_graph(connection: &Connection<'_>, stored: &StoredSchemaR
             insert_kuzu_api_doc_section(
                 connection,
                 &mut section_statement,
-                &mut has_section_statement,
+                &mut has_section_edges,
                 &source_id,
                 &section_id,
                 section_title_path_for_api_doc_document(document),
@@ -2099,7 +2176,7 @@ fn insert_kuzu_api_doc_graph(connection: &Connection<'_>, stored: &StoredSchemaR
                 insert_kuzu_api_doc_section(
                     connection,
                     &mut section_statement,
-                    &mut has_section_statement,
+                    &mut has_section_edges,
                     &extraction.source_id,
                     &section_id,
                     Vec::new(),
@@ -2110,6 +2187,7 @@ fn insert_kuzu_api_doc_graph(connection: &Connection<'_>, stored: &StoredSchemaR
         }
     }
 
+    copy_kuzu_rel_edges(connection, "HAS_SECTION", &[], &has_section_edges)?;
     insert_kuzu_api_doc_extractions(connection, &stored.api_doc_extractions)?;
     Ok(())
 }
@@ -2157,7 +2235,7 @@ fn insert_kuzu_api_doc_source_fallback(
 fn insert_kuzu_api_doc_section(
     connection: &Connection<'_>,
     section_statement: &mut PreparedStatement,
-    has_section_statement: &mut PreparedStatement,
+    has_section_edges: &mut Vec<KuzuRelEdge>,
     source_id: &str,
     section_id: &str,
     title_path: Vec<String>,
@@ -2176,12 +2254,7 @@ fn insert_kuzu_api_doc_section(
             ],
         )
         .map_err(|err| err.to_string())?;
-    connection
-        .execute(
-            has_section_statement,
-            vec![("sourceId", Value::String(source_id.to_string())), ("sectionId", Value::String(section_id.to_string()))],
-        )
-        .map_err(|err| err.to_string())?;
+    has_section_edges.push(KuzuRelEdge::new(source_id.to_string(), section_id.to_string()));
     Ok(())
 }
 
@@ -2204,36 +2277,16 @@ fn insert_kuzu_api_doc_extractions(
             "CREATE (:JoinCandidate {id: $id, source_id: $source_id, section_id: $section_id, left_schema: $left_schema, left_table: $left_table, left_columns: $left_columns, right_schema: $right_schema, right_table: $right_table, right_columns: $right_columns, relation: $relation, confidence: $confidence, status: $status, evidence: $evidence});",
         )
         .map_err(|err| err.to_string())?;
-    let mut section_field_statement = connection
-        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (field:ApiField {id: $fieldId}) CREATE (section)-[:SECTION_MENTIONS_FIELD]->(field);")
-        .map_err(|err| err.to_string())?;
-    let mut section_concept_statement = connection
-        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (concept:BusinessConcept {id: $conceptId}) CREATE (section)-[:SECTION_MENTIONS_CONCEPT]->(concept);")
-        .map_err(|err| err.to_string())?;
-    let mut section_join_statement = connection
-        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (join:JoinCandidate {id: $joinId}) CREATE (section)-[:SECTION_MENTIONS_JOIN]->(join);")
-        .map_err(|err| err.to_string())?;
-    let mut field_column_statement = connection
-        .prepare("MATCH (field:ApiField {id: $fieldId}), (column:ColumnNode {id: $columnId}) CREATE (field)-[:API_FIELD_MAPS_TO_COLUMN]->(column);")
-        .map_err(|err| err.to_string())?;
-    let mut concept_table_statement = connection
-        .prepare("MATCH (concept:BusinessConcept {id: $conceptId}), (table:TableNode {id: $tableId}) CREATE (concept)-[:CONCEPT_MAPS_TO_TABLE]->(table);")
-        .map_err(|err| err.to_string())?;
-    let mut concept_column_statement = connection
-        .prepare("MATCH (concept:BusinessConcept {id: $conceptId}), (column:ColumnNode {id: $columnId}) CREATE (concept)-[:CONCEPT_MAPS_TO_COLUMN]->(column);")
-        .map_err(|err| err.to_string())?;
-    let mut section_table_statement = connection
-        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (table:TableNode {id: $tableId}) CREATE (section)-[:SECTION_DESCRIBES_TABLE]->(table);")
-        .map_err(|err| err.to_string())?;
-    let mut section_column_statement = connection
-        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (column:ColumnNode {id: $columnId}) CREATE (section)-[:SECTION_DESCRIBES_COLUMN]->(column);")
-        .map_err(|err| err.to_string())?;
-    let mut join_left_statement = connection
-        .prepare("MATCH (join:JoinCandidate {id: $joinId}), (table:TableNode {id: $tableId}) CREATE (join)-[:JOIN_LEFT_TABLE]->(table);")
-        .map_err(|err| err.to_string())?;
-    let mut join_right_statement = connection
-        .prepare("MATCH (join:JoinCandidate {id: $joinId}), (table:TableNode {id: $tableId}) CREATE (join)-[:JOIN_RIGHT_TABLE]->(table);")
-        .map_err(|err| err.to_string())?;
+    let mut section_field_edges = Vec::new();
+    let mut section_concept_edges = Vec::new();
+    let mut section_join_edges = Vec::new();
+    let mut field_column_edges = Vec::new();
+    let mut concept_table_edges = Vec::new();
+    let mut concept_column_edges = Vec::new();
+    let mut section_table_edges = Vec::new();
+    let mut section_column_edges = Vec::new();
+    let mut join_left_edges = Vec::new();
+    let mut join_right_edges = Vec::new();
 
     for extraction in extractions {
         for field in &extraction.api_fields {
@@ -2255,12 +2308,7 @@ fn insert_kuzu_api_doc_extractions(
                     ],
                 )
                 .map_err(|err| err.to_string())?;
-            connection
-                .execute(
-                    &mut section_field_statement,
-                    vec![("sectionId", Value::String(field.section_id.clone())), ("fieldId", Value::String(field.id.clone()))],
-                )
-                .map_err(|err| err.to_string())?;
+            section_field_edges.push(KuzuRelEdge::new(field.section_id.clone(), field.id.clone()));
             if field.status == SchemaRagFactStatus::Verified {
                 if let (Some(schema), Some(table), Some(column)) = (
                     field.candidate_schema.as_deref(),
@@ -2269,15 +2317,9 @@ fn insert_kuzu_api_doc_extractions(
                 ) {
                     let table_id = kuzu_table_id(schema, table);
                     let column_id = kuzu_column_id(schema, table, column);
-                    connection
-                        .execute(&mut field_column_statement, vec![("fieldId", Value::String(field.id.clone())), ("columnId", Value::String(column_id.clone()))])
-                        .map_err(|err| err.to_string())?;
-                    connection
-                        .execute(&mut section_table_statement, vec![("sectionId", Value::String(field.section_id.clone())), ("tableId", Value::String(table_id))])
-                        .map_err(|err| err.to_string())?;
-                    connection
-                        .execute(&mut section_column_statement, vec![("sectionId", Value::String(field.section_id.clone())), ("columnId", Value::String(column_id))])
-                        .map_err(|err| err.to_string())?;
+                    field_column_edges.push(KuzuRelEdge::new(field.id.clone(), column_id.clone()));
+                    section_table_edges.push(KuzuRelEdge::new(field.section_id.clone(), table_id));
+                    section_column_edges.push(KuzuRelEdge::new(field.section_id.clone(), column_id));
                 }
             }
         }
@@ -2301,29 +2343,16 @@ fn insert_kuzu_api_doc_extractions(
                     ],
                 )
                 .map_err(|err| err.to_string())?;
-            connection
-                .execute(
-                    &mut section_concept_statement,
-                    vec![("sectionId", Value::String(concept.section_id.clone())), ("conceptId", Value::String(concept.id.clone()))],
-                )
-                .map_err(|err| err.to_string())?;
+            section_concept_edges.push(KuzuRelEdge::new(concept.section_id.clone(), concept.id.clone()));
             if concept.status == SchemaRagFactStatus::Verified {
                 if let (Some(schema), Some(table)) = (concept.candidate_schema.as_deref(), concept.candidate_table.as_deref()) {
                     let table_id = kuzu_table_id(schema, table);
-                    connection
-                        .execute(&mut concept_table_statement, vec![("conceptId", Value::String(concept.id.clone())), ("tableId", Value::String(table_id.clone()))])
-                        .map_err(|err| err.to_string())?;
-                    connection
-                        .execute(&mut section_table_statement, vec![("sectionId", Value::String(concept.section_id.clone())), ("tableId", Value::String(table_id))])
-                        .map_err(|err| err.to_string())?;
+                    concept_table_edges.push(KuzuRelEdge::new(concept.id.clone(), table_id.clone()));
+                    section_table_edges.push(KuzuRelEdge::new(concept.section_id.clone(), table_id));
                     if let Some(column) = concept.candidate_column.as_deref().filter(|column| !column.trim().is_empty()) {
                         let column_id = kuzu_column_id(schema, table, column);
-                        connection
-                            .execute(&mut concept_column_statement, vec![("conceptId", Value::String(concept.id.clone())), ("columnId", Value::String(column_id.clone()))])
-                            .map_err(|err| err.to_string())?;
-                        connection
-                            .execute(&mut section_column_statement, vec![("sectionId", Value::String(concept.section_id.clone())), ("columnId", Value::String(column_id))])
-                            .map_err(|err| err.to_string())?;
+                        concept_column_edges.push(KuzuRelEdge::new(concept.id.clone(), column_id.clone()));
+                        section_column_edges.push(KuzuRelEdge::new(concept.section_id.clone(), column_id));
                     }
                 }
             }
@@ -2350,25 +2379,26 @@ fn insert_kuzu_api_doc_extractions(
                     ],
                 )
                 .map_err(|err| err.to_string())?;
-            connection
-                .execute(
-                    &mut section_join_statement,
-                    vec![("sectionId", Value::String(join.section_id.clone())), ("joinId", Value::String(join.id.clone()))],
-                )
-                .map_err(|err| err.to_string())?;
+            section_join_edges.push(KuzuRelEdge::new(join.section_id.clone(), join.id.clone()));
             if join.status == SchemaRagFactStatus::Verified {
                 let left_table_id = kuzu_table_id(&join.left_schema, &join.left_table);
                 let right_table_id = kuzu_table_id(&join.right_schema, &join.right_table);
-                connection
-                    .execute(&mut join_left_statement, vec![("joinId", Value::String(join.id.clone())), ("tableId", Value::String(left_table_id))])
-                    .map_err(|err| err.to_string())?;
-                connection
-                    .execute(&mut join_right_statement, vec![("joinId", Value::String(join.id.clone())), ("tableId", Value::String(right_table_id))])
-                    .map_err(|err| err.to_string())?;
+                join_left_edges.push(KuzuRelEdge::new(join.id.clone(), left_table_id));
+                join_right_edges.push(KuzuRelEdge::new(join.id.clone(), right_table_id));
             }
         }
     }
 
+    copy_kuzu_rel_edges(connection, "SECTION_MENTIONS_FIELD", &[], &section_field_edges)?;
+    copy_kuzu_rel_edges(connection, "SECTION_MENTIONS_CONCEPT", &[], &section_concept_edges)?;
+    copy_kuzu_rel_edges(connection, "SECTION_MENTIONS_JOIN", &[], &section_join_edges)?;
+    copy_kuzu_rel_edges(connection, "API_FIELD_MAPS_TO_COLUMN", &[], &field_column_edges)?;
+    copy_kuzu_rel_edges(connection, "CONCEPT_MAPS_TO_TABLE", &[], &concept_table_edges)?;
+    copy_kuzu_rel_edges(connection, "CONCEPT_MAPS_TO_COLUMN", &[], &concept_column_edges)?;
+    copy_kuzu_rel_edges(connection, "SECTION_DESCRIBES_TABLE", &[], &section_table_edges)?;
+    copy_kuzu_rel_edges(connection, "SECTION_DESCRIBES_COLUMN", &[], &section_column_edges)?;
+    copy_kuzu_rel_edges(connection, "JOIN_LEFT_TABLE", &[], &join_left_edges)?;
+    copy_kuzu_rel_edges(connection, "JOIN_RIGHT_TABLE", &[], &join_right_edges)?;
     Ok(())
 }
 
@@ -2408,21 +2438,9 @@ fn insert_kuzu_foreign_keys(connection: &Connection<'_>, stored: &StoredSchemaRa
             "CREATE (:ForeignKeyNode {id: $id, schema_name: $schema_name, table_name: $table_name, name: $name, column_name: $column_name, ref_schema: $ref_schema, ref_table: $ref_table, ref_column: $ref_column});",
         )
         .map_err(|err| err.to_string())?;
-    let mut has_fk_statement = connection
-        .prepare(
-            "MATCH (t:TableNode {id: $tableId}), (f:ForeignKeyNode {id: $fkId}) CREATE (t)-[:HAS_FOREIGN_KEY]->(f);",
-        )
-        .map_err(|err| err.to_string())?;
-    let mut fk_to_statement = connection
-        .prepare(
-            "MATCH (from:ColumnNode {id: $fromColumnId}), (to:ColumnNode {id: $toColumnId}) CREATE (from)-[:FK_TO]->(to);",
-        )
-        .map_err(|err| err.to_string())?;
-    let mut related_statement = connection
-        .prepare(
-            "MATCH (from:TableNode {id: $fromTableId}), (to:TableNode {id: $toTableId}) CREATE (from)-[:RELATED_TO {source: $source, reason: $reason}]->(to);",
-        )
-        .map_err(|err| err.to_string())?;
+    let mut has_fk_edges = Vec::new();
+    let mut fk_to_edges = Vec::new();
+    let mut related_edges = Vec::new();
 
     let table_ids: HashSet<String> =
         stored.tables.iter().map(|table| kuzu_table_id(&table.schema, &table.name)).collect();
@@ -2455,44 +2473,25 @@ fn insert_kuzu_foreign_keys(connection: &Connection<'_>, stored: &StoredSchemaRa
                     ],
                 )
                 .map_err(|err| err.to_string())?;
-            connection
-                .execute(
-                    &mut has_fk_statement,
-                    vec![("tableId", Value::String(table_id.clone())), ("fkId", Value::String(fk_id))],
-                )
-                .map_err(|err| err.to_string())?;
+            has_fk_edges.push(KuzuRelEdge::new(table_id.clone(), fk_id));
             if column_ids.contains(&from_column_id) && column_ids.contains(&to_column_id) {
-                connection
-                    .execute(
-                        &mut fk_to_statement,
-                        vec![
-                            ("fromColumnId", Value::String(from_column_id)),
-                            ("toColumnId", Value::String(to_column_id)),
-                        ],
-                    )
-                    .map_err(|err| err.to_string())?;
+                fk_to_edges.push(KuzuRelEdge::new(from_column_id, to_column_id));
             }
             if table_ids.contains(&ref_table_id) {
-                connection
-                    .execute(
-                        &mut related_statement,
-                        vec![
-                            ("fromTableId", Value::String(table_id.clone())),
-                            ("toTableId", Value::String(ref_table_id)),
-                            ("source", Value::String("foreign_key".to_string())),
-                            (
-                                "reason",
-                                Value::String(format!(
-                                    "{}.{} -> {}.{}",
-                                    table.name, fk.column, fk.ref_table, fk.ref_column
-                                )),
-                            ),
-                        ],
-                    )
-                    .map_err(|err| err.to_string())?;
+                related_edges.push(KuzuRelEdge::with_properties(
+                    table_id.clone(),
+                    ref_table_id,
+                    vec![
+                        "foreign_key".to_string(),
+                        format!("{}.{} -> {}.{}", table.name, fk.column, fk.ref_table, fk.ref_column),
+                    ],
+                ));
             }
         }
     }
+    copy_kuzu_rel_edges(connection, "HAS_FOREIGN_KEY", &[], &has_fk_edges)?;
+    copy_kuzu_rel_edges(connection, "FK_TO", &[], &fk_to_edges)?;
+    copy_kuzu_rel_edges(connection, "RELATED_TO", &["source", "reason"], &related_edges)?;
     Ok(())
 }
 
@@ -3602,14 +3601,8 @@ fn save_kuzu_business_aliases_blocking(graph_path: &Path, aliases: &[SchemaRagBu
             "CREATE (:BusinessAlias {id: $id, term: $term, target_kind: $target_kind, schema_name: $schema_name, table_name: $table_name, column_name: $column_name, source: $source, confidence: $confidence, note: $note, created_at: $created_at});",
         )
         .map_err(|err| err.to_string())?;
-    let mut table_rel_statement = connection
-        .prepare(
-            "MATCH (a:BusinessAlias {id: $aliasId}), (t:TableNode {id: $tableId}) CREATE (a)-[:ALIAS_OF_TABLE]->(t);",
-        )
-        .map_err(|err| err.to_string())?;
-    let mut column_rel_statement = connection
-        .prepare("MATCH (a:BusinessAlias {id: $aliasId}), (c:ColumnNode {id: $columnId}) CREATE (a)-[:ALIAS_OF_COLUMN]->(c);")
-        .map_err(|err| err.to_string())?;
+    let mut table_alias_edges = Vec::new();
+    let mut column_alias_edges = Vec::new();
 
     let created_at = Utc::now().to_rfc3339();
     let mut saved = 0usize;
@@ -3633,23 +3626,15 @@ fn save_kuzu_business_aliases_blocking(graph_path: &Path, aliases: &[SchemaRagBu
             )
             .map_err(|err| err.to_string())?;
         let table_id = kuzu_table_id(&alias.schema, &alias.table);
-        connection
-            .execute(
-                &mut table_rel_statement,
-                vec![("aliasId", Value::String(alias_id.clone())), ("tableId", Value::String(table_id))],
-            )
-            .map_err(|err| err.to_string())?;
+        table_alias_edges.push(KuzuRelEdge::new(alias_id.clone(), table_id));
         if let Some(column) = &alias.column {
             let column_id = kuzu_column_id(&alias.schema, &alias.table, column);
-            connection
-                .execute(
-                    &mut column_rel_statement,
-                    vec![("aliasId", Value::String(alias_id)), ("columnId", Value::String(column_id))],
-                )
-                .map_err(|err| err.to_string())?;
+            column_alias_edges.push(KuzuRelEdge::new(alias_id, column_id));
         }
         saved += 1;
     }
+    copy_kuzu_rel_edges(&connection, "ALIAS_OF_TABLE", &[], &table_alias_edges)?;
+    copy_kuzu_rel_edges(&connection, "ALIAS_OF_COLUMN", &[], &column_alias_edges)?;
     Ok(saved)
 }
 
@@ -5404,6 +5389,94 @@ GET /api/refund/list
             kuzu_count(
                 &graph_path,
                 "MATCH (section:ApiDocSection)-[r:SECTION_DESCRIBES_COLUMN]->(c:ColumnNode) RETURN count(r) AS count",
+            ),
+            1,
+        );
+    }
+
+    #[test]
+    fn kuzu_graph_writes_verified_api_doc_join_candidate_edges() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let left_table = fake_table();
+        let right_table = SchemaRagTableMetadata {
+            schema: "public".to_string(),
+            name: "mc_birth_detail".to_string(),
+            table_type: "TABLE".to_string(),
+            comment: Some("出生医学证明详情".to_string()),
+            ddl: None,
+            columns: vec![
+                SchemaRagColumnMetadata {
+                    name: "id".to_string(),
+                    data_type: "bigint".to_string(),
+                    is_nullable: false,
+                    is_primary_key: true,
+                    column_default: None,
+                    comment: None,
+                },
+                SchemaRagColumnMetadata {
+                    name: "apply_id".to_string(),
+                    data_type: "bigint".to_string(),
+                    is_nullable: false,
+                    is_primary_key: false,
+                    column_default: None,
+                    comment: Some("申请ID".to_string()),
+                },
+            ],
+            indexes: Vec::new(),
+            foreign_keys: Vec::new(),
+        };
+        let extraction = SchemaRagApiDocExtraction {
+            source_id: "api-doc:birth".to_string(),
+            extracted_at: "2026-06-03T00:00:00Z".to_string(),
+            status: ApiDocExtractionStatus::Extracted,
+            api_fields: Vec::new(),
+            business_concepts: Vec::new(),
+            join_candidates: vec![SchemaRagJoinCandidateFact {
+                id: "join:verified".to_string(),
+                source_id: "api-doc:birth".to_string(),
+                section_id: "api-doc:birth#section-1".to_string(),
+                left_schema: "public".to_string(),
+                left_table: "mc_birth_apply".to_string(),
+                left_columns: vec!["id".to_string()],
+                right_schema: "public".to_string(),
+                right_table: "mc_birth_detail".to_string(),
+                right_columns: vec!["apply_id".to_string()],
+                relation: "申请对应详情".to_string(),
+                status: SchemaRagFactStatus::Verified,
+                confidence: 0.8,
+                evidence: "文档写明申请和详情通过 id/apply_id 关联".to_string(),
+            }],
+            errors: Vec::new(),
+        };
+        let graph_path = temp_dir.path().join("graph.kuzu");
+        let stored = StoredSchemaRagIndex {
+            manifest: fake_manifest(2, left_table.columns.len() + right_table.columns.len()),
+            tables: vec![left_table, right_table],
+            documents: Vec::new(),
+            api_doc_extractions: vec![extraction],
+        };
+
+        write_kuzu_index_blocking(&graph_path, &stored).unwrap();
+
+        assert_eq!(kuzu_count(&graph_path, "MATCH (j:JoinCandidate) RETURN count(j) AS count"), 1);
+        assert_eq!(
+            kuzu_count(
+                &graph_path,
+                "MATCH (section:ApiDocSection)-[r:SECTION_MENTIONS_JOIN]->(j:JoinCandidate) RETURN count(r) AS count",
+            ),
+            1,
+        );
+        assert_eq!(
+            kuzu_count(
+                &graph_path,
+                "MATCH (j:JoinCandidate)-[r:JOIN_LEFT_TABLE]->(t:TableNode) RETURN count(r) AS count",
+            ),
+            1,
+        );
+        assert_eq!(
+            kuzu_count(
+                &graph_path,
+                "MATCH (j:JoinCandidate)-[r:JOIN_RIGHT_TABLE]->(t:TableNode) RETURN count(r) AS count",
             ),
             1,
         );

@@ -7,7 +7,11 @@ import {
   normalizeSchemaRagApiKey,
   normalizeSchemaRagConfig,
 } from "../../apps/desktop/src/lib/schemaRag";
-import { apiDocSourceId, splitMarkdownSections } from "../../apps/desktop/src/lib/schemaDocIngestion";
+import {
+  API_DOC_SECTION_MAX_CHARS_FOR_TEST,
+  apiDocSourceId,
+  splitMarkdownSections,
+} from "../../apps/desktop/src/lib/schemaDocIngestion";
 import {
   appendSchemaDocImportLog,
   createSchemaDocImportProgress,
@@ -162,6 +166,13 @@ test("schema doc ingestion builds stable source and section ids", async () => {
   assert.equal(sections[0].id, `${sourceId}#section-1`);
   assert.deepEqual(sections[1].titlePath, ["出生证接口", "申请列表"]);
   assert.match(sections[1].text, /apply_status/);
+});
+
+test("schema doc ingestion uses smaller chunks for token-heavy JSON extraction", () => {
+  const sections = splitMarkdownSections("长字段说明\n".repeat(260), "api-doc:long");
+
+  assert.ok(sections.length > 1);
+  assert.ok(sections.every((section) => section.text.length <= API_DOC_SECTION_MAX_CHARS_FOR_TEST));
 });
 
 test("schema doc import progress clamps percent and keeps recent logs", () => {
