@@ -121,6 +121,123 @@ pub struct SchemaRagManifest {
     pub index_count: usize,
     pub foreign_key_count: usize,
     pub schema_fingerprint: String,
+    #[serde(default)]
+    pub table_units: Vec<SchemaRagTableIndexUnit>,
+    #[serde(default)]
+    pub api_doc_sources: Vec<SchemaRagApiDocSource>,
+    #[serde(default)]
+    pub api_doc_chunk_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagTableIndexUnit {
+    pub schema: String,
+    pub table: String,
+    pub fingerprint: String,
+    pub document_ids: Vec<String>,
+    pub column_count: usize,
+    pub index_count: usize,
+    pub foreign_key_count: usize,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SchemaRagTableChangeKind {
+    Added,
+    Changed,
+    Removed,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagTableChange {
+    pub schema: String,
+    pub table: String,
+    pub kind: SchemaRagTableChangeKind,
+    pub old_fingerprint: Option<String>,
+    pub new_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagTableChangeSummary {
+    pub added: usize,
+    pub changed: usize,
+    pub removed: usize,
+    pub unchanged: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RefreshSchemaRagMode {
+    ChangedOnly,
+    SelectedTables,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshSchemaRagTablesRequest {
+    pub scope: SchemaRagScope,
+    pub tables: Vec<SchemaRagTableMetadata>,
+    pub config: SchemaRagConfig,
+    pub mode: RefreshSchemaRagMode,
+    #[serde(default)]
+    pub selected_tables: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshSchemaRagTablesResponse {
+    pub manifest: SchemaRagManifest,
+    pub changes: SchemaRagTableChangeSummary,
+    pub rebuilt_documents: usize,
+    pub index_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum KnowledgeSourceKind {
+    Schema,
+    ApiDoc,
+    Enrichment,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedApiDocSection {
+    pub id: String,
+    pub title_path: Vec<String>,
+    pub text: String,
+    pub page: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedApiDoc {
+    pub source_id: String,
+    pub source_path: String,
+    pub source_kind: KnowledgeSourceKind,
+    pub original_format: String,
+    pub converter: String,
+    pub content_hash: String,
+    pub markdown: String,
+    pub sections: Vec<NormalizedApiDocSection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagApiDocSource {
+    pub source_id: String,
+    pub source_path: String,
+    pub original_format: String,
+    pub converter: String,
+    pub content_hash: String,
+    pub section_count: usize,
+    pub imported_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -128,6 +245,33 @@ pub struct SchemaRagManifest {
 pub struct AnalyzeSchemaRagResponse {
     pub manifest: SchemaRagManifest,
     pub index_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSchemaRagApiDocsRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub schema: String,
+    pub config: SchemaRagConfig,
+    pub files: Vec<ApiDocImportFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiDocImportFile {
+    pub path: String,
+    pub display_name: Option<String>,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSchemaRagApiDocsResponse {
+    pub imported_sources: usize,
+    pub chunks: usize,
+    pub embedded_chunks: usize,
+    pub unsupported_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -289,6 +433,7 @@ pub struct SchemaRagDocument {
 pub enum SchemaRagDocumentKind {
     Table,
     Column,
+    ApiDoc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,7 +550,9 @@ where
         "Building schema documents",
     ));
 
+    let api_documents = load_api_doc_documents(&index_dir, &request.scope.schema).await?;
     let mut documents = build_schema_documents(&request.tables);
+    documents.extend(api_documents);
     let texts: Vec<String> = documents.iter().map(|doc| doc.text_for_embedding.clone()).collect();
     append_sidecar_log(
         &index_dir,
@@ -426,7 +573,11 @@ where
     }
 
     let analyzed_at = Utc::now();
-    let manifest = build_manifest(&request, analyzed_at)?;
+    let mut manifest = build_manifest(&request, analyzed_at)?;
+    if let Some(existing_manifest) = load_manifest_if_exists(&index_dir).await? {
+        manifest.api_doc_sources = existing_manifest.api_doc_sources;
+        manifest.api_doc_chunk_count = existing_manifest.api_doc_chunk_count;
+    }
     let document_count = documents.len();
     progress(progress_event(
         "write_index",
@@ -464,6 +615,88 @@ where
     ));
 
     Ok(AnalyzeSchemaRagResponse { manifest, index_path: index_dir.to_string_lossy().to_string() })
+}
+
+pub async fn refresh_schema_tables(
+    data_dir: &Path,
+    request: RefreshSchemaRagTablesRequest,
+) -> Result<RefreshSchemaRagTablesResponse, String> {
+    validate_schema_rag_config(&request.config)?;
+    let index_dir =
+        schema_index_dir(data_dir, &request.scope.connection_id, &request.scope.database, &request.scope.schema);
+    let mut search_index =
+        load_search_index(data_dir, &request.scope.connection_id, &request.scope.database, &request.scope.schema).await?;
+    let requested_tables: HashSet<String> = match request.mode {
+        RefreshSchemaRagMode::ChangedOnly => request.tables.iter().map(|table| table.name.clone()).collect(),
+        RefreshSchemaRagMode::SelectedTables => request.selected_tables.iter().cloned().collect(),
+    };
+    if requested_tables.is_empty() {
+        return Err("At least one table is required for table refresh".to_string());
+    }
+
+    let changes = diff_table_index_units(&search_index.stored.manifest.table_units, &request.tables)?;
+    let selected_tables: Vec<SchemaRagTableMetadata> = request
+        .tables
+        .iter()
+        .filter(|table| requested_tables.iter().any(|selected| selected.eq_ignore_ascii_case(&table.name)))
+        .cloned()
+        .collect();
+    if selected_tables.is_empty() {
+        return Err("Selected tables were not found in current schema metadata".to_string());
+    }
+
+    let mut refreshed_documents = build_schema_documents(&selected_tables);
+    let texts: Vec<String> = refreshed_documents.iter().map(|doc| doc.text_for_embedding.clone()).collect();
+    let mut progress = |_| {};
+    let embeddings = embed_texts(&request.config, &texts, &index_dir, &mut progress).await?;
+    if embeddings.len() != refreshed_documents.len() {
+        return Err("Embedding service returned an unexpected number of vectors".to_string());
+    }
+    for (doc, embedding) in refreshed_documents.iter_mut().zip(embeddings) {
+        doc.embedding = embedding;
+    }
+
+    let selected_names: Vec<String> = selected_tables.iter().map(|table| table.name.clone()).collect();
+    search_index.stored.documents =
+        merge_refreshed_table_documents(&search_index.stored.documents, refreshed_documents, &selected_names);
+    for refreshed_table in selected_tables {
+        if let Some(existing) = search_index
+            .stored
+            .tables
+            .iter_mut()
+            .find(|table| table.schema == refreshed_table.schema && table.name.eq_ignore_ascii_case(&refreshed_table.name))
+        {
+            *existing = refreshed_table;
+        } else {
+            search_index.stored.tables.push(refreshed_table);
+        }
+    }
+    search_index.stored.tables.sort_by(|a, b| a.schema.cmp(&b.schema).then_with(|| a.name.cmp(&b.name)));
+
+    let analyzed_at = Utc::now();
+    let mut manifest = build_manifest(
+        &AnalyzeSchemaRagRequest { scope: request.scope, tables: search_index.stored.tables.clone(), config: request.config },
+        analyzed_at,
+    )?;
+    manifest.api_doc_sources = search_index.stored.manifest.api_doc_sources;
+    manifest.api_doc_chunk_count = search_index.stored.manifest.api_doc_chunk_count;
+    search_index.stored.manifest = manifest.clone();
+
+    write_json_pretty(&index_dir.join("manifest.json"), &manifest).await?;
+    write_json_pretty(&index_dir.join("documents.json"), &search_index.stored).await?;
+    let graph_path = index_dir.join("graph.kuzu");
+    write_kuzu_index(&graph_path, &search_index.stored).await?;
+    if !search_index.enrichment.aliases.is_empty() {
+        save_kuzu_business_aliases(&graph_path, &search_index.enrichment.aliases).await?;
+    }
+    append_sidecar_log(&index_dir, &format!("table refresh done rebuilt_documents={}", texts.len())).await?;
+
+    Ok(RefreshSchemaRagTablesResponse {
+        manifest,
+        changes: summarize_table_changes(&changes_for_requested_tables(&changes, &requested_tables)),
+        rebuilt_documents: texts.len(),
+        index_path: index_dir.to_string_lossy().to_string(),
+    })
 }
 
 pub async fn search_schema(data_dir: &Path, request: SearchSchemaRagRequest) -> Result<SchemaRagSearchResult, String> {
@@ -594,6 +827,110 @@ pub async fn save_schema_enrichment(
     Ok(SaveSchemaRagEnrichmentResponse { saved_aliases })
 }
 
+pub async fn import_api_docs(
+    data_dir: &Path,
+    request: ImportSchemaRagApiDocsRequest,
+) -> Result<ImportSchemaRagApiDocsResponse, String> {
+    let schema = request.schema.trim();
+    if schema.is_empty() {
+        return Err("schema is required".to_string());
+    }
+    let index_dir = schema_index_dir(data_dir, &request.connection_id, &request.database, schema);
+    tokio::fs::create_dir_all(&index_dir).await.map_err(|err| err.to_string())?;
+    let docs_dir = index_dir.join("api-docs");
+    tokio::fs::create_dir_all(&docs_dir).await.map_err(|err| err.to_string())?;
+
+    let mut manifest = load_manifest_if_exists(&index_dir)
+        .await?
+        .ok_or_else(|| "Analyze schema before importing API docs.".to_string())?;
+    validate_schema_rag_config(&request.config)?;
+    let mut imported_sources = 0usize;
+    let mut chunks = 0usize;
+    let mut embedded_chunks = 0usize;
+    let mut unsupported_files = Vec::new();
+    let mut imported_source_ids = HashSet::new();
+    let mut normalized_docs = Vec::new();
+    let mut all_api_documents = Vec::new();
+    let imported_at = Utc::now();
+
+    for file in request.files {
+        let path = file.path.trim();
+        let display_name = file.display_name.as_deref().unwrap_or(path);
+        if !is_markdown_path(path) {
+            unsupported_files.push(display_name.to_string());
+            continue;
+        }
+        let source_id = format!("api-doc:{}", sha256_hex(path.as_bytes()));
+        let normalized = normalize_markdown_api_doc(&source_id, path, &file.content)?;
+        chunks += normalized.sections.len();
+        imported_sources += 1;
+        imported_source_ids.insert(normalized.source_id.clone());
+        all_api_documents.extend(build_api_doc_documents(schema, &normalized));
+        normalized_docs.push(normalized);
+    }
+
+    let mut updated_search_index = None;
+    if !all_api_documents.is_empty() {
+        let mut search_index =
+            load_search_index(data_dir, &request.connection_id, &request.database, schema).await?;
+        let texts: Vec<String> = all_api_documents.iter().map(|doc| doc.text_for_embedding.clone()).collect();
+        let mut progress = |_| {};
+        let embeddings = embed_texts(&request.config, &texts, &index_dir, &mut progress).await?;
+        if embeddings.len() != all_api_documents.len() {
+            return Err("Embedding service returned an unexpected number of vectors".to_string());
+        }
+        for (doc, embedding) in all_api_documents.iter_mut().zip(embeddings) {
+            doc.embedding = embedding;
+        }
+        search_index
+            .stored
+            .documents
+            .retain(|doc| doc.kind != SchemaRagDocumentKind::ApiDoc || !imported_source_ids.contains(&doc.table));
+        search_index.stored.documents.extend(all_api_documents);
+        search_index
+            .stored
+            .documents
+            .sort_by(|a, b| a.schema.cmp(&b.schema).then_with(|| a.table.cmp(&b.table)).then_with(|| a.id.cmp(&b.id)));
+        embedded_chunks = texts.len();
+        updated_search_index = Some(search_index);
+    }
+
+    for normalized in &normalized_docs {
+        write_json_pretty(
+            &docs_dir.join(format!("{}.json", sanitize_path_segment(&normalized.source_id))),
+            normalized,
+        )
+        .await?;
+        upsert_api_doc_source(&mut manifest, normalized, imported_at);
+    }
+    if !normalized_docs.is_empty() {
+        manifest.api_doc_chunk_count = load_api_doc_chunk_count(&docs_dir).await.unwrap_or(chunks);
+        write_json_pretty(&index_dir.join("manifest.json"), &manifest).await?;
+    }
+    if let Some(mut search_index) = updated_search_index {
+        search_index.stored.manifest = manifest;
+        write_json_pretty(&index_dir.join("documents.json"), &search_index.stored).await?;
+        let graph_path = index_dir.join("graph.kuzu");
+        write_kuzu_index(&graph_path, &search_index.stored).await?;
+        if !search_index.enrichment.aliases.is_empty() {
+            save_kuzu_business_aliases(&graph_path, &search_index.enrichment.aliases).await?;
+        }
+    }
+    append_sidecar_log(
+        &index_dir,
+        &format!(
+            "api docs imported sources={} chunks={} embedded_chunks={} unsupported={}",
+            imported_sources,
+            chunks,
+            embedded_chunks,
+            unsupported_files.len()
+        ),
+    )
+    .await?;
+
+    Ok(ImportSchemaRagApiDocsResponse { imported_sources, chunks, embedded_chunks, unsupported_files })
+}
+
 pub async fn index_status(data_dir: &Path, request: SchemaRagStatusRequest) -> Result<SchemaRagStatus, String> {
     let index_dir = schema_index_dir(data_dir, &request.connection_id, &request.database, &request.schema);
     let manifest_path = index_dir.join("manifest.json");
@@ -652,6 +989,48 @@ pub fn build_schema_documents(tables: &[SchemaRagTableMetadata]) -> Vec<SchemaRa
     docs
 }
 
+fn build_api_doc_documents(schema: &str, doc: &NormalizedApiDoc) -> Vec<SchemaRagDocument> {
+    doc.sections
+        .iter()
+        .map(|section| SchemaRagDocument {
+            id: format!("api-doc:{}:{}", doc.source_id, section.id),
+            kind: SchemaRagDocumentKind::ApiDoc,
+            schema: schema.to_string(),
+            table: doc.source_id.clone(),
+            column: Some(section.id.clone()),
+            data_type: Some(doc.original_format.clone()),
+            text_for_embedding: api_doc_section_text_for_embedding(doc, section),
+            embedding: Vec::new(),
+        })
+        .collect()
+}
+
+fn merge_refreshed_table_documents(
+    old_documents: &[SchemaRagDocument],
+    refreshed_documents: Vec<SchemaRagDocument>,
+    selected_tables: &[String],
+) -> Vec<SchemaRagDocument> {
+    let mut merged: Vec<SchemaRagDocument> = old_documents
+        .iter()
+        .filter(|doc| !selected_tables.iter().any(|table| table.eq_ignore_ascii_case(&doc.table)))
+        .cloned()
+        .collect();
+    merged.extend(refreshed_documents);
+    merged.sort_by(|a, b| a.schema.cmp(&b.schema).then_with(|| a.table.cmp(&b.table)).then_with(|| a.id.cmp(&b.id)));
+    merged
+}
+
+fn changes_for_requested_tables(
+    changes: &[SchemaRagTableChange],
+    requested_tables: &HashSet<String>,
+) -> Vec<SchemaRagTableChange> {
+    changes
+        .iter()
+        .filter(|change| requested_tables.iter().any(|table| table.eq_ignore_ascii_case(&change.table)))
+        .cloned()
+        .collect()
+}
+
 pub fn search_documents_lexical(
     schema: &str,
     query: &str,
@@ -664,6 +1043,9 @@ pub fn search_documents_lexical(
     let query_text = query.to_lowercase();
     let mut by_table: HashMap<(String, String), (f32, Vec<SchemaRagMatchedColumn>, Vec<String>)> = HashMap::new();
     for doc in documents.iter().filter(|doc| doc.schema == schema) {
+        if doc.kind == SchemaRagDocumentKind::ApiDoc {
+            continue;
+        }
         let score = lexical_score(&query_tokens, &query_text, doc);
         if score <= 0.0 {
             continue;
@@ -673,10 +1055,12 @@ pub fn search_documents_lexical(
         entry.0 += match doc.kind {
             SchemaRagDocumentKind::Table => score,
             SchemaRagDocumentKind::Column => score + 0.4,
+            SchemaRagDocumentKind::ApiDoc => continue,
         };
         entry.2.push(match doc.kind {
             SchemaRagDocumentKind::Table => "表级元数据命中".to_string(),
             SchemaRagDocumentKind::Column => format!("字段 {} 命中", doc.column.as_deref().unwrap_or("")),
+            SchemaRagDocumentKind::ApiDoc => continue,
         });
         if doc.kind == SchemaRagDocumentKind::Column {
             if let Some(column) = &doc.column {
@@ -732,6 +1116,10 @@ fn search_documents_vector(
     let query_text = query.to_lowercase();
     let mut by_table: HashMap<(String, String), TableSearchAccumulator> = HashMap::new();
     for doc in documents.iter().filter(|doc| doc.schema == schema) {
+        if doc.kind == SchemaRagDocumentKind::ApiDoc {
+            apply_api_doc_search_hit(query_embedding, &query_tokens, &query_text, doc, tables, &mut by_table);
+            continue;
+        }
         let vector_score = cosine_similarity(query_embedding, &doc.embedding).unwrap_or(0.0).max(0.0);
         let lexical_raw = lexical_score(&query_tokens, &query_text, doc);
         let alias_hits = business_alias_hits_for_doc(&query_tokens, &query_text, doc, enrichment);
@@ -921,7 +1309,76 @@ fn build_manifest(request: &AnalyzeSchemaRagRequest, analyzed_at: DateTime<Utc>)
         index_count,
         foreign_key_count,
         schema_fingerprint: schema_fingerprint(&request.tables)?,
+        table_units: build_table_index_units(&request.tables, analyzed_at)?,
+        api_doc_sources: Vec::new(),
+        api_doc_chunk_count: 0,
     })
+}
+
+fn apply_api_doc_search_hit(
+    query_embedding: &[f32],
+    query_tokens: &HashSet<String>,
+    query_text: &str,
+    doc: &SchemaRagDocument,
+    tables: &[SchemaRagTableMetadata],
+    by_table: &mut HashMap<(String, String), TableSearchAccumulator>,
+) {
+    let vector_score = cosine_similarity(query_embedding, &doc.embedding).unwrap_or(0.0).max(0.0);
+    let lexical_raw = lexical_score(query_tokens, query_text, doc);
+    if vector_score < 0.20 && lexical_raw <= 0.0 {
+        return;
+    }
+    let lexical_component = normalize_lexical_score(lexical_raw);
+    let base_score = vector_score * 0.55 + lexical_component * 0.30;
+    if base_score <= 0.0 {
+        return;
+    }
+    let text = doc.text_for_embedding.to_lowercase();
+    for table in tables.iter().filter(|table| table.schema == doc.schema) {
+        let table_name = table.name.to_lowercase();
+        let table_comment = table.comment.as_deref().unwrap_or("").to_lowercase();
+        let table_matches = text.contains(&table_name) || (!table_comment.is_empty() && text.contains(&table_comment));
+        let matched_columns = api_doc_matched_columns(table, &text, base_score);
+        if !table_matches && matched_columns.is_empty() {
+            continue;
+        }
+
+        let key = (table.schema.clone(), table.name.clone());
+        let entry = by_table.entry(key).or_default();
+        entry.score = entry.score.max(base_score + if table_matches { 0.10 } else { 0.0 });
+        let mut reasons = vec![format!("接口文档命中 {}", api_doc_section_label(doc))];
+        if table_matches {
+            reasons.push("接口文档提到当前表".to_string());
+        }
+        entry.reasons.extend(reasons.clone());
+        entry.matched_columns.extend(matched_columns.into_iter().map(|mut column| {
+            let original_reason = column.reason.clone();
+            column.reason = summarize_reasons(&[original_reason, summarize_reasons(&reasons)]);
+            column
+        }));
+    }
+}
+
+fn api_doc_matched_columns(table: &SchemaRagTableMetadata, text: &str, score: f32) -> Vec<SchemaRagMatchedColumn> {
+    table
+        .columns
+        .iter()
+        .filter(|column| {
+            let column_name = column.name.to_lowercase();
+            let column_comment = column.comment.as_deref().unwrap_or("").to_lowercase();
+            (column_name.chars().count() >= 3 && text.contains(&column_name))
+                || (!column_comment.is_empty() && text.contains(&column_comment))
+        })
+        .take(8)
+        .map(|column| SchemaRagMatchedColumn {
+            name: column.name.clone(),
+            comment: column.comment.clone(),
+            primary_key: Some(column.is_primary_key),
+            data_type: Some(column.data_type.clone()),
+            score,
+            reason: format!("接口文档命中字段 {}", column.name),
+        })
+        .collect()
 }
 
 async fn write_kuzu_index(graph_path: &Path, stored: &StoredSchemaRagIndex) -> Result<(), String> {
@@ -1158,6 +1615,9 @@ fn insert_kuzu_documents(connection: &Connection<'_>, stored: &StoredSchemaRagIn
                 ],
             )
             .map_err(|err| err.to_string())?;
+        if document.kind == SchemaRagDocumentKind::ApiDoc {
+            continue;
+        }
         let table_id = kuzu_table_id(&document.schema, &document.table);
         connection
             .execute(
@@ -1296,6 +1756,7 @@ fn kuzu_document_kind(kind: &SchemaRagDocumentKind) -> &'static str {
     match kind {
         SchemaRagDocumentKind::Table => "table",
         SchemaRagDocumentKind::Column => "column",
+        SchemaRagDocumentKind::ApiDoc => "api_doc",
     }
 }
 
@@ -2177,6 +2638,7 @@ fn value_document_kind(value: &Value) -> Result<SchemaRagDocumentKind, String> {
     match value_string(value)?.as_str() {
         "table" => Ok(SchemaRagDocumentKind::Table),
         "column" => Ok(SchemaRagDocumentKind::Column),
+        "api_doc" => Ok(SchemaRagDocumentKind::ApiDoc),
         other => Err(format!("unknown schema document kind: {other}")),
     }
 }
@@ -2219,6 +2681,15 @@ fn column_text_for_embedding(table: &SchemaRagTableMetadata, column: &SchemaRagC
     .join("\n")
 }
 
+fn api_doc_section_text_for_embedding(doc: &NormalizedApiDoc, section: &NormalizedApiDocSection) -> String {
+    [
+        format!("接口文档: {}", doc.source_path),
+        format!("章节: {}", section.title_path.join(" / ")),
+        format!("内容: {}", section.text),
+    ]
+    .join("\n")
+}
+
 fn lexical_score(query_tokens: &HashSet<String>, query_text: &str, doc: &SchemaRagDocument) -> f32 {
     let haystack = doc.text_for_embedding.to_lowercase();
     let mut score = 0.0;
@@ -2231,6 +2702,12 @@ fn lexical_score(query_tokens: &HashSet<String>, query_text: &str, doc: &SchemaR
     }
     if query_text.contains(&doc.table.to_lowercase()) {
         score += 12.0;
+    }
+    if doc.kind == SchemaRagDocumentKind::ApiDoc {
+        let haystack = doc.text_for_embedding.to_lowercase();
+        if query_text.len() >= 2 && haystack.contains(query_text) {
+            score += 10.0;
+        }
     }
     if let Some(column) = &doc.column {
         if query_text.contains(&column.to_lowercase()) {
@@ -2274,6 +2751,7 @@ fn document_hit_reasons(doc: &SchemaRagDocument, vector_score: f32, lexical_scor
             SchemaRagDocumentKind::Column => {
                 reasons.push(format!("向量命中字段 {}", doc.column.as_deref().unwrap_or("")))
             }
+            SchemaRagDocumentKind::ApiDoc => reasons.push(format!("向量命中接口文档 {}", api_doc_section_label(doc))),
         }
     }
     if lexical_score > 0.0 {
@@ -2282,6 +2760,7 @@ fn document_hit_reasons(doc: &SchemaRagDocument, vector_score: f32, lexical_scor
             SchemaRagDocumentKind::Column => {
                 reasons.push(format!("关键词命中字段 {}", doc.column.as_deref().unwrap_or("")))
             }
+            SchemaRagDocumentKind::ApiDoc => reasons.push(format!("关键词命中接口文档 {}", api_doc_section_label(doc))),
         }
     }
     if reasons.is_empty() {
@@ -2290,9 +2769,14 @@ fn document_hit_reasons(doc: &SchemaRagDocument, vector_score: f32, lexical_scor
             SchemaRagDocumentKind::Column => {
                 reasons.push(format!("低分向量命中字段 {}", doc.column.as_deref().unwrap_or("")))
             }
+            SchemaRagDocumentKind::ApiDoc => reasons.push(format!("低分向量命中接口文档 {}", api_doc_section_label(doc))),
         }
     }
     reasons
+}
+
+fn api_doc_section_label(doc: &SchemaRagDocument) -> String {
+    doc.column.as_deref().unwrap_or(&doc.table).to_string()
 }
 
 fn business_alias_hits_for_doc<'a>(
@@ -2423,10 +2907,261 @@ fn related_tables_for(table: &SchemaRagTableMetadata, tables: &[SchemaRagTableMe
     related
 }
 
+pub fn build_table_index_units(
+    tables: &[SchemaRagTableMetadata],
+    updated_at: DateTime<Utc>,
+) -> Result<Vec<SchemaRagTableIndexUnit>, String> {
+    tables
+        .iter()
+        .map(|table| {
+            Ok(SchemaRagTableIndexUnit {
+                schema: table.schema.clone(),
+                table: table.name.clone(),
+                fingerprint: table_fingerprint(table)?,
+                document_ids: table_document_ids(table),
+                column_count: table.columns.len(),
+                index_count: table.indexes.len(),
+                foreign_key_count: table.foreign_keys.len(),
+                updated_at,
+            })
+        })
+        .collect()
+}
+
+pub fn diff_table_index_units(
+    old_units: &[SchemaRagTableIndexUnit],
+    new_tables: &[SchemaRagTableMetadata],
+) -> Result<Vec<SchemaRagTableChange>, String> {
+    let old_by_key: HashMap<(String, String), &SchemaRagTableIndexUnit> =
+        old_units.iter().map(|unit| ((unit.schema.clone(), unit.table.clone()), unit)).collect();
+    let mut seen_new_keys = HashSet::new();
+    let mut changes = Vec::new();
+
+    for table in new_tables {
+        let key = (table.schema.clone(), table.name.clone());
+        seen_new_keys.insert(key.clone());
+        let new_fingerprint = table_fingerprint(table)?;
+        match old_by_key.get(&key) {
+            Some(old) if old.fingerprint == new_fingerprint => changes.push(SchemaRagTableChange {
+                schema: table.schema.clone(),
+                table: table.name.clone(),
+                kind: SchemaRagTableChangeKind::Unchanged,
+                old_fingerprint: Some(old.fingerprint.clone()),
+                new_fingerprint: Some(new_fingerprint),
+            }),
+            Some(old) => changes.push(SchemaRagTableChange {
+                schema: table.schema.clone(),
+                table: table.name.clone(),
+                kind: SchemaRagTableChangeKind::Changed,
+                old_fingerprint: Some(old.fingerprint.clone()),
+                new_fingerprint: Some(new_fingerprint),
+            }),
+            None => changes.push(SchemaRagTableChange {
+                schema: table.schema.clone(),
+                table: table.name.clone(),
+                kind: SchemaRagTableChangeKind::Added,
+                old_fingerprint: None,
+                new_fingerprint: Some(new_fingerprint),
+            }),
+        }
+    }
+
+    for old in old_units {
+        let key = (old.schema.clone(), old.table.clone());
+        if !seen_new_keys.contains(&key) {
+            changes.push(SchemaRagTableChange {
+                schema: old.schema.clone(),
+                table: old.table.clone(),
+                kind: SchemaRagTableChangeKind::Removed,
+                old_fingerprint: Some(old.fingerprint.clone()),
+                new_fingerprint: None,
+            });
+        }
+    }
+
+    changes.sort_by(|a, b| a.schema.cmp(&b.schema).then_with(|| a.table.cmp(&b.table)));
+    Ok(changes)
+}
+
+pub fn summarize_table_changes(changes: &[SchemaRagTableChange]) -> SchemaRagTableChangeSummary {
+    let mut summary = SchemaRagTableChangeSummary { added: 0, changed: 0, removed: 0, unchanged: 0, total: changes.len() };
+    for change in changes {
+        match change.kind {
+            SchemaRagTableChangeKind::Added => summary.added += 1,
+            SchemaRagTableChangeKind::Changed => summary.changed += 1,
+            SchemaRagTableChangeKind::Removed => summary.removed += 1,
+            SchemaRagTableChangeKind::Unchanged => summary.unchanged += 1,
+        }
+    }
+    summary
+}
+
+pub fn table_fingerprint(table: &SchemaRagTableMetadata) -> Result<String, String> {
+    let bytes = serde_json::to_vec(table).map_err(|err| err.to_string())?;
+    let digest = Sha256::digest(bytes);
+    Ok(format!("{digest:x}"))
+}
+
+fn table_document_ids(table: &SchemaRagTableMetadata) -> Vec<String> {
+    let mut ids = Vec::with_capacity(table.columns.len() + 1);
+    ids.push(format!("table:{}:{}", table.schema, table.name));
+    ids.extend(table.columns.iter().map(|column| format!("column:{}:{}.{}", table.schema, table.name, column.name)));
+    ids
+}
+
+async fn load_manifest_if_exists(index_dir: &Path) -> Result<Option<SchemaRagManifest>, String> {
+    match tokio::fs::read(index_dir.join("manifest.json")).await {
+        Ok(bytes) => serde_json::from_slice::<SchemaRagManifest>(&bytes).map(Some).map_err(|err| err.to_string()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn upsert_api_doc_source(manifest: &mut SchemaRagManifest, doc: &NormalizedApiDoc, imported_at: DateTime<Utc>) {
+    let source = SchemaRagApiDocSource {
+        source_id: doc.source_id.clone(),
+        source_path: doc.source_path.clone(),
+        original_format: doc.original_format.clone(),
+        converter: doc.converter.clone(),
+        content_hash: doc.content_hash.clone(),
+        section_count: doc.sections.len(),
+        imported_at,
+    };
+    if let Some(existing) = manifest.api_doc_sources.iter_mut().find(|source| source.source_id == doc.source_id) {
+        *existing = source;
+    } else {
+        manifest.api_doc_sources.push(source);
+    }
+    manifest.api_doc_sources.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+}
+
+async fn load_api_doc_chunk_count(docs_dir: &Path) -> Result<usize, String> {
+    let mut entries = match tokio::fs::read_dir(docs_dir).await {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(err.to_string()),
+    };
+    let mut chunks = 0usize;
+    while let Some(entry) = entries.next_entry().await.map_err(|err| err.to_string())? {
+        if entry.path().extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let bytes = tokio::fs::read(entry.path()).await.map_err(|err| err.to_string())?;
+        let doc: NormalizedApiDoc = serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        chunks += doc.sections.len();
+    }
+    Ok(chunks)
+}
+
+async fn load_api_doc_documents(index_dir: &Path, schema: &str) -> Result<Vec<SchemaRagDocument>, String> {
+    let docs_dir = index_dir.join("api-docs");
+    let mut entries = match tokio::fs::read_dir(&docs_dir).await {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.to_string()),
+    };
+    let mut documents = Vec::new();
+    while let Some(entry) = entries.next_entry().await.map_err(|err| err.to_string())? {
+        if entry.path().extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let bytes = tokio::fs::read(entry.path()).await.map_err(|err| err.to_string())?;
+        let doc: NormalizedApiDoc = serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+        documents.extend(build_api_doc_documents(schema, &doc));
+    }
+    documents.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(documents)
+}
+
+fn is_markdown_path(path: &str) -> bool {
+    let extension = Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or_default();
+    extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+}
+
 fn schema_fingerprint(tables: &[SchemaRagTableMetadata]) -> Result<String, String> {
     let bytes = serde_json::to_vec(tables).map_err(|err| err.to_string())?;
     let digest = Sha256::digest(bytes);
     Ok(format!("{digest:x}"))
+}
+
+pub fn normalize_markdown_api_doc(
+    source_id: &str,
+    source_path: &str,
+    markdown: &str,
+) -> Result<NormalizedApiDoc, String> {
+    let markdown = markdown.trim();
+    if markdown.is_empty() {
+        return Err("API document content is empty".to_string());
+    }
+    let content_hash = sha256_hex(markdown.as_bytes());
+    Ok(NormalizedApiDoc {
+        source_id: source_id.to_string(),
+        source_path: source_path.to_string(),
+        source_kind: KnowledgeSourceKind::ApiDoc,
+        original_format: "markdown".to_string(),
+        converter: "builtin-markdown".to_string(),
+        content_hash,
+        markdown: markdown.to_string(),
+        sections: split_markdown_sections(markdown, source_id),
+    })
+}
+
+fn split_markdown_sections(markdown: &str, source_id: &str) -> Vec<NormalizedApiDocSection> {
+    let mut title_stack: Vec<String> = Vec::new();
+    let mut current_title_path: Vec<String> = Vec::new();
+    let mut current_lines: Vec<String> = Vec::new();
+    let mut sections = Vec::new();
+
+    for line in markdown.lines() {
+        if let Some((level, title)) = markdown_heading(line) {
+            push_markdown_section(source_id, &mut sections, &current_title_path, &mut current_lines);
+            title_stack.truncate(level.saturating_sub(1));
+            title_stack.push(title.to_string());
+            current_title_path = title_stack.clone();
+            continue;
+        }
+        current_lines.push(line.to_string());
+    }
+    push_markdown_section(source_id, &mut sections, &current_title_path, &mut current_lines);
+    sections
+}
+
+fn push_markdown_section(
+    source_id: &str,
+    sections: &mut Vec<NormalizedApiDocSection>,
+    title_path: &[String],
+    lines: &mut Vec<String>,
+) {
+    let text = lines.join("\n").trim().to_string();
+    lines.clear();
+    if text.is_empty() {
+        return;
+    }
+    let section_index = sections.len() + 1;
+    sections.push(NormalizedApiDocSection {
+        id: format!("{source_id}#section-{section_index}"),
+        title_path: title_path.to_vec(),
+        text,
+        page: None,
+    });
+}
+
+fn markdown_heading(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim();
+    let hashes = trimmed.chars().take_while(|ch| *ch == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let rest = trimmed.get(hashes..)?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    Some((hashes, rest))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    format!("{digest:x}")
 }
 
 fn sanitize_path_segment(value: &str) -> String {
@@ -2540,6 +3275,9 @@ mod tests {
             index_count: 0,
             foreign_key_count: 0,
             schema_fingerprint: "fake".to_string(),
+            table_units: Vec::new(),
+            api_doc_sources: Vec::new(),
+            api_doc_chunk_count: 0,
         }
     }
 
@@ -2634,6 +3372,192 @@ mod tests {
         assert!(id_doc.text_for_embedding.contains("表注释: 出生医学证明申请"));
         assert!(id_doc.text_for_embedding.contains("类型: bigint"));
         assert!(id_doc.text_for_embedding.contains("主键: true"));
+    }
+
+    #[test]
+    fn api_doc_documents_use_markdown_sections_as_embedding_units() {
+        let doc = normalize_markdown_api_doc(
+            "api-doc:birth",
+            "/docs/birth.md",
+            r#"# 出生证接口
+
+## 申请列表
+
+返回 apply_status 和 mother_name 字段。
+"#,
+        )
+        .unwrap();
+
+        let docs = build_api_doc_documents("public", &doc);
+
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].kind, SchemaRagDocumentKind::ApiDoc);
+        assert_eq!(docs[0].schema, "public");
+        assert_eq!(docs[0].table, "api-doc:birth");
+        assert!(docs[0].text_for_embedding.contains("接口文档: /docs/birth.md"));
+        assert!(docs[0].text_for_embedding.contains("申请列表"));
+        assert!(docs[0].text_for_embedding.contains("apply_status"));
+    }
+
+    #[test]
+    fn api_doc_vector_hit_boosts_tables_mentioned_by_imported_docs() {
+        let table = fake_table();
+        let doc = SchemaRagDocument {
+            id: "api-doc:birth:section-1".to_string(),
+            kind: SchemaRagDocumentKind::ApiDoc,
+            schema: "public".to_string(),
+            table: "api-doc:birth".to_string(),
+            column: Some("出生证接口 / 申请列表".to_string()),
+            data_type: Some("markdown".to_string()),
+            text_for_embedding: "接口文档: 出生证申请列表 返回字段 apply_status mother_name".to_string(),
+            embedding: vec![1.0, 0.0, 0.0],
+        };
+
+        let result = search_documents_vector(
+            "public",
+            "出生证申请列表",
+            &[1.0, 0.0, 0.0],
+            &[doc],
+            &[table],
+            &SchemaRagEnrichment::default(),
+            5,
+            "2026-06-03T00:00:00Z",
+        );
+
+        assert_eq!(result.tables.len(), 1);
+        assert_eq!(result.tables[0].name, "mc_birth_apply");
+        assert!(result.tables[0].reason.contains("接口文档命中"));
+        assert!(result.tables[0].matched_columns.iter().any(|column| column.name == "apply_status"));
+    }
+
+    #[test]
+    fn table_index_units_include_table_and_column_document_ids() {
+        let table = fake_table();
+        let units = build_table_index_units(std::slice::from_ref(&table), Utc::now()).unwrap();
+
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].schema, "public");
+        assert_eq!(units[0].table, "mc_birth_apply");
+        assert_eq!(units[0].column_count, 3);
+        assert_eq!(units[0].index_count, 1);
+        assert_eq!(units[0].foreign_key_count, 1);
+        assert_eq!(
+            units[0].document_ids,
+            vec![
+                "table:public:mc_birth_apply".to_string(),
+                "column:public:mc_birth_apply.id".to_string(),
+                "column:public:mc_birth_apply.mother_name".to_string(),
+                "column:public:mc_birth_apply.apply_status".to_string(),
+            ]
+        );
+        assert_eq!(units[0].fingerprint, table_fingerprint(&table).unwrap());
+    }
+
+    #[test]
+    fn table_diff_detects_added_changed_removed_and_unchanged_tables() {
+        let unchanged = fake_table();
+        let mut changed_old = fake_table();
+        changed_old.name = "changed_table".to_string();
+        changed_old.comment = Some("old comment".to_string());
+        let mut changed_new = changed_old.clone();
+        changed_new.comment = Some("new comment".to_string());
+        let mut removed = fake_table();
+        removed.name = "removed_table".to_string();
+        let mut added = fake_table();
+        added.name = "added_table".to_string();
+
+        let old_units = build_table_index_units(&[unchanged.clone(), changed_old, removed], Utc::now()).unwrap();
+        let changes = diff_table_index_units(&old_units, &[unchanged, changed_new, added]).unwrap();
+
+        let by_table: HashMap<String, SchemaRagTableChangeKind> =
+            changes.into_iter().map(|change| (change.table, change.kind)).collect();
+        assert_eq!(by_table.get("mc_birth_apply"), Some(&SchemaRagTableChangeKind::Unchanged));
+        assert_eq!(by_table.get("changed_table"), Some(&SchemaRagTableChangeKind::Changed));
+        assert_eq!(by_table.get("removed_table"), Some(&SchemaRagTableChangeKind::Removed));
+        assert_eq!(by_table.get("added_table"), Some(&SchemaRagTableChangeKind::Added));
+    }
+
+    #[test]
+    fn table_change_summary_counts_each_kind() {
+        let changes = vec![
+            SchemaRagTableChange {
+                schema: "public".to_string(),
+                table: "added_table".to_string(),
+                kind: SchemaRagTableChangeKind::Added,
+                old_fingerprint: None,
+                new_fingerprint: Some("new".to_string()),
+            },
+            SchemaRagTableChange {
+                schema: "public".to_string(),
+                table: "changed_table".to_string(),
+                kind: SchemaRagTableChangeKind::Changed,
+                old_fingerprint: Some("old".to_string()),
+                new_fingerprint: Some("new".to_string()),
+            },
+            SchemaRagTableChange {
+                schema: "public".to_string(),
+                table: "removed_table".to_string(),
+                kind: SchemaRagTableChangeKind::Removed,
+                old_fingerprint: Some("old".to_string()),
+                new_fingerprint: None,
+            },
+            SchemaRagTableChange {
+                schema: "public".to_string(),
+                table: "same_table".to_string(),
+                kind: SchemaRagTableChangeKind::Unchanged,
+                old_fingerprint: Some("same".to_string()),
+                new_fingerprint: Some("same".to_string()),
+            },
+        ];
+
+        let summary = summarize_table_changes(&changes);
+
+        assert_eq!(summary.added, 1);
+        assert_eq!(summary.changed, 1);
+        assert_eq!(summary.removed, 1);
+        assert_eq!(summary.unchanged, 1);
+        assert_eq!(summary.total, 4);
+    }
+
+    #[test]
+    fn normalize_markdown_api_doc_splits_sections_by_heading_path() {
+        let doc = normalize_markdown_api_doc(
+            "doc:order-api",
+            "/docs/order-api.md",
+            r#"# 订单模块
+
+## 退款列表接口
+
+GET /api/refund/list
+
+### 响应字段
+
+| 字段 | 说明 |
+| --- | --- |
+| refundNo | 退款单号 |
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(doc.source_id, "doc:order-api");
+        assert_eq!(doc.original_format, "markdown");
+        assert_eq!(doc.converter, "builtin-markdown");
+        assert_eq!(doc.sections.len(), 2);
+        assert_eq!(doc.sections[0].title_path, vec!["订单模块", "退款列表接口"]);
+        assert!(doc.sections[0].text.contains("GET /api/refund/list"));
+        assert_eq!(doc.sections[1].title_path, vec!["订单模块", "退款列表接口", "响应字段"]);
+        assert!(doc.sections[1].text.contains("refundNo"));
+        assert_eq!(
+            doc.content_hash,
+            normalize_markdown_api_doc("doc:order-api-copy", "/copy.md", doc.markdown.as_str()).unwrap().content_hash
+        );
+    }
+
+    #[test]
+    fn normalize_markdown_api_doc_rejects_empty_content() {
+        let error = normalize_markdown_api_doc("doc:empty", "/docs/empty.md", " \n\t ").unwrap_err();
+
+        assert_eq!(error, "API document content is empty");
     }
 
     #[test]
@@ -2794,6 +3718,81 @@ mod tests {
         );
 
         assert!(result.columns.is_empty());
+    }
+
+    #[test]
+    fn merge_refreshed_table_documents_replaces_only_selected_table_documents() {
+        let mut current_table = fake_table();
+        current_table.columns.push(SchemaRagColumnMetadata {
+            name: "apply_no".to_string(),
+            data_type: "varchar".to_string(),
+            is_nullable: false,
+            is_primary_key: false,
+            column_default: None,
+            comment: Some("申请编号".to_string()),
+        });
+        let other_table = SchemaRagTableMetadata {
+            schema: "public".to_string(),
+            name: "other_apply".to_string(),
+            table_type: "TABLE".to_string(),
+            comment: Some("其他申请".to_string()),
+            ddl: None,
+            columns: vec![SchemaRagColumnMetadata {
+                name: "id".to_string(),
+                data_type: "varchar".to_string(),
+                is_nullable: false,
+                is_primary_key: true,
+                column_default: None,
+                comment: None,
+            }],
+            indexes: vec![],
+            foreign_keys: vec![],
+        };
+        let old_tables = vec![fake_table(), other_table.clone()];
+        let mut old_documents = build_schema_documents(&old_tables);
+        for doc in &mut old_documents {
+            doc.embedding = if doc.table == "other_apply" { vec![9.0, 9.0, 9.0] } else { vec![1.0, 1.0, 1.0] };
+        }
+        let mut refreshed_documents = build_schema_documents(std::slice::from_ref(&current_table));
+        for doc in &mut refreshed_documents {
+            doc.embedding = vec![2.0, 2.0, 2.0];
+        }
+
+        let merged = merge_refreshed_table_documents(&old_documents, refreshed_documents, &["mc_birth_apply".to_string()]);
+
+        assert!(merged.iter().any(|doc| doc.table == "mc_birth_apply" && doc.column.as_deref() == Some("apply_no")));
+        assert!(merged.iter().any(|doc| doc.table == "other_apply" && doc.embedding == vec![9.0, 9.0, 9.0]));
+        assert!(merged
+            .iter()
+            .filter(|doc| doc.table == "mc_birth_apply")
+            .all(|doc| doc.embedding == vec![2.0, 2.0, 2.0]));
+    }
+
+    #[test]
+    fn changes_for_requested_tables_does_not_count_unselected_removed_tables() {
+        let changes = vec![
+            SchemaRagTableChange {
+                schema: "public".to_string(),
+                table: "mc_birth_apply".to_string(),
+                kind: SchemaRagTableChangeKind::Changed,
+                old_fingerprint: Some("old".to_string()),
+                new_fingerprint: Some("new".to_string()),
+            },
+            SchemaRagTableChange {
+                schema: "public".to_string(),
+                table: "other_apply".to_string(),
+                kind: SchemaRagTableChangeKind::Removed,
+                old_fingerprint: Some("other".to_string()),
+                new_fingerprint: None,
+            },
+        ];
+        let requested_tables = HashSet::from(["mc_birth_apply".to_string()]);
+
+        let summary = summarize_table_changes(&changes_for_requested_tables(&changes, &requested_tables));
+
+        assert_eq!(summary.total, 1);
+        assert_eq!(summary.changed, 1);
+        assert_eq!(summary.removed, 0);
     }
 
     #[tokio::test]

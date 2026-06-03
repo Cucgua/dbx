@@ -39,6 +39,41 @@ export interface SchemaRagProgressEvent extends SchemaRagScopeRequest {
 
 export interface AnalyzeSchemaRagRequest extends SchemaRagScopeRequest {}
 
+export interface ImportSchemaRagApiDocFile {
+  path: string;
+  displayName?: string | null;
+}
+
+export interface ImportSchemaRagApiDocsRequest extends SchemaRagScopeRequest {
+  files: ImportSchemaRagApiDocFile[];
+}
+
+export interface ImportSchemaRagApiDocsResponse {
+  importedSources: number;
+  chunks: number;
+  embeddedChunks: number;
+  unsupportedFiles: string[];
+}
+
+export interface RefreshSchemaRagTableRequest extends SchemaRagScopeRequest {
+  table: string;
+}
+
+export interface SchemaRagTableChangeSummary {
+  added: number;
+  changed: number;
+  removed: number;
+  unchanged: number;
+  total: number;
+}
+
+export interface RefreshSchemaRagTableResponse {
+  manifest: SchemaRagManifest;
+  changes: SchemaRagTableChangeSummary;
+  rebuiltDocuments: number;
+  indexPath: string;
+}
+
 export interface SearchSchemaRagRequest extends SchemaRagScopeRequest {
   query: string;
   limit?: number;
@@ -85,6 +120,30 @@ export interface SchemaRagManifest {
   indexCount: number;
   foreignKeyCount: number;
   schemaFingerprint: string;
+  tableUnits?: SchemaRagTableIndexUnit[];
+  apiDocSources?: SchemaRagApiDocSource[];
+  apiDocChunkCount?: number;
+}
+
+export interface SchemaRagTableIndexUnit {
+  schema: string;
+  table: string;
+  fingerprint: string;
+  documentIds: string[];
+  columnCount: number;
+  indexCount: number;
+  foreignKeyCount: number;
+  updatedAt: string;
+}
+
+export interface SchemaRagApiDocSource {
+  sourceId: string;
+  sourcePath: string;
+  originalFormat: string;
+  converter: string;
+  contentHash: string;
+  sectionCount: number;
+  importedAt: string;
 }
 
 export interface AnalyzeSchemaRagResponse {
@@ -157,6 +216,20 @@ export const DEFAULT_SCHEMA_RAG_CONFIG: SchemaRagConfig = {
   proxyEnabled: false,
   proxyUrl: "",
 };
+
+export function findSchemaRagTableUnit(
+  manifest: SchemaRagManifest | null | undefined,
+  target: { schema?: string | null; table?: string | null },
+): SchemaRagTableIndexUnit | null {
+  const schema = target.schema?.trim();
+  const table = target.table?.trim();
+  if (!schema || !table) return null;
+  return (
+    manifest?.tableUnits?.find(
+      (unit) => unit.schema.trim().toLowerCase() === schema.toLowerCase() && unit.table.trim().toLowerCase() === table.toLowerCase(),
+    ) || null
+  );
+}
 
 type RawSchemaRagConfig = Partial<SchemaRagConfig> & {
   embedding_provider?: unknown;

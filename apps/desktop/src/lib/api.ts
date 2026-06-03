@@ -74,6 +74,8 @@ export const deleteSchemaCachePrefix = forward("deleteSchemaCachePrefix");
 export const saveSchemaRagConfig = forward("saveSchemaRagConfig");
 export const loadSchemaRagConfig = forward("loadSchemaRagConfig");
 export const analyzeSchemaRag = forward("analyzeSchemaRag");
+export const importSchemaRagApiDocs = forward("importSchemaRagApiDocs");
+export const refreshSchemaRagTable = forward("refreshSchemaRagTable");
 export const searchSchemaRag = forward("searchSchemaRag");
 export const searchTableColumnsRag = forward("searchTableColumnsRag");
 export const saveSchemaRagEnrichment = forward("saveSchemaRagEnrichment");
@@ -267,6 +269,10 @@ export type {
   AiConversation,
   AnalyzeSchemaRagRequest,
   AnalyzeSchemaRagResponse,
+  ImportSchemaRagApiDocsRequest,
+  ImportSchemaRagApiDocsResponse,
+  RefreshSchemaRagTableRequest,
+  RefreshSchemaRagTableResponse,
   SaveSchemaRagEnrichmentRequest,
   SaveSchemaRagEnrichmentResponse,
   SchemaRagBusinessAliasInput,

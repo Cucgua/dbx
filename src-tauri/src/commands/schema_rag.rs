@@ -34,6 +34,31 @@ pub struct AnalyzeSchemaRagCommandRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ImportSchemaRagApiDocsCommandRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub schema: String,
+    pub files: Vec<ApiDocImportCommandFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshSchemaRagTableCommandRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub schema: String,
+    pub table: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiDocImportCommandFile {
+    pub path: String,
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchSchemaRagCommandRequest {
     pub connection_id: String,
     pub database: String,
@@ -207,12 +232,107 @@ pub struct SchemaRagManifest {
     pub index_count: usize,
     pub foreign_key_count: usize,
     pub schema_fingerprint: String,
+    #[serde(default)]
+    pub table_units: Vec<SchemaRagTableIndexUnit>,
+    #[serde(default)]
+    pub api_doc_sources: Vec<SchemaRagApiDocSource>,
+    #[serde(default)]
+    pub api_doc_chunk_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagTableIndexUnit {
+    pub schema: String,
+    pub table: String,
+    pub fingerprint: String,
+    pub document_ids: Vec<String>,
+    pub column_count: usize,
+    pub index_count: usize,
+    pub foreign_key_count: usize,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagApiDocSource {
+    pub source_id: String,
+    pub source_path: String,
+    pub original_format: String,
+    pub converter: String,
+    pub content_hash: String,
+    pub section_count: usize,
+    pub imported_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeSchemaRagResponse {
     pub manifest: SchemaRagManifest,
+    pub index_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSchemaRagApiDocsRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub schema: String,
+    pub config: SchemaRagConfig,
+    pub files: Vec<ApiDocImportFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiDocImportFile {
+    pub path: String,
+    pub display_name: Option<String>,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSchemaRagApiDocsResponse {
+    pub imported_sources: usize,
+    pub chunks: usize,
+    pub embedded_chunks: usize,
+    pub unsupported_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RefreshSchemaRagMode {
+    ChangedOnly,
+    SelectedTables,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshSchemaRagTablesRequest {
+    pub scope: SchemaRagScope,
+    pub tables: Vec<SchemaRagTableMetadata>,
+    pub config: SchemaRagConfig,
+    pub mode: RefreshSchemaRagMode,
+    #[serde(default)]
+    pub selected_tables: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagTableChangeSummary {
+    pub added: usize,
+    pub changed: usize,
+    pub removed: usize,
+    pub unchanged: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshSchemaRagTablesResponse {
+    pub manifest: SchemaRagManifest,
+    pub changes: SchemaRagTableChangeSummary,
+    pub rebuilt_documents: usize,
     pub index_path: String,
 }
 
@@ -327,6 +447,8 @@ enum SidecarRequest {
     Search { data_dir: PathBuf, request: SearchSchemaRagRequest },
     SearchTableColumns { data_dir: PathBuf, request: SearchTableColumnsRagRequest },
     SaveEnrichment { data_dir: PathBuf, request: SaveSchemaRagEnrichmentRequest },
+    ImportApiDocs { data_dir: PathBuf, request: ImportSchemaRagApiDocsRequest },
+    RefreshTables { data_dir: PathBuf, request: RefreshSchemaRagTablesRequest },
 }
 
 #[derive(Debug, Deserialize)]
@@ -336,6 +458,8 @@ enum SidecarResponse {
     Search(SchemaRagSearchResult),
     SearchTableColumns(SchemaRagColumnSearchResult),
     SaveEnrichment(SaveSchemaRagEnrichmentResponse),
+    ImportApiDocs(ImportSchemaRagApiDocsResponse),
+    RefreshTables(RefreshSchemaRagTablesResponse),
 }
 
 const DEFAULT_EMBEDDING_CONCURRENCY: usize = 4;
@@ -426,6 +550,10 @@ pub async fn analyze_schema_rag(
         SidecarResponse::SaveEnrichment(_) => {
             Err("Schema RAG sidecar returned an unexpected enrichment response".to_string())
         }
+        SidecarResponse::ImportApiDocs(_) => {
+            Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
+        }
+        SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
         Ok(response) => log::info!(
@@ -483,6 +611,10 @@ pub async fn search_schema_rag(
         SidecarResponse::SaveEnrichment(_) => {
             Err("Schema RAG sidecar returned an unexpected enrichment response".to_string())
         }
+        SidecarResponse::ImportApiDocs(_) => {
+            Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
+        }
+        SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
         Ok(response) => log::info!(
@@ -540,6 +672,10 @@ pub async fn search_table_columns_rag(
         SidecarResponse::SaveEnrichment(_) => {
             Err("Schema RAG sidecar returned an unexpected enrichment response".to_string())
         }
+        SidecarResponse::ImportApiDocs(_) => {
+            Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
+        }
+        SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
         Ok(response) => log::info!(
@@ -592,6 +728,10 @@ pub async fn save_schema_rag_enrichment(
         SidecarResponse::SearchTableColumns(_) => {
             Err("Schema RAG sidecar returned an unexpected column search response".to_string())
         }
+        SidecarResponse::ImportApiDocs(_) => {
+            Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
+        }
+        SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
         Ok(response) => log::info!(
@@ -602,6 +742,132 @@ pub async fn save_schema_rag_enrichment(
         Err(error) => {
             log::info!("[schema-rag][enrichment:error] error={} elapsed_ms={}", error, started_at.elapsed().as_millis())
         }
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn import_schema_rag_api_docs(
+    app: AppHandle,
+    runtime: State<'_, SchemaRagRuntimeState>,
+    request: ImportSchemaRagApiDocsCommandRequest,
+) -> Result<ImportSchemaRagApiDocsResponse, String> {
+    let started_at = Instant::now();
+    log::info!(
+        "[schema-rag][api-docs-import:start] connection_id={} database={} schema={} files={}",
+        request.connection_id,
+        request.database,
+        request.schema,
+        request.files.len()
+    );
+    let config = require_schema_rag_config(&runtime.data_dir).await?;
+    let files = read_api_doc_import_files(request.files).await?;
+    let result = invoke_schema_rag_sidecar(
+        &app,
+        &runtime.data_dir,
+        SidecarRequest::ImportApiDocs {
+            data_dir: runtime.data_dir.clone(),
+            request: ImportSchemaRagApiDocsRequest {
+                connection_id: request.connection_id,
+                database: request.database,
+                schema: request.schema,
+                config,
+                files,
+            },
+        },
+    )
+    .await
+    .and_then(|response| match response {
+        SidecarResponse::ImportApiDocs(result) => Ok(result),
+        SidecarResponse::Analyze(_) => Err("Schema RAG sidecar returned an unexpected analyze response".to_string()),
+        SidecarResponse::Search(_) => Err("Schema RAG sidecar returned an unexpected search response".to_string()),
+        SidecarResponse::SearchTableColumns(_) => {
+            Err("Schema RAG sidecar returned an unexpected column search response".to_string())
+        }
+        SidecarResponse::SaveEnrichment(_) => {
+            Err("Schema RAG sidecar returned an unexpected enrichment response".to_string())
+        }
+        SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
+    });
+    match &result {
+        Ok(response) => log::info!(
+            "[schema-rag][api-docs-import:done] imported_sources={} chunks={} unsupported={} elapsed_ms={}",
+            response.imported_sources,
+            response.chunks,
+            response.unsupported_files.len(),
+            started_at.elapsed().as_millis()
+        ),
+        Err(error) => log::info!(
+            "[schema-rag][api-docs-import:error] error={} elapsed_ms={}",
+            error,
+            started_at.elapsed().as_millis()
+        ),
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn refresh_schema_rag_table(
+    app: AppHandle,
+    runtime: State<'_, SchemaRagRuntimeState>,
+    state: State<'_, Arc<AppState>>,
+    request: RefreshSchemaRagTableCommandRequest,
+) -> Result<RefreshSchemaRagTablesResponse, String> {
+    let started_at = Instant::now();
+    log::info!(
+        "[schema-rag][table-refresh:start] connection_id={} database={} schema={} table={}",
+        request.connection_id,
+        request.database,
+        request.schema,
+        request.table
+    );
+    let config = require_schema_rag_config(&runtime.data_dir).await?;
+    let db_type = connection_db_type(&state, &request.connection_id).await?;
+    let table = collect_one_table_metadata(&state, &request).await?;
+    let sidecar_request = RefreshSchemaRagTablesRequest {
+        scope: SchemaRagScope {
+            connection_id: request.connection_id,
+            database: request.database,
+            schema: request.schema,
+            db_type,
+        },
+        tables: vec![table],
+        config,
+        mode: RefreshSchemaRagMode::SelectedTables,
+        selected_tables: vec![request.table],
+    };
+    let result = invoke_schema_rag_sidecar(
+        &app,
+        &runtime.data_dir,
+        SidecarRequest::RefreshTables { data_dir: runtime.data_dir.clone(), request: sidecar_request },
+    )
+    .await
+    .and_then(|response| match response {
+        SidecarResponse::RefreshTables(result) => Ok(result),
+        SidecarResponse::Analyze(_) => Err("Schema RAG sidecar returned an unexpected analyze response".to_string()),
+        SidecarResponse::Search(_) => Err("Schema RAG sidecar returned an unexpected search response".to_string()),
+        SidecarResponse::SearchTableColumns(_) => {
+            Err("Schema RAG sidecar returned an unexpected column search response".to_string())
+        }
+        SidecarResponse::SaveEnrichment(_) => {
+            Err("Schema RAG sidecar returned an unexpected enrichment response".to_string())
+        }
+        SidecarResponse::ImportApiDocs(_) => {
+            Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
+        }
+    });
+    match &result {
+        Ok(response) => log::info!(
+            "[schema-rag][table-refresh:done] rebuilt_documents={} index_path={} elapsed_ms={}",
+            response.rebuilt_documents,
+            response.index_path,
+            started_at.elapsed().as_millis()
+        ),
+        Err(error) => log::info!(
+            "[schema-rag][table-refresh:error] error={} elapsed_ms={}",
+            error,
+            started_at.elapsed().as_millis()
+        ),
     }
     result
 }
@@ -642,6 +908,30 @@ async fn require_schema_rag_config(data_dir: &Path) -> Result<SchemaRagConfig, S
     let config: SchemaRagConfig = serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
     validate_schema_rag_config(&config)?;
     Ok(config)
+}
+
+async fn read_api_doc_import_files(files: Vec<ApiDocImportCommandFile>) -> Result<Vec<ApiDocImportFile>, String> {
+    let mut result = Vec::with_capacity(files.len());
+    for file in files {
+        let content = if is_markdown_import_path(&file.path) {
+            tokio::fs::read_to_string(&file.path)
+                .await
+                .map_err(|err| format!("Failed to read API document {}: {err}", file.path))?
+        } else {
+            String::new()
+        };
+        result.push(ApiDocImportFile { path: file.path, display_name: file.display_name, content });
+    }
+    Ok(result)
+}
+
+fn is_markdown_import_path(path: &str) -> bool {
+    let extension = Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or_default();
+    extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+}
+
+fn unexpected_refresh_response() -> String {
+    "Schema RAG sidecar returned an unexpected table refresh response".to_string()
 }
 
 async fn invoke_schema_rag_sidecar(
@@ -786,6 +1076,53 @@ async fn collect_schema_metadata(
         );
     }
     Ok(result)
+}
+
+async fn collect_one_table_metadata(
+    state: &Arc<AppState>,
+    request: &RefreshSchemaRagTableCommandRequest,
+) -> Result<SchemaRagTableMetadata, String> {
+    let tables = dbx_core::schema::list_tables_core(
+        state,
+        &request.connection_id,
+        &request.database,
+        &request.schema,
+        None,
+        None,
+    )
+    .await?;
+    let table = tables
+        .into_iter()
+        .find(|table| table.name.eq_ignore_ascii_case(&request.table))
+        .ok_or_else(|| format!("Table {} was not found in schema {}", request.table, request.schema))?;
+    let columns = dbx_core::schema::get_columns_core(
+        state,
+        &request.connection_id,
+        &request.database,
+        &request.schema,
+        &table.name,
+    )
+    .await
+    .unwrap_or_default();
+    let indexes = dbx_core::schema::list_indexes_core(
+        state,
+        &request.connection_id,
+        &request.database,
+        &request.schema,
+        &table.name,
+    )
+    .await
+    .unwrap_or_default();
+    let foreign_keys = dbx_core::schema::list_foreign_keys_core(
+        state,
+        &request.connection_id,
+        &request.database,
+        &request.schema,
+        &table.name,
+    )
+    .await
+    .unwrap_or_default();
+    Ok(table_metadata(&request.schema, table, columns, indexes, foreign_keys))
 }
 
 fn emit_schema_rag_progress(

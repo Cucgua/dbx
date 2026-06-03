@@ -102,6 +102,10 @@ import type { DataGridSavePreparation } from "./tauri";
 import type {
   AnalyzeSchemaRagRequest,
   AnalyzeSchemaRagResponse,
+  ImportSchemaRagApiDocsRequest,
+  ImportSchemaRagApiDocsResponse,
+  RefreshSchemaRagTableRequest,
+  RefreshSchemaRagTableResponse,
   SaveSchemaRagEnrichmentRequest,
   SaveSchemaRagEnrichmentResponse,
   SchemaRagColumnSearchResult,
@@ -406,6 +410,18 @@ export async function loadSchemaRagConfig(): Promise<SchemaRagConfig | null> {
 }
 
 export async function analyzeSchemaRag(_request: AnalyzeSchemaRagRequest): Promise<AnalyzeSchemaRagResponse> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function importSchemaRagApiDocs(
+  _request: ImportSchemaRagApiDocsRequest,
+): Promise<ImportSchemaRagApiDocsResponse> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function refreshSchemaRagTable(
+  _request: RefreshSchemaRagTableRequest,
+): Promise<RefreshSchemaRagTableResponse> {
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   DEFAULT_SCHEMA_RAG_CONFIG,
+  findSchemaRagTableUnit,
   normalizeSchemaRagApiKey,
   normalizeSchemaRagConfig,
 } from "../../apps/desktop/src/lib/schemaRag";
@@ -68,4 +69,51 @@ test("normalizeSchemaRagApiKey preserves a previous real key when form value is 
   assert.equal(normalizeSchemaRagApiKey("https://ai.gitee.com/v1", "https://ai.gitee.com/v1", "real-key"), "real-key");
   assert.equal(normalizeSchemaRagApiKey("new-real-key", "https://ai.gitee.com/v1", "old-key"), "new-real-key");
   assert.equal(normalizeSchemaRagApiKey("", "https://ai.gitee.com/v1", "old-key"), "");
+});
+
+test("findSchemaRagTableUnit resolves the indexed unit for a selected table", () => {
+  const unit = findSchemaRagTableUnit(
+    {
+      connectionId: "conn",
+      database: "db",
+      schema: "PUBLIC",
+      dbType: "postgres",
+      embeddingProvider: "openai-compatible",
+      embeddingEndpoint: "https://embedding.example.com/v1",
+      embeddingModel: "embedding-model",
+      embeddingDimension: 1024,
+      rerankProvider: "none",
+      analyzedAt: "2026-06-02T00:00:00Z",
+      tableCount: 2,
+      columnCount: 3,
+      indexCount: 1,
+      foreignKeyCount: 0,
+      schemaFingerprint: "schema-fingerprint",
+      tableUnits: [
+        {
+          schema: "PUBLIC",
+          table: "orders",
+          fingerprint: "orders-fingerprint",
+          documentIds: ["table:PUBLIC.orders", "column:PUBLIC.orders.id"],
+          columnCount: 2,
+          indexCount: 1,
+          foreignKeyCount: 0,
+          updatedAt: "2026-06-02T00:00:00Z",
+        },
+        {
+          schema: "PUBLIC",
+          table: "users",
+          fingerprint: "users-fingerprint",
+          documentIds: ["table:PUBLIC.users"],
+          columnCount: 1,
+          indexCount: 0,
+          foreignKeyCount: 0,
+          updatedAt: "2026-06-02T00:00:00Z",
+        },
+      ],
+    },
+    { schema: "public", table: "ORDERS" },
+  );
+
+  assert.equal(unit?.fingerprint, "orders-fingerprint");
 });

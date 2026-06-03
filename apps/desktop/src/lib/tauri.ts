@@ -64,6 +64,10 @@ import type { BuildDatabaseSqlExportOptions, BuildExportInsertStatementsOptions 
 import type {
   AnalyzeSchemaRagRequest,
   AnalyzeSchemaRagResponse,
+  ImportSchemaRagApiDocsRequest,
+  ImportSchemaRagApiDocsResponse,
+  RefreshSchemaRagTableRequest,
+  RefreshSchemaRagTableResponse,
   SaveSchemaRagEnrichmentRequest,
   SaveSchemaRagEnrichmentResponse,
   SchemaRagColumnSearchResult,
@@ -78,6 +82,10 @@ import type {
 export type {
   AnalyzeSchemaRagRequest,
   AnalyzeSchemaRagResponse,
+  ImportSchemaRagApiDocsRequest,
+  ImportSchemaRagApiDocsResponse,
+  RefreshSchemaRagTableRequest,
+  RefreshSchemaRagTableResponse,
   SaveSchemaRagEnrichmentRequest,
   SaveSchemaRagEnrichmentResponse,
   SchemaRagBusinessAliasInput,
@@ -526,6 +534,18 @@ export async function loadSchemaRagConfig(): Promise<SchemaRagConfig | null> {
 
 export async function analyzeSchemaRag(request: AnalyzeSchemaRagRequest): Promise<AnalyzeSchemaRagResponse> {
   return invoke("analyze_schema_rag", { request });
+}
+
+export async function importSchemaRagApiDocs(
+  request: ImportSchemaRagApiDocsRequest,
+): Promise<ImportSchemaRagApiDocsResponse> {
+  return invoke("import_schema_rag_api_docs", { request });
+}
+
+export async function refreshSchemaRagTable(
+  request: RefreshSchemaRagTableRequest,
+): Promise<RefreshSchemaRagTableResponse> {
+  return invoke("refresh_schema_rag_table", { request });
 }
 
 export async function searchSchemaRag(request: SearchSchemaRagRequest): Promise<SchemaRagSearchResult> {

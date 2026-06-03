@@ -125,7 +125,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import LightTooltip from "@/components/ui/LightTooltip.vue";
-import type { SchemaRagScopeRequest, SchemaRagStatus } from "@/lib/schemaRag";
+import { findSchemaRagTableUnit, type SchemaRagScopeRequest, type SchemaRagStatus } from "@/lib/schemaRag";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 const { t } = useI18n();
@@ -712,16 +712,24 @@ const createSchemaName = ref("");
 const showDropSchemaConfirm = ref(false);
 const showSchemaRagStatusDialog = ref(false);
 const schemaRagStatus = ref<SchemaRagStatus | null>(null);
+const schemaRagStatusTable = ref<{ schema: string; table: string } | null>(null);
 const schemaRagStatusLoading = ref(false);
 const schemaRagStatusError = ref("");
 const schemaRagProgress = ref("");
-const schemaRagBusy = ref<"" | "analyze" | "delete">("");
+const schemaRagBusy = ref<"" | "analyze" | "delete" | "import-docs" | "refresh-table">("");
 
 // --- Procedure / Function Management ---
 const showDropObjectConfirm = ref(false);
 
 function schemaRagScopeForNode(node = props.node): SchemaRagScopeRequest | null {
   if (!node.connectionId || !hasTreeNodeDatabaseContext(node)) return null;
+  if (node.type === "table" || node.type === "view") {
+    return {
+      connectionId: node.connectionId,
+      database: node.database,
+      schema: node.schema || node.database || "main",
+    };
+  }
   if (node.type === "schema" && node.schema) {
     return {
       connectionId: node.connectionId,
@@ -738,6 +746,15 @@ function schemaRagScopeForNode(node = props.node): SchemaRagScopeRequest | null 
     schema: node.database || "main",
   };
 }
+
+function schemaRagTableForNode(node = props.node): { schema: string; table: string } | null {
+  if ((node.type !== "table" && node.type !== "view") || !hasTreeNodeDatabaseContext(node)) return null;
+  return { schema: node.schema || node.database || "main", table: node.label };
+}
+
+const selectedSchemaRagTableUnit = computed(() =>
+  findSchemaRagTableUnit(schemaRagStatus.value?.manifest, schemaRagStatusTable.value || {}),
+);
 
 function formatSchemaRagProgress(progress: any): string {
   switch (progress.stage) {
@@ -798,6 +815,7 @@ async function analyzeSchemaRag() {
   if (!window.confirm(t("contextMenu.schemaRagAnalyzeConfirm"))) return;
   schemaRagBusy.value = "analyze";
   schemaRagProgress.value = "";
+  schemaRagStatusTable.value = null;
   showSchemaRagStatusDialog.value = true;
   schemaRagStatusLoading.value = false;
   schemaRagStatusError.value = "";
@@ -838,6 +856,7 @@ async function analyzeSchemaRag() {
 async function openSchemaRagStatus() {
   const scope = schemaRagScopeForNode();
   if (!scope) return;
+  schemaRagStatusTable.value = null;
   showSchemaRagStatusDialog.value = true;
   schemaRagStatusLoading.value = true;
   schemaRagStatusError.value = "";
@@ -848,6 +867,98 @@ async function openSchemaRagStatus() {
     schemaRagStatusError.value = e?.message || String(e);
   } finally {
     schemaRagStatusLoading.value = false;
+  }
+}
+
+async function openSchemaRagTableStatus() {
+  const scope = schemaRagScopeForNode();
+  const table = schemaRagTableForNode();
+  if (!scope || !table) return;
+  schemaRagStatusTable.value = table;
+  showSchemaRagStatusDialog.value = true;
+  schemaRagStatusLoading.value = true;
+  schemaRagStatusError.value = "";
+  try {
+    schemaRagStatus.value = await api.loadSchemaRagStatus(scope);
+  } catch (e: any) {
+    schemaRagStatus.value = null;
+    schemaRagStatusError.value = e?.message || String(e);
+  } finally {
+    schemaRagStatusLoading.value = false;
+  }
+}
+
+async function importSchemaRagApiDocs() {
+  const scope = schemaRagScopeForNode();
+  if (!scope) return;
+  schemaRagBusy.value = "import-docs";
+  schemaRagStatusTable.value = null;
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      multiple: true,
+      filters: [
+        { name: t("contextMenu.schemaRagApiDocMarkdownFilter"), extensions: ["md", "markdown"] },
+        { name: t("contextMenu.schemaRagApiDocFutureFilter"), extensions: ["pdf", "doc", "docx"] },
+      ],
+    });
+    const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
+    if (paths.length === 0) return;
+    const result = await api.importSchemaRagApiDocs({
+      ...scope,
+      files: paths.map((path) => ({ path, displayName: path.split(/[\\/]/).pop() || path })),
+    });
+    schemaRagStatus.value = await api.loadSchemaRagStatus(scope);
+    showSchemaRagStatusDialog.value = true;
+    toast(
+      t("contextMenu.schemaRagApiDocsImportSuccess", {
+        sources: result.importedSources,
+        chunks: result.chunks,
+        unsupported: result.unsupportedFiles.length,
+      }),
+      5000,
+    );
+  } catch (e: any) {
+    toast(t("contextMenu.schemaRagOperationFailed", { message: e?.message || String(e) }), 6000);
+  } finally {
+    schemaRagBusy.value = "";
+  }
+}
+
+async function refreshSchemaRagCurrentTable() {
+  const scope = schemaRagScopeForNode();
+  const table = schemaRagTableForNode();
+  if (!scope || !table) return;
+  if (!window.confirm(t("contextMenu.schemaRagRefreshTableConfirm", { name: table.table }))) return;
+  schemaRagBusy.value = "refresh-table";
+  schemaRagStatusTable.value = table;
+  showSchemaRagStatusDialog.value = true;
+  schemaRagStatusLoading.value = true;
+  schemaRagStatusError.value = "";
+  try {
+    await connectionStore.ensureConnected(scope.connectionId);
+    const result = await api.refreshSchemaRagTable({
+      ...scope,
+      table: table.table,
+    });
+    schemaRagStatus.value = {
+      indexed: true,
+      manifest: result.manifest,
+      indexPath: result.indexPath,
+    };
+    toast(
+      t("contextMenu.schemaRagRefreshTableSuccess", {
+        documents: result.rebuiltDocuments,
+      }),
+      4000,
+    );
+  } catch (e: any) {
+    schemaRagStatus.value = null;
+    schemaRagStatusError.value = e?.message || String(e);
+    toast(t("contextMenu.schemaRagOperationFailed", { message: e?.message || String(e) }), 6000);
+  } finally {
+    schemaRagStatusLoading.value = false;
+    schemaRagBusy.value = "";
   }
 }
 
@@ -2256,6 +2367,12 @@ function treeItemMenuItems(): ContextMenuItem[] {
         disabled: schemaRagStatusLoading.value,
       });
       items.push({
+        label: t("contextMenu.schemaRagImportApiDocs"),
+        action: importSchemaRagApiDocs,
+        icon: FileUp,
+        disabled: schemaRagBusy.value === "import-docs",
+      });
+      items.push({
         label: t("contextMenu.schemaRagDelete"),
         action: deleteSchemaRagIndex,
         icon: Trash2,
@@ -2334,6 +2451,21 @@ function treeItemMenuItems(): ContextMenuItem[] {
     }
     if (isTableNotView.value) {
       items.push({ label: t("dataCompare.title"), action: openDataCompare, icon: ArrowRightLeft });
+    }
+    if (schemaRagTableForNode(node)) {
+      items.push({ label: "", separator: true });
+      items.push({
+        label: t("contextMenu.schemaRagTableStatus"),
+        action: openSchemaRagTableStatus,
+        icon: Sparkles,
+        disabled: schemaRagStatusLoading.value,
+      });
+      items.push({
+        label: t("contextMenu.schemaRagRefreshTable"),
+        action: refreshSchemaRagCurrentTable,
+        icon: RefreshCw,
+        disabled: schemaRagBusy.value === "refresh-table",
+      });
     }
     items.push({ label: "", separator: true });
     items.push(exportDataSubmenu());
@@ -2850,7 +2982,13 @@ function treeItemMenuItems(): ContextMenuItem[] {
   <Dialog v-model:open="showSchemaRagStatusDialog">
     <DialogContent class="sm:max-w-[480px]">
       <DialogHeader>
-        <DialogTitle>{{ t("contextMenu.schemaRagStatusTitle", { name: node.label }) }}</DialogTitle>
+        <DialogTitle>
+          {{
+            schemaRagStatusTable
+              ? t("contextMenu.schemaRagTableStatusTitle", { name: schemaRagStatusTable.table })
+              : t("contextMenu.schemaRagStatusTitle", { name: node.label })
+          }}
+        </DialogTitle>
       </DialogHeader>
       <div class="space-y-3 text-sm">
         <div v-if="schemaRagStatusLoading" class="flex items-center gap-2 text-muted-foreground">
@@ -2859,6 +2997,37 @@ function treeItemMenuItems(): ContextMenuItem[] {
         </div>
         <p v-else-if="schemaRagStatusError" class="text-destructive">{{ schemaRagStatusError }}</p>
         <div v-else-if="schemaRagStatus?.indexed && schemaRagStatus.manifest" class="space-y-2">
+          <div v-if="schemaRagStatusTable" class="space-y-2">
+            <div v-if="selectedSchemaRagTableUnit" class="grid grid-cols-2 gap-2 rounded-md border bg-muted/20 p-3 text-xs">
+              <div>
+                <div class="text-muted-foreground">{{ t("contextMenu.schemaRagTableName") }}</div>
+                <div class="truncate" :title="`${selectedSchemaRagTableUnit.schema}.${selectedSchemaRagTableUnit.table}`">
+                  {{ selectedSchemaRagTableUnit.schema }}.{{ selectedSchemaRagTableUnit.table }}
+                </div>
+              </div>
+              <div>
+                <div class="text-muted-foreground">{{ t("contextMenu.schemaRagTableUpdatedAt") }}</div>
+                <div>{{ new Date(selectedSchemaRagTableUnit.updatedAt).toLocaleString() }}</div>
+              </div>
+              <div>
+                <div class="text-muted-foreground">{{ t("contextMenu.schemaRagColumnCount") }}</div>
+                <div>{{ selectedSchemaRagTableUnit.columnCount }}</div>
+              </div>
+              <div>
+                <div class="text-muted-foreground">{{ t("contextMenu.schemaRagIndexCount") }}</div>
+                <div>{{ selectedSchemaRagTableUnit.indexCount }}</div>
+              </div>
+              <div>
+                <div class="text-muted-foreground">{{ t("contextMenu.schemaRagForeignKeyCount") }}</div>
+                <div>{{ selectedSchemaRagTableUnit.foreignKeyCount }}</div>
+              </div>
+              <div>
+                <div class="text-muted-foreground">{{ t("contextMenu.schemaRagDocumentCount") }}</div>
+                <div>{{ selectedSchemaRagTableUnit.documentIds.length }}</div>
+              </div>
+            </div>
+            <p v-else class="text-muted-foreground">{{ t("contextMenu.schemaRagTableNotIndexed") }}</p>
+          </div>
           <div class="grid grid-cols-2 gap-2 rounded-md border bg-muted/20 p-3 text-xs">
             <div>
               <div class="text-muted-foreground">{{ t("contextMenu.schemaRagAnalyzedAt") }}</div>
@@ -2885,6 +3054,29 @@ function treeItemMenuItems(): ContextMenuItem[] {
             <div>
               <div class="text-muted-foreground">{{ t("contextMenu.schemaRagForeignKeyCount") }}</div>
               <div>{{ schemaRagStatus.manifest.foreignKeyCount }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocSourceCount") }}</div>
+              <div>{{ schemaRagStatus.manifest.apiDocSources?.length || 0 }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocChunkCount") }}</div>
+              <div>{{ schemaRagStatus.manifest.apiDocChunkCount || 0 }}</div>
+            </div>
+          </div>
+          <div v-if="!schemaRagStatusTable && schemaRagStatus.manifest.apiDocSources?.length" class="space-y-1">
+            <div class="text-xs text-muted-foreground">{{ t("contextMenu.schemaRagApiDocSources") }}</div>
+            <div class="max-h-24 space-y-1 overflow-auto rounded-md border bg-muted/20 p-2 text-xs">
+              <div
+                v-for="source in schemaRagStatus.manifest.apiDocSources"
+                :key="source.sourceId"
+                class="flex items-center justify-between gap-2"
+              >
+                <span class="truncate" :title="source.sourcePath">{{ source.sourcePath }}</span>
+                <span class="shrink-0 text-muted-foreground">
+                  {{ t("contextMenu.schemaRagApiDocSections", { count: source.sectionCount }) }}
+                </span>
+              </div>
             </div>
           </div>
           <div class="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
