@@ -554,7 +554,7 @@ export const useSettingsStore = defineStore("settings", () => {
   }
 
   async function updateSchemaRagConfig(config: Partial<SchemaRagConfig>) {
-    schemaRagConfig.value = normalizeSchemaRagConfig(config);
+    schemaRagConfig.value = normalizeSchemaRagConfig(config, schemaRagConfig.value);
     await api.saveSchemaRagConfig(schemaRagConfig.value);
   }
 

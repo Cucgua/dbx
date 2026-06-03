@@ -8,6 +8,11 @@ import {
   normalizeSchemaRagConfig,
 } from "../../apps/desktop/src/lib/schemaRag";
 import { apiDocSourceId, splitMarkdownSections } from "../../apps/desktop/src/lib/schemaDocIngestion";
+import {
+  appendSchemaDocImportLog,
+  createSchemaDocImportProgress,
+  schemaDocImportProgressPercent,
+} from "../../apps/desktop/src/lib/schemaDocImportProgress";
 
 test("normalizeSchemaRagConfig defaults missing embedding concurrency", () => {
   const config = normalizeSchemaRagConfig({
@@ -70,6 +75,24 @@ test("normalizeSchemaRagApiKey preserves a previous real key when form value is 
   assert.equal(normalizeSchemaRagApiKey("https://ai.gitee.com/v1", "https://ai.gitee.com/v1", "real-key"), "real-key");
   assert.equal(normalizeSchemaRagApiKey("new-real-key", "https://ai.gitee.com/v1", "old-key"), "new-real-key");
   assert.equal(normalizeSchemaRagApiKey("", "https://ai.gitee.com/v1", "old-key"), "");
+});
+
+test("normalizeSchemaRagConfig preserves previous real keys when form fields echo endpoint URLs", () => {
+  const config = normalizeSchemaRagConfig(
+    {
+      embeddingEndpoint: "https://ai.gitee.com/v1",
+      embeddingApiKey: "https://ai.gitee.com/v1",
+      rerankEndpoint: "https://rerank.example.com/v1",
+      rerankApiKey: "https://rerank.example.com/v1",
+    },
+    {
+      embeddingApiKey: "old-embedding-key",
+      rerankApiKey: "old-rerank-key",
+    },
+  );
+
+  assert.equal(config.embeddingApiKey, "old-embedding-key");
+  assert.equal(config.rerankApiKey, "old-rerank-key");
 });
 
 test("findSchemaRagTableUnit resolves the indexed unit for a selected table", () => {
@@ -139,4 +162,24 @@ test("schema doc ingestion builds stable source and section ids", async () => {
   assert.equal(sections[0].id, `${sourceId}#section-1`);
   assert.deepEqual(sections[1].titlePath, ["出生证接口", "申请列表"]);
   assert.match(sections[1].text, /apply_status/);
+});
+
+test("schema doc import progress clamps percent and keeps recent logs", () => {
+  const progress = {
+    ...createSchemaDocImportProgress(),
+    totalFiles: 4,
+    processedFiles: 5,
+  };
+
+  assert.equal(schemaDocImportProgressPercent(progress), 100);
+  assert.equal(schemaDocImportProgressPercent({ ...progress, stage: "finished", processedFiles: 0 }), 100);
+  assert.equal(schemaDocImportProgressPercent({ ...progress, totalFiles: 0, processedFiles: 0 }), 0);
+
+  let withLogs = createSchemaDocImportProgress();
+  withLogs = appendSchemaDocImportLog(withLogs, "第一条", 2);
+  withLogs = appendSchemaDocImportLog(withLogs, "第二条", 2);
+  withLogs = appendSchemaDocImportLog(withLogs, "第三条", 2);
+  withLogs = appendSchemaDocImportLog(withLogs, "   ", 2);
+
+  assert.deepEqual(withLogs.logs, ["第二条", "第三条"]);
 });

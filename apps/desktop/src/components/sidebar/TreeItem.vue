@@ -132,6 +132,14 @@ import {
   emptyFailedApiDocExtraction,
   type ApiDocImportTextFile,
 } from "@/lib/schemaDocIngestion";
+import {
+  apiDocExtractionRequestSectionCount,
+  appendSchemaDocImportLog,
+  createSchemaDocImportProgress,
+  schemaDocImportProgressPercent,
+  summarizeApiDocExtraction,
+  type SchemaDocImportProgressState,
+} from "@/lib/schemaDocImportProgress";
 import { extractApiDocGraphFactsWithSchemaResearch } from "@/lib/ai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -724,6 +732,7 @@ const schemaRagStatusLoading = ref(false);
 const schemaRagStatusError = ref("");
 const schemaRagProgress = ref("");
 const schemaRagBusy = ref<"" | "analyze" | "delete" | "import-docs" | "refresh-table">("");
+const schemaDocImportProgress = ref<SchemaDocImportProgressState>(createSchemaDocImportProgress());
 
 // --- Procedure / Function Management ---
 const showDropObjectConfirm = ref(false);
@@ -762,6 +771,22 @@ function schemaRagTableForNode(node = props.node): { schema: string; table: stri
 const selectedSchemaRagTableUnit = computed(() =>
   findSchemaRagTableUnit(schemaRagStatus.value?.manifest, schemaRagStatusTable.value || {}),
 );
+const schemaDocImportPercent = computed(() => schemaDocImportProgressPercent(schemaDocImportProgress.value));
+
+function updateSchemaDocImportProgress(patch: Partial<SchemaDocImportProgressState>) {
+  schemaDocImportProgress.value = {
+    ...schemaDocImportProgress.value,
+    ...patch,
+  };
+}
+
+function appendSchemaDocImportProgressLog(message: string) {
+  schemaDocImportProgress.value = appendSchemaDocImportLog(schemaDocImportProgress.value, message);
+}
+
+function resetSchemaDocImportProgress() {
+  schemaDocImportProgress.value = createSchemaDocImportProgress();
+}
 
 function formatSchemaRagProgress(progress: any): string {
   switch (progress.stage) {
@@ -822,6 +847,7 @@ async function analyzeSchemaRag() {
   if (!window.confirm(t("contextMenu.schemaRagAnalyzeConfirm"))) return;
   schemaRagBusy.value = "analyze";
   schemaRagProgress.value = "";
+  resetSchemaDocImportProgress();
   schemaRagStatusTable.value = null;
   showSchemaRagStatusDialog.value = true;
   schemaRagStatusLoading.value = false;
@@ -863,6 +889,7 @@ async function analyzeSchemaRag() {
 async function openSchemaRagStatus() {
   const scope = schemaRagScopeForNode();
   if (!scope) return;
+  resetSchemaDocImportProgress();
   schemaRagStatusTable.value = null;
   showSchemaRagStatusDialog.value = true;
   schemaRagStatusLoading.value = true;
@@ -881,6 +908,7 @@ async function openSchemaRagTableStatus() {
   const scope = schemaRagScopeForNode();
   const table = schemaRagTableForNode();
   if (!scope || !table) return;
+  resetSchemaDocImportProgress();
   schemaRagStatusTable.value = table;
   showSchemaRagStatusDialog.value = true;
   schemaRagStatusLoading.value = true;
@@ -900,6 +928,12 @@ async function importSchemaRagApiDocs() {
   if (!scope) return;
   schemaRagBusy.value = "import-docs";
   schemaRagStatusTable.value = null;
+  schemaRagStatusLoading.value = false;
+  schemaRagStatusError.value = "";
+  schemaRagProgress.value = "";
+  resetSchemaDocImportProgress();
+  updateSchemaDocImportProgress({ stage: "selecting" });
+  appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressSelecting"));
   try {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({
@@ -910,15 +944,36 @@ async function importSchemaRagApiDocs() {
       ],
     });
     const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
-    if (paths.length === 0) return;
+    if (paths.length === 0) {
+      resetSchemaDocImportProgress();
+      return;
+    }
+    showSchemaRagStatusDialog.value = true;
+    updateSchemaDocImportProgress({ stage: "reading", totalFiles: paths.length });
+    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressSelected", { count: paths.length }));
     const textFiles = await readMarkdownApiDocTextFiles(paths);
+    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressReadable", { count: textFiles.length }));
     const extractions = await extractApiDocFactsForImport(scope, textFiles);
+    updateSchemaDocImportProgress({ stage: "importing" });
+    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressImporting"));
     const result = await api.importSchemaRagApiDocs({
       ...scope,
       files: paths.map((path) => ({ path, displayName: path.split(/[\\/]/).pop() || path })),
       extractions,
     });
+    appendSchemaDocImportProgressLog(
+      t("contextMenu.schemaRagApiDocProgressImportDone", {
+        chunks: result.chunks,
+        facts: result.graphFacts,
+        verified: result.verifiedFacts,
+        unresolved: result.unresolvedFacts,
+      }),
+    );
+    updateSchemaDocImportProgress({ stage: "refreshing" });
+    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressRefreshing"));
     schemaRagStatus.value = await api.loadSchemaRagStatus(scope);
+    updateSchemaDocImportProgress({ stage: "finished" });
+    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressFinished"));
     showSchemaRagStatusDialog.value = true;
     toast(
       t("contextMenu.schemaRagApiDocsImportSuccess", {
@@ -932,6 +987,8 @@ async function importSchemaRagApiDocs() {
       5000,
     );
   } catch (e: any) {
+    updateSchemaDocImportProgress({ stage: "failed" });
+    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressFailed", { message: e?.message || String(e) }));
     toast(t("contextMenu.schemaRagOperationFailed", { message: e?.message || String(e) }), 6000);
   } finally {
     schemaRagBusy.value = "";
@@ -941,10 +998,17 @@ async function importSchemaRagApiDocs() {
 async function readMarkdownApiDocTextFiles(paths: string[]): Promise<ApiDocImportTextFile[]> {
   const { readTextFile } = await import("@tauri-apps/plugin-fs");
   const files: ApiDocImportTextFile[] = [];
-  for (const path of paths) {
-    if (!isMarkdownApiDocPath(path)) continue;
+  for (const [index, path] of paths.entries()) {
+    const displayName = path.split(/[\\/]/).pop() || path;
+    updateSchemaDocImportProgress({ stage: "reading", currentFile: displayName, processedFiles: index });
+    if (!isMarkdownApiDocPath(path)) {
+      appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressSkipUnsupported", { file: displayName }));
+      continue;
+    }
+    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressReading", { file: displayName }));
     const content = await readTextFile(path);
-    files.push({ path, displayName: path.split(/[\\/]/).pop() || path, content });
+    files.push({ path, displayName, content });
+    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressReadDone", { file: displayName }));
   }
   return files;
 }
@@ -955,13 +1019,52 @@ async function extractApiDocFactsForImport(
 ): Promise<SchemaRagApiDocExtraction[]> {
   if (!files.length) return [];
   const extractions: SchemaRagApiDocExtraction[] = [];
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
     const sourceId = await apiDocSourceId(file.path);
+    const displayName = file.displayName || file.path.split(/[\\/]/).pop() || file.path;
+    updateSchemaDocImportProgress({
+      stage: "splitting",
+      currentFile: displayName,
+      processedFiles: index,
+      currentSections: 0,
+    });
     try {
       const request = await buildApiDocExtractionRequest(file, scope.schema);
+      const sectionCount = apiDocExtractionRequestSectionCount(request);
+      updateSchemaDocImportProgress({ stage: "extracting", currentSections: sectionCount });
+      appendSchemaDocImportProgressLog(
+        t("contextMenu.schemaRagApiDocProgressSplitDone", { file: displayName, sections: sectionCount }),
+      );
+      appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressExtracting", { file: displayName }));
       extractions.push(await extractApiDocGraphFactsWithSchemaResearch(settingsStore.aiConfig, request));
+      const summary = summarizeApiDocExtraction(extractions[extractions.length - 1]);
+      updateSchemaDocImportProgress({
+        processedFiles: index + 1,
+        apiFields: schemaDocImportProgress.value.apiFields + summary.apiFields,
+        businessConcepts: schemaDocImportProgress.value.businessConcepts + summary.businessConcepts,
+        joinCandidates: schemaDocImportProgress.value.joinCandidates + summary.joinCandidates,
+        failedFiles: schemaDocImportProgress.value.failedFiles + (summary.failed ? 1 : 0),
+      });
+      appendSchemaDocImportProgressLog(
+        t("contextMenu.schemaRagApiDocProgressExtractDone", {
+          file: displayName,
+          fields: summary.apiFields,
+          concepts: summary.businessConcepts,
+          joins: summary.joinCandidates,
+        }),
+      );
     } catch (error) {
       extractions.push(emptyFailedApiDocExtraction(sourceId, error instanceof Error ? error.message : String(error || "")));
+      updateSchemaDocImportProgress({
+        processedFiles: index + 1,
+        failedFiles: schemaDocImportProgress.value.failedFiles + 1,
+      });
+      appendSchemaDocImportProgressLog(
+        t("contextMenu.schemaRagApiDocProgressExtractFailed", {
+          file: displayName,
+          message: error instanceof Error ? error.message : String(error || ""),
+        }),
+      );
     }
   }
   return extractions;
@@ -977,6 +1080,7 @@ async function refreshSchemaRagCurrentTable() {
   if (!scope || !table) return;
   if (!window.confirm(t("contextMenu.schemaRagRefreshTableConfirm", { name: table.table }))) return;
   schemaRagBusy.value = "refresh-table";
+  resetSchemaDocImportProgress();
   schemaRagStatusTable.value = table;
   showSchemaRagStatusDialog.value = true;
   schemaRagStatusLoading.value = true;
@@ -1013,6 +1117,7 @@ async function deleteSchemaRagIndex() {
   if (!scope) return;
   if (!window.confirm(t("contextMenu.schemaRagDeleteConfirm", { name: scope.schema }))) return;
   schemaRagBusy.value = "delete";
+  resetSchemaDocImportProgress();
   try {
     const deleted = await api.deleteSchemaRagIndex(scope);
     schemaRagStatus.value = deleted ? null : schemaRagStatus.value;
@@ -3037,6 +3142,68 @@ function treeItemMenuItems(): ContextMenuItem[] {
         </DialogTitle>
       </DialogHeader>
       <div class="space-y-3 text-sm">
+        <div
+          v-if="schemaRagBusy === 'import-docs' || schemaDocImportProgress.logs.length"
+          class="space-y-3 rounded-md border bg-muted/20 p-3 text-xs"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <div class="font-medium">{{ t("contextMenu.schemaRagApiDocProgressTitle") }}</div>
+              <div class="text-muted-foreground">
+                {{
+                  t(`contextMenu.schemaRagApiDocProgressStage.${schemaDocImportProgress.stage}`, {
+                    default: schemaDocImportProgress.stage,
+                  })
+                }}
+              </div>
+            </div>
+            <Badge variant="secondary">{{ schemaDocImportPercent }}%</Badge>
+          </div>
+          <div class="h-2 overflow-hidden rounded-full bg-muted">
+            <div
+              class="h-full rounded-full bg-primary transition-all"
+              :style="{ width: `${schemaDocImportPercent}%` }"
+            />
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocProgressCurrentFile") }}</div>
+              <div class="truncate" :title="schemaDocImportProgress.currentFile || '-'">
+                {{ schemaDocImportProgress.currentFile || "-" }}
+              </div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocProgressFiles") }}</div>
+              <div>{{ schemaDocImportProgress.processedFiles }}/{{ schemaDocImportProgress.totalFiles }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocProgressSections") }}</div>
+              <div>{{ schemaDocImportProgress.currentSections }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocProgressFailedFiles") }}</div>
+              <div>{{ schemaDocImportProgress.failedFiles }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocProgressFieldFacts") }}</div>
+              <div>{{ schemaDocImportProgress.apiFields }}</div>
+            </div>
+            <div>
+              <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocProgressConceptFacts") }}</div>
+              <div>
+                {{ schemaDocImportProgress.businessConcepts }} / {{ schemaDocImportProgress.joinCandidates }}
+              </div>
+            </div>
+          </div>
+          <div v-if="schemaDocImportProgress.logs.length" class="space-y-1">
+            <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocProgressLogs") }}</div>
+            <div class="max-h-32 space-y-1 overflow-auto rounded-md border bg-background p-2 font-mono text-[11px]">
+              <div v-for="(line, index) in schemaDocImportProgress.logs" :key="`${index}-${line}`" class="break-all">
+                {{ line }}
+              </div>
+            </div>
+          </div>
+        </div>
         <div v-if="schemaRagStatusLoading" class="flex items-center gap-2 text-muted-foreground">
           <Loader2 class="h-4 w-4 animate-spin" />
           {{ t("common.loading") }}

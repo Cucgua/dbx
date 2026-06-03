@@ -336,7 +336,10 @@ type RawSchemaRagConfig = Partial<SchemaRagConfig> & {
   proxy_url?: unknown;
 };
 
-export function normalizeSchemaRagConfig(config: RawSchemaRagConfig | null | undefined): SchemaRagConfig {
+export function normalizeSchemaRagConfig(
+  config: RawSchemaRagConfig | null | undefined,
+  previousConfig?: Pick<SchemaRagConfig, "embeddingApiKey" | "rerankApiKey"> | null,
+): SchemaRagConfig {
   const value = config || {};
   return {
     ...DEFAULT_SCHEMA_RAG_CONFIG,
@@ -354,6 +357,7 @@ export function normalizeSchemaRagConfig(config: RawSchemaRagConfig | null | und
     embeddingApiKey: normalizeSchemaRagApiKey(
       stringValue(value.embeddingApiKey, value.embedding_api_key, DEFAULT_SCHEMA_RAG_CONFIG.embeddingApiKey),
       stringValue(value.embeddingEndpoint, value.embedding_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.embeddingEndpoint),
+      previousConfig?.embeddingApiKey || "",
     ),
     embeddingDimension: positiveInt(
       firstDefined(value.embeddingDimension, value.embedding_dimension),
@@ -377,6 +381,7 @@ export function normalizeSchemaRagConfig(config: RawSchemaRagConfig | null | und
     rerankApiKey: normalizeSchemaRagApiKey(
       stringValue(value.rerankApiKey, value.rerank_api_key, DEFAULT_SCHEMA_RAG_CONFIG.rerankApiKey),
       stringValue(value.rerankEndpoint, value.rerank_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.rerankEndpoint),
+      previousConfig?.rerankApiKey || "",
     ),
     proxyEnabled: !!firstDefined(value.proxyEnabled, value.proxy_enabled),
     proxyUrl: stringValue(value.proxyUrl, value.proxy_url, DEFAULT_SCHEMA_RAG_CONFIG.proxyUrl),
