@@ -1061,7 +1061,8 @@ export default {
     schemaRagApiDocProgressSkipUnsupported: "Skipping unsupported extraction file: {file}",
     schemaRagApiDocProgressSplitDone: "Split complete: {file}, {sections} sections",
     schemaRagApiDocProgressExtracting: "Calling submodel extraction: {file}",
-    schemaRagApiDocProgressExtractDone: "Extraction complete: {file}, fields {fields}, concepts {concepts}, joins {joins}",
+    schemaRagApiDocProgressExtractDone:
+      "Extraction complete: {file}, fields {fields}, concepts {concepts}, joins {joins}",
     schemaRagApiDocProgressExtractFailed: "Extraction failed: {file}, {message}",
     schemaRagApiDocProgressImporting: "Submitting to sidecar for validation, embedding, and graph write",
     schemaRagApiDocProgressImportDone:
@@ -1596,6 +1597,7 @@ export default {
     snippetsTab: "Snippets",
     syncTab: "Sync",
     aiTab: "AI",
+    aiProvider: "AI Provider",
     systemTab: "System",
     mcpTab: "MCP",
     jdbcTab: "JDBC Drivers",

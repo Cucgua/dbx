@@ -726,6 +726,13 @@ async function downloadWebDavSnapshot() {
   });
 }
 
+const oldPassword = ref("");
+const newPassword = ref("");
+const confirmNewPassword = ref("");
+const passwordMessage = ref("");
+const passwordError = ref(false);
+const changingPassword = ref(false);
+
 watch(
   () => props.open,
   async (open) => {
@@ -760,13 +767,6 @@ watch(webdavRememberPassword, (val) => {
 onMounted(() => {
   void refreshWebDavPasswordStatus();
 });
-
-const oldPassword = ref("");
-const newPassword = ref("");
-const confirmNewPassword = ref("");
-const passwordMessage = ref("");
-const passwordError = ref(false);
-const changingPassword = ref(false);
 
 async function changePassword() {
   if (newPassword.value !== confirmNewPassword.value) {
@@ -817,7 +817,9 @@ const aiEditProxyUrl = ref(settingsStore.aiConfig.proxyUrl || "");
 const aiEditEnableThinking = ref(settingsStore.aiConfig.enableThinking ?? true);
 const schemaResearchEnabled = ref(settingsStore.aiConfig.schemaResearch?.enabled ?? true);
 const schemaResearchUseMainModel = ref(settingsStore.aiConfig.schemaResearch?.useMainModel ?? true);
-const schemaResearchProvider = ref<AiProvider>(settingsStore.aiConfig.schemaResearch?.provider ?? settingsStore.aiConfig.provider);
+const schemaResearchProvider = ref<AiProvider>(
+  settingsStore.aiConfig.schemaResearch?.provider ?? settingsStore.aiConfig.provider,
+);
 const schemaResearchApiKey = ref(settingsStore.aiConfig.schemaResearch?.apiKey ?? settingsStore.aiConfig.apiKey);
 const schemaResearchEndpoint = ref(settingsStore.aiConfig.schemaResearch?.endpoint ?? settingsStore.aiConfig.endpoint);
 const schemaResearchModel = ref(settingsStore.aiConfig.schemaResearch?.model ?? settingsStore.aiConfig.model);
@@ -827,7 +829,9 @@ const schemaResearchApiStyle = ref<AiApiStyle>(
 const schemaResearchProxyEnabled = ref(
   settingsStore.aiConfig.schemaResearch?.proxyEnabled ?? !!settingsStore.aiConfig.proxyEnabled,
 );
-const schemaResearchProxyUrl = ref(settingsStore.aiConfig.schemaResearch?.proxyUrl ?? settingsStore.aiConfig.proxyUrl ?? "");
+const schemaResearchProxyUrl = ref(
+  settingsStore.aiConfig.schemaResearch?.proxyUrl ?? settingsStore.aiConfig.proxyUrl ?? "",
+);
 const schemaResearchMaxToolRounds = ref(String(settingsStore.aiConfig.schemaResearch?.maxToolRounds ?? 4));
 const schemaResearchMaxOutputTokens = ref(String(settingsStore.aiConfig.schemaResearch?.maxOutputTokens ?? 1800));
 const schemaRagEmbeddingProvider = ref(settingsStore.schemaRagConfig.embeddingProvider);
@@ -2172,8 +2176,7 @@ watch(
                       variant="outline"
                       class="h-8 flex-1 text-xs"
                       :class="{
-                        'border-blue-300 border-2 ring-2 ring-blue-300/50':
-                          schemaResearchApiStyle === 'completions',
+                        'border-blue-300 border-2 ring-2 ring-blue-300/50': schemaResearchApiStyle === 'completions',
                       }"
                       :disabled="!schemaResearchEnabled || schemaResearchUseMainModel"
                       @click="schemaResearchApiStyle = 'completions'"

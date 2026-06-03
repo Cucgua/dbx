@@ -923,7 +923,8 @@ export default {
     schemaRagAnalyzeSuccess: "Índice inteligente actualizado: {tables} tablas, {columns} columnas",
     schemaRagRefreshTableConfirm:
       "Esto volverá a leer columnas, índices y claves externas de la tabla actual y enviará esos metadatos al servicio externo de embedding configurado. No se enviarán datos de tablas. ¿Continuar?",
-    schemaRagRefreshTableSuccess: "Índice inteligente de la tabla actual actualizado: {documents} documentos reconstruidos",
+    schemaRagRefreshTableSuccess:
+      "Índice inteligente de la tabla actual actualizado: {documents} documentos reconstruidos",
     schemaRagOperationFailed: "Error en el índice inteligente de Schema: {message}",
     schemaRagDeleteConfirm: '¿Eliminar el índice inteligente del esquema "{name}"?',
     schemaRagDeleteSuccess: "Índice inteligente eliminado",
@@ -1495,6 +1496,7 @@ export default {
     snippetsTab: "Fragmentos",
     syncTab: "Sync",
     aiTab: "IA",
+    aiProvider: "Proveedor de IA",
     jdbcTab: "Drivers JDBC",
     securityTab: "Seguridad",
     aboutTab: "Acerca de",

@@ -13,11 +13,7 @@ import { normalizeSidebarHiddenTablePrefixes } from "@/lib/sidebarTableNameDispl
 import type { SidebarActivation } from "@/lib/treeNodeClick";
 import type { SqlSnippet } from "@/types/database";
 import { DEFAULT_SQL_SNIPPETS } from "@/lib/sqlCompletion";
-import {
-  DEFAULT_SCHEMA_RAG_CONFIG,
-  normalizeSchemaRagConfig,
-  type SchemaRagConfig,
-} from "@/lib/schemaRag";
+import { DEFAULT_SCHEMA_RAG_CONFIG, normalizeSchemaRagConfig, type SchemaRagConfig } from "@/lib/schemaRag";
 
 export type AiProvider =
   | "claude"
@@ -186,8 +182,7 @@ export function normalizeSchemaResearchModelConfig(
   config: Partial<SchemaResearchModelConfig> | null | undefined,
   mainConfig: Pick<AiConfig, "provider" | "apiKey" | "endpoint" | "model" | "apiStyle" | "proxyEnabled" | "proxyUrl">,
 ): SchemaResearchModelConfig {
-  const provider =
-    config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : mainConfig.provider;
+  const provider = config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : mainConfig.provider;
   const defaults = defaultConfigs[provider];
   const useMainModel = config?.useMainModel ?? true;
   const source = useMainModel ? mainConfig : config;
@@ -549,8 +544,8 @@ export const useSettingsStore = defineStore("settings", () => {
       isSchemaRagConfigLoaded.value = false;
       return null;
     });
-    schemaRagConfig.value = normalizeSchemaRagConfig(saved);
-    isSchemaRagConfigLoaded.value = saved !== null;
+    schemaRagConfig.value = normalizeSchemaRagConfig(saved, schemaRagConfig.value);
+    isSchemaRagConfigLoaded.value = true;
   }
 
   async function updateSchemaRagConfig(config: Partial<SchemaRagConfig>) {

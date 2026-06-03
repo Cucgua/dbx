@@ -1050,8 +1050,7 @@ export default {
     schemaRagProgressEmbeddingQueued: "已生成 {total} 条 embedding 文档，共 {batches} 批，并发 {concurrency}",
     schemaRagProgressEmbeddingRequest:
       "正在发送 embedding 第 {batch}/{batches} 批，已完成 {done}/{total}，本批 {size} 条，并发 {concurrency}，飞行中 {inFlight}",
-    schemaRagProgressEmbeddingDone:
-      "embedding 第 {batch}/{batches} 批已返回，已完成 {done}/{total}，飞行中 {inFlight}",
+    schemaRagProgressEmbeddingDone: "embedding 第 {batch}/{batches} 批已返回，已完成 {done}/{total}，飞行中 {inFlight}",
     schemaRagProgressEmbeddingFailed: "embedding 第 {batch}/{batches} 批失败",
     schemaRagProgressWrite: "正在写入 Schema 智能索引文件",
     schemaRagProgressFinished: "Schema 智能索引写入完成",
@@ -1566,6 +1565,7 @@ export default {
     snippetsTab: "代码片段",
     syncTab: "同步",
     aiTab: "AI",
+    aiProvider: "AI 提供商",
     systemTab: "系统",
     mcpTab: "MCP",
     jdbcTab: "JDBC 驱动",
