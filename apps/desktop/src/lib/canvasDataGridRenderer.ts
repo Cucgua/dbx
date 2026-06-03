@@ -45,7 +45,8 @@ export interface DrawCanvasDataGridOptions {
   height: number;
   isDark: boolean;
   styleKey?: string;
-  rows: CanvasDataGridRow[];
+  rowCount: number;
+  rowAt: (rowIndex: number) => CanvasDataGridRow | undefined;
   renderedColumnWidths: number[];
   renderedColumnOffsets?: number[];
   visibleColumnIndexes: number[];
@@ -195,7 +196,8 @@ export function drawCanvasDataGrid(options: DrawCanvasDataGridOptions) {
     height,
     isDark,
     styleKey,
-    rows,
+    rowCount,
+    rowAt,
     renderedColumnWidths,
     renderedColumnOffsets,
     visibleColumnIndexes,
@@ -244,7 +246,7 @@ export function drawCanvasDataGrid(options: DrawCanvasDataGridOptions) {
   const scrollTop = scroller.scrollTop;
   const scrollLeft = scroller.scrollLeft;
   const firstRow = Math.max(0, Math.floor(scrollTop / CANVAS_DATA_GRID_ROW_HEIGHT));
-  const lastRow = Math.min(rows.length - 1, Math.ceil((scrollTop + height) / CANVAS_DATA_GRID_ROW_HEIGHT));
+  const lastRow = Math.min(rowCount - 1, Math.ceil((scrollTop + height) / CANVAS_DATA_GRID_ROW_HEIGHT));
 
   ctx.fillStyle = theme.background;
   ctx.fillRect(0, 0, width, height);
@@ -258,7 +260,7 @@ export function drawCanvasDataGrid(options: DrawCanvasDataGridOptions) {
   const paintSearchMatches = !isScrolling && searchMatchKeys.size > 0;
 
   for (let rowIndex = firstRow; rowIndex <= lastRow; rowIndex++) {
-    const item = rows[rowIndex];
+    const item = rowAt(rowIndex);
     if (!item) continue;
     const y = rowIndex * CANVAS_DATA_GRID_ROW_HEIGHT - scrollTop;
     const rowIsActive = isRowActive(item.displayIndex);

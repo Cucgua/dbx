@@ -849,8 +849,9 @@ function formatterPreviewRows(columnIndex: number) {
     currentFormatterDraft(),
     settingsStore.editorSettings.customColumnFormatters,
   );
-  return displayItems.value.slice(0, 5).map((item, index) => {
-    const value = item.data[columnIndex] ?? null;
+  return displayRowRefs.value.slice(0, 5).map((_, index) => {
+    const item = displayItemAt(index);
+    const value = item?.data[columnIndex] ?? null;
     return {
       index: index + 1,
       raw: displayCellValue(value),
@@ -1945,6 +1946,24 @@ interface RowItem {
   status: RowStatus;
 }
 
+type DisplayRowRef =
+  | {
+      id: number;
+      displayIndex: number;
+      sourceIndex: number;
+      isNew: false;
+      isDeleted: boolean;
+      status: RowStatus;
+    }
+  | {
+      id: number;
+      displayIndex: number;
+      newIndex: number;
+      isNew: true;
+      isDeleted: false;
+      status: RowStatus;
+    };
+
 const editor = useDataGridEditor({
   result: computed(() => props.result),
   editable: computed(() => props.editable),
@@ -2118,37 +2137,75 @@ const sortedRows = computed(() => {
   return indices;
 });
 
-const displayItems = computed<RowItem[]>(() => {
-  const cols = props.result.columns;
-  const rows = props.result.rows;
-  const items: Omit<RowItem, "displayIndex">[] = sortedRows.value.map((sourceIndex) => {
-    const row = rows[sourceIndex];
+const cleanDirtyColumns = computed(() => Object.freeze(Array(props.result.columns.length).fill(false)) as boolean[]);
+
+function dirtyColumnsForRow(dirty: Map<number, CellValue> | undefined, columnCount: number): boolean[] {
+  if (!dirty?.size) return cleanDirtyColumns.value;
+  const flags = Array(columnCount).fill(false) as boolean[];
+  for (const colIdx of dirty.keys()) {
+    if (colIdx >= 0 && colIdx < columnCount) flags[colIdx] = true;
+  }
+  return flags;
+}
+
+const displayRowRefs = computed<DisplayRowRef[]>(() => {
+  const refs: DisplayRowRef[] = [];
+  for (const sourceIndex of sortedRows.value) {
     const dirty = dirtyRows.value.get(sourceIndex);
-    const data = rowDataWithChanges(row, sourceIndex);
-    const isDirtyCol = row.map((_, colIdx) => dirty?.has(colIdx) ?? false);
     const isDeleted = deletedRows.value.has(sourceIndex);
-    const status: RowStatus = isDeleted ? "deleted" : dirty ? "edited" : "clean";
-    return { id: sourceIndex, sourceIndex, data, isNew: false, isDeleted, isDirtyCol, status };
-  });
+    const status: RowStatus = isDeleted ? "deleted" : dirty?.size ? "edited" : "clean";
+    if (matchesRowStatusFilter(status, rowStatusFilter.value)) {
+      refs.push({ id: sourceIndex, displayIndex: refs.length, sourceIndex, isNew: false, isDeleted, status });
+    }
+  }
   newRows.value.forEach((row, i) => {
     if (!rowMatchesLocalColumnFilters(row)) return;
-    items.push({
+    const status: RowStatus = "new";
+    if (!matchesRowStatusFilter(status, rowStatusFilter.value)) return;
+    refs.push({
       id: -(i + 1),
+      displayIndex: refs.length,
       newIndex: i,
-      data: row,
       isNew: true,
       isDeleted: false,
-      isDirtyCol: cols.map(() => false),
-      status: "new",
+      status,
     });
   });
-  return items
-    .filter((item) => matchesRowStatusFilter(item.status, rowStatusFilter.value))
-    .map((item, displayIndex) => ({ ...item, displayIndex }));
+  return refs;
 });
 
+const displayRowCount = computed(() => displayRowRefs.value.length);
+
+function rowItemFromDisplayRef(ref: DisplayRowRef): RowItem {
+  if (ref.isNew) {
+    return {
+      ...ref,
+      data: newRows.value[ref.newIndex] ?? cleanDirtyColumns.value.map(() => null),
+      isDirtyCol: cleanDirtyColumns.value,
+    };
+  }
+  const row = props.result.rows[ref.sourceIndex] ?? [];
+  const dirty = dirtyRows.value.get(ref.sourceIndex);
+  return {
+    ...ref,
+    data: rowDataWithChanges(row, ref.sourceIndex),
+    isDirtyCol: dirtyColumnsForRow(dirty, props.result.columns.length),
+  };
+}
+
+function displayItemAt(rowIndex: number): RowItem | undefined {
+  const ref = displayRowRefs.value[rowIndex];
+  return ref ? rowItemFromDisplayRef(ref) : undefined;
+}
+
+function displayRowIndexById(rowId: number): number {
+  return displayRowRefs.value.findIndex((ref) => ref.id === rowId);
+}
+
+const displayItems = computed<RowItem[]>(() => displayRowRefs.value.map(rowItemFromDisplayRef));
+
 watch(
-  () => displayItems.value.length,
+  () => displayRowCount.value,
   (length) => {
     const startedAt = performance.now();
     console.info("[DBX][DataGrid:display-items:ready]", {
@@ -2264,7 +2321,8 @@ function scrollToCurrentMatch() {
 }
 
 function getRowItem(rowId: number): RowItem | undefined {
-  return displayItems.value.find((item) => item.id === rowId);
+  const rowIndex = displayRowIndexById(rowId);
+  return rowIndex >= 0 ? displayItemAt(rowIndex) : undefined;
 }
 
 function visibleRowData(row: CellValue[]): CellValue[] {
@@ -2294,7 +2352,7 @@ const deleteRowDetails = computed(() =>
     : t("dangerDialog.deleteRowDetailsNoTable"),
 );
 
-const hasVisibleRows = computed(() => displayItems.value.length > 0);
+const hasVisibleRows = computed(() => displayRowCount.value > 0);
 const hasActiveFilter = computed(
   () => !!deferredClientSearchText.value || rowStatusFilter.value !== "all" || hasLocalColumnFilters.value,
 );
@@ -2406,7 +2464,7 @@ function affectedRowIds(): number[] {
   }
   const range = selectedRange.value;
   if (range && range.startRow !== range.endRow) {
-    return displayItems.value.slice(range.startRow, range.endRow + 1).map((item) => item.id);
+    return displayRowRefs.value.slice(range.startRow, range.endRow + 1).map((ref) => ref.id);
   }
   return [];
 }
@@ -2432,11 +2490,11 @@ function exportSelectedRowsSql() {
 }
 
 function isRowActive(index: number): boolean {
-  const item = displayItems.value[index];
+  const item = displayItemAt(index);
   if (item && isRowSelected(item.id)) return true;
   const range = selectedRange.value;
   if (!range) return false;
-  const coversAllVisibleRows = range.startRow === 0 && range.endRow >= displayItems.value.length - 1;
+  const coversAllVisibleRows = range.startRow === 0 && range.endRow >= displayRowCount.value - 1;
   const coversAllVisibleColumns = range.startCol === 0 && range.endCol >= visibleColumnCount.value - 1;
   if (coversAllVisibleRows && !coversAllVisibleColumns) return false;
   return index >= range.startRow && index <= range.endRow;
@@ -2457,7 +2515,7 @@ const contextCellDetail = computed(() => {
   return cellDetailFor(cell.rowIndex, cell.col);
 });
 function cellDetailFor(rowIndex: number, columnIndex: number): DataGridCellDetail | null {
-  const item = displayItems.value[rowIndex];
+  const item = displayItemAt(rowIndex);
   if (!item) return null;
   return buildDataGridCellDetail({
     rowIndex,
@@ -3101,7 +3159,7 @@ const canvasViewportHeight = ref(0);
 const canvasScrollTop = ref(0);
 const canvasHoverCell = ref<{ rowIndex: number; visibleColIdx: number } | null>(null);
 const useCanvasGridRows = computed(() => dataGridRenderMode.value === "canvas");
-const canvasContentHeight = computed(() => Math.max(1, displayItems.value.length * CANVAS_DATA_GRID_ROW_HEIGHT));
+const canvasContentHeight = computed(() => Math.max(1, displayRowCount.value * CANVAS_DATA_GRID_ROW_HEIGHT));
 const canvasRenderStyleKey = computed(
   () => `${settingsStore.editorSettings.theme}:${settingsStore.editorSettings.uiScale}:${isDark.value}`,
 );
@@ -3190,7 +3248,7 @@ function canvasHitTest(event: MouseEvent): { rowIndex: number; visibleColIdx: nu
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
   const rowIndex = Math.floor((scroller.scrollTop + y) / CANVAS_DATA_GRID_ROW_HEIGHT);
-  if (rowIndex < 0 || rowIndex >= displayItems.value.length) return null;
+  if (rowIndex < 0 || rowIndex >= displayRowCount.value) return null;
   if (x < DATA_GRID_ROW_NUM_WIDTH) return { rowIndex, visibleColIdx: -1, rowNumber: true };
   const visibleColIdx = canvasColumnAt(scroller.scrollLeft + x - DATA_GRID_ROW_NUM_WIDTH);
   if (visibleColIdx < 0) return null;
@@ -3221,7 +3279,7 @@ function onCanvasScroll(event: Event) {
 
 function onCanvasMouseMove(event: MouseEvent) {
   const hit = canvasHitTest(event);
-  const hitItem = hit ? displayItems.value[hit.rowIndex] : undefined;
+  const hitItem = hit ? displayItemAt(hit.rowIndex) : undefined;
   const next =
     hit && hitItem ? { rowIndex: hitItem.displayIndex, visibleColIdx: hit.rowNumber ? -1 : hit.visibleColIdx } : null;
   const actualColIdx = next ? visibleColumnIndexes.value[next.visibleColIdx] : undefined;
@@ -3284,7 +3342,7 @@ function onCanvasMouseDown(event: MouseEvent) {
   commitHiddenCanvasEditBeforeCellInteraction();
   const hit = canvasHitTest(event);
   if (!hit) return;
-  const item = displayItems.value[hit.rowIndex];
+  const item = displayItemAt(hit.rowIndex);
   if (!item) return;
   if (hit.rowNumber) {
     handleRowClick(item.displayIndex, item.id, event);
@@ -3299,7 +3357,7 @@ function onCanvasContext(event: MouseEvent) {
   commitHiddenCanvasEditBeforeCellInteraction();
   const hit = canvasHitTest(event);
   if (!hit) return;
-  const item = displayItems.value[hit.rowIndex];
+  const item = displayItemAt(hit.rowIndex);
   if (!item) return;
   if (hit.rowNumber) {
     onRowContext(item.id, item.displayIndex);
@@ -3314,11 +3372,11 @@ function onCanvasDblClick(event: MouseEvent) {
   const hit = canvasHitTest(event);
   if (!hit) return;
   if (hit.rowNumber) {
-    const item = displayItems.value[hit.rowIndex];
+    const item = displayItemAt(hit.rowIndex);
     if (item) toggleTranspose(item.displayIndex);
     return;
   }
-  const item = displayItems.value[hit.rowIndex];
+  const item = displayItemAt(hit.rowIndex);
   const actualColIdx = visibleColumnIndexes.value[hit.visibleColIdx];
   if (!item || actualColIdx === undefined || !canEditCellItem(item, actualColIdx)) return;
   startEdit(item.id, actualColIdx);
@@ -3341,7 +3399,7 @@ function canvasCellViewportRect(rowIndex: number, visibleColIdx: number) {
 function canvasEditingCellViewportRect() {
   const editing = editingCell.value;
   if (!editing || !useCanvasGridRows.value) return null;
-  const rowIndex = displayItems.value.findIndex((item) => item.id === editing.rowId);
+  const rowIndex = displayRowIndexById(editing.rowId);
   const visibleColIdx = visibleColumnIndexes.value.indexOf(editing.col);
   if (rowIndex < 0 || visibleColIdx < 0) return null;
   return canvasCellViewportRect(rowIndex, visibleColIdx);
@@ -3364,7 +3422,7 @@ function commitHiddenCanvasEditBeforeCellInteraction() {
 const canvasEditingCell = computed(() => {
   const editing = editingCell.value;
   if (!editing || !useCanvasGridRows.value) return null;
-  const rowIndex = displayItems.value.findIndex((item) => item.id === editing.rowId);
+  const rowIndex = displayRowIndexById(editing.rowId);
   const visibleColIdx = visibleColumnIndexes.value.indexOf(editing.col);
   if (rowIndex < 0 || visibleColIdx < 0) return null;
   const rect = canvasCellViewportRect(rowIndex, visibleColIdx);
@@ -3375,7 +3433,7 @@ const canvasEditingCell = computed(() => {
 const canvasEditingCellIsNumeric = computed(() => {
   const cell = canvasEditingCell.value;
   if (!cell) return false;
-  return typeof displayItems.value[cell.rowIndex]?.data[cell.actualColIdx] === "number";
+  return typeof displayItemAt(cell.rowIndex)?.data[cell.actualColIdx] === "number";
 });
 
 const canvasSingleSelectedCell = computed(() => {
@@ -3436,7 +3494,8 @@ function drawCanvasGrid() {
     height: Math.max(1, canvasViewportHeight.value || scroller.clientHeight),
     isDark: isDark.value,
     styleKey: canvasRenderStyleKey.value,
-    rows: displayItems.value,
+    rowCount: displayRowCount.value,
+    rowAt: displayItemAt,
     renderedColumnWidths: renderedColumnWidths.value,
     renderedColumnOffsets: renderedColumnOffsets.value,
     visibleColumnIndexes: visibleColumnIndexes.value,
@@ -3459,7 +3518,7 @@ function drawCanvasGrid() {
 watch(useCanvasGridRows, () => nextTick(attachCanvasResizeObserver), { immediate: true });
 watch(
   [
-    displayItems,
+    displayRowRefs,
     renderedColumnWidths,
     visibleColumnIndexes,
     selectedRange,
@@ -3478,6 +3537,7 @@ watch(
   ],
   scheduleCanvasDraw,
 );
+watch([dirtyRows, newRows, deletedRows], scheduleCanvasDraw, { deep: true });
 
 function pauseCanvasGridWork() {
   dataGridIsActive = false;
@@ -3717,7 +3777,7 @@ function selectTransposeCell(rowIndex: number, actualColIdx: number, event: Mous
 
 function onTransposeCellContext(rowIndex: number, actualColIdx: number, event: MouseEvent) {
   selectTransposeCell(rowIndex, actualColIdx, event);
-  const item = displayItems.value[rowIndex];
+  const item = displayItemAt(rowIndex);
   contextCell.value = item ? { rowId: item.id, rowIndex, col: actualColIdx } : null;
   void prefetchCopyStatements();
 }
@@ -3783,7 +3843,7 @@ function pasteTextIntoSelection(text: string): boolean {
   if (!start) return false;
   let applied = false;
   rows.forEach((row, rowOffset) => {
-    const item = displayItems.value[start.rowIndex + rowOffset];
+    const item = displayItemAt(start.rowIndex + rowOffset);
     if (!item) return;
     row.forEach((value, colOffset) => {
       const visibleCol = start.colIndex + colOffset;
@@ -3830,7 +3890,7 @@ function fillSelectionWithValue(value: string): boolean {
   let applied = false;
   if (range) {
     for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex++) {
-      const item = displayItems.value[rowIndex];
+      const item = displayItemAt(rowIndex);
       if (!item) continue;
       for (let visibleCol = range.startCol; visibleCol <= range.endCol; visibleCol++) {
         applied = applyVisibleCellValue(item, visibleCol, value) || applied;
@@ -3842,7 +3902,9 @@ function fillSelectionWithValue(value: string): boolean {
   if (!hasColumnSelection.value) return false;
   const visibleColumnIndexes = selectedVisibleColumnIndexes();
   if (!visibleColumnIndexes.length) return false;
-  for (const item of displayItems.value) {
+  for (let rowIndex = 0; rowIndex < displayRowCount.value; rowIndex++) {
+    const item = displayItemAt(rowIndex);
+    if (!item) continue;
     for (const visibleCol of visibleColumnIndexes) {
       applied = applyVisibleCellValue(item, visibleCol, value) || applied;
     }
@@ -3854,7 +3916,7 @@ function selectionHasEditableCells(): boolean {
   const range = selectedRange.value;
   if (range) {
     for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex++) {
-      const item = displayItems.value[rowIndex];
+      const item = displayItemAt(rowIndex);
       if (!item) continue;
       for (let visibleCol = range.startCol; visibleCol <= range.endCol; visibleCol++) {
         if (canEditCellItem(item, actualColumnIndex(visibleCol))) return true;
@@ -3865,7 +3927,9 @@ function selectionHasEditableCells(): boolean {
 
   if (!hasColumnSelection.value) return false;
   const visibleColumnIndexes = selectedVisibleColumnIndexes();
-  for (const item of displayItems.value) {
+  for (let rowIndex = 0; rowIndex < displayRowCount.value; rowIndex++) {
+    const item = displayItemAt(rowIndex);
+    if (!item) continue;
     for (const visibleCol of visibleColumnIndexes) {
       if (canEditCellItem(item, actualColumnIndex(visibleCol))) return true;
     }
@@ -3889,7 +3953,7 @@ function cutSelection() {
   copySelectionTsv();
   const range = selectedRange.value;
   for (let rowIndex = range.startRow; rowIndex <= range.endRow; rowIndex++) {
-    const item = displayItems.value[rowIndex];
+    const item = displayItemAt(rowIndex);
     if (!item) continue;
     for (let visibleCol = range.startCol; visibleCol <= range.endCol; visibleCol++) {
       applyCellValue(item.id, actualColumnIndex(visibleCol), null);
@@ -3938,7 +4002,7 @@ function scrollGridColumnIntoView(visibleColIdx: number) {
 }
 
 function scrollCanvasRowIntoView(rowIndex: number, block: "nearest" | "start") {
-  const target = Math.max(0, Math.min(displayItems.value.length - 1, rowIndex));
+  const target = Math.max(0, Math.min(displayRowCount.value - 1, rowIndex));
   const scroller = canvasScrollerElement();
   if (!scroller) return;
   const rowTop = target * CANVAS_DATA_GRID_ROW_HEIGHT;
@@ -3952,7 +4016,7 @@ function scrollCanvasRowIntoView(rowIndex: number, block: "nearest" | "start") {
 }
 
 function scrollGridRowIntoView(rowIndex: number) {
-  const target = Math.max(0, Math.min(displayItems.value.length - 1, rowIndex));
+  const target = Math.max(0, Math.min(displayRowCount.value - 1, rowIndex));
   nextTick(() => {
     if (useCanvasGridRows.value) {
       scrollCanvasRowIntoView(target, "start");
@@ -3980,13 +4044,13 @@ function currentTransposeRequestedRowIndex(): number {
 }
 
 function toggleKeyboardTranspose(): boolean {
-  if (displayItems.value.length === 0) return false;
+  if (displayRowCount.value === 0) return false;
   const requestedRowIndex = currentTransposeRequestedRowIndex();
   const next = nextKeyboardTransposeState({
     showTranspose: showTranspose.value,
     transposeRowIndex: transposeRowIndex.value,
     requestedRowIndex,
-    rowIds: displayItems.value.map((item) => item.id),
+    rowIds: displayRowRefs.value.map((ref) => ref.id),
     selectedRowIds: selectedRowIds.value,
     selectedRange: selectedRange.value,
   });
@@ -4004,9 +4068,9 @@ function toggleKeyboardTranspose(): boolean {
 
 function moveSelectedCell(rowDelta: number, colDelta: number): boolean {
   const position = currentSelectedCellPosition();
-  if (!position || editingCell.value || displayItems.value.length === 0 || visibleColumnIndexes.value.length === 0)
+  if (!position || editingCell.value || displayRowCount.value === 0 || visibleColumnIndexes.value.length === 0)
     return false;
-  const rowIndex = Math.max(0, Math.min(displayItems.value.length - 1, position.rowIndex + rowDelta));
+  const rowIndex = Math.max(0, Math.min(displayRowCount.value - 1, position.rowIndex + rowDelta));
   const colIndex = Math.max(0, Math.min(visibleColumnIndexes.value.length - 1, position.colIndex + colDelta));
   selectSingleCell(rowIndex, colIndex);
   clearRowSelection();
@@ -4018,7 +4082,7 @@ function moveSelectedCell(rowDelta: number, colDelta: number): boolean {
 function editSelectedCell(): boolean {
   const position = currentSelectedCellPosition();
   if (!position || editingCell.value) return false;
-  const item = displayItems.value[position.rowIndex];
+  const item = displayItemAt(position.rowIndex);
   const actualColIndex = actualColumnIndex(position.colIndex);
   if (!item || !canEditCellItem(item, actualColIndex)) return false;
   startEdit(item.id, actualColIndex);
@@ -4030,7 +4094,7 @@ function selectedOrCurrentRowIds(): number[] {
   if (affected.length > 0) return affected;
   const position = currentSelectedCellPosition();
   if (!position) return [];
-  const item = displayItems.value[position.rowIndex];
+  const item = displayItemAt(position.rowIndex);
   return item ? [item.id] : [];
 }
 
@@ -4301,7 +4365,7 @@ const TRANSPOSE_PINNED_MIN_WIDTH = 104;
 const transposeRecordWidths = ref<number[]>([]);
 
 function calcTransposeRecordWidth(recordIndex: number): number {
-  const item = displayItems.value[recordIndex];
+  const item = displayItemAt(recordIndex);
   if (!item) return TRANSPOSE_RECORD_DEFAULT_WIDTH;
   let maxWidth = TRANSPOSE_RECORD_MIN_WIDTH;
   const charWidth = 8;
@@ -4334,7 +4398,7 @@ function estimatedTransposeRecordWidth(): number {
 }
 
 watch(
-  () => displayItems.value.length,
+  () => displayRowCount.value,
   (count) => ensureTransposeRecordWidths(count),
 );
 const transposePinnedWidthOverride = ref<number | null>(null);
@@ -4344,7 +4408,7 @@ const transposePinnedWidth = computed(
 
 const transposeRecordWindow = computed(() =>
   visibleTransposeRecordWindow({
-    totalRecords: displayItems.value.length,
+    totalRecords: displayRowCount.value,
     scrollLeft: transposeScrollLeft.value,
     viewportWidth: transposeViewportWidth.value,
     pinnedWidth: transposePinnedWidth.value,
@@ -4359,7 +4423,7 @@ const visibleTransposeRecordIndexes = computed(() => {
 const transposeRows = computed(() => {
   return buildVisibleTransposeRows({
     columns: visibleColumns.value,
-    records: displayItems.value.map((item) => item.data),
+    records: displayRowRefs.value.map((_, index) => displayItemAt(index)?.data ?? []),
     recordIndexes: visibleTransposeRecordIndexes.value,
     valueIndexes: visibleColumnIndexes.value,
     typeByColumn: columnTypeMap.value,
@@ -4368,7 +4432,9 @@ const transposeRows = computed(() => {
 });
 const isTransposeMode = computed(() => showTranspose.value && transposeRows.value.length > 0);
 const transposeTotalWidth = computed(
-  () => transposePinnedWidth.value + displayItems.value.reduce((sum, _, i) => sum + getTransposeRecordWidth(i), 0),
+  () =>
+    transposePinnedWidth.value +
+    Array.from({ length: displayRowCount.value }, (_, i) => getTransposeRecordWidth(i)).reduce((sum, w) => sum + w, 0),
 );
 
 function transposeScrollElement(): HTMLElement | undefined {
@@ -4395,7 +4461,7 @@ function scrollTransposeRecordIntoView(rowIndex: number) {
     if (!el) return;
     el.scrollLeft = transposeScrollLeftForRecord({
       recordIndex: rowIndex,
-      totalRecords: displayItems.value.length,
+      totalRecords: displayRowCount.value,
       viewportWidth: el.clientWidth,
       pinnedWidth: transposePinnedWidth.value,
       recordWidth: estimatedTransposeRecordWidth(),
@@ -4416,7 +4482,7 @@ function applyTransposeState(next: { showTranspose: boolean; transposeRowIndex: 
 function focusAppendedTransposeRecord() {
   if (!showTranspose.value) return;
   nextTick(() => {
-    applyTransposeState(nextAppendedTransposeState(true, displayItems.value.length));
+    applyTransposeState(nextAppendedTransposeState(true, displayRowCount.value));
   });
 }
 
@@ -4438,7 +4504,7 @@ function onTransposePinnedResizeStart(event: MouseEvent) {
 
 function onTransposeRecordResizeStart(recordIndex: number, event: MouseEvent) {
   event.preventDefault();
-  ensureTransposeRecordWidths(displayItems.value.length);
+  ensureTransposeRecordWidths(displayRowCount.value);
   const startX = event.clientX;
   const startWidth = getTransposeRecordWidth(recordIndex);
   const onMove = (e: MouseEvent) => {
@@ -4456,16 +4522,16 @@ function onTransposeRecordResizeStart(recordIndex: number, event: MouseEvent) {
 }
 
 function autoFitTransposeRecord(recordIndex: number) {
-  ensureTransposeRecordWidths(displayItems.value.length);
+  ensureTransposeRecordWidths(displayRowCount.value);
   const next = [...transposeRecordWidths.value];
   next[recordIndex] = calcTransposeRecordWidth(recordIndex);
   transposeRecordWidths.value = next;
 }
 
 function currentTransposeViewportRowIndex(): number {
-  if (displayItems.value.length === 0) return 0;
+  if (displayRowCount.value === 0) return 0;
   const rowIndex = transposeRowIndex.value ?? transposeRecordWindow.value.start;
-  return Math.max(0, Math.min(displayItems.value.length - 1, rowIndex));
+  return Math.max(0, Math.min(displayRowCount.value - 1, rowIndex));
 }
 
 function closeTranspose(scrollToCurrentRecord = true) {
@@ -4485,7 +4551,7 @@ function openContextTranspose() {
     showTranspose: showTranspose.value,
     transposeRowIndex: transposeRowIndex.value,
     requestedRowIndex: contextCell.value.rowIndex,
-    rowIds: displayItems.value.map((item) => item.id),
+    rowIds: displayRowRefs.value.map((ref) => ref.id),
     selectedRowIds: selectedRowIds.value,
     selectedRange: selectedRange.value,
   });
@@ -4512,11 +4578,11 @@ function toggleTranspose(rowIndex: number) {
 }
 
 function selectTransposeRecord(rowIndex: number, event?: MouseEvent) {
-  if (rowIndex < 0 || rowIndex >= displayItems.value.length) return;
+  if (rowIndex < 0 || rowIndex >= displayRowCount.value) return;
   transposeRowIndex.value = rowIndex;
   contextHeaderColumn.value = null;
   contextHeaderColumnIndex.value = null;
-  const item = displayItems.value[rowIndex];
+  const item = displayItemAt(rowIndex);
   if (item) {
     if (event) {
       handleRowClick(rowIndex, item.id, event);
@@ -4532,7 +4598,7 @@ function selectTransposeRecord(rowIndex: number, event?: MouseEvent) {
 }
 
 function transposeRecordIsSelected(rowIndex: number): boolean {
-  const item = displayItems.value[rowIndex];
+  const item = displayItemAt(rowIndex);
   return !!item && isRowSelected(item.id);
 }
 
@@ -4549,9 +4615,9 @@ function transposeRecordUsesFramedHeader(rowIndex: number): boolean {
 }
 
 function moveTransposeRecordSelection(delta: number): boolean {
-  if (!isTransposeMode.value || displayItems.value.length === 0) return false;
+  if (!isTransposeMode.value || displayRowCount.value === 0) return false;
   const current = transposeRowIndex.value ?? 0;
-  const next = Math.max(0, Math.min(displayItems.value.length - 1, current + delta));
+  const next = Math.max(0, Math.min(displayRowCount.value - 1, current + delta));
   transposeRowIndex.value = next;
   scrollTransposeRecordIntoView(next);
   return true;
@@ -4580,7 +4646,7 @@ watch(
     closeDetailDialogs();
     if (shouldPreserveTranspose) {
       applyTransposeState(
-        nextTransposeStateForRecordCount(showTranspose.value, transposeRowIndex.value, displayItems.value.length),
+        nextTransposeStateForRecordCount(showTranspose.value, transposeRowIndex.value, displayRowCount.value),
       );
     } else {
       closeTranspose(false);

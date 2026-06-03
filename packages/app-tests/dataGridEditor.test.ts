@@ -97,6 +97,48 @@ function column(name: string, isPrimaryKey = false, extra: string | null = null)
   };
 }
 
+test("row data helper reuses unchanged rows and clones dirty rows only", () => {
+  setActivePinia(createPinia());
+  installBrowserTestGlobals();
+
+  const row = ["AFW", 1995, 35271.907090628745] as CellValue[];
+  const result = computed(() => ({
+    columns: ["code", "year", "score"],
+    rows: [row],
+  }));
+  const editor = useDataGridEditor({
+    result,
+    editable: computed(() => true),
+    databaseType: computed(() => "postgres"),
+    connectionId: computed(() => undefined),
+    database: computed(() => undefined),
+    tableMeta: computed(() => ({
+      tableName: "metrics",
+      columns: [column("code", true), column("year", true), column("score")],
+      primaryKeys: ["code", "year"],
+    })),
+    onExecuteSql: computed(() => undefined),
+    sql: computed(() => undefined),
+    searchText: ref(""),
+    whereFilterInput: ref(""),
+    orderByInput: ref(""),
+    rowStatusFilter: ref("all"),
+    getRowItem: () => undefined,
+    pageSize: ref(100),
+    currentPage: ref(1),
+    emit: () => {},
+  });
+
+  assert.equal(editor.rowDataWithChanges(row, 0), row);
+
+  editor.dirtyRows.value.set(0, new Map([[2, 10]]));
+  const dirtyRow = editor.rowDataWithChanges(row, 0);
+
+  assert.notEqual(dirtyRow, row);
+  assert.deepEqual(dirtyRow, ["AFW", 1995, 10]);
+  assert.deepEqual(row, ["AFW", 1995, 35271.907090628745]);
+});
+
 test("cloning a row copies non-generated primary key values without executing save", async () => {
   setActivePinia(createPinia());
   installBrowserTestGlobals();
