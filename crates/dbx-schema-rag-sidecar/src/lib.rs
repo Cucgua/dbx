@@ -234,6 +234,96 @@ pub struct NormalizedApiDoc {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum ApiDocExtractionStatus {
+    Pending,
+    Extracted,
+    Partial,
+    Failed,
+}
+
+impl Default for ApiDocExtractionStatus {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SchemaRagFactStatus {
+    Verified,
+    Candidate,
+    Rejected,
+    Unresolved,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagApiFieldFact {
+    pub id: String,
+    pub source_id: String,
+    pub section_id: String,
+    pub name: String,
+    pub meaning: String,
+    pub candidate_schema: Option<String>,
+    pub candidate_table: Option<String>,
+    pub candidate_column: Option<String>,
+    pub status: SchemaRagFactStatus,
+    pub confidence: f32,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagBusinessConceptFact {
+    pub id: String,
+    pub source_id: String,
+    pub section_id: String,
+    pub term: String,
+    pub description: String,
+    pub candidate_schema: Option<String>,
+    pub candidate_table: Option<String>,
+    pub candidate_column: Option<String>,
+    pub status: SchemaRagFactStatus,
+    pub confidence: f32,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagJoinCandidateFact {
+    pub id: String,
+    pub source_id: String,
+    pub section_id: String,
+    pub left_schema: String,
+    pub left_table: String,
+    pub left_columns: Vec<String>,
+    pub right_schema: String,
+    pub right_table: String,
+    pub right_columns: Vec<String>,
+    pub relation: String,
+    pub status: SchemaRagFactStatus,
+    pub confidence: f32,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagApiDocExtraction {
+    pub source_id: String,
+    pub extracted_at: String,
+    pub status: ApiDocExtractionStatus,
+    #[serde(default)]
+    pub api_fields: Vec<SchemaRagApiFieldFact>,
+    #[serde(default)]
+    pub business_concepts: Vec<SchemaRagBusinessConceptFact>,
+    #[serde(default)]
+    pub join_candidates: Vec<SchemaRagJoinCandidateFact>,
+    #[serde(default)]
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct SchemaRagApiDocSource {
     pub source_id: String,
     pub source_path: String,
@@ -242,6 +332,18 @@ pub struct SchemaRagApiDocSource {
     pub content_hash: String,
     pub section_count: usize,
     pub imported_at: DateTime<Utc>,
+    #[serde(default)]
+    pub extraction_status: ApiDocExtractionStatus,
+    #[serde(default)]
+    pub extracted_at: Option<String>,
+    #[serde(default)]
+    pub api_field_count: usize,
+    #[serde(default)]
+    pub business_concept_count: usize,
+    #[serde(default)]
+    pub join_candidate_count: usize,
+    #[serde(default)]
+    pub unresolved_fact_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -3022,6 +3124,7 @@ async fn load_manifest_if_exists(index_dir: &Path) -> Result<Option<SchemaRagMan
 }
 
 fn upsert_api_doc_source(manifest: &mut SchemaRagManifest, doc: &NormalizedApiDoc, imported_at: DateTime<Utc>) {
+    let existing = manifest.api_doc_sources.iter().find(|source| source.source_id == doc.source_id);
     let source = SchemaRagApiDocSource {
         source_id: doc.source_id.clone(),
         source_path: doc.source_path.clone(),
@@ -3030,6 +3133,14 @@ fn upsert_api_doc_source(manifest: &mut SchemaRagManifest, doc: &NormalizedApiDo
         content_hash: doc.content_hash.clone(),
         section_count: doc.sections.len(),
         imported_at,
+        extraction_status: existing
+            .map(|source| source.extraction_status.clone())
+            .unwrap_or(ApiDocExtractionStatus::Pending),
+        extracted_at: existing.and_then(|source| source.extracted_at.clone()),
+        api_field_count: existing.map(|source| source.api_field_count).unwrap_or(0),
+        business_concept_count: existing.map(|source| source.business_concept_count).unwrap_or(0),
+        join_candidate_count: existing.map(|source| source.join_candidate_count).unwrap_or(0),
+        unresolved_fact_count: existing.map(|source| source.unresolved_fact_count).unwrap_or(0),
     };
     if let Some(existing) = manifest.api_doc_sources.iter_mut().find(|source| source.source_id == doc.source_id) {
         *existing = source;
@@ -3108,6 +3219,137 @@ pub fn normalize_markdown_api_doc(
         markdown: markdown.to_string(),
         sections: split_markdown_sections(markdown, source_id),
     })
+}
+
+pub fn validate_api_doc_extraction(
+    mut extraction: SchemaRagApiDocExtraction,
+    schema: &str,
+    tables: &[SchemaRagTableMetadata],
+) -> SchemaRagApiDocExtraction {
+    for field in &mut extraction.api_fields {
+        let target_schema = fact_schema(field.candidate_schema.as_deref(), schema);
+        field.candidate_schema = Some(target_schema.clone());
+        field.status = validate_column_target_status(
+            &target_schema,
+            field.candidate_table.as_deref(),
+            field.candidate_column.as_deref(),
+            field.confidence,
+            tables,
+        );
+    }
+
+    for concept in &mut extraction.business_concepts {
+        let target_schema = fact_schema(concept.candidate_schema.as_deref(), schema);
+        concept.candidate_schema = Some(target_schema.clone());
+        concept.status = if concept.candidate_column.as_deref().filter(|column| !column.trim().is_empty()).is_some() {
+            validate_column_target_status(
+                &target_schema,
+                concept.candidate_table.as_deref(),
+                concept.candidate_column.as_deref(),
+                concept.confidence,
+                tables,
+            )
+        } else {
+            validate_table_target_status(&target_schema, concept.candidate_table.as_deref(), concept.confidence, tables)
+        };
+    }
+
+    for join in &mut extraction.join_candidates {
+        join.left_schema = fact_schema(Some(&join.left_schema), schema);
+        join.right_schema = fact_schema(Some(&join.right_schema), schema);
+        join.status = validate_join_candidate_status(join, tables);
+    }
+
+    extraction
+}
+
+fn fact_schema(candidate_schema: Option<&str>, default_schema: &str) -> String {
+    candidate_schema
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_schema)
+        .to_string()
+}
+
+fn validate_table_target_status(
+    schema: &str,
+    table: Option<&str>,
+    confidence: f32,
+    tables: &[SchemaRagTableMetadata],
+) -> SchemaRagFactStatus {
+    let Some(table) = table.map(str::trim).filter(|value| !value.is_empty()) else {
+        return SchemaRagFactStatus::Unresolved;
+    };
+    if find_schema_table(tables, schema, table).is_none() {
+        return SchemaRagFactStatus::Unresolved;
+    }
+    fact_status_for_existing_target(confidence)
+}
+
+fn validate_column_target_status(
+    schema: &str,
+    table: Option<&str>,
+    column: Option<&str>,
+    confidence: f32,
+    tables: &[SchemaRagTableMetadata],
+) -> SchemaRagFactStatus {
+    let Some(table) = table.map(str::trim).filter(|value| !value.is_empty()) else {
+        return SchemaRagFactStatus::Unresolved;
+    };
+    let Some(column) = column.map(str::trim).filter(|value| !value.is_empty()) else {
+        return SchemaRagFactStatus::Unresolved;
+    };
+    let Some(table) = find_schema_table(tables, schema, table) else {
+        return SchemaRagFactStatus::Unresolved;
+    };
+    if !table.columns.iter().any(|candidate| candidate.name.eq_ignore_ascii_case(column)) {
+        return SchemaRagFactStatus::Unresolved;
+    }
+    fact_status_for_existing_target(confidence)
+}
+
+fn validate_join_candidate_status(join: &SchemaRagJoinCandidateFact, tables: &[SchemaRagTableMetadata]) -> SchemaRagFactStatus {
+    if join.left_columns.len() != join.right_columns.len() {
+        return SchemaRagFactStatus::Rejected;
+    }
+    if join.left_columns.is_empty() {
+        return SchemaRagFactStatus::Unresolved;
+    }
+    let Some(left) = find_schema_table(tables, &join.left_schema, &join.left_table) else {
+        return SchemaRagFactStatus::Unresolved;
+    };
+    let Some(right) = find_schema_table(tables, &join.right_schema, &join.right_table) else {
+        return SchemaRagFactStatus::Unresolved;
+    };
+    if !join.left_columns.iter().all(|column| table_has_column(left, column))
+        || !join.right_columns.iter().all(|column| table_has_column(right, column))
+    {
+        return SchemaRagFactStatus::Unresolved;
+    }
+    fact_status_for_existing_target(join.confidence)
+}
+
+fn fact_status_for_existing_target(confidence: f32) -> SchemaRagFactStatus {
+    if confidence < 0.5 {
+        SchemaRagFactStatus::Rejected
+    } else if confidence < 0.75 {
+        SchemaRagFactStatus::Candidate
+    } else {
+        SchemaRagFactStatus::Verified
+    }
+}
+
+fn find_schema_table<'a>(
+    tables: &'a [SchemaRagTableMetadata],
+    schema: &str,
+    table: &str,
+) -> Option<&'a SchemaRagTableMetadata> {
+    tables.iter().find(|candidate| candidate.schema == schema && candidate.name.eq_ignore_ascii_case(table))
+}
+
+fn table_has_column(table: &SchemaRagTableMetadata, column: &str) -> bool {
+    let column = column.trim();
+    !column.is_empty() && table.columns.iter().any(|candidate| candidate.name.eq_ignore_ascii_case(column))
 }
 
 fn split_markdown_sections(markdown: &str, source_id: &str) -> Vec<NormalizedApiDocSection> {
@@ -3660,6 +3902,197 @@ GET /api/refund/list
         assert!(doc.sections.iter().all(|section| section.text.chars().count() <= API_DOC_SECTION_MAX_CHARS));
         assert!(doc.sections.iter().all(|section| section.title_path == vec!["接口文档", "超长响应字段"]));
         assert!(doc.sections[0].text.contains("field_0"));
+    }
+
+    #[test]
+    fn api_doc_source_defaults_extraction_fields_for_old_manifest_json() {
+        let manifest: SchemaRagManifest = serde_json::from_value(serde_json::json!({
+            "connectionId": "conn",
+            "database": "main",
+            "schema": "public",
+            "dbType": "sqlite",
+            "embeddingProvider": "openai-compatible",
+            "embeddingEndpoint": "http://127.0.0.1",
+            "embeddingModel": "fake-embedding",
+            "embeddingDimension": 3,
+            "rerankProvider": "none",
+            "analyzedAt": "2026-05-31T00:00:00Z",
+            "tableCount": 1,
+            "columnCount": 1,
+            "indexCount": 0,
+            "foreignKeyCount": 0,
+            "schemaFingerprint": "fake",
+            "apiDocSources": [{
+                "sourceId": "api-doc:birth",
+                "sourcePath": "/docs/birth.md",
+                "originalFormat": "markdown",
+                "converter": "builtin-markdown",
+                "contentHash": "hash",
+                "sectionCount": 2,
+                "importedAt": "2026-06-03T00:00:00Z"
+            }]
+        }))
+        .unwrap();
+
+        let source = &manifest.api_doc_sources[0];
+        assert_eq!(source.extraction_status, ApiDocExtractionStatus::Pending);
+        assert_eq!(source.extracted_at, None);
+        assert_eq!(source.api_field_count, 0);
+        assert_eq!(source.business_concept_count, 0);
+        assert_eq!(source.join_candidate_count, 0);
+        assert_eq!(source.unresolved_fact_count, 0);
+    }
+
+    #[test]
+    fn validate_api_doc_extraction_marks_field_mappings_by_schema_evidence() {
+        let extraction = SchemaRagApiDocExtraction {
+            source_id: "api-doc:birth".to_string(),
+            extracted_at: "2026-06-03T00:00:00Z".to_string(),
+            status: ApiDocExtractionStatus::Extracted,
+            api_fields: vec![
+                SchemaRagApiFieldFact {
+                    id: "field:verified".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    name: "applyStatus".to_string(),
+                    meaning: "申请状态".to_string(),
+                    candidate_schema: None,
+                    candidate_table: Some("mc_birth_apply".to_string()),
+                    candidate_column: Some("apply_status".to_string()),
+                    status: SchemaRagFactStatus::Candidate,
+                    confidence: 0.86,
+                    evidence: "表格写明 applyStatus 对应 apply_status".to_string(),
+                },
+                SchemaRagApiFieldFact {
+                    id: "field:candidate".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    name: "motherName".to_string(),
+                    meaning: "母亲姓名".to_string(),
+                    candidate_schema: Some("public".to_string()),
+                    candidate_table: Some("mc_birth_apply".to_string()),
+                    candidate_column: Some("mother_name".to_string()),
+                    status: SchemaRagFactStatus::Unresolved,
+                    confidence: 0.62,
+                    evidence: "字段名相似".to_string(),
+                },
+                SchemaRagApiFieldFact {
+                    id: "field:missing-column".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    name: "certNo".to_string(),
+                    meaning: "证件编号".to_string(),
+                    candidate_schema: Some("public".to_string()),
+                    candidate_table: Some("mc_birth_apply".to_string()),
+                    candidate_column: Some("cert_no".to_string()),
+                    status: SchemaRagFactStatus::Candidate,
+                    confidence: 0.9,
+                    evidence: "文档写了 certNo".to_string(),
+                },
+                SchemaRagApiFieldFact {
+                    id: "field:low-confidence".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    name: "unknown".to_string(),
+                    meaning: "未知字段".to_string(),
+                    candidate_schema: Some("public".to_string()),
+                    candidate_table: Some("mc_birth_apply".to_string()),
+                    candidate_column: Some("apply_status".to_string()),
+                    status: SchemaRagFactStatus::Verified,
+                    confidence: 0.4,
+                    evidence: "低置信度猜测".to_string(),
+                },
+            ],
+            business_concepts: vec![],
+            join_candidates: vec![],
+            errors: vec![],
+        };
+
+        let validated = validate_api_doc_extraction(extraction, "public", &[fake_table()]);
+
+        assert_eq!(validated.api_fields[0].status, SchemaRagFactStatus::Verified);
+        assert_eq!(validated.api_fields[0].candidate_schema.as_deref(), Some("public"));
+        assert_eq!(validated.api_fields[1].status, SchemaRagFactStatus::Candidate);
+        assert_eq!(validated.api_fields[2].status, SchemaRagFactStatus::Unresolved);
+        assert_eq!(validated.api_fields[3].status, SchemaRagFactStatus::Rejected);
+    }
+
+    #[test]
+    fn validate_api_doc_extraction_validates_multi_column_join_candidates() {
+        let mut left = fake_table();
+        left.name = "left_table".to_string();
+        left.columns.push(SchemaRagColumnMetadata {
+            name: "tenant_id".to_string(),
+            data_type: "varchar".to_string(),
+            is_nullable: false,
+            is_primary_key: false,
+            column_default: None,
+            comment: Some("租户".to_string()),
+        });
+        let mut right = fake_table();
+        right.name = "right_table".to_string();
+        right.columns.push(SchemaRagColumnMetadata {
+            name: "tenant_id".to_string(),
+            data_type: "varchar".to_string(),
+            is_nullable: false,
+            is_primary_key: false,
+            column_default: None,
+            comment: Some("租户".to_string()),
+        });
+        right.columns.push(SchemaRagColumnMetadata {
+            name: "apply_id".to_string(),
+            data_type: "bigint".to_string(),
+            is_nullable: false,
+            is_primary_key: false,
+            column_default: None,
+            comment: Some("申请ID".to_string()),
+        });
+
+        let extraction = SchemaRagApiDocExtraction {
+            source_id: "api-doc:birth".to_string(),
+            extracted_at: "2026-06-03T00:00:00Z".to_string(),
+            status: ApiDocExtractionStatus::Extracted,
+            api_fields: vec![],
+            business_concepts: vec![],
+            join_candidates: vec![
+                SchemaRagJoinCandidateFact {
+                    id: "join:verified".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    left_schema: "public".to_string(),
+                    left_table: "left_table".to_string(),
+                    left_columns: vec!["tenant_id".to_string(), "id".to_string()],
+                    right_schema: "public".to_string(),
+                    right_table: "right_table".to_string(),
+                    right_columns: vec!["tenant_id".to_string(), "apply_id".to_string()],
+                    relation: "租户内申请对应详情".to_string(),
+                    status: SchemaRagFactStatus::Candidate,
+                    confidence: 0.88,
+                    evidence: "文档展示联合字段".to_string(),
+                },
+                SchemaRagJoinCandidateFact {
+                    id: "join:mismatch".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    left_schema: "public".to_string(),
+                    left_table: "left_table".to_string(),
+                    left_columns: vec!["id".to_string()],
+                    right_schema: "public".to_string(),
+                    right_table: "right_table".to_string(),
+                    right_columns: vec!["tenant_id".to_string(), "apply_id".to_string()],
+                    relation: "字段数量不匹配".to_string(),
+                    status: SchemaRagFactStatus::Verified,
+                    confidence: 0.9,
+                    evidence: "错误抽取".to_string(),
+                },
+            ],
+            errors: vec![],
+        };
+
+        let validated = validate_api_doc_extraction(extraction, "public", &[left, right]);
+
+        assert_eq!(validated.join_candidates[0].status, SchemaRagFactStatus::Verified);
+        assert_eq!(validated.join_candidates[1].status, SchemaRagFactStatus::Rejected);
     }
 
     #[test]
