@@ -9,6 +9,10 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncWriteExt;
 
+const API_DOC_SECTION_TARGET_CHARS: usize = 1600;
+const API_DOC_SECTION_MAX_CHARS: usize = 2200;
+const API_DOC_SECTION_OVERLAP_CHARS: usize = 180;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SchemaRagConfig {
@@ -3137,13 +3141,86 @@ fn push_markdown_section(
     if text.is_empty() {
         return;
     }
-    let section_index = sections.len() + 1;
-    sections.push(NormalizedApiDocSection {
-        id: format!("{source_id}#section-{section_index}"),
-        title_path: title_path.to_vec(),
-        text,
-        page: None,
-    });
+    for chunk in split_api_doc_section_text(&text) {
+        let section_index = sections.len() + 1;
+        sections.push(NormalizedApiDocSection {
+            id: format!("{source_id}#section-{section_index}"),
+            title_path: title_path.to_vec(),
+            text: chunk,
+            page: None,
+        });
+    }
+}
+
+fn split_api_doc_section_text(text: &str) -> Vec<String> {
+    let text = text.trim();
+    if text.chars().count() <= API_DOC_SECTION_MAX_CHARS {
+        return vec![text.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.chars().count() > API_DOC_SECTION_MAX_CHARS {
+            push_api_doc_chunk(&mut chunks, &mut current);
+            chunks.extend(split_long_api_doc_line(line));
+            continue;
+        }
+
+        let additional = line.chars().count() + usize::from(!current.is_empty());
+        if !current.is_empty() && current.chars().count() + additional > API_DOC_SECTION_TARGET_CHARS {
+            push_api_doc_chunk(&mut chunks, &mut current);
+        }
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(line);
+    }
+
+    push_api_doc_chunk(&mut chunks, &mut current);
+    chunks
+}
+
+fn push_api_doc_chunk(chunks: &mut Vec<String>, current: &mut String) {
+    let chunk = current.trim();
+    if chunk.is_empty() {
+        current.clear();
+        return;
+    }
+    chunks.push(chunk.to_string());
+    let overlap = trailing_chars(chunk, API_DOC_SECTION_OVERLAP_CHARS);
+    current.clear();
+    if !overlap.trim().is_empty() {
+        current.push_str(overlap.trim_start());
+    }
+}
+
+fn split_long_api_doc_line(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + API_DOC_SECTION_MAX_CHARS).min(chars.len());
+        let chunk: String = chars[start..end].iter().collect();
+        if !chunk.trim().is_empty() {
+            chunks.push(chunk);
+        }
+        if end == chars.len() {
+            break;
+        }
+        start = end.saturating_sub(API_DOC_SECTION_OVERLAP_CHARS);
+    }
+    chunks
+}
+
+fn trailing_chars(text: &str, max_chars: usize) -> &str {
+    let mut indices: Vec<usize> = text.char_indices().map(|(index, _)| index).collect();
+    indices.push(text.len());
+    let char_count = indices.len().saturating_sub(1);
+    let start_char = char_count.saturating_sub(max_chars);
+    &text[indices[start_char]..]
 }
 
 fn markdown_heading(line: &str) -> Option<(usize, &str)> {
@@ -3558,6 +3635,31 @@ GET /api/refund/list
         let error = normalize_markdown_api_doc("doc:empty", "/docs/empty.md", " \n\t ").unwrap_err();
 
         assert_eq!(error, "API document content is empty");
+    }
+
+    #[test]
+    fn normalize_markdown_api_doc_splits_oversized_sections_by_chunk_budget() {
+        let rows = (0..120)
+            .map(|index| format!("| field_{index} | 字段说明 {index} | table_{index}.column_{index} |"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let markdown = format!(
+            r#"# 接口文档
+
+## 超长响应字段
+
+| 字段 | 说明 | 数据库字段 |
+| --- | --- | --- |
+{rows}
+"#
+        );
+
+        let doc = normalize_markdown_api_doc("doc:large-table", "/docs/large-table.md", &markdown).unwrap();
+
+        assert!(doc.sections.len() > 1);
+        assert!(doc.sections.iter().all(|section| section.text.chars().count() <= API_DOC_SECTION_MAX_CHARS));
+        assert!(doc.sections.iter().all(|section| section.title_path == vec!["接口文档", "超长响应字段"]));
+        assert!(doc.sections[0].text.contains("field_0"));
     }
 
     #[test]

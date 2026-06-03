@@ -3,7 +3,12 @@ import test from "node:test";
 
 import type { AiConfig } from "../../apps/desktop/src/stores/settingsStore";
 import type { AiContext } from "../../apps/desktop/src/lib/ai";
-import { buildAiSchemaTools, buildSchemaResearchEvidenceGateInstruction, supportsAiSchemaToolLoop } from "../../apps/desktop/src/lib/ai";
+import {
+  buildAiSchemaTools,
+  buildSchemaResearchEvidenceGateInstruction,
+  buildToolSystemPrompt,
+  supportsAiSchemaToolLoop,
+} from "../../apps/desktop/src/lib/ai";
 
 function completionsConfig(overrides: Partial<AiConfig> = {}): AiConfig {
   return {
@@ -45,20 +50,13 @@ test("schema tool loop is disabled for providers without this tool-call path", (
   assert.equal(supportsAiSchemaToolLoop(completionsConfig(), context({ databaseType: "mongodb" })), false);
 });
 
-test("AI schema tools include non-vector metadata tools and relation confirmation", () => {
+test("main AI schema tools expose only schema research and user confirmation tools", () => {
   const tools = buildAiSchemaTools();
   assert.deepEqual(toolNames(tools), [
     "dbx_schema_research_task",
-    "dbx_search_schema",
-    "dbx_list_tables",
-    "dbx_find_columns",
     "dbx_request_table_choice",
-    "dbx_search_table_columns",
-    "dbx_get_column_details",
-    "dbx_load_table_schema",
     "dbx_request_column_choice",
     "dbx_save_schema_enrichment",
-    "dbx_get_related_tables",
     "dbx_request_relation",
   ]);
   const researchTool = tools.find((tool: any) => tool?.function?.name === "dbx_schema_research_task") as any;
@@ -75,14 +73,6 @@ test("AI schema tools include non-vector metadata tools and relation confirmatio
   assert.equal(columnChoiceTool?.function?.parameters?.properties?.multiple?.type, "boolean");
   assert.match(columnChoiceTool?.function?.description || "", /manually enter|手动输入/);
   assert.equal(columnChoiceTool?.function?.parameters?.properties?.candidates?.items?.properties?.column?.type, "string");
-  const columnSearchTool = tools.find((tool: any) => tool?.function?.name === "dbx_search_table_columns") as any;
-  assert.equal(columnSearchTool?.function?.parameters?.properties?.query?.type, "string");
-  assert.equal(columnSearchTool?.function?.parameters?.properties?.includePrimaryKey?.type, "boolean");
-  assert.deepEqual(columnSearchTool?.function?.parameters?.required, ["table", "query"]);
-  assert.match(columnSearchTool?.function?.description || "", /vector|向量/);
-  const columnDetailsTool = tools.find((tool: any) => tool?.function?.name === "dbx_get_column_details") as any;
-  assert.equal(columnDetailsTool?.function?.parameters?.properties?.columns?.type, "array");
-  assert.deepEqual(columnDetailsTool?.function?.parameters?.required, ["table", "columns"]);
   const enrichmentTool = tools.find((tool: any) => tool?.function?.name === "dbx_save_schema_enrichment") as any;
   assert.deepEqual(enrichmentTool?.function?.parameters?.properties?.confirmationSource?.enum, [
     "explicit_user_request",
@@ -95,14 +85,14 @@ test("AI schema tools include non-vector metadata tools and relation confirmatio
 });
 
 test("schema research subtask tools exclude recursion, user UI, and enrichment", () => {
+  const tools = buildAiSchemaTools({
+    scope: "schema_research",
+    includeResearchTask: false,
+    includeUserChoiceTools: false,
+    includeEnrichmentTool: false,
+  });
   assert.deepEqual(
-    toolNames(
-      buildAiSchemaTools({
-        includeResearchTask: false,
-        includeUserChoiceTools: false,
-        includeEnrichmentTool: false,
-      }),
-    ),
+    toolNames(tools),
     [
       "dbx_search_schema",
       "dbx_list_tables",
@@ -113,6 +103,14 @@ test("schema research subtask tools exclude recursion, user UI, and enrichment",
       "dbx_get_related_tables",
     ],
   );
+  const columnSearchTool = tools.find((tool: any) => tool?.function?.name === "dbx_search_table_columns") as any;
+  assert.equal(columnSearchTool?.function?.parameters?.properties?.query?.type, "string");
+  assert.equal(columnSearchTool?.function?.parameters?.properties?.includePrimaryKey?.type, "boolean");
+  assert.deepEqual(columnSearchTool?.function?.parameters?.required, ["table", "query"]);
+  assert.match(columnSearchTool?.function?.description || "", /vector|向量/);
+  const columnDetailsTool = tools.find((tool: any) => tool?.function?.name === "dbx_get_column_details") as any;
+  assert.equal(columnDetailsTool?.function?.parameters?.properties?.columns?.type, "array");
+  assert.deepEqual(columnDetailsTool?.function?.parameters?.required, ["table", "columns"]);
 });
 
 test("schema research partial evidence gate requires another lookup before final SQL", () => {
@@ -127,8 +125,23 @@ test("schema research partial evidence gate requires another lookup before final
 
   assert.match(instruction || "", /不能直接生成最终 SQL/);
   assert.match(instruction || "", /继续调用/);
-  assert.match(instruction || "", /dbx_get_column_details/);
+  assert.doesNotMatch(instruction || "", /dbx_get_column_details/);
+  assert.doesNotMatch(instruction || "", /dbx_search_schema/);
+  assert.match(instruction || "", /dbx_schema_research_task/);
   assert.match(instruction || "", /relation: Need user\/order join evidence/);
+});
+
+test("main schema prompt allows schema queries only through schema research task", () => {
+  const prompt = buildToolSystemPrompt("generate", context(), "agent");
+
+  assert.match(prompt, /dbx_schema_research_task/);
+  assert.match(prompt, /唯一的 Schema 查询入口|only schema-query entrypoint/);
+  assert.doesNotMatch(prompt, /优先调用 dbx_search_schema/);
+  assert.doesNotMatch(prompt, /调用 dbx_get_column_details/);
+  assert.doesNotMatch(prompt, /调用 dbx_get_related_tables/);
+  assert.doesNotMatch(prompt, /prefer dbx_search_schema/i);
+  assert.doesNotMatch(prompt, /call dbx_get_column_details/i);
+  assert.doesNotMatch(prompt, /call dbx_get_related_tables/i);
 });
 
 test("schema research user-choice gate requires a user confirmation tool", () => {

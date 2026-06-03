@@ -503,7 +503,7 @@ async function runAiToolLoop(
 
   const isZh = currentLocale() === "zh-CN";
   const messages: any[] = userMessages.map((message) => ({ role: message.role, content: message.content }));
-  const tools = buildAiSchemaTools({ includeLoadTableSchema: false });
+  const tools = buildAiSchemaTools({ scope: "main" });
   const budget = createAiSchemaToolBudget();
   let pendingEvidenceGate: SchemaResearchEvidenceGate | undefined;
   let evidenceGateInstructionUsed = false;
@@ -1057,13 +1057,7 @@ function schemaResearchEvidenceGateFromToolOutput(output: unknown): SchemaResear
 
 function isSchemaEvidenceContinuationTool(name: string): boolean {
   return [
-    "dbx_search_schema",
-    "dbx_list_tables",
-    "dbx_find_columns",
-    "dbx_search_table_columns",
-    "dbx_get_column_details",
-    "dbx_load_table_schema",
-    "dbx_get_related_tables",
+    "dbx_schema_research_task",
     "dbx_request_table_choice",
     "dbx_request_column_choice",
     "dbx_request_relation",
@@ -1099,8 +1093,8 @@ export function buildSchemaResearchEvidenceGateInstruction(
     return isZh
       ? [
           "Schema Research 返回 partial，证据不足，不能直接生成最终 SQL。",
-          "必须继续调用更窄的 dbx_schema_research_task，或调用 dbx_search_schema、dbx_find_columns、dbx_search_table_columns、dbx_get_column_details、dbx_get_related_tables 补齐实时证据；如果仍无法确定，调用用户选择/关系确认工具。",
-          "最终 SQL 只能使用 verified 字段，或随后通过 dbx_get_column_details 实时核对过的字段。",
+          "必须继续调用更窄的 dbx_schema_research_task 补齐实时证据；如果仍无法确定，调用用户选择/关系确认工具。",
+          "最终 SQL 只能使用 Schema Research 返回的 verified 字段、当前明确 @table 上下文中的字段，或用户确认后再次由 Schema Research 验证过的字段。",
           `摘要：${gate.summary}`,
           uncertaintyText,
         ]
@@ -1108,8 +1102,8 @@ export function buildSchemaResearchEvidenceGateInstruction(
           .join("\n")
       : [
           "Schema Research returned partial evidence. Do not generate final SQL yet.",
-          "You must continue with a narrower dbx_schema_research_task or call dbx_search_schema, dbx_find_columns, dbx_search_table_columns, dbx_get_column_details, or dbx_get_related_tables to complete real-time evidence. If still uncertain, call a user-choice or relation-confirmation tool.",
-          "Final SQL may use only verified columns or columns later verified through dbx_get_column_details.",
+          "You must continue with a narrower dbx_schema_research_task to complete real-time evidence. If still uncertain, call a user-choice or relation-confirmation tool.",
+          "Final SQL may use only columns verified by Schema Research, columns in the current explicit @table context, or user-confirmed candidates that were verified again by Schema Research.",
           `Summary: ${gate.summary}`,
           uncertaintyText,
         ]
@@ -1119,7 +1113,7 @@ export function buildSchemaResearchEvidenceGateInstruction(
   return isZh
     ? [
         `Schema Research 返回 ${gate.status}，不能编造表、字段或关系，也不能直接生成最终 SQL。`,
-        "请继续调用 schema 检索/详情工具寻找证据；如果没有足够候选，向用户说明缺少哪些表、字段或关系，让用户用 @table 或明确字段补充。",
+        "请继续调用更窄的 dbx_schema_research_task 寻找证据；如果没有足够候选，向用户说明缺少哪些表、字段或关系，让用户用 @table 或明确字段补充。",
         `摘要：${gate.summary}`,
         uncertaintyText,
       ]
@@ -1127,7 +1121,7 @@ export function buildSchemaResearchEvidenceGateInstruction(
         .join("\n")
     : [
         `Schema Research returned ${gate.status}. Do not invent tables, columns, or relationships, and do not generate final SQL yet.`,
-        "Continue with schema search/detail tools. If there are not enough candidates, explain which tables, columns, or relationships are missing and ask the user to provide an @table mention or explicit fields.",
+        "Continue with a narrower dbx_schema_research_task. If there are not enough candidates, explain which tables, columns, or relationships are missing and ask the user to provide an @table mention or explicit fields.",
         `Summary: ${gate.summary}`,
         uncertaintyText,
       ]
@@ -1193,7 +1187,7 @@ function normalizeRawAssistantMessage(rawMessage: unknown, content: string, tool
   };
 }
 
-function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAssistantMode = "ask"): string {
+export function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAssistantMode = "ask"): string {
   const isZh = currentLocale() === "zh-CN";
   const seedSchema = context.tables.length
     ? `\n${isZh ? "初始 Schema 上下文，仅来自当前表或用户明确 @table 提到的表：" : "Initial schema context, from current tab or explicit @table mentions only:"}\n${formatSchema(context)}\n`
@@ -1206,16 +1200,16 @@ function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAss
         ...buildModePromptLines(mode, isZh),
         ...buildActionPromptLines(action, isZh),
         "当前没有预加载完整 Schema。只有工具返回的实时表结构、当前表上下文、用户明确 @table 提到的表可以作为最终 SQL 的表列依据。",
-        "复杂查表、找字段、判断多表关系时，优先调用 dbx_schema_research_task，让 Schema Research 子任务消化低级工具结果并返回压缩证据；不要让主对话直接吃大量候选表/字段结果。",
-        "dbx_schema_research_task 返回的 promptSummary 是给你生成最终 SQL 用的压缩证据；最终 SQL 只能使用其中已 verified 的字段，或你随后通过 dbx_get_column_details 实时核对过的字段。",
-        "你可以按需调用工具检索 Schema，而不是预先获得完整 Schema。dbx_search_schema 使用 Schema 智能索引；如果当前 schema 未分析或搜索结果不足，改用 dbx_list_tables 和 dbx_find_columns。",
+        "查询表、字段、字段详情、表关系或文档映射时，只能调用 dbx_schema_research_task；这是你唯一的 Schema 查询入口。",
+        "dbx_schema_research_task 会让 Schema Research 子任务内部消化低级工具结果并返回压缩证据；主对话不能直接调用低级 schema tools。",
+        "dbx_schema_research_task 返回的 promptSummary 是给你生成最终 SQL 用的压缩证据；最终 SQL 只能使用其中已 verified 的字段、当前明确 @table 上下文中的字段，或用户确认后再次由 Schema Research 验证过的字段。",
         "当用户用中文业务词查表或字段时，工具 query 要同时包含原始中文词和可能的英文业务词、表名/字段名片段，例如：评价 review rating comment feedback score。",
-        "当问题涉及当前上下文未提供的表、字段或关系时，优先调用 dbx_search_schema；没有索引或需要按字段名精确查找时调用 dbx_find_columns；需要浏览候选表时调用 dbx_list_tables。",
-        "拿到候选表后，若不能确定用户想要哪张表，调用 dbx_request_table_choice 让用户确认。确认表后，优先调用 dbx_search_table_columns 在该表内做字段级向量召回，只拿字段摘要。",
-        "字段摘要只用于候选判断。准备把字段写入最终 SQL 的 SELECT、WHERE、JOIN、GROUP BY、ORDER BY、INSERT 或 UPDATE 前，必须调用 dbx_get_column_details 获取这些字段的实时详情，或复用当前仍有效的字段详情证据。",
-        "拿到字段候选后，若不能确定用户想要哪个字段，调用 dbx_request_column_choice 让用户确认；用户选择或手动输入后，仍要以实时字段详情核对字段存在性。",
+        "当问题涉及当前上下文未提供的表、字段或关系时，调用 dbx_schema_research_task，并把业务意图、表角色、字段角色、关系需求和可能的中英文检索词写清楚。",
+        "Schema Research 返回 partial 时，继续发起更窄的 dbx_schema_research_task；如果仍无法确定，调用用户选择/关系确认工具。",
+        "拿到候选表后，若不能确定用户想要哪张表，调用 dbx_request_table_choice 让用户确认。用户选择或手动输入后，仍要把该候选交给新的 dbx_schema_research_task 做实时验证。",
+        "拿到字段候选后，若不能确定用户想要哪个字段，调用 dbx_request_column_choice 让用户确认。用户选择或手动输入后，仍要把该候选交给新的 dbx_schema_research_task 做实时验证。",
         "只有当用户明确要求沉淀/记住某个业务词到表或字段的映射，或用户刚刚通过表/字段选择器确认了映射并同意沉淀时，才可以调用 dbx_save_schema_enrichment。禁止保存模型自己猜测的映射。",
-        "需要 JOIN 两张表时，先调用 dbx_get_related_tables 查看真实外键或已知关系；如果没有可靠关系，不要猜测，调用 dbx_request_relation 让用户确认字段对应关系。联合键或多字段关联必须使用多个 candidatePairs，并在最终 JOIN 中用 AND 使用用户确认的全部 columnPairs。",
+        "需要 JOIN 两张表时，先通过 dbx_schema_research_task 获取关系证据；如果没有可靠关系，不要猜测，调用 dbx_request_relation 让用户确认字段对应关系。联合键或多字段关联必须使用多个 candidatePairs，并在最终 JOIN 中用 AND 使用用户确认的全部 columnPairs。",
         "不要编造工具结果中不存在的表、字段或关联关系。工具预算有限，缺什么查什么，不要重复查同一个意图。",
         "返回 SQL 时放在 ```sql 代码块中。额外说明简短实用。",
       ]
@@ -1226,16 +1220,16 @@ function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAss
         ...buildModePromptLines(mode, isZh),
         ...buildActionPromptLines(action, isZh),
         "A complete schema is not preloaded. Only tool-returned real-time schemas, current table context, and explicit @table mentions may be used as table/column facts for final SQL.",
-        "For complex table search, column search, or multi-table relation research, prefer dbx_schema_research_task so the Schema Research subtask digests low-level tool results and returns compact evidence. Avoid feeding large candidate table/column payloads directly into the main conversation.",
-        "The promptSummary returned by dbx_schema_research_task is compact evidence for final SQL generation. Final SQL may use only columns marked verified there, or columns you subsequently verify with dbx_get_column_details.",
-        "You may call tools to retrieve schema on demand instead of receiving the full schema upfront. dbx_search_schema uses the smart schema index; if the schema is not indexed or results are insufficient, use dbx_list_tables and dbx_find_columns.",
+        "To query tables, columns, column details, table relationships, or document mappings, call only dbx_schema_research_task. It is your only schema-query entrypoint.",
+        "dbx_schema_research_task lets the Schema Research subtask digest low-level tool results and return compact evidence. The main conversation must not call low-level schema tools directly.",
+        "The promptSummary returned by dbx_schema_research_task is compact evidence for final SQL generation. Final SQL may use only columns marked verified there, columns in the current explicit @table context, or user-confirmed candidates that were verified again by Schema Research.",
         "When a Chinese business term is used to search tables or columns, include the original Chinese term plus likely English business terms and identifier fragments in tool queries, for example: 评价 review rating comment feedback score.",
-        "When the request needs tables, columns, or relationships not already in context, prefer dbx_search_schema; use dbx_find_columns for precise column-name searches or when no index exists; use dbx_list_tables to browse candidates.",
-        "After candidate tables are found, call dbx_request_table_choice if you cannot determine which table the user means. After the user chooses or manually enters a table, prefer dbx_search_table_columns to run vector column retrieval inside that table and get lightweight column summaries.",
-        "Column summaries are only candidates. Before putting a column in final SQL SELECT, WHERE, JOIN, GROUP BY, ORDER BY, INSERT, or UPDATE, call dbx_get_column_details for real-time details or reuse still-valid column-detail evidence.",
-        "After column candidates are found, call dbx_request_column_choice if you cannot determine which column the user means. After the user chooses or manually enters columns, still verify them against real-time column details.",
+        "When the request needs tables, columns, or relationships not already in context, call dbx_schema_research_task and include the business intent, table roles, column roles, relation needs, and likely Chinese/English search terms.",
+        "When Schema Research returns partial evidence, start a narrower dbx_schema_research_task. If the result remains ambiguous, call a user-choice or relation-confirmation tool.",
+        "After candidate tables are found, call dbx_request_table_choice if you cannot determine which table the user means. After the user chooses or manually enters a table, send that candidate to a new dbx_schema_research_task for real-time verification.",
+        "After column candidates are found, call dbx_request_column_choice if you cannot determine which column the user means. After the user chooses or manually enters columns, send those candidates to a new dbx_schema_research_task for real-time verification.",
         "Call dbx_save_schema_enrichment only when the user explicitly asks to save/remember a business term to table/column mapping, or when the user has just confirmed the mapping through a table/column choice UI and agreed to save it. Never save model-guessed mappings.",
-        "Before joining two tables, call dbx_get_related_tables for real foreign keys or known relationships. If no reliable relation exists, do not guess; call dbx_request_relation so the user can confirm matching columns. For composite-key or multi-column relationships, provide multiple candidatePairs and use all user-confirmed columnPairs with AND in the final JOIN.",
+        "Before joining two tables, use dbx_schema_research_task to get relation evidence. If no reliable relation exists, do not guess; call dbx_request_relation so the user can confirm matching columns. For composite-key or multi-column relationships, provide multiple candidatePairs and use all user-confirmed columnPairs with AND in the final JOIN.",
         "Never invent tables, columns, or relationships that are not present in tool results. Tool budget is limited; retrieve only what is missing and avoid duplicate searches.",
         "Put SQL in a fenced ```sql code block. Keep extra explanation short and practical.",
       ];
@@ -1258,11 +1252,30 @@ function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAss
 }
 
 export interface AiSchemaToolsOptions {
+  scope?: "main" | "schema_research";
   includeResearchTask?: boolean;
   includeUserChoiceTools?: boolean;
   includeEnrichmentTool?: boolean;
   includeLoadTableSchema?: boolean;
 }
+
+const MAIN_SCHEMA_TOOL_NAMES = new Set([
+  "dbx_schema_research_task",
+  "dbx_request_table_choice",
+  "dbx_request_column_choice",
+  "dbx_save_schema_enrichment",
+  "dbx_request_relation",
+]);
+
+const SCHEMA_RESEARCH_TOOL_NAMES = new Set([
+  "dbx_search_schema",
+  "dbx_list_tables",
+  "dbx_find_columns",
+  "dbx_search_table_columns",
+  "dbx_get_column_details",
+  "dbx_load_table_schema",
+  "dbx_get_related_tables",
+]);
 
 export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[] {
   const isZh = currentLocale() === "zh-CN";
@@ -1726,12 +1739,15 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
 }
 
 function filterAiSchemaTools(tools: unknown[], options: AiSchemaToolsOptions): unknown[] {
+  const scope = options.scope || "main";
   const includeResearchTask = options.includeResearchTask !== false;
   const includeUserChoiceTools = options.includeUserChoiceTools !== false;
   const includeEnrichmentTool = options.includeEnrichmentTool !== false;
   const includeLoadTableSchema = options.includeLoadTableSchema !== false;
   return tools.filter((tool: any) => {
     const name = tool?.function?.name;
+    if (scope === "main" && !MAIN_SCHEMA_TOOL_NAMES.has(name)) return false;
+    if (scope === "schema_research" && !SCHEMA_RESEARCH_TOOL_NAMES.has(name)) return false;
     if (!includeResearchTask && name === "dbx_schema_research_task") return false;
     if (!includeLoadTableSchema && name === "dbx_load_table_schema") return false;
     if (
@@ -1835,6 +1851,7 @@ async function runSchemaResearchSubtask(
     },
   ];
   const tools = buildAiSchemaTools({
+    scope: "schema_research",
     includeResearchTask: false,
     includeUserChoiceTools: false,
     includeEnrichmentTool: false,

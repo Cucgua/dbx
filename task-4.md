@@ -153,6 +153,36 @@ User right-clicks Schema / Database -> import API docs
 
 The system must not auto-ingest or auto-save graph knowledge during a normal chat answer. Ingestion happens only through explicit user-triggered document import or an explicit user confirmation/save action.
 
+## Document Chunk Policy
+
+Markdown documents are normalized before extraction and embedding.
+
+Chunking rules:
+
+```text
+1. Split by Markdown heading path first.
+2. If one heading section is too large, split it again by line with a character budget.
+3. Target chunk size: 1600 characters.
+4. Hard max chunk size: 2200 characters.
+5. Overlap between adjacent chunks: 180 characters.
+6. Keep line boundaries when possible.
+7. If a single line is longer than 2200 characters, split that line by character budget.
+8. Markdown tables are allowed. Long tables are split by rows because rows are line-based.
+```
+
+Why character budget instead of token budget:
+
+```text
+Embedding providers and subagent models can use different tokenizers.
+Character budget is deterministic in Rust sidecar and good enough for the first GraphRAG ingestion pass.
+```
+
+Future table improvement:
+
+```text
+When a Markdown table is split across multiple chunks, repeat the table header in continuation chunks so every chunk preserves column meaning.
+```
+
 ## Data Model Plan
 
 ### Rust Sidecar Types
@@ -1263,4 +1293,3 @@ Sidecar directly calls the Schema Research model, requiring AI config and raw ch
 ```
 
 Use the recommended option unless implementation evidence shows it creates an unclean dependency or blocks streaming/progress reporting.
-
