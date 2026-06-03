@@ -101,6 +101,7 @@ test("schema research subtask tools exclude recursion, user UI, and enrichment",
       "dbx_get_column_details",
       "dbx_load_table_schema",
       "dbx_get_related_tables",
+      "dbx_expand_schema_graph",
     ],
   );
   const columnSearchTool = tools.find((tool: any) => tool?.function?.name === "dbx_search_table_columns") as any;
@@ -111,6 +112,10 @@ test("schema research subtask tools exclude recursion, user UI, and enrichment",
   const columnDetailsTool = tools.find((tool: any) => tool?.function?.name === "dbx_get_column_details") as any;
   assert.equal(columnDetailsTool?.function?.parameters?.properties?.columns?.type, "array");
   assert.deepEqual(columnDetailsTool?.function?.parameters?.required, ["table", "columns"]);
+  const graphTool = tools.find((tool: any) => tool?.function?.name === "dbx_expand_schema_graph") as any;
+  assert.equal(graphTool?.function?.parameters?.properties?.seeds?.type, "array");
+  assert.equal(graphTool?.function?.parameters?.properties?.includeCandidates?.type, "boolean");
+  assert.match(graphTool?.function?.description || "", /Schema Graph|Kuzu|图/);
 });
 
 test("schema research partial evidence gate requires another lookup before final SQL", () => {

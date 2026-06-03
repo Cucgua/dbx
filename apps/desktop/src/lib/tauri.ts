@@ -64,6 +64,8 @@ import type { BuildDatabaseSqlExportOptions, BuildExportInsertStatementsOptions 
 import type {
   AnalyzeSchemaRagRequest,
   AnalyzeSchemaRagResponse,
+  ExpandSchemaRagGraphRequest,
+  ExpandSchemaRagGraphResponse,
   ImportSchemaRagApiDocsRequest,
   ImportSchemaRagApiDocsResponse,
   RefreshSchemaRagTableRequest,
@@ -82,6 +84,8 @@ import type {
 export type {
   AnalyzeSchemaRagRequest,
   AnalyzeSchemaRagResponse,
+  ExpandSchemaRagGraphRequest,
+  ExpandSchemaRagGraphResponse,
   ImportSchemaRagApiDocsRequest,
   ImportSchemaRagApiDocsResponse,
   RefreshSchemaRagTableRequest,
@@ -540,6 +544,12 @@ export async function importSchemaRagApiDocs(
   request: ImportSchemaRagApiDocsRequest,
 ): Promise<ImportSchemaRagApiDocsResponse> {
   return invoke("import_schema_rag_api_docs", { request });
+}
+
+export async function expandSchemaRagGraph(
+  request: ExpandSchemaRagGraphRequest,
+): Promise<ExpandSchemaRagGraphResponse> {
+  return invoke("expand_schema_rag_graph", { request });
 }
 
 export async function refreshSchemaRagTable(

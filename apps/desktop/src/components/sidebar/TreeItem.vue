@@ -125,7 +125,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import LightTooltip from "@/components/ui/LightTooltip.vue";
-import { findSchemaRagTableUnit, type SchemaRagScopeRequest, type SchemaRagStatus } from "@/lib/schemaRag";
+import { findSchemaRagTableUnit, type SchemaRagApiDocExtraction, type SchemaRagScopeRequest, type SchemaRagStatus } from "@/lib/schemaRag";
+import {
+  apiDocSourceId,
+  buildApiDocExtractionRequest,
+  emptyFailedApiDocExtraction,
+  type ApiDocImportTextFile,
+} from "@/lib/schemaDocIngestion";
+import { extractApiDocGraphFactsWithSchemaResearch } from "@/lib/ai";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 const { t } = useI18n();
@@ -904,9 +911,12 @@ async function importSchemaRagApiDocs() {
     });
     const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
     if (paths.length === 0) return;
+    const textFiles = await readMarkdownApiDocTextFiles(paths);
+    const extractions = await extractApiDocFactsForImport(scope, textFiles);
     const result = await api.importSchemaRagApiDocs({
       ...scope,
       files: paths.map((path) => ({ path, displayName: path.split(/[\\/]/).pop() || path })),
+      extractions,
     });
     schemaRagStatus.value = await api.loadSchemaRagStatus(scope);
     showSchemaRagStatusDialog.value = true;
@@ -914,6 +924,9 @@ async function importSchemaRagApiDocs() {
       t("contextMenu.schemaRagApiDocsImportSuccess", {
         sources: result.importedSources,
         chunks: result.chunks,
+        facts: result.graphFacts,
+        verified: result.verifiedFacts,
+        unresolved: result.unresolvedFacts,
         unsupported: result.unsupportedFiles.length,
       }),
       5000,
@@ -923,6 +936,39 @@ async function importSchemaRagApiDocs() {
   } finally {
     schemaRagBusy.value = "";
   }
+}
+
+async function readMarkdownApiDocTextFiles(paths: string[]): Promise<ApiDocImportTextFile[]> {
+  const { readTextFile } = await import("@tauri-apps/plugin-fs");
+  const files: ApiDocImportTextFile[] = [];
+  for (const path of paths) {
+    if (!isMarkdownApiDocPath(path)) continue;
+    const content = await readTextFile(path);
+    files.push({ path, displayName: path.split(/[\\/]/).pop() || path, content });
+  }
+  return files;
+}
+
+async function extractApiDocFactsForImport(
+  scope: SchemaRagScopeRequest,
+  files: ApiDocImportTextFile[],
+): Promise<SchemaRagApiDocExtraction[]> {
+  if (!files.length) return [];
+  const extractions: SchemaRagApiDocExtraction[] = [];
+  for (const file of files) {
+    const sourceId = await apiDocSourceId(file.path);
+    try {
+      const request = await buildApiDocExtractionRequest(file, scope.schema);
+      extractions.push(await extractApiDocGraphFactsWithSchemaResearch(settingsStore.aiConfig, request));
+    } catch (error) {
+      extractions.push(emptyFailedApiDocExtraction(sourceId, error instanceof Error ? error.message : String(error || "")));
+    }
+  }
+  return extractions;
+}
+
+function isMarkdownApiDocPath(path: string): boolean {
+  return /\.(md|markdown)$/i.test(path);
 }
 
 async function refreshSchemaRagCurrentTable() {
@@ -3070,12 +3116,25 @@ function treeItemMenuItems(): ContextMenuItem[] {
               <div
                 v-for="source in schemaRagStatus.manifest.apiDocSources"
                 :key="source.sourceId"
-                class="flex items-center justify-between gap-2"
+                class="space-y-0.5"
               >
-                <span class="truncate" :title="source.sourcePath">{{ source.sourcePath }}</span>
-                <span class="shrink-0 text-muted-foreground">
-                  {{ t("contextMenu.schemaRagApiDocSections", { count: source.sectionCount }) }}
-                </span>
+                <div class="flex items-center justify-between gap-2">
+                  <span class="truncate" :title="source.sourcePath">{{ source.sourcePath }}</span>
+                  <span class="shrink-0 text-muted-foreground">
+                    {{ t("contextMenu.schemaRagApiDocSections", { count: source.sectionCount }) }}
+                  </span>
+                </div>
+                <div class="text-muted-foreground">
+                  {{
+                    t("contextMenu.schemaRagApiDocExtractionSummary", {
+                      status: t(`contextMenu.schemaRagApiDocExtractionStatus.${source.extractionStatus || "pending"}`),
+                      fields: source.apiFieldCount || 0,
+                      concepts: source.businessConceptCount || 0,
+                      joins: source.joinCandidateCount || 0,
+                      unresolved: source.unresolvedFactCount || 0,
+                    })
+                  }}
+                </div>
               </div>
             </div>
           </div>

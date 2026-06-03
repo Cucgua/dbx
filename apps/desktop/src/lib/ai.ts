@@ -29,6 +29,14 @@ import {
   type SchemaResearchStatus,
   type SchemaResearchTaskResult,
 } from "@/lib/schemaResearch";
+import type { ApiDocExtractionRequest } from "@/lib/schemaDocIngestion";
+import type {
+  ApiDocExtractionStatus,
+  SchemaRagApiDocExtraction,
+  SchemaRagApiFieldFact,
+  SchemaRagBusinessConceptFact,
+  SchemaRagJoinCandidateFact,
+} from "@/lib/schemaRag";
 
 export type AiAction = "generate" | "explain" | "optimize" | "fix" | "convert" | "sampleData";
 export type AiAssistantMode = "ask" | "agent";
@@ -734,6 +742,253 @@ function supportsDeepSeekRawChatStream(config: AiConfig): boolean {
   return config.provider === "deepseek" && config.apiStyle === "completions";
 }
 
+function buildApiDocExtractionSystemPrompt(): string {
+  const isZh = currentLocale() === "zh-CN";
+  return isZh
+    ? [
+        "你是 DBX API 文档 GraphRAG 抽取子任务模型。只输出 JSON，不要 Markdown。",
+        "你只能从用户提供的 Markdown 章节中抽取事实，不能标记 verified，不能编造文档里没有的表名或字段名。",
+        "如果文档只说明接口字段含义，没有数据库映射，就保留接口字段并让 candidateTable/candidateColumn 为 null。",
+        "多字段关联必须使用 leftColumns/rightColumns 数组，左右数量必须一致。",
+        "输出 JSON 结构：{\"apiFields\":[],\"businessConcepts\":[],\"joinCandidates\":[],\"errors\":[]}",
+      ].join("\n")
+    : [
+        "You are the DBX API document GraphRAG extraction subtask model. Output JSON only, no Markdown.",
+        "Extract facts only from the supplied Markdown sections. Do not mark facts verified and do not invent table or column names absent from the document.",
+        "If the document gives only API field meaning without DB mapping, keep the API field and set candidateTable/candidateColumn to null.",
+        "Multi-column relationships must use leftColumns/rightColumns arrays with equal length.",
+        "Output JSON shape: {\"apiFields\":[],\"businessConcepts\":[],\"joinCandidates\":[],\"errors\":[]}",
+      ].join("\n");
+}
+
+function buildApiDocExtractionUserPrompt(request: ApiDocExtractionRequest): string {
+  const sections = request.sections.slice(0, 40).map((section) => ({
+    id: section.id,
+    titlePath: section.titlePath,
+    text: section.text,
+  }));
+  return JSON.stringify(
+    {
+      sourceId: request.sourceId,
+      sourcePath: request.sourcePath,
+      schema: request.schema,
+      instructions: {
+        apiFields:
+          "Return API request/response fields with meaning and optional candidateTable/candidateColumn if the document states or strongly implies a database mapping.",
+        businessConcepts:
+          "Return business terms or entities that may map to a table or column. Do not invent targets.",
+        joinCandidates:
+          "Return candidate table relationships only when the document contains evidence for both sides.",
+      },
+      sections,
+    },
+    null,
+    2,
+  );
+}
+
+function normalizeApiDocExtractionResponse(
+  request: ApiDocExtractionRequest,
+  content: string,
+): SchemaRagApiDocExtraction {
+  const parsed = parseJsonObjectFromText(content);
+  const extractedAt = new Date().toISOString();
+  const apiFields = normalizeApiFieldFacts(request, parsed.apiFields, extractedAt);
+  const businessConcepts = normalizeBusinessConceptFacts(request, parsed.businessConcepts, extractedAt);
+  const joinCandidates = normalizeJoinCandidateFacts(request, parsed.joinCandidates, extractedAt);
+  const errors = Array.isArray(parsed.errors)
+    ? parsed.errors.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  return {
+    sourceId: request.sourceId,
+    extractedAt,
+    status: summarizeFrontendExtractionStatus(apiFields, businessConcepts, joinCandidates, errors),
+    apiFields,
+    businessConcepts,
+    joinCandidates,
+    errors,
+  };
+}
+
+function normalizeApiFieldFacts(
+  request: ApiDocExtractionRequest,
+  value: unknown,
+  extractedAt: string,
+): SchemaRagApiFieldFact[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      const data = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const name = optionalToolString(data.name);
+      const meaning = optionalToolString(data.meaning) || optionalToolString(data.description) || "";
+      const sectionId = normalizeExtractionSectionId(request, data.sectionId);
+      if (!name || !sectionId) return null;
+      const fact: SchemaRagApiFieldFact = {
+        id: optionalToolString(data.id) || `api-field:${request.sourceId}:${index + 1}:${hashLite(`${name}:${extractedAt}`)}`,
+        sourceId: request.sourceId,
+        sectionId,
+        name,
+        meaning,
+        candidateSchema: optionalToolString(data.candidateSchema) || null,
+        candidateTable: optionalToolString(data.candidateTable) || null,
+        candidateColumn: optionalToolString(data.candidateColumn) || null,
+        status: "candidate" as const,
+        confidence: clampConfidence(data.confidence),
+        evidence: optionalToolString(data.evidence) || "",
+      };
+      return fact;
+    })
+    .filter((item): item is SchemaRagApiFieldFact => !!item);
+}
+
+function normalizeBusinessConceptFacts(
+  request: ApiDocExtractionRequest,
+  value: unknown,
+  extractedAt: string,
+): SchemaRagBusinessConceptFact[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      const data = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const term = optionalToolString(data.term) || optionalToolString(data.name);
+      const description = optionalToolString(data.description) || optionalToolString(data.meaning) || "";
+      const sectionId = normalizeExtractionSectionId(request, data.sectionId);
+      if (!term || !sectionId) return null;
+      const fact: SchemaRagBusinessConceptFact = {
+        id: optionalToolString(data.id) || `api-concept:${request.sourceId}:${index + 1}:${hashLite(`${term}:${extractedAt}`)}`,
+        sourceId: request.sourceId,
+        sectionId,
+        term,
+        description,
+        candidateSchema: optionalToolString(data.candidateSchema) || null,
+        candidateTable: optionalToolString(data.candidateTable) || null,
+        candidateColumn: optionalToolString(data.candidateColumn) || null,
+        status: "candidate" as const,
+        confidence: clampConfidence(data.confidence),
+        evidence: optionalToolString(data.evidence) || "",
+      };
+      return fact;
+    })
+    .filter((item): item is SchemaRagBusinessConceptFact => !!item);
+}
+
+function normalizeJoinCandidateFacts(
+  request: ApiDocExtractionRequest,
+  value: unknown,
+  extractedAt: string,
+): SchemaRagJoinCandidateFact[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      const data = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const leftTable = optionalToolString(data.leftTable);
+      const rightTable = optionalToolString(data.rightTable);
+      const leftColumns = stringArrayValue(data.leftColumns);
+      const rightColumns = stringArrayValue(data.rightColumns);
+      const sectionId = normalizeExtractionSectionId(request, data.sectionId);
+      if (!leftTable || !rightTable || !leftColumns.length || !rightColumns.length || !sectionId) return null;
+      const fact: SchemaRagJoinCandidateFact = {
+        id:
+          optionalToolString(data.id) ||
+          `api-join:${request.sourceId}:${index + 1}:${hashLite(`${leftTable}:${rightTable}:${extractedAt}`)}`,
+        sourceId: request.sourceId,
+        sectionId,
+        leftSchema: optionalToolString(data.leftSchema) || request.schema,
+        leftTable,
+        leftColumns,
+        rightSchema: optionalToolString(data.rightSchema) || request.schema,
+        rightTable,
+        rightColumns,
+        relation: optionalToolString(data.relation) || "",
+        status: "candidate" as const,
+        confidence: clampConfidence(data.confidence),
+        evidence: optionalToolString(data.evidence) || "",
+      };
+      return fact;
+    })
+    .filter((item): item is SchemaRagJoinCandidateFact => !!item);
+}
+
+function summarizeFrontendExtractionStatus(
+  apiFields: SchemaRagApiFieldFact[],
+  businessConcepts: SchemaRagBusinessConceptFact[],
+  joinCandidates: SchemaRagJoinCandidateFact[],
+  errors: string[],
+): ApiDocExtractionStatus {
+  const facts = apiFields.length + businessConcepts.length + joinCandidates.length;
+  if (!facts) return errors.length ? "failed" : "pending";
+  return errors.length ? "partial" : "extracted";
+}
+
+function normalizeExtractionSectionId(request: ApiDocExtractionRequest, value: unknown): string | null {
+  const id = optionalToolString(value);
+  if (id && request.sections.some((section) => section.id === id)) return id;
+  return request.sections[0]?.id || null;
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+}
+
+function clampConfidence(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0.5;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function parseJsonObjectFromText(text: string): Record<string, any> {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const match = /\{[\s\S]*\}/.exec(trimmed);
+    if (!match) return {};
+    return JSON.parse(match[0]);
+  }
+}
+
+function rawMessageContent(rawMessage: unknown): string {
+  if (!rawMessage || typeof rawMessage !== "object") return "";
+  const content = (rawMessage as Record<string, unknown>).content;
+  return typeof content === "string" ? content : "";
+}
+
+function hashLite(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+export async function extractApiDocGraphFactsWithSchemaResearch(
+  config: AiConfig,
+  request: ApiDocExtractionRequest,
+): Promise<SchemaRagApiDocExtraction> {
+  const researchSettings = resolveSchemaResearchSettings(config);
+  if (!researchSettings.enabled) {
+    throw new Error("Schema Research model is disabled in AI settings.");
+  }
+  if (!supportsSchemaResearchModel(researchSettings.config)) {
+    throw new Error("Schema Research API doc extraction requires a /chat/completions-compatible provider.");
+  }
+  const response = await runRawChatForToolLoop(
+    {
+      config: researchSettings.config,
+      systemPrompt: buildApiDocExtractionSystemPrompt(),
+      messages: [{ role: "user", content: buildApiDocExtractionUserPrompt(request) }],
+      tools: [],
+      toolChoice: "none",
+      maxTokens: Math.min(researchSettings.maxOutputTokens, 4096),
+      temperature: 0,
+    },
+    {},
+  );
+  return normalizeApiDocExtractionResponse(request, response.content || rawMessageContent(response.rawMessage));
+}
+
 function rawMessageReasoningContent(rawMessage: unknown): string {
   if (!rawMessage || typeof rawMessage !== "object") return "";
   const message = rawMessage as Record<string, any>;
@@ -869,6 +1124,13 @@ function formatSchemaToolArguments(call: api.AiRawToolCall): string {
       table: args.table || "",
     });
   }
+  if (call.name === "dbx_expand_schema_graph") {
+    return JSON.stringify({
+      seeds: Array.isArray(args.seeds) ? args.seeds.length : 0,
+      includeCandidates: args.includeCandidates !== false,
+      limit: args.limit,
+    });
+  }
   if (call.name === "dbx_request_relation") {
     return JSON.stringify({
       leftSchema: args.leftSchema || "",
@@ -963,6 +1225,15 @@ function formatSchemaToolResultSummary(name: string, output: unknown, isZh: bool
   if (name === "dbx_get_related_tables") {
     const relations = Array.isArray(data.relations) ? data.relations : [];
     return isZh ? `${relations.length} 条关系` : `${relations.length} relation(s)`;
+  }
+  if (name === "dbx_expand_schema_graph") {
+    const verified = Array.isArray(data.verifiedMappings) ? data.verifiedMappings.length : 0;
+    const candidates = Array.isArray(data.candidateMappings) ? data.candidateMappings.length : 0;
+    const joins = Array.isArray(data.joinCandidates) ? data.joinCandidates.length : 0;
+    const concepts = Array.isArray(data.concepts) ? data.concepts.length : 0;
+    return isZh
+      ? `图扩展：verified ${verified}，candidate ${candidates}，关系 ${joins}，概念 ${concepts}`
+      : `Graph expansion: ${verified} verified, ${candidates} candidate(s), ${joins} join(s), ${concepts} concept(s)`;
   }
   if (name === "dbx_request_relation") {
     if (data.cancelled) return isZh ? "关系确认已取消" : "Relation confirmation cancelled";
@@ -1275,6 +1546,7 @@ const SCHEMA_RESEARCH_TOOL_NAMES = new Set([
   "dbx_get_column_details",
   "dbx_load_table_schema",
   "dbx_get_related_tables",
+  "dbx_expand_schema_graph",
 ]);
 
 export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[] {
@@ -1633,6 +1905,54 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             table: { type: "string", description: isZh ? "表名。" : "Table name." },
           },
           required: ["table"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "dbx_expand_schema_graph",
+        description: isZh
+          ? "根据表、字段、接口文档章节、接口字段或业务概念种子扩展 Schema Graph，返回验证过或候选的接口文档映射、业务概念和关联候选。只供 Schema Research 子任务内部使用。"
+          : "Expand the Schema Graph from table, column, API document section, API field, or business concept seeds, returning verified/candidate API doc mappings, concepts, and join candidates. Internal to Schema Research only.",
+        parameters: {
+          type: "object",
+          properties: {
+            seeds: {
+              type: "array",
+              description: isZh ? "图扩展种子。" : "Graph expansion seeds.",
+              items: {
+                type: "object",
+                properties: {
+                  kind: {
+                    type: "string",
+                    enum: ["table", "column", "api_doc_source", "api_doc_section", "api_field", "business_concept", "join_candidate"],
+                  },
+                  id: {
+                    type: "string",
+                    description: isZh ? "文档 source/section/fact id，可选。" : "Optional source, section, or fact id.",
+                  },
+                  schema: { type: "string", description: isZh ? "Schema 名称。" : "Schema name." },
+                  table: { type: "string", description: isZh ? "表名。" : "Table name." },
+                  column: { type: "string", description: isZh ? "字段名。" : "Column name." },
+                },
+                required: ["kind"],
+              },
+            },
+            includeCandidates: {
+              type: "boolean",
+              description: isZh
+                ? "是否返回 candidate 状态事实。candidate 不能直接作为最终 SQL verified 证据。"
+                : "Whether to include candidate facts. Candidates are not verified final-SQL evidence.",
+            },
+            limit: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              description: isZh ? "最多返回的图事实数量。" : "Maximum graph facts to return.",
+            },
+          },
+          required: ["seeds"],
         },
       },
     },
@@ -2095,6 +2415,8 @@ function buildSchemaResearchSystemPrompt(
         "你是 DBX Schema Research 子任务模型。用中文写 summary/reason/message，但只输出 JSON。",
         "你的职责是查找表、字段、关系证据；不是生成最终 SQL。",
         "优先使用 dbx_search_schema 查表；如果没有索引或结果不足，使用 dbx_list_tables/dbx_find_columns。",
+        "当 dbx_search_schema 命中接口文档、接口文档事实、业务概念或多个候选表时，调用 dbx_expand_schema_graph 扩展 Kuzu 图关系。",
+        "dbx_expand_schema_graph 返回 candidate 时不能直接当 verified 使用；需要 dbx_get_column_details 或 verified graph fact 支撑。",
         "确认表后，优先使用 dbx_search_table_columns 获取字段摘要；只有字段要作为证据返回时，必须调用 dbx_get_column_details 获取实时详情并把 verified 设为 true。",
         "只有确实需要整表索引或外键时才调用 dbx_load_table_schema。",
         "需要 JOIN 或主任务要求关系时，调用 dbx_get_related_tables 查真实外键；没有可靠关系时，不要猜测为 high confidence。",
@@ -2112,6 +2434,8 @@ function buildSchemaResearchSystemPrompt(
         "You are the DBX Schema Research subtask model. Write summary/reason/message in English and output JSON only.",
         "Your job is to find table, column, and relation evidence; do not generate final SQL.",
         "Prefer dbx_search_schema for table search; if no index or results are insufficient, use dbx_list_tables/dbx_find_columns.",
+        "When dbx_search_schema hits API documents, API document facts, business concepts, or multiple candidate tables, call dbx_expand_schema_graph to expand Kuzu graph relationships.",
+        "Candidate facts from dbx_expand_schema_graph are not verified SQL evidence; support them with dbx_get_column_details or verified graph facts.",
         "After confirming a table, prefer dbx_search_table_columns for column summaries; before returning a column as evidence, call dbx_get_column_details and set verified=true.",
         "Call dbx_load_table_schema only when full indexes or foreign keys are truly needed.",
         "For JOIN needs or relation requirements, call dbx_get_related_tables for real foreign keys; do not mark guessed relations as high confidence.",
@@ -2333,6 +2657,16 @@ function compactSchemaResearchToolOutput(name: string, output: unknown): unknown
       message: data.message,
     };
   }
+  if (name === "dbx_expand_schema_graph") {
+    return {
+      verifiedMappings: Array.isArray(data.verifiedMappings) ? data.verifiedMappings.slice(0, 12) : [],
+      candidateMappings: Array.isArray(data.candidateMappings) ? data.candidateMappings.slice(0, 12) : [],
+      joinCandidates: Array.isArray(data.joinCandidates) ? data.joinCandidates.slice(0, 12) : [],
+      concepts: Array.isArray(data.concepts) ? data.concepts.slice(0, 12) : [],
+      sourceEvidence: Array.isArray(data.sourceEvidence) ? data.sourceEvidence.slice(0, 12) : [],
+      message: data.message,
+    };
+  }
   return output;
 }
 
@@ -2380,6 +2714,9 @@ async function executeAiSchemaToolCall(
   }
   if (name === "dbx_get_related_tables") {
     return executeGetRelatedTablesTool(context, budget, args);
+  }
+  if (name === "dbx_expand_schema_graph") {
+    return executeExpandSchemaGraphTool(context, args);
   }
   if (name === "dbx_request_relation") {
     return executeRequestRelationTool(context, budget, args, onRelationRequest);
@@ -2955,6 +3292,81 @@ async function executeGetRelatedTablesTool(
       relationLookups: budget.relationLookups,
       maxRelationLookups: MAX_AI_RELATION_LOOKUPS,
     },
+  };
+}
+
+async function executeExpandSchemaGraphTool(context: AiContext, args: Record<string, any>): Promise<unknown> {
+  if (!context.connectionId || !context.schema) return { error: "No active connection/schema for graph expansion." };
+  const seeds = Array.isArray(args.seeds)
+    ? args.seeds
+        .map((seed) => normalizeSchemaGraphSeed(seed))
+        .filter((seed): seed is NonNullable<ReturnType<typeof normalizeSchemaGraphSeed>> => !!seed)
+    : [];
+  if (!seeds.length) return { error: "seeds are required" };
+  const scope = { connectionId: context.connectionId, database: context.database, schema: context.schema };
+  const status = await api.loadSchemaRagStatus(scope);
+  if (!status.indexed) {
+    return {
+      indexed: false,
+      message: "Current schema has not been analyzed. Graph expansion is unavailable.",
+      verifiedMappings: [],
+      candidateMappings: [],
+      joinCandidates: [],
+      concepts: [],
+      sourceEvidence: [],
+    };
+  }
+  const result = await api.expandSchemaRagGraph({
+    ...scope,
+    seeds,
+    includeCandidates: args.includeCandidates !== false,
+    limit: clampToolLimit(args.limit, 1, 100, 20),
+  });
+  return {
+    indexed: true,
+    verifiedMappings: result.verifiedMappings.slice(0, 20),
+    candidateMappings: result.candidateMappings.slice(0, 20),
+    joinCandidates: result.joinCandidates.slice(0, 20),
+    concepts: result.concepts.slice(0, 20),
+    sourceEvidence: result.sourceEvidence.slice(0, 20),
+    message:
+      result.verifiedMappings.length || result.candidateMappings.length || result.joinCandidates.length || result.concepts.length
+        ? undefined
+        : "No graph facts matched the provided seeds.",
+  };
+}
+
+function normalizeSchemaGraphSeed(value: unknown):
+  | {
+      kind: "table" | "column" | "api_doc_source" | "api_doc_section" | "api_field" | "business_concept" | "join_candidate";
+      id?: string | null;
+      schema?: string | null;
+      table?: string | null;
+      column?: string | null;
+    }
+  | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const kind = String(raw.kind || "").trim();
+  if (
+    ![
+      "table",
+      "column",
+      "api_doc_source",
+      "api_doc_section",
+      "api_field",
+      "business_concept",
+      "join_candidate",
+    ].includes(kind)
+  ) {
+    return null;
+  }
+  return {
+    kind: kind as any,
+    id: optionalToolString(raw.id) ?? null,
+    schema: optionalToolString(raw.schema) ?? null,
+    table: optionalToolString(raw.table) ?? null,
+    column: optionalToolString(raw.column) ?? null,
   };
 }
 

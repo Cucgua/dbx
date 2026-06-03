@@ -2,8 +2,9 @@ use std::env;
 use std::path::PathBuf;
 
 use dbx_schema_rag_sidecar::{
-    analyze_schema, import_api_docs, refresh_schema_tables, save_schema_enrichment, search_schema, search_table_columns,
-    AnalyzeSchemaRagRequest, AnalyzeSchemaRagResponse, ImportSchemaRagApiDocsRequest, ImportSchemaRagApiDocsResponse,
+    analyze_schema, expand_schema_graph, import_api_docs, refresh_schema_tables, save_schema_enrichment, search_schema,
+    search_table_columns, AnalyzeSchemaRagRequest, AnalyzeSchemaRagResponse, ExpandSchemaRagGraphRequest,
+    ExpandSchemaRagGraphResponse, ImportSchemaRagApiDocsRequest, ImportSchemaRagApiDocsResponse,
     RefreshSchemaRagTablesRequest, RefreshSchemaRagTablesResponse, SaveSchemaRagEnrichmentRequest,
     SaveSchemaRagEnrichmentResponse, SchemaRagColumnSearchResult, SchemaRagSearchResult, SearchSchemaRagRequest,
     SearchTableColumnsRagRequest,
@@ -18,6 +19,7 @@ enum SidecarRequest {
     SearchTableColumns { data_dir: PathBuf, request: SearchTableColumnsRagRequest },
     SaveEnrichment { data_dir: PathBuf, request: SaveSchemaRagEnrichmentRequest },
     ImportApiDocs { data_dir: PathBuf, request: ImportSchemaRagApiDocsRequest },
+    ExpandGraph { data_dir: PathBuf, request: ExpandSchemaRagGraphRequest },
     RefreshTables { data_dir: PathBuf, request: RefreshSchemaRagTablesRequest },
 }
 
@@ -29,6 +31,7 @@ enum SidecarResponse {
     SearchTableColumns(SchemaRagColumnSearchResult),
     SaveEnrichment(SaveSchemaRagEnrichmentResponse),
     ImportApiDocs(ImportSchemaRagApiDocsResponse),
+    ExpandGraph(ExpandSchemaRagGraphResponse),
     RefreshTables(RefreshSchemaRagTablesResponse),
 }
 
@@ -65,6 +68,9 @@ async fn run() -> Result<SidecarResponse, String> {
         }
         SidecarRequest::ImportApiDocs { data_dir, request } => {
             import_api_docs(&data_dir, request).await.map(SidecarResponse::ImportApiDocs)
+        }
+        SidecarRequest::ExpandGraph { data_dir, request } => {
+            expand_schema_graph(&data_dir, request).await.map(SidecarResponse::ExpandGraph)
         }
         SidecarRequest::RefreshTables { data_dir, request } => {
             refresh_schema_tables(&data_dir, request).await.map(SidecarResponse::RefreshTables)

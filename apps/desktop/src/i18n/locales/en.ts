@@ -1033,7 +1033,7 @@ export default {
     schemaRagApiDocMarkdownFilter: "Markdown API Docs",
     schemaRagApiDocFutureFilter: "Word / PDF (currently unsupported)",
     schemaRagApiDocsImportSuccess:
-      "API docs imported: {sources} sources, {chunks} chunks, {unsupported} unsupported files",
+      "API docs imported: {sources} sources, {chunks} chunks, {facts} graph facts, {verified} verified, {unresolved} need confirmation, {unsupported} unsupported files",
     schemaRagProgress: "Analyzing {done}/{total}: {table}",
     schemaRagProgressScan: "Scanning table metadata {done}/{total}: {table}",
     schemaRagProgressBuildDocuments: "Building table and column embedding documents",
@@ -1062,6 +1062,14 @@ export default {
     schemaRagApiDocChunkCount: "Doc Chunks",
     schemaRagApiDocSources: "Imported API Docs",
     schemaRagApiDocSections: "{count} sections",
+    schemaRagApiDocExtractionSummary:
+      "{status}, fields {fields}, concepts {concepts}, joins {joins}, need confirmation {unresolved}",
+    schemaRagApiDocExtractionStatus: {
+      pending: "Pending extraction",
+      extracted: "Extracted",
+      partial: "Partially extracted",
+      failed: "Extraction failed",
+    },
   },
   visibleDatabases: {
     title: "Visible Databases",

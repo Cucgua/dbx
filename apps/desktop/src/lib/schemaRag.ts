@@ -46,13 +46,96 @@ export interface ImportSchemaRagApiDocFile {
 
 export interface ImportSchemaRagApiDocsRequest extends SchemaRagScopeRequest {
   files: ImportSchemaRagApiDocFile[];
+  extractions?: SchemaRagApiDocExtraction[];
 }
 
 export interface ImportSchemaRagApiDocsResponse {
   importedSources: number;
   chunks: number;
   embeddedChunks: number;
+  graphFacts: number;
+  verifiedFacts: number;
+  unresolvedFacts: number;
   unsupportedFiles: string[];
+}
+
+export type ApiDocExtractionStatus = "pending" | "extracted" | "partial" | "failed";
+export type SchemaRagFactStatus = "verified" | "candidate" | "rejected" | "unresolved";
+
+export interface SchemaRagApiFieldFact {
+  id: string;
+  sourceId: string;
+  sectionId: string;
+  name: string;
+  meaning: string;
+  candidateSchema?: string | null;
+  candidateTable?: string | null;
+  candidateColumn?: string | null;
+  status: SchemaRagFactStatus;
+  confidence: number;
+  evidence: string;
+}
+
+export interface SchemaRagBusinessConceptFact {
+  id: string;
+  sourceId: string;
+  sectionId: string;
+  term: string;
+  description: string;
+  candidateSchema?: string | null;
+  candidateTable?: string | null;
+  candidateColumn?: string | null;
+  status: SchemaRagFactStatus;
+  confidence: number;
+  evidence: string;
+}
+
+export interface SchemaRagJoinCandidateFact {
+  id: string;
+  sourceId: string;
+  sectionId: string;
+  leftSchema: string;
+  leftTable: string;
+  leftColumns: string[];
+  rightSchema: string;
+  rightTable: string;
+  rightColumns: string[];
+  relation: string;
+  status: SchemaRagFactStatus;
+  confidence: number;
+  evidence: string;
+}
+
+export interface SchemaRagApiDocExtraction {
+  sourceId: string;
+  extractedAt: string;
+  status: ApiDocExtractionStatus;
+  apiFields: SchemaRagApiFieldFact[];
+  businessConcepts: SchemaRagBusinessConceptFact[];
+  joinCandidates: SchemaRagJoinCandidateFact[];
+  errors: string[];
+}
+
+export interface SchemaRagGraphSeed {
+  kind: "table" | "column" | "api_doc_source" | "api_doc_section" | "api_field" | "business_concept" | "join_candidate";
+  id?: string | null;
+  schema?: string | null;
+  table?: string | null;
+  column?: string | null;
+}
+
+export interface ExpandSchemaRagGraphRequest extends SchemaRagScopeRequest {
+  seeds: SchemaRagGraphSeed[];
+  includeCandidates?: boolean;
+  limit?: number;
+}
+
+export interface ExpandSchemaRagGraphResponse {
+  verifiedMappings: SchemaRagApiFieldFact[];
+  candidateMappings: SchemaRagApiFieldFact[];
+  joinCandidates: SchemaRagJoinCandidateFact[];
+  concepts: SchemaRagBusinessConceptFact[];
+  sourceEvidence: string[];
 }
 
 export interface RefreshSchemaRagTableRequest extends SchemaRagScopeRequest {
@@ -144,6 +227,12 @@ export interface SchemaRagApiDocSource {
   contentHash: string;
   sectionCount: number;
   importedAt: string;
+  extractionStatus?: ApiDocExtractionStatus;
+  extractedAt?: string | null;
+  apiFieldCount?: number;
+  businessConceptCount?: number;
+  joinCandidateCount?: number;
+  unresolvedFactCount?: number;
 }
 
 export interface AnalyzeSchemaRagResponse {

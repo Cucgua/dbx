@@ -7,6 +7,7 @@ import {
   normalizeSchemaRagApiKey,
   normalizeSchemaRagConfig,
 } from "../../apps/desktop/src/lib/schemaRag";
+import { apiDocSourceId, splitMarkdownSections } from "../../apps/desktop/src/lib/schemaDocIngestion";
 
 test("normalizeSchemaRagConfig defaults missing embedding concurrency", () => {
   const config = normalizeSchemaRagConfig({
@@ -116,4 +117,26 @@ test("findSchemaRagTableUnit resolves the indexed unit for a selected table", ()
   );
 
   assert.equal(unit?.fingerprint, "orders-fingerprint");
+});
+
+test("schema doc ingestion builds stable source and section ids", async () => {
+  const sourceId = await apiDocSourceId("/docs/birth.md");
+  const sections = splitMarkdownSections(
+    [
+      "# 出生证接口",
+      "",
+      "总览",
+      "",
+      "## 申请列表",
+      "",
+      "返回 apply_status 和 mother_name 字段。",
+    ].join("\n"),
+    sourceId,
+  );
+
+  assert.match(sourceId, /^api-doc:[a-f0-9]{64}$/);
+  assert.equal(sections.length, 2);
+  assert.equal(sections[0].id, `${sourceId}#section-1`);
+  assert.deepEqual(sections[1].titlePath, ["出生证接口", "申请列表"]);
+  assert.match(sections[1].text, /apply_status/);
 });

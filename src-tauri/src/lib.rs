@@ -422,6 +422,7 @@ pub fn run() {
             commands::schema_rag::search_table_columns_rag,
             commands::schema_rag::save_schema_rag_enrichment,
             commands::schema_rag::import_schema_rag_api_docs,
+            commands::schema_rag::expand_schema_rag_graph,
             commands::schema_rag::refresh_schema_rag_table,
             commands::schema_rag::load_schema_rag_status,
             commands::schema_rag::delete_schema_rag_index,

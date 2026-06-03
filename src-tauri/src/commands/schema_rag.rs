@@ -39,6 +39,8 @@ pub struct ImportSchemaRagApiDocsCommandRequest {
     pub database: String,
     pub schema: String,
     pub files: Vec<ApiDocImportCommandFile>,
+    #[serde(default)]
+    pub extractions: Vec<SchemaRagApiDocExtraction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +265,108 @@ pub struct SchemaRagApiDocSource {
     pub content_hash: String,
     pub section_count: usize,
     pub imported_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    pub extraction_status: ApiDocExtractionStatus,
+    #[serde(default)]
+    pub extracted_at: Option<String>,
+    #[serde(default)]
+    pub api_field_count: usize,
+    #[serde(default)]
+    pub business_concept_count: usize,
+    #[serde(default)]
+    pub join_candidate_count: usize,
+    #[serde(default)]
+    pub unresolved_fact_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ApiDocExtractionStatus {
+    Pending,
+    Extracted,
+    Partial,
+    Failed,
+}
+
+impl Default for ApiDocExtractionStatus {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SchemaRagFactStatus {
+    Verified,
+    Candidate,
+    Rejected,
+    Unresolved,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagApiFieldFact {
+    pub id: String,
+    pub source_id: String,
+    pub section_id: String,
+    pub name: String,
+    pub meaning: String,
+    pub candidate_schema: Option<String>,
+    pub candidate_table: Option<String>,
+    pub candidate_column: Option<String>,
+    pub status: SchemaRagFactStatus,
+    pub confidence: f32,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagBusinessConceptFact {
+    pub id: String,
+    pub source_id: String,
+    pub section_id: String,
+    pub term: String,
+    pub description: String,
+    pub candidate_schema: Option<String>,
+    pub candidate_table: Option<String>,
+    pub candidate_column: Option<String>,
+    pub status: SchemaRagFactStatus,
+    pub confidence: f32,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagJoinCandidateFact {
+    pub id: String,
+    pub source_id: String,
+    pub section_id: String,
+    pub left_schema: String,
+    pub left_table: String,
+    pub left_columns: Vec<String>,
+    pub right_schema: String,
+    pub right_table: String,
+    pub right_columns: Vec<String>,
+    pub relation: String,
+    pub status: SchemaRagFactStatus,
+    pub confidence: f32,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagApiDocExtraction {
+    pub source_id: String,
+    pub extracted_at: String,
+    pub status: ApiDocExtractionStatus,
+    #[serde(default)]
+    pub api_fields: Vec<SchemaRagApiFieldFact>,
+    #[serde(default)]
+    pub business_concepts: Vec<SchemaRagBusinessConceptFact>,
+    #[serde(default)]
+    pub join_candidates: Vec<SchemaRagJoinCandidateFact>,
+    #[serde(default)]
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -280,6 +384,8 @@ pub struct ImportSchemaRagApiDocsRequest {
     pub schema: String,
     pub config: SchemaRagConfig,
     pub files: Vec<ApiDocImportFile>,
+    #[serde(default)]
+    pub extractions: Vec<SchemaRagApiDocExtraction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -296,7 +402,43 @@ pub struct ImportSchemaRagApiDocsResponse {
     pub imported_sources: usize,
     pub chunks: usize,
     pub embedded_chunks: usize,
+    pub graph_facts: usize,
+    pub verified_facts: usize,
+    pub unresolved_facts: usize,
     pub unsupported_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagGraphSeed {
+    pub kind: String,
+    pub id: Option<String>,
+    pub schema: Option<String>,
+    pub table: Option<String>,
+    pub column: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpandSchemaRagGraphRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub schema: String,
+    #[serde(default)]
+    pub seeds: Vec<SchemaRagGraphSeed>,
+    #[serde(default)]
+    pub include_candidates: bool,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpandSchemaRagGraphResponse {
+    pub verified_mappings: Vec<SchemaRagApiFieldFact>,
+    pub candidate_mappings: Vec<SchemaRagApiFieldFact>,
+    pub join_candidates: Vec<SchemaRagJoinCandidateFact>,
+    pub concepts: Vec<SchemaRagBusinessConceptFact>,
+    pub source_evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -448,6 +590,7 @@ enum SidecarRequest {
     SearchTableColumns { data_dir: PathBuf, request: SearchTableColumnsRagRequest },
     SaveEnrichment { data_dir: PathBuf, request: SaveSchemaRagEnrichmentRequest },
     ImportApiDocs { data_dir: PathBuf, request: ImportSchemaRagApiDocsRequest },
+    ExpandGraph { data_dir: PathBuf, request: ExpandSchemaRagGraphRequest },
     RefreshTables { data_dir: PathBuf, request: RefreshSchemaRagTablesRequest },
 }
 
@@ -459,6 +602,7 @@ enum SidecarResponse {
     SearchTableColumns(SchemaRagColumnSearchResult),
     SaveEnrichment(SaveSchemaRagEnrichmentResponse),
     ImportApiDocs(ImportSchemaRagApiDocsResponse),
+    ExpandGraph(ExpandSchemaRagGraphResponse),
     RefreshTables(RefreshSchemaRagTablesResponse),
 }
 
@@ -553,6 +697,7 @@ pub async fn analyze_schema_rag(
         SidecarResponse::ImportApiDocs(_) => {
             Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
         }
+        SidecarResponse::ExpandGraph(_) => Err(unexpected_expand_graph_response()),
         SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
@@ -614,6 +759,7 @@ pub async fn search_schema_rag(
         SidecarResponse::ImportApiDocs(_) => {
             Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
         }
+        SidecarResponse::ExpandGraph(_) => Err(unexpected_expand_graph_response()),
         SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
@@ -675,6 +821,7 @@ pub async fn search_table_columns_rag(
         SidecarResponse::ImportApiDocs(_) => {
             Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
         }
+        SidecarResponse::ExpandGraph(_) => Err(unexpected_expand_graph_response()),
         SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
@@ -731,6 +878,7 @@ pub async fn save_schema_rag_enrichment(
         SidecarResponse::ImportApiDocs(_) => {
             Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
         }
+        SidecarResponse::ExpandGraph(_) => Err(unexpected_expand_graph_response()),
         SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
@@ -773,6 +921,7 @@ pub async fn import_schema_rag_api_docs(
                 schema: request.schema,
                 config,
                 files,
+                extractions: request.extractions,
             },
         },
     )
@@ -787,6 +936,7 @@ pub async fn import_schema_rag_api_docs(
         SidecarResponse::SaveEnrichment(_) => {
             Err("Schema RAG sidecar returned an unexpected enrichment response".to_string())
         }
+        SidecarResponse::ExpandGraph(_) => Err(unexpected_expand_graph_response()),
         SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
     });
     match &result {
@@ -799,6 +949,59 @@ pub async fn import_schema_rag_api_docs(
         ),
         Err(error) => log::info!(
             "[schema-rag][api-docs-import:error] error={} elapsed_ms={}",
+            error,
+            started_at.elapsed().as_millis()
+        ),
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn expand_schema_rag_graph(
+    app: AppHandle,
+    runtime: State<'_, SchemaRagRuntimeState>,
+    request: ExpandSchemaRagGraphRequest,
+) -> Result<ExpandSchemaRagGraphResponse, String> {
+    let started_at = Instant::now();
+    log::info!(
+        "[schema-rag][graph-expand:start] connection_id={} database={} schema={} seeds={}",
+        request.connection_id,
+        request.database,
+        request.schema,
+        request.seeds.len()
+    );
+    let result = invoke_schema_rag_sidecar(
+        &app,
+        &runtime.data_dir,
+        SidecarRequest::ExpandGraph { data_dir: runtime.data_dir.clone(), request },
+    )
+    .await
+    .and_then(|response| match response {
+        SidecarResponse::ExpandGraph(result) => Ok(result),
+        SidecarResponse::Analyze(_) => Err("Schema RAG sidecar returned an unexpected analyze response".to_string()),
+        SidecarResponse::Search(_) => Err("Schema RAG sidecar returned an unexpected search response".to_string()),
+        SidecarResponse::SearchTableColumns(_) => {
+            Err("Schema RAG sidecar returned an unexpected column search response".to_string())
+        }
+        SidecarResponse::SaveEnrichment(_) => {
+            Err("Schema RAG sidecar returned an unexpected enrichment response".to_string())
+        }
+        SidecarResponse::ImportApiDocs(_) => {
+            Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
+        }
+        SidecarResponse::RefreshTables(_) => Err(unexpected_refresh_response()),
+    });
+    match &result {
+        Ok(response) => log::info!(
+            "[schema-rag][graph-expand:done] verified={} candidates={} joins={} concepts={} elapsed_ms={}",
+            response.verified_mappings.len(),
+            response.candidate_mappings.len(),
+            response.join_candidates.len(),
+            response.concepts.len(),
+            started_at.elapsed().as_millis()
+        ),
+        Err(error) => log::info!(
+            "[schema-rag][graph-expand:error] error={} elapsed_ms={}",
             error,
             started_at.elapsed().as_millis()
         ),
@@ -855,6 +1058,7 @@ pub async fn refresh_schema_rag_table(
         SidecarResponse::ImportApiDocs(_) => {
             Err("Schema RAG sidecar returned an unexpected API docs import response".to_string())
         }
+        SidecarResponse::ExpandGraph(_) => Err(unexpected_expand_graph_response()),
     });
     match &result {
         Ok(response) => log::info!(
@@ -932,6 +1136,10 @@ fn is_markdown_import_path(path: &str) -> bool {
 
 fn unexpected_refresh_response() -> String {
     "Schema RAG sidecar returned an unexpected table refresh response".to_string()
+}
+
+fn unexpected_expand_graph_response() -> String {
+    "Schema RAG sidecar returned an unexpected graph expansion response".to_string()
 }
 
 async fn invoke_schema_rag_sidecar(

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use futures::stream::{FuturesUnordered, StreamExt};
-use kuzu::{Connection, Database, LogicalType, SystemConfig, Value};
+use kuzu::{Connection, Database, LogicalType, PreparedStatement, SystemConfig, Value};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -361,6 +361,8 @@ pub struct ImportSchemaRagApiDocsRequest {
     pub schema: String,
     pub config: SchemaRagConfig,
     pub files: Vec<ApiDocImportFile>,
+    #[serde(default)]
+    pub extractions: Vec<SchemaRagApiDocExtraction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -377,7 +379,43 @@ pub struct ImportSchemaRagApiDocsResponse {
     pub imported_sources: usize,
     pub chunks: usize,
     pub embedded_chunks: usize,
+    pub graph_facts: usize,
+    pub verified_facts: usize,
+    pub unresolved_facts: usize,
     pub unsupported_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaRagGraphSeed {
+    pub kind: String,
+    pub id: Option<String>,
+    pub schema: Option<String>,
+    pub table: Option<String>,
+    pub column: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpandSchemaRagGraphRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub schema: String,
+    #[serde(default)]
+    pub seeds: Vec<SchemaRagGraphSeed>,
+    #[serde(default)]
+    pub include_candidates: bool,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpandSchemaRagGraphResponse {
+    pub verified_mappings: Vec<SchemaRagApiFieldFact>,
+    pub candidate_mappings: Vec<SchemaRagApiFieldFact>,
+    pub join_candidates: Vec<SchemaRagJoinCandidateFact>,
+    pub concepts: Vec<SchemaRagBusinessConceptFact>,
+    pub source_evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -540,6 +578,7 @@ pub enum SchemaRagDocumentKind {
     Table,
     Column,
     ApiDoc,
+    ApiDocFact,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -548,6 +587,8 @@ struct StoredSchemaRagIndex {
     manifest: SchemaRagManifest,
     tables: Vec<SchemaRagTableMetadata>,
     documents: Vec<SchemaRagDocument>,
+    #[serde(default)]
+    api_doc_extractions: Vec<SchemaRagApiDocExtraction>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -701,7 +742,12 @@ where
     ));
     append_sidecar_log(&index_dir, "writing manifest and documents").await?;
     write_json_pretty(&index_dir.join("manifest.json"), &manifest).await?;
-    let stored = StoredSchemaRagIndex { manifest: manifest.clone(), tables: request.tables, documents };
+    let stored = StoredSchemaRagIndex {
+        manifest: manifest.clone(),
+        tables: request.tables,
+        documents,
+        api_doc_extractions: Vec::new(),
+    };
     write_json_pretty(&index_dir.join("documents.json"), &stored).await?;
     write_kuzu_index(&index_dir.join("graph.kuzu"), &stored).await?;
     append_sidecar_log(&index_dir, "analyze finished").await?;
@@ -953,10 +999,15 @@ pub async fn import_api_docs(
     let mut imported_sources = 0usize;
     let mut chunks = 0usize;
     let mut embedded_chunks = 0usize;
+    let mut graph_facts = 0usize;
+    let mut verified_facts = 0usize;
+    let mut unresolved_facts = 0usize;
     let mut unsupported_files = Vec::new();
     let mut imported_source_ids = HashSet::new();
     let mut normalized_docs = Vec::new();
     let mut all_api_documents = Vec::new();
+    let request_extractions: HashMap<String, SchemaRagApiDocExtraction> =
+        request.extractions.into_iter().map(|extraction| (extraction.source_id.clone(), extraction)).collect();
     let imported_at = Utc::now();
 
     for file in request.files {
@@ -975,10 +1026,29 @@ pub async fn import_api_docs(
         normalized_docs.push(normalized);
     }
 
+    let mut validated_extractions = Vec::new();
     let mut updated_search_index = None;
     if !all_api_documents.is_empty() {
         let mut search_index =
             load_search_index(data_dir, &request.connection_id, &request.database, schema).await?;
+        let source_id_set = imported_source_ids.clone();
+        let old_fact_document_ids: HashSet<String> = search_index
+            .stored
+            .api_doc_extractions
+            .iter()
+            .filter(|extraction| source_id_set.contains(&extraction.source_id))
+            .flat_map(api_doc_extraction_fact_document_ids)
+            .collect();
+        for normalized in &normalized_docs {
+            if let Some(extraction) = request_extractions.get(&normalized.source_id).cloned() {
+                let validated = validate_api_doc_extraction(extraction, schema, &search_index.stored.tables);
+                graph_facts += extraction_fact_count(&validated);
+                verified_facts += extraction_verified_fact_count(&validated);
+                unresolved_facts += extraction_unresolved_fact_count(&validated);
+                all_api_documents.extend(build_api_doc_fact_documents(schema, &validated));
+                validated_extractions.push(validated);
+            }
+        }
         let texts: Vec<String> = all_api_documents.iter().map(|doc| doc.text_for_embedding.clone()).collect();
         let mut progress = |_| {};
         let embeddings = embed_texts(&request.config, &texts, &index_dir, &mut progress).await?;
@@ -991,8 +1061,14 @@ pub async fn import_api_docs(
         search_index
             .stored
             .documents
-            .retain(|doc| doc.kind != SchemaRagDocumentKind::ApiDoc || !imported_source_ids.contains(&doc.table));
+            .retain(|doc| !is_imported_api_doc_document(doc, &source_id_set, &old_fact_document_ids));
         search_index.stored.documents.extend(all_api_documents);
+        search_index
+            .stored
+            .api_doc_extractions
+            .retain(|extraction| !source_id_set.contains(&extraction.source_id));
+        search_index.stored.api_doc_extractions.extend(validated_extractions.clone());
+        search_index.stored.api_doc_extractions.sort_by(|a, b| a.source_id.cmp(&b.source_id));
         search_index
             .stored
             .documents
@@ -1008,6 +1084,9 @@ pub async fn import_api_docs(
         )
         .await?;
         upsert_api_doc_source(&mut manifest, normalized, imported_at);
+    }
+    for extraction in &validated_extractions {
+        apply_api_doc_extraction_summary(&mut manifest, extraction);
     }
     if !normalized_docs.is_empty() {
         manifest.api_doc_chunk_count = load_api_doc_chunk_count(&docs_dir).await.unwrap_or(chunks);
@@ -1034,7 +1113,15 @@ pub async fn import_api_docs(
     )
     .await?;
 
-    Ok(ImportSchemaRagApiDocsResponse { imported_sources, chunks, embedded_chunks, unsupported_files })
+    Ok(ImportSchemaRagApiDocsResponse {
+        imported_sources,
+        chunks,
+        embedded_chunks,
+        graph_facts,
+        verified_facts,
+        unresolved_facts,
+        unsupported_files,
+    })
 }
 
 pub async fn index_status(data_dir: &Path, request: SchemaRagStatusRequest) -> Result<SchemaRagStatus, String> {
@@ -1046,6 +1133,44 @@ pub async fn index_status(data_dir: &Path, request: SchemaRagStatusRequest) -> R
         Err(err) => return Err(err.to_string()),
     };
     Ok(SchemaRagStatus { indexed: manifest.is_some(), manifest, index_path: index_dir.to_string_lossy().to_string() })
+}
+
+pub async fn expand_schema_graph(
+    data_dir: &Path,
+    request: ExpandSchemaRagGraphRequest,
+) -> Result<ExpandSchemaRagGraphResponse, String> {
+    let schema = request.schema.trim();
+    if schema.is_empty() {
+        return Err("schema is required".to_string());
+    }
+    let index_dir = schema_index_dir(data_dir, &request.connection_id, &request.database, schema);
+    let graph_path = index_dir.join("graph.kuzu");
+    if !graph_path.exists() {
+        return Err("Schema RAG graph.kuzu is not available. Analyze schema before expanding graph.".to_string());
+    }
+    let limit = request.limit.unwrap_or(20).clamp(1, 100);
+    let graph_path_for_task = graph_path.clone();
+    let seeds = request.seeds.clone();
+    let seed_count = seeds.len();
+    let include_candidates = request.include_candidates;
+    let response = tokio::task::spawn_blocking(move || {
+        expand_schema_graph_blocking(&graph_path_for_task, &seeds, include_candidates, limit)
+    })
+    .await
+    .map_err(|err| format!("Kuzu graph expansion task failed: {err}"))??;
+    append_sidecar_log(
+        &index_dir,
+        &format!(
+            "graph expanded seeds={} verified={} candidates={} joins={} concepts={}",
+            seed_count,
+            response.verified_mappings.len(),
+            response.candidate_mappings.len(),
+            response.join_candidates.len(),
+            response.concepts.len()
+        ),
+    )
+    .await?;
+    Ok(response)
 }
 
 pub async fn delete_index(data_dir: &Path, request: SchemaRagStatusRequest) -> Result<bool, String> {
@@ -1111,6 +1236,120 @@ fn build_api_doc_documents(schema: &str, doc: &NormalizedApiDoc) -> Vec<SchemaRa
         .collect()
 }
 
+fn build_api_doc_fact_documents(schema: &str, extraction: &SchemaRagApiDocExtraction) -> Vec<SchemaRagDocument> {
+    let mut documents = Vec::new();
+
+    for fact in &extraction.api_fields {
+        if !should_embed_fact(&fact.status) {
+            continue;
+        }
+        let target_schema = fact_schema(fact.candidate_schema.as_deref(), schema);
+        let table = fact.candidate_table.as_deref().unwrap_or("").trim();
+        let column = fact.candidate_column.as_deref().unwrap_or("").trim();
+        let target = if !table.is_empty() && !column.is_empty() {
+            format!("{target_schema}.{table}.{column}")
+        } else if !table.is_empty() {
+            format!("{target_schema}.{table}")
+        } else {
+            "未映射数据库字段".to_string()
+        };
+        documents.push(SchemaRagDocument {
+            id: format!("api-doc-fact:{}", fact.id),
+            kind: SchemaRagDocumentKind::ApiDocFact,
+            schema: target_schema,
+            table: if table.is_empty() { fact.source_id.clone() } else { table.to_string() },
+            column: (!column.is_empty()).then(|| column.to_string()),
+            data_type: Some("api_doc_field_fact".to_string()),
+            text_for_embedding: [
+                format!("接口字段: {}", fact.name),
+                format!("含义: {}", fact.meaning),
+                format!("候选映射: {target}"),
+                format!("状态: {}", fact_status_label(&fact.status)),
+                format!("置信度: {:.2}", fact.confidence),
+                format!("证据: {}", fact.evidence),
+                format!("来源: {} / {}", fact.source_id, fact.section_id),
+            ]
+            .join("\n"),
+            embedding: Vec::new(),
+        });
+    }
+
+    for fact in &extraction.business_concepts {
+        if !should_embed_fact(&fact.status) {
+            continue;
+        }
+        let target_schema = fact_schema(fact.candidate_schema.as_deref(), schema);
+        let table = fact.candidate_table.as_deref().unwrap_or("").trim();
+        let column = fact.candidate_column.as_deref().unwrap_or("").trim();
+        let target = if !table.is_empty() && !column.is_empty() {
+            format!("{target_schema}.{table}.{column}")
+        } else if !table.is_empty() {
+            format!("{target_schema}.{table}")
+        } else {
+            "未映射数据库对象".to_string()
+        };
+        documents.push(SchemaRagDocument {
+            id: format!("api-doc-fact:{}", fact.id),
+            kind: SchemaRagDocumentKind::ApiDocFact,
+            schema: target_schema,
+            table: if table.is_empty() { fact.source_id.clone() } else { table.to_string() },
+            column: (!column.is_empty()).then(|| column.to_string()),
+            data_type: Some("api_doc_concept_fact".to_string()),
+            text_for_embedding: [
+                format!("业务概念: {}", fact.term),
+                format!("说明: {}", fact.description),
+                format!("候选映射: {target}"),
+                format!("状态: {}", fact_status_label(&fact.status)),
+                format!("置信度: {:.2}", fact.confidence),
+                format!("证据: {}", fact.evidence),
+                format!("来源: {} / {}", fact.source_id, fact.section_id),
+            ]
+            .join("\n"),
+            embedding: Vec::new(),
+        });
+    }
+
+    for fact in &extraction.join_candidates {
+        if !should_embed_fact(&fact.status) {
+            continue;
+        }
+        documents.push(SchemaRagDocument {
+            id: format!("api-doc-fact:{}", fact.id),
+            kind: SchemaRagDocumentKind::ApiDocFact,
+            schema: fact.left_schema.clone(),
+            table: fact.left_table.clone(),
+            column: None,
+            data_type: Some("api_doc_join_fact".to_string()),
+            text_for_embedding: [
+                format!("关联关系: {}", fact.relation),
+                format!("左表: {}.{}({})", fact.left_schema, fact.left_table, fact.left_columns.join(", ")),
+                format!("右表: {}.{}({})", fact.right_schema, fact.right_table, fact.right_columns.join(", ")),
+                format!("状态: {}", fact_status_label(&fact.status)),
+                format!("置信度: {:.2}", fact.confidence),
+                format!("证据: {}", fact.evidence),
+                format!("来源: {} / {}", fact.source_id, fact.section_id),
+            ]
+            .join("\n"),
+            embedding: Vec::new(),
+        });
+    }
+
+    documents
+}
+
+fn should_embed_fact(status: &SchemaRagFactStatus) -> bool {
+    matches!(status, SchemaRagFactStatus::Verified | SchemaRagFactStatus::Candidate | SchemaRagFactStatus::Unresolved)
+}
+
+fn fact_status_label(status: &SchemaRagFactStatus) -> &'static str {
+    match status {
+        SchemaRagFactStatus::Verified => "verified",
+        SchemaRagFactStatus::Candidate => "candidate",
+        SchemaRagFactStatus::Rejected => "rejected",
+        SchemaRagFactStatus::Unresolved => "unresolved",
+    }
+}
+
 fn merge_refreshed_table_documents(
     old_documents: &[SchemaRagDocument],
     refreshed_documents: Vec<SchemaRagDocument>,
@@ -1149,7 +1388,7 @@ pub fn search_documents_lexical(
     let query_text = query.to_lowercase();
     let mut by_table: HashMap<(String, String), (f32, Vec<SchemaRagMatchedColumn>, Vec<String>)> = HashMap::new();
     for doc in documents.iter().filter(|doc| doc.schema == schema) {
-        if doc.kind == SchemaRagDocumentKind::ApiDoc {
+        if matches!(doc.kind, SchemaRagDocumentKind::ApiDoc | SchemaRagDocumentKind::ApiDocFact) {
             continue;
         }
         let score = lexical_score(&query_tokens, &query_text, doc);
@@ -1161,12 +1400,12 @@ pub fn search_documents_lexical(
         entry.0 += match doc.kind {
             SchemaRagDocumentKind::Table => score,
             SchemaRagDocumentKind::Column => score + 0.4,
-            SchemaRagDocumentKind::ApiDoc => continue,
+            SchemaRagDocumentKind::ApiDoc | SchemaRagDocumentKind::ApiDocFact => continue,
         };
         entry.2.push(match doc.kind {
             SchemaRagDocumentKind::Table => "表级元数据命中".to_string(),
             SchemaRagDocumentKind::Column => format!("字段 {} 命中", doc.column.as_deref().unwrap_or("")),
-            SchemaRagDocumentKind::ApiDoc => continue,
+            SchemaRagDocumentKind::ApiDoc | SchemaRagDocumentKind::ApiDocFact => continue,
         });
         if doc.kind == SchemaRagDocumentKind::Column {
             if let Some(column) = &doc.column {
@@ -1224,6 +1463,10 @@ fn search_documents_vector(
     for doc in documents.iter().filter(|doc| doc.schema == schema) {
         if doc.kind == SchemaRagDocumentKind::ApiDoc {
             apply_api_doc_search_hit(query_embedding, &query_tokens, &query_text, doc, tables, &mut by_table);
+            continue;
+        }
+        if doc.kind == SchemaRagDocumentKind::ApiDocFact {
+            apply_api_doc_fact_search_hit(query_embedding, &query_tokens, &query_text, doc, tables, &mut by_table);
             continue;
         }
         let vector_score = cosine_similarity(query_embedding, &doc.embedding).unwrap_or(0.0).max(0.0);
@@ -1465,6 +1708,48 @@ fn apply_api_doc_search_hit(
     }
 }
 
+fn apply_api_doc_fact_search_hit(
+    query_embedding: &[f32],
+    query_tokens: &HashSet<String>,
+    query_text: &str,
+    doc: &SchemaRagDocument,
+    tables: &[SchemaRagTableMetadata],
+    by_table: &mut HashMap<(String, String), TableSearchAccumulator>,
+) {
+    let vector_score = cosine_similarity(query_embedding, &doc.embedding).unwrap_or(0.0).max(0.0);
+    let lexical_raw = lexical_score(query_tokens, query_text, doc);
+    if vector_score < 0.15 && lexical_raw <= 0.0 {
+        return;
+    }
+    let lexical_component = normalize_lexical_score(lexical_raw);
+    let score = vector_score * 0.68 + lexical_component * 0.24 + 0.08;
+    if score <= 0.0 {
+        return;
+    }
+    let Some(table) = tables
+        .iter()
+        .find(|table| table.schema == doc.schema && table.name.eq_ignore_ascii_case(&doc.table))
+    else {
+        return;
+    };
+    let key = (table.schema.clone(), table.name.clone());
+    let entry = by_table.entry(key).or_default();
+    entry.score = entry.score.max(score);
+    entry.reasons.extend(document_hit_reasons(doc, vector_score, lexical_raw));
+    if let Some(column_name) = doc.column.as_deref() {
+        if let Some(column) = table.columns.iter().find(|column| column.name.eq_ignore_ascii_case(column_name)) {
+            entry.matched_columns.push(SchemaRagMatchedColumn {
+                name: column.name.clone(),
+                comment: column.comment.clone(),
+                primary_key: Some(column.is_primary_key),
+                data_type: Some(column.data_type.clone()),
+                score,
+                reason: summarize_reasons(&document_hit_reasons(doc, vector_score, lexical_raw)),
+            });
+        }
+    }
+}
+
 fn api_doc_matched_columns(table: &SchemaRagTableMetadata, text: &str, score: f32) -> Vec<SchemaRagMatchedColumn> {
     table
         .columns
@@ -1510,6 +1795,7 @@ fn write_kuzu_index_blocking(graph_path: &Path, stored: &StoredSchemaRagIndex) -
     insert_kuzu_tables(&connection, stored)?;
     insert_kuzu_indexes(&connection, stored)?;
     insert_kuzu_documents(&connection, stored)?;
+    insert_kuzu_api_doc_graph(&connection, stored)?;
     insert_kuzu_foreign_keys(&connection, stored)?;
     Ok(())
 }
@@ -1524,6 +1810,11 @@ fn create_kuzu_schema(connection: &Connection<'_>) -> Result<(), String> {
         "CREATE NODE TABLE SchemaDocument(id STRING, kind STRING, schema_name STRING, table_name STRING, column_name STRING, data_type STRING, text_for_embedding STRING, embedding FLOAT[], embedding_model STRING, embedding_dimension INT64, PRIMARY KEY(id));",
         "CREATE NODE TABLE BusinessAlias(id STRING, term STRING, target_kind STRING, schema_name STRING, table_name STRING, column_name STRING, source STRING, confidence FLOAT, note STRING, created_at STRING, PRIMARY KEY(id));",
         "CREATE NODE TABLE QueryPattern(id STRING, text STRING, created_at STRING, PRIMARY KEY(id));",
+        "CREATE NODE TABLE ApiDocSource(id STRING, path STRING, original_format STRING, content_hash STRING, imported_at STRING, PRIMARY KEY(id));",
+        "CREATE NODE TABLE ApiDocSection(id STRING, source_id STRING, title_path STRING[], text STRING, page INT64, PRIMARY KEY(id));",
+        "CREATE NODE TABLE ApiField(id STRING, source_id STRING, section_id STRING, name STRING, meaning STRING, candidate_schema STRING, candidate_table STRING, candidate_column STRING, confidence FLOAT, status STRING, evidence STRING, PRIMARY KEY(id));",
+        "CREATE NODE TABLE BusinessConcept(id STRING, source_id STRING, section_id STRING, term STRING, description STRING, candidate_schema STRING, candidate_table STRING, candidate_column STRING, confidence FLOAT, status STRING, evidence STRING, PRIMARY KEY(id));",
+        "CREATE NODE TABLE JoinCandidate(id STRING, source_id STRING, section_id STRING, left_schema STRING, left_table STRING, left_columns STRING[], right_schema STRING, right_table STRING, right_columns STRING[], relation STRING, confidence FLOAT, status STRING, evidence STRING, PRIMARY KEY(id));",
         "CREATE REL TABLE HAS_TABLE(FROM SchemaScope TO TableNode);",
         "CREATE REL TABLE HAS_COLUMN(FROM TableNode TO ColumnNode);",
         "CREATE REL TABLE HAS_INDEX(FROM TableNode TO IndexNode);",
@@ -1534,6 +1825,17 @@ fn create_kuzu_schema(connection: &Connection<'_>) -> Result<(), String> {
         "CREATE REL TABLE DESCRIBES_COLUMN(FROM SchemaDocument TO ColumnNode);",
         "CREATE REL TABLE ALIAS_OF_TABLE(FROM BusinessAlias TO TableNode);",
         "CREATE REL TABLE ALIAS_OF_COLUMN(FROM BusinessAlias TO ColumnNode);",
+        "CREATE REL TABLE HAS_SECTION(FROM ApiDocSource TO ApiDocSection);",
+        "CREATE REL TABLE SECTION_MENTIONS_FIELD(FROM ApiDocSection TO ApiField);",
+        "CREATE REL TABLE SECTION_MENTIONS_CONCEPT(FROM ApiDocSection TO BusinessConcept);",
+        "CREATE REL TABLE SECTION_MENTIONS_JOIN(FROM ApiDocSection TO JoinCandidate);",
+        "CREATE REL TABLE API_FIELD_MAPS_TO_COLUMN(FROM ApiField TO ColumnNode);",
+        "CREATE REL TABLE CONCEPT_MAPS_TO_TABLE(FROM BusinessConcept TO TableNode);",
+        "CREATE REL TABLE CONCEPT_MAPS_TO_COLUMN(FROM BusinessConcept TO ColumnNode);",
+        "CREATE REL TABLE SECTION_DESCRIBES_TABLE(FROM ApiDocSection TO TableNode);",
+        "CREATE REL TABLE SECTION_DESCRIBES_COLUMN(FROM ApiDocSection TO ColumnNode);",
+        "CREATE REL TABLE JOIN_LEFT_TABLE(FROM JoinCandidate TO TableNode);",
+        "CREATE REL TABLE JOIN_RIGHT_TABLE(FROM JoinCandidate TO TableNode);",
     ] {
         connection.query(statement).map_err(|err| err.to_string())?;
     }
@@ -1721,7 +2023,7 @@ fn insert_kuzu_documents(connection: &Connection<'_>, stored: &StoredSchemaRagIn
                 ],
             )
             .map_err(|err| err.to_string())?;
-        if document.kind == SchemaRagDocumentKind::ApiDoc {
+        if matches!(document.kind, SchemaRagDocumentKind::ApiDoc | SchemaRagDocumentKind::ApiDocFact) {
             continue;
         }
         let table_id = kuzu_table_id(&document.schema, &document.table);
@@ -1742,6 +2044,362 @@ fn insert_kuzu_documents(connection: &Connection<'_>, stored: &StoredSchemaRagIn
         }
     }
     Ok(())
+}
+
+fn insert_kuzu_api_doc_graph(connection: &Connection<'_>, stored: &StoredSchemaRagIndex) -> Result<(), String> {
+    let mut source_statement = connection
+        .prepare(
+            "CREATE (:ApiDocSource {id: $id, path: $path, original_format: $original_format, content_hash: $content_hash, imported_at: $imported_at});",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut section_statement = connection
+        .prepare(
+            "CREATE (:ApiDocSection {id: $id, source_id: $source_id, title_path: $title_path, text: $text, page: $page});",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut has_section_statement = connection
+        .prepare("MATCH (s:ApiDocSource {id: $sourceId}), (section:ApiDocSection {id: $sectionId}) CREATE (s)-[:HAS_SECTION]->(section);")
+        .map_err(|err| err.to_string())?;
+
+    let mut inserted_sources = HashSet::new();
+    for source in &stored.manifest.api_doc_sources {
+        insert_kuzu_api_doc_source(connection, &mut source_statement, source)?;
+        inserted_sources.insert(source.source_id.clone());
+    }
+    for extraction in &stored.api_doc_extractions {
+        if inserted_sources.insert(extraction.source_id.clone()) {
+            insert_kuzu_api_doc_source_fallback(connection, &mut source_statement, &extraction.source_id)?;
+        }
+    }
+
+    let source_ids: HashSet<String> = stored.manifest.api_doc_sources.iter().map(|source| source.source_id.clone()).collect();
+    let mut inserted_sections = HashSet::new();
+    for document in stored.documents.iter().filter(|doc| doc.kind == SchemaRagDocumentKind::ApiDoc) {
+        let source_id = document.table.clone();
+        if !source_ids.contains(&source_id) && inserted_sources.insert(source_id.clone()) {
+            insert_kuzu_api_doc_source_fallback(connection, &mut source_statement, &source_id)?;
+        }
+        let section_id = document.column.clone().unwrap_or_else(|| document.id.clone());
+        if inserted_sections.insert(section_id.clone()) {
+            insert_kuzu_api_doc_section(
+                connection,
+                &mut section_statement,
+                &mut has_section_statement,
+                &source_id,
+                &section_id,
+                section_title_path_for_api_doc_document(document),
+                document.text_for_embedding.clone(),
+                -1,
+            )?;
+        }
+    }
+    for extraction in &stored.api_doc_extractions {
+        for section_id in api_doc_extraction_section_ids(extraction) {
+            if inserted_sections.insert(section_id.clone()) {
+                insert_kuzu_api_doc_section(
+                    connection,
+                    &mut section_statement,
+                    &mut has_section_statement,
+                    &extraction.source_id,
+                    &section_id,
+                    Vec::new(),
+                    String::new(),
+                    -1,
+                )?;
+            }
+        }
+    }
+
+    insert_kuzu_api_doc_extractions(connection, &stored.api_doc_extractions)?;
+    Ok(())
+}
+
+fn insert_kuzu_api_doc_source(
+    connection: &Connection<'_>,
+    statement: &mut PreparedStatement,
+    source: &SchemaRagApiDocSource,
+) -> Result<(), String> {
+    connection
+        .execute(
+            statement,
+            vec![
+                ("id", Value::String(source.source_id.clone())),
+                ("path", Value::String(source.source_path.clone())),
+                ("original_format", Value::String(source.original_format.clone())),
+                ("content_hash", Value::String(source.content_hash.clone())),
+                ("imported_at", Value::String(source.imported_at.to_rfc3339())),
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn insert_kuzu_api_doc_source_fallback(
+    connection: &Connection<'_>,
+    statement: &mut PreparedStatement,
+    source_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            statement,
+            vec![
+                ("id", Value::String(source_id.to_string())),
+                ("path", Value::String(String::new())),
+                ("original_format", Value::String(String::new())),
+                ("content_hash", Value::String(String::new())),
+                ("imported_at", Value::String(String::new())),
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn insert_kuzu_api_doc_section(
+    connection: &Connection<'_>,
+    section_statement: &mut PreparedStatement,
+    has_section_statement: &mut PreparedStatement,
+    source_id: &str,
+    section_id: &str,
+    title_path: Vec<String>,
+    text: String,
+    page: i64,
+) -> Result<(), String> {
+    connection
+        .execute(
+            section_statement,
+            vec![
+                ("id", Value::String(section_id.to_string())),
+                ("source_id", Value::String(source_id.to_string())),
+                ("title_path", string_list_value(&title_path)),
+                ("text", Value::String(text)),
+                ("page", Value::Int64(page)),
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+    connection
+        .execute(
+            has_section_statement,
+            vec![("sourceId", Value::String(source_id.to_string())), ("sectionId", Value::String(section_id.to_string()))],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn insert_kuzu_api_doc_extractions(
+    connection: &Connection<'_>,
+    extractions: &[SchemaRagApiDocExtraction],
+) -> Result<(), String> {
+    let mut field_statement = connection
+        .prepare(
+            "CREATE (:ApiField {id: $id, source_id: $source_id, section_id: $section_id, name: $name, meaning: $meaning, candidate_schema: $candidate_schema, candidate_table: $candidate_table, candidate_column: $candidate_column, confidence: $confidence, status: $status, evidence: $evidence});",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut concept_statement = connection
+        .prepare(
+            "CREATE (:BusinessConcept {id: $id, source_id: $source_id, section_id: $section_id, term: $term, description: $description, candidate_schema: $candidate_schema, candidate_table: $candidate_table, candidate_column: $candidate_column, confidence: $confidence, status: $status, evidence: $evidence});",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut join_statement = connection
+        .prepare(
+            "CREATE (:JoinCandidate {id: $id, source_id: $source_id, section_id: $section_id, left_schema: $left_schema, left_table: $left_table, left_columns: $left_columns, right_schema: $right_schema, right_table: $right_table, right_columns: $right_columns, relation: $relation, confidence: $confidence, status: $status, evidence: $evidence});",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut section_field_statement = connection
+        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (field:ApiField {id: $fieldId}) CREATE (section)-[:SECTION_MENTIONS_FIELD]->(field);")
+        .map_err(|err| err.to_string())?;
+    let mut section_concept_statement = connection
+        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (concept:BusinessConcept {id: $conceptId}) CREATE (section)-[:SECTION_MENTIONS_CONCEPT]->(concept);")
+        .map_err(|err| err.to_string())?;
+    let mut section_join_statement = connection
+        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (join:JoinCandidate {id: $joinId}) CREATE (section)-[:SECTION_MENTIONS_JOIN]->(join);")
+        .map_err(|err| err.to_string())?;
+    let mut field_column_statement = connection
+        .prepare("MATCH (field:ApiField {id: $fieldId}), (column:ColumnNode {id: $columnId}) CREATE (field)-[:API_FIELD_MAPS_TO_COLUMN]->(column);")
+        .map_err(|err| err.to_string())?;
+    let mut concept_table_statement = connection
+        .prepare("MATCH (concept:BusinessConcept {id: $conceptId}), (table:TableNode {id: $tableId}) CREATE (concept)-[:CONCEPT_MAPS_TO_TABLE]->(table);")
+        .map_err(|err| err.to_string())?;
+    let mut concept_column_statement = connection
+        .prepare("MATCH (concept:BusinessConcept {id: $conceptId}), (column:ColumnNode {id: $columnId}) CREATE (concept)-[:CONCEPT_MAPS_TO_COLUMN]->(column);")
+        .map_err(|err| err.to_string())?;
+    let mut section_table_statement = connection
+        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (table:TableNode {id: $tableId}) CREATE (section)-[:SECTION_DESCRIBES_TABLE]->(table);")
+        .map_err(|err| err.to_string())?;
+    let mut section_column_statement = connection
+        .prepare("MATCH (section:ApiDocSection {id: $sectionId}), (column:ColumnNode {id: $columnId}) CREATE (section)-[:SECTION_DESCRIBES_COLUMN]->(column);")
+        .map_err(|err| err.to_string())?;
+    let mut join_left_statement = connection
+        .prepare("MATCH (join:JoinCandidate {id: $joinId}), (table:TableNode {id: $tableId}) CREATE (join)-[:JOIN_LEFT_TABLE]->(table);")
+        .map_err(|err| err.to_string())?;
+    let mut join_right_statement = connection
+        .prepare("MATCH (join:JoinCandidate {id: $joinId}), (table:TableNode {id: $tableId}) CREATE (join)-[:JOIN_RIGHT_TABLE]->(table);")
+        .map_err(|err| err.to_string())?;
+
+    for extraction in extractions {
+        for field in &extraction.api_fields {
+            connection
+                .execute(
+                    &mut field_statement,
+                    vec![
+                        ("id", Value::String(field.id.clone())),
+                        ("source_id", Value::String(field.source_id.clone())),
+                        ("section_id", Value::String(field.section_id.clone())),
+                        ("name", Value::String(field.name.clone())),
+                        ("meaning", Value::String(field.meaning.clone())),
+                        ("candidate_schema", optional_string_value(field.candidate_schema.as_deref())),
+                        ("candidate_table", optional_string_value(field.candidate_table.as_deref())),
+                        ("candidate_column", optional_string_value(field.candidate_column.as_deref())),
+                        ("confidence", Value::Float(field.confidence)),
+                        ("status", Value::String(fact_status_label(&field.status).to_string())),
+                        ("evidence", Value::String(field.evidence.clone())),
+                    ],
+                )
+                .map_err(|err| err.to_string())?;
+            connection
+                .execute(
+                    &mut section_field_statement,
+                    vec![("sectionId", Value::String(field.section_id.clone())), ("fieldId", Value::String(field.id.clone()))],
+                )
+                .map_err(|err| err.to_string())?;
+            if field.status == SchemaRagFactStatus::Verified {
+                if let (Some(schema), Some(table), Some(column)) = (
+                    field.candidate_schema.as_deref(),
+                    field.candidate_table.as_deref(),
+                    field.candidate_column.as_deref(),
+                ) {
+                    let table_id = kuzu_table_id(schema, table);
+                    let column_id = kuzu_column_id(schema, table, column);
+                    connection
+                        .execute(&mut field_column_statement, vec![("fieldId", Value::String(field.id.clone())), ("columnId", Value::String(column_id.clone()))])
+                        .map_err(|err| err.to_string())?;
+                    connection
+                        .execute(&mut section_table_statement, vec![("sectionId", Value::String(field.section_id.clone())), ("tableId", Value::String(table_id))])
+                        .map_err(|err| err.to_string())?;
+                    connection
+                        .execute(&mut section_column_statement, vec![("sectionId", Value::String(field.section_id.clone())), ("columnId", Value::String(column_id))])
+                        .map_err(|err| err.to_string())?;
+                }
+            }
+        }
+
+        for concept in &extraction.business_concepts {
+            connection
+                .execute(
+                    &mut concept_statement,
+                    vec![
+                        ("id", Value::String(concept.id.clone())),
+                        ("source_id", Value::String(concept.source_id.clone())),
+                        ("section_id", Value::String(concept.section_id.clone())),
+                        ("term", Value::String(concept.term.clone())),
+                        ("description", Value::String(concept.description.clone())),
+                        ("candidate_schema", optional_string_value(concept.candidate_schema.as_deref())),
+                        ("candidate_table", optional_string_value(concept.candidate_table.as_deref())),
+                        ("candidate_column", optional_string_value(concept.candidate_column.as_deref())),
+                        ("confidence", Value::Float(concept.confidence)),
+                        ("status", Value::String(fact_status_label(&concept.status).to_string())),
+                        ("evidence", Value::String(concept.evidence.clone())),
+                    ],
+                )
+                .map_err(|err| err.to_string())?;
+            connection
+                .execute(
+                    &mut section_concept_statement,
+                    vec![("sectionId", Value::String(concept.section_id.clone())), ("conceptId", Value::String(concept.id.clone()))],
+                )
+                .map_err(|err| err.to_string())?;
+            if concept.status == SchemaRagFactStatus::Verified {
+                if let (Some(schema), Some(table)) = (concept.candidate_schema.as_deref(), concept.candidate_table.as_deref()) {
+                    let table_id = kuzu_table_id(schema, table);
+                    connection
+                        .execute(&mut concept_table_statement, vec![("conceptId", Value::String(concept.id.clone())), ("tableId", Value::String(table_id.clone()))])
+                        .map_err(|err| err.to_string())?;
+                    connection
+                        .execute(&mut section_table_statement, vec![("sectionId", Value::String(concept.section_id.clone())), ("tableId", Value::String(table_id))])
+                        .map_err(|err| err.to_string())?;
+                    if let Some(column) = concept.candidate_column.as_deref().filter(|column| !column.trim().is_empty()) {
+                        let column_id = kuzu_column_id(schema, table, column);
+                        connection
+                            .execute(&mut concept_column_statement, vec![("conceptId", Value::String(concept.id.clone())), ("columnId", Value::String(column_id.clone()))])
+                            .map_err(|err| err.to_string())?;
+                        connection
+                            .execute(&mut section_column_statement, vec![("sectionId", Value::String(concept.section_id.clone())), ("columnId", Value::String(column_id))])
+                            .map_err(|err| err.to_string())?;
+                    }
+                }
+            }
+        }
+
+        for join in &extraction.join_candidates {
+            connection
+                .execute(
+                    &mut join_statement,
+                    vec![
+                        ("id", Value::String(join.id.clone())),
+                        ("source_id", Value::String(join.source_id.clone())),
+                        ("section_id", Value::String(join.section_id.clone())),
+                        ("left_schema", Value::String(join.left_schema.clone())),
+                        ("left_table", Value::String(join.left_table.clone())),
+                        ("left_columns", string_list_value(&join.left_columns)),
+                        ("right_schema", Value::String(join.right_schema.clone())),
+                        ("right_table", Value::String(join.right_table.clone())),
+                        ("right_columns", string_list_value(&join.right_columns)),
+                        ("relation", Value::String(join.relation.clone())),
+                        ("confidence", Value::Float(join.confidence)),
+                        ("status", Value::String(fact_status_label(&join.status).to_string())),
+                        ("evidence", Value::String(join.evidence.clone())),
+                    ],
+                )
+                .map_err(|err| err.to_string())?;
+            connection
+                .execute(
+                    &mut section_join_statement,
+                    vec![("sectionId", Value::String(join.section_id.clone())), ("joinId", Value::String(join.id.clone()))],
+                )
+                .map_err(|err| err.to_string())?;
+            if join.status == SchemaRagFactStatus::Verified {
+                let left_table_id = kuzu_table_id(&join.left_schema, &join.left_table);
+                let right_table_id = kuzu_table_id(&join.right_schema, &join.right_table);
+                connection
+                    .execute(&mut join_left_statement, vec![("joinId", Value::String(join.id.clone())), ("tableId", Value::String(left_table_id))])
+                    .map_err(|err| err.to_string())?;
+                connection
+                    .execute(&mut join_right_statement, vec![("joinId", Value::String(join.id.clone())), ("tableId", Value::String(right_table_id))])
+                    .map_err(|err| err.to_string())?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn section_title_path_for_api_doc_document(document: &SchemaRagDocument) -> Vec<String> {
+    let marker = "章节: ";
+    document
+        .text_for_embedding
+        .lines()
+        .find_map(|line| line.strip_prefix(marker))
+        .map(|path| {
+            path.split(" / ")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn api_doc_extraction_section_ids(extraction: &SchemaRagApiDocExtraction) -> HashSet<String> {
+    extraction
+        .api_fields
+        .iter()
+        .map(|fact| fact.section_id.clone())
+        .chain(extraction.business_concepts.iter().map(|fact| fact.section_id.clone()))
+        .chain(extraction.join_candidates.iter().map(|fact| fact.section_id.clone()))
+        .collect()
+}
+
+fn optional_string_value(value: Option<&str>) -> Value {
+    Value::String(value.unwrap_or("").to_string())
 }
 
 fn insert_kuzu_foreign_keys(connection: &Connection<'_>, stored: &StoredSchemaRagIndex) -> Result<(), String> {
@@ -1863,6 +2521,7 @@ fn kuzu_document_kind(kind: &SchemaRagDocumentKind) -> &'static str {
         SchemaRagDocumentKind::Table => "table",
         SchemaRagDocumentKind::Column => "column",
         SchemaRagDocumentKind::ApiDoc => "api_doc",
+        SchemaRagDocumentKind::ApiDocFact => "api_doc_fact",
     }
 }
 
@@ -2379,7 +3038,213 @@ fn load_kuzu_search_index_blocking(
         return Err("graph.kuzu does not contain schema documents".to_string());
     }
     let enrichment = load_kuzu_enrichment(&connection)?;
-    Ok((StoredSchemaRagIndex { manifest, tables, documents }, enrichment))
+    let api_doc_extractions = load_kuzu_api_doc_extractions(&connection)?;
+    Ok((StoredSchemaRagIndex { manifest, tables, documents, api_doc_extractions }, enrichment))
+}
+
+fn expand_schema_graph_blocking(
+    graph_path: &Path,
+    seeds: &[SchemaRagGraphSeed],
+    include_candidates: bool,
+    limit: usize,
+) -> Result<ExpandSchemaRagGraphResponse, String> {
+    let database = Database::new(graph_path, SystemConfig::default()).map_err(|err| err.to_string())?;
+    let connection = Connection::new(&database).map_err(|err| err.to_string())?;
+    let extractions = load_kuzu_api_doc_extractions(&connection)?;
+    Ok(expand_schema_graph_from_extractions(&extractions, seeds, include_candidates, limit))
+}
+
+fn expand_schema_graph_from_extractions(
+    extractions: &[SchemaRagApiDocExtraction],
+    seeds: &[SchemaRagGraphSeed],
+    include_candidates: bool,
+    limit: usize,
+) -> ExpandSchemaRagGraphResponse {
+    let mut verified_mappings = Vec::new();
+    let mut candidate_mappings = Vec::new();
+    let mut join_candidates = Vec::new();
+    let mut concepts = Vec::new();
+    let mut source_evidence = Vec::new();
+    let mut seen_evidence = HashSet::new();
+
+    for extraction in extractions {
+        for field in &extraction.api_fields {
+            if !seeds.is_empty() && !seeds.iter().any(|seed| api_field_matches_seed(field, seed)) {
+                continue;
+            }
+            match field.status {
+                SchemaRagFactStatus::Verified => {
+                    if verified_mappings.len() < limit {
+                        verified_mappings.push(field.clone());
+                    }
+                }
+                SchemaRagFactStatus::Candidate if include_candidates => {
+                    if candidate_mappings.len() < limit {
+                        candidate_mappings.push(field.clone());
+                    }
+                }
+                _ => {}
+            }
+            push_fact_evidence(&mut source_evidence, &mut seen_evidence, &field.source_id, &field.section_id, &field.evidence);
+        }
+
+        for concept in &extraction.business_concepts {
+            if !seeds.is_empty() && !seeds.iter().any(|seed| business_concept_matches_seed(concept, seed)) {
+                continue;
+            }
+            if concept.status == SchemaRagFactStatus::Verified
+                || (include_candidates && concept.status == SchemaRagFactStatus::Candidate)
+            {
+                if concepts.len() < limit {
+                    concepts.push(concept.clone());
+                }
+                push_fact_evidence(
+                    &mut source_evidence,
+                    &mut seen_evidence,
+                    &concept.source_id,
+                    &concept.section_id,
+                    &concept.evidence,
+                );
+            }
+        }
+
+        for join in &extraction.join_candidates {
+            if !seeds.is_empty() && !seeds.iter().any(|seed| join_candidate_matches_seed(join, seed)) {
+                continue;
+            }
+            if join.status == SchemaRagFactStatus::Verified
+                || (include_candidates && join.status == SchemaRagFactStatus::Candidate)
+            {
+                if join_candidates.len() < limit {
+                    join_candidates.push(join.clone());
+                }
+                push_fact_evidence(&mut source_evidence, &mut seen_evidence, &join.source_id, &join.section_id, &join.evidence);
+            }
+        }
+    }
+
+    source_evidence.truncate(limit);
+    ExpandSchemaRagGraphResponse { verified_mappings, candidate_mappings, join_candidates, concepts, source_evidence }
+}
+
+fn api_field_matches_seed(field: &SchemaRagApiFieldFact, seed: &SchemaRagGraphSeed) -> bool {
+    if seed_matches_source_or_section(&field.source_id, &field.section_id, &field.id, seed) {
+        return true;
+    }
+    let schema = field.candidate_schema.as_deref();
+    let table = field.candidate_table.as_deref();
+    let column = field.candidate_column.as_deref();
+    seed_matches_database_target(schema, table, column, seed)
+}
+
+fn business_concept_matches_seed(concept: &SchemaRagBusinessConceptFact, seed: &SchemaRagGraphSeed) -> bool {
+    if seed_matches_source_or_section(&concept.source_id, &concept.section_id, &concept.id, seed) {
+        return true;
+    }
+    if seed.kind.eq_ignore_ascii_case("business_concept")
+        && seed.id.as_deref().is_some_and(|id| {
+            id.eq_ignore_ascii_case(&concept.id) || id.eq_ignore_ascii_case(&concept.term)
+        })
+    {
+        return true;
+    }
+    seed_matches_database_target(
+        concept.candidate_schema.as_deref(),
+        concept.candidate_table.as_deref(),
+        concept.candidate_column.as_deref(),
+        seed,
+    )
+}
+
+fn join_candidate_matches_seed(join: &SchemaRagJoinCandidateFact, seed: &SchemaRagGraphSeed) -> bool {
+    if seed_matches_source_or_section(&join.source_id, &join.section_id, &join.id, seed) {
+        return true;
+    }
+    let seed_schema = seed.schema.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let Some(seed_table) = seed.table.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    let seed_column = seed.column.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let left_table_matches = schema_matches(seed_schema, &join.left_schema)
+        && join.left_table.eq_ignore_ascii_case(seed_table)
+        && seed_column_matches_any(seed_column, &join.left_columns);
+    let right_table_matches = schema_matches(seed_schema, &join.right_schema)
+        && join.right_table.eq_ignore_ascii_case(seed_table)
+        && seed_column_matches_any(seed_column, &join.right_columns);
+    left_table_matches || right_table_matches
+}
+
+fn seed_matches_source_or_section(source_id: &str, section_id: &str, fact_id: &str, seed: &SchemaRagGraphSeed) -> bool {
+    let kind = seed.kind.trim().to_ascii_lowercase();
+    let id = seed.id.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    match kind.as_str() {
+        "api_doc_source" => id.is_some_and(|id| id.eq_ignore_ascii_case(source_id)),
+        "api_doc_section" => id.is_some_and(|id| id.eq_ignore_ascii_case(section_id)),
+        "api_field" | "business_concept" | "join_candidate" => id.is_some_and(|id| id.eq_ignore_ascii_case(fact_id)),
+        _ => false,
+    }
+}
+
+fn seed_matches_database_target(
+    schema: Option<&str>,
+    table: Option<&str>,
+    column: Option<&str>,
+    seed: &SchemaRagGraphSeed,
+) -> bool {
+    let Some(seed_table) = seed.table.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    let Some(target_table) = table.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    if !target_table.eq_ignore_ascii_case(seed_table) {
+        return false;
+    }
+    let seed_schema = seed.schema.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    if let Some(target_schema) = schema.map(str::trim).filter(|value| !value.is_empty()) {
+        if !schema_matches(seed_schema, target_schema) {
+            return false;
+        }
+    }
+    let seed_column = seed.column.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    match seed.kind.trim().to_ascii_lowercase().as_str() {
+        "column" => {
+            let Some(seed_column) = seed_column else {
+                return false;
+            };
+            column.is_some_and(|target_column| target_column.eq_ignore_ascii_case(seed_column))
+        }
+        "table" => true,
+        _ => match seed_column {
+            Some(seed_column) => column.is_some_and(|target_column| target_column.eq_ignore_ascii_case(seed_column)),
+            None => true,
+        },
+    }
+}
+
+fn schema_matches(seed_schema: Option<&str>, target_schema: &str) -> bool {
+    seed_schema.map_or(true, |schema| schema.eq_ignore_ascii_case(target_schema))
+}
+
+fn seed_column_matches_any(seed_column: Option<&str>, candidates: &[String]) -> bool {
+    seed_column.map_or(true, |column| candidates.iter().any(|candidate| candidate.eq_ignore_ascii_case(column)))
+}
+
+fn push_fact_evidence(
+    source_evidence: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    source_id: &str,
+    section_id: &str,
+    evidence: &str,
+) {
+    let evidence = evidence.trim();
+    if evidence.is_empty() {
+        return;
+    }
+    let line = format!("{source_id} / {section_id}: {evidence}");
+    if seen.insert(line.clone()) {
+        source_evidence.push(line);
+    }
 }
 
 fn load_kuzu_tables(connection: &Connection<'_>) -> Result<Vec<SchemaRagTableMetadata>, String> {
@@ -2539,6 +3404,171 @@ fn load_kuzu_enrichment(connection: &Connection<'_>) -> Result<SchemaRagEnrichme
         }
     }
     Ok(SchemaRagEnrichment { aliases })
+}
+
+fn load_kuzu_api_doc_extractions(connection: &Connection<'_>) -> Result<Vec<SchemaRagApiDocExtraction>, String> {
+    let mut by_source: HashMap<String, SchemaRagApiDocExtraction> = HashMap::new();
+
+    let mut field_result = match connection.query(
+        "MATCH (f:ApiField) RETURN f.id, f.source_id, f.section_id, f.name, f.meaning, f.candidate_schema, f.candidate_table, f.candidate_column, f.status, f.confidence, f.evidence",
+    ) {
+        Ok(result) => result,
+        Err(err) => {
+            if is_missing_kuzu_table_error(&err.to_string(), "apifield") {
+                return Ok(Vec::new());
+            }
+            return Err(err.to_string());
+        }
+    };
+    while let Some(row) = field_result.next() {
+        let source_id = value_string(&row[1])?;
+        by_source
+            .entry(source_id.clone())
+            .or_insert_with(|| empty_kuzu_api_doc_extraction(&source_id))
+            .api_fields
+            .push(SchemaRagApiFieldFact {
+                id: value_string(&row[0])?,
+                source_id,
+                section_id: value_string(&row[2])?,
+                name: value_string(&row[3])?,
+                meaning: value_string(&row[4])?,
+                candidate_schema: value_optional_string(&row[5])?,
+                candidate_table: value_optional_string(&row[6])?,
+                candidate_column: value_optional_string(&row[7])?,
+                status: value_fact_status(&row[8])?,
+                confidence: value_f32(&row[9])?,
+                evidence: value_string(&row[10])?,
+            });
+    }
+
+    let mut concept_result = match connection.query(
+        "MATCH (c:BusinessConcept) RETURN c.id, c.source_id, c.section_id, c.term, c.description, c.candidate_schema, c.candidate_table, c.candidate_column, c.status, c.confidence, c.evidence",
+    ) {
+        Ok(result) => result,
+        Err(err) => {
+            if is_missing_kuzu_table_error(&err.to_string(), "businessconcept") {
+                return finish_kuzu_api_doc_extractions(by_source);
+            }
+            return Err(err.to_string());
+        }
+    };
+    while let Some(row) = concept_result.next() {
+        let source_id = value_string(&row[1])?;
+        by_source
+            .entry(source_id.clone())
+            .or_insert_with(|| empty_kuzu_api_doc_extraction(&source_id))
+            .business_concepts
+            .push(SchemaRagBusinessConceptFact {
+                id: value_string(&row[0])?,
+                source_id,
+                section_id: value_string(&row[2])?,
+                term: value_string(&row[3])?,
+                description: value_string(&row[4])?,
+                candidate_schema: value_optional_string(&row[5])?,
+                candidate_table: value_optional_string(&row[6])?,
+                candidate_column: value_optional_string(&row[7])?,
+                status: value_fact_status(&row[8])?,
+                confidence: value_f32(&row[9])?,
+                evidence: value_string(&row[10])?,
+            });
+    }
+
+    let mut join_result = match connection.query(
+        "MATCH (j:JoinCandidate) RETURN j.id, j.source_id, j.section_id, j.left_schema, j.left_table, j.left_columns, j.right_schema, j.right_table, j.right_columns, j.relation, j.status, j.confidence, j.evidence",
+    ) {
+        Ok(result) => result,
+        Err(err) => {
+            if is_missing_kuzu_table_error(&err.to_string(), "joincandidate") {
+                return finish_kuzu_api_doc_extractions(by_source);
+            }
+            return Err(err.to_string());
+        }
+    };
+    while let Some(row) = join_result.next() {
+        let source_id = value_string(&row[1])?;
+        by_source
+            .entry(source_id.clone())
+            .or_insert_with(|| empty_kuzu_api_doc_extraction(&source_id))
+            .join_candidates
+            .push(SchemaRagJoinCandidateFact {
+                id: value_string(&row[0])?,
+                source_id,
+                section_id: value_string(&row[2])?,
+                left_schema: value_string(&row[3])?,
+                left_table: value_string(&row[4])?,
+                left_columns: value_string_list(&row[5])?,
+                right_schema: value_string(&row[6])?,
+                right_table: value_string(&row[7])?,
+                right_columns: value_string_list(&row[8])?,
+                relation: value_string(&row[9])?,
+                status: value_fact_status(&row[10])?,
+                confidence: value_f32(&row[11])?,
+                evidence: value_string(&row[12])?,
+            });
+    }
+
+    finish_kuzu_api_doc_extractions(by_source)
+}
+
+fn empty_kuzu_api_doc_extraction(source_id: &str) -> SchemaRagApiDocExtraction {
+    SchemaRagApiDocExtraction {
+        source_id: source_id.to_string(),
+        extracted_at: String::new(),
+        status: ApiDocExtractionStatus::Pending,
+        api_fields: Vec::new(),
+        business_concepts: Vec::new(),
+        join_candidates: Vec::new(),
+        errors: Vec::new(),
+    }
+}
+
+fn finish_kuzu_api_doc_extractions(
+    by_source: HashMap<String, SchemaRagApiDocExtraction>,
+) -> Result<Vec<SchemaRagApiDocExtraction>, String> {
+    let mut extractions: Vec<SchemaRagApiDocExtraction> = by_source
+        .into_values()
+        .map(|mut extraction| {
+            extraction.status = summarize_api_doc_extraction_status(&extraction);
+            extraction
+        })
+        .collect();
+    extractions.sort_by(|a, b| a.source_id.cmp(&b.source_id));
+    Ok(extractions)
+}
+
+fn summarize_api_doc_extraction_status(extraction: &SchemaRagApiDocExtraction) -> ApiDocExtractionStatus {
+    let facts = extraction_fact_count(extraction);
+    if facts == 0 {
+        if !extraction.errors.is_empty() {
+            return ApiDocExtractionStatus::Failed;
+        }
+        return ApiDocExtractionStatus::Pending;
+    }
+    if !extraction.errors.is_empty() {
+        return ApiDocExtractionStatus::Partial;
+    }
+    let has_unresolved = extraction
+        .api_fields
+        .iter()
+        .any(|fact| matches!(fact.status, SchemaRagFactStatus::Unresolved | SchemaRagFactStatus::Rejected))
+        || extraction
+            .business_concepts
+            .iter()
+            .any(|fact| matches!(fact.status, SchemaRagFactStatus::Unresolved | SchemaRagFactStatus::Rejected))
+        || extraction
+            .join_candidates
+            .iter()
+            .any(|fact| matches!(fact.status, SchemaRagFactStatus::Unresolved | SchemaRagFactStatus::Rejected));
+    if has_unresolved {
+        ApiDocExtractionStatus::Partial
+    } else {
+        ApiDocExtractionStatus::Extracted
+    }
+}
+
+fn is_missing_kuzu_table_error(message: &str, table_name: &str) -> bool {
+    let message = message.to_lowercase();
+    message.contains(table_name) && (message.contains("exist") || message.contains("not found"))
 }
 
 fn empty_table_metadata(schema: &str, table_name: &str) -> SchemaRagTableMetadata {
@@ -2745,7 +3775,18 @@ fn value_document_kind(value: &Value) -> Result<SchemaRagDocumentKind, String> {
         "table" => Ok(SchemaRagDocumentKind::Table),
         "column" => Ok(SchemaRagDocumentKind::Column),
         "api_doc" => Ok(SchemaRagDocumentKind::ApiDoc),
+        "api_doc_fact" => Ok(SchemaRagDocumentKind::ApiDocFact),
         other => Err(format!("unknown schema document kind: {other}")),
+    }
+}
+
+fn value_fact_status(value: &Value) -> Result<SchemaRagFactStatus, String> {
+    match value_string(value)?.as_str() {
+        "verified" => Ok(SchemaRagFactStatus::Verified),
+        "candidate" => Ok(SchemaRagFactStatus::Candidate),
+        "rejected" => Ok(SchemaRagFactStatus::Rejected),
+        "unresolved" => Ok(SchemaRagFactStatus::Unresolved),
+        other => Err(format!("unknown schema rag fact status: {other}")),
     }
 }
 
@@ -2809,7 +3850,7 @@ fn lexical_score(query_tokens: &HashSet<String>, query_text: &str, doc: &SchemaR
     if query_text.contains(&doc.table.to_lowercase()) {
         score += 12.0;
     }
-    if doc.kind == SchemaRagDocumentKind::ApiDoc {
+    if matches!(doc.kind, SchemaRagDocumentKind::ApiDoc | SchemaRagDocumentKind::ApiDocFact) {
         let haystack = doc.text_for_embedding.to_lowercase();
         if query_text.len() >= 2 && haystack.contains(query_text) {
             score += 10.0;
@@ -2858,6 +3899,9 @@ fn document_hit_reasons(doc: &SchemaRagDocument, vector_score: f32, lexical_scor
                 reasons.push(format!("向量命中字段 {}", doc.column.as_deref().unwrap_or("")))
             }
             SchemaRagDocumentKind::ApiDoc => reasons.push(format!("向量命中接口文档 {}", api_doc_section_label(doc))),
+            SchemaRagDocumentKind::ApiDocFact => {
+                reasons.push(format!("向量命中接口文档事实 {}", api_doc_section_label(doc)))
+            }
         }
     }
     if lexical_score > 0.0 {
@@ -2867,6 +3911,9 @@ fn document_hit_reasons(doc: &SchemaRagDocument, vector_score: f32, lexical_scor
                 reasons.push(format!("关键词命中字段 {}", doc.column.as_deref().unwrap_or("")))
             }
             SchemaRagDocumentKind::ApiDoc => reasons.push(format!("关键词命中接口文档 {}", api_doc_section_label(doc))),
+            SchemaRagDocumentKind::ApiDocFact => {
+                reasons.push(format!("关键词命中接口文档事实 {}", api_doc_section_label(doc)))
+            }
         }
     }
     if reasons.is_empty() {
@@ -2876,6 +3923,9 @@ fn document_hit_reasons(doc: &SchemaRagDocument, vector_score: f32, lexical_scor
                 reasons.push(format!("低分向量命中字段 {}", doc.column.as_deref().unwrap_or("")))
             }
             SchemaRagDocumentKind::ApiDoc => reasons.push(format!("低分向量命中接口文档 {}", api_doc_section_label(doc))),
+            SchemaRagDocumentKind::ApiDocFact => {
+                reasons.push(format!("低分向量命中接口文档事实 {}", api_doc_section_label(doc)))
+            }
         }
     }
     reasons
@@ -3150,6 +4200,82 @@ fn upsert_api_doc_source(manifest: &mut SchemaRagManifest, doc: &NormalizedApiDo
     manifest.api_doc_sources.sort_by(|a, b| a.source_path.cmp(&b.source_path));
 }
 
+fn apply_api_doc_extraction_summary(manifest: &mut SchemaRagManifest, extraction: &SchemaRagApiDocExtraction) {
+    if let Some(source) = manifest.api_doc_sources.iter_mut().find(|source| source.source_id == extraction.source_id) {
+        source.extraction_status = extraction.status.clone();
+        source.extracted_at = Some(extraction.extracted_at.clone());
+        source.api_field_count = extraction.api_fields.len();
+        source.business_concept_count = extraction.business_concepts.len();
+        source.join_candidate_count = extraction.join_candidates.len();
+        source.unresolved_fact_count = extraction_unresolved_fact_count(extraction);
+    }
+}
+
+fn extraction_fact_count(extraction: &SchemaRagApiDocExtraction) -> usize {
+    extraction.api_fields.len() + extraction.business_concepts.len() + extraction.join_candidates.len()
+}
+
+fn extraction_verified_fact_count(extraction: &SchemaRagApiDocExtraction) -> usize {
+    extraction
+        .api_fields
+        .iter()
+        .filter(|fact| fact.status == SchemaRagFactStatus::Verified)
+        .count()
+        + extraction
+            .business_concepts
+            .iter()
+            .filter(|fact| fact.status == SchemaRagFactStatus::Verified)
+            .count()
+        + extraction
+            .join_candidates
+            .iter()
+            .filter(|fact| fact.status == SchemaRagFactStatus::Verified)
+            .count()
+}
+
+fn extraction_unresolved_fact_count(extraction: &SchemaRagApiDocExtraction) -> usize {
+    extraction
+        .api_fields
+        .iter()
+        .filter(|fact| matches!(fact.status, SchemaRagFactStatus::Unresolved | SchemaRagFactStatus::Rejected))
+        .count()
+        + extraction
+            .business_concepts
+            .iter()
+            .filter(|fact| matches!(fact.status, SchemaRagFactStatus::Unresolved | SchemaRagFactStatus::Rejected))
+            .count()
+        + extraction
+            .join_candidates
+            .iter()
+            .filter(|fact| matches!(fact.status, SchemaRagFactStatus::Unresolved | SchemaRagFactStatus::Rejected))
+            .count()
+}
+
+fn api_doc_extraction_fact_document_ids(extraction: &SchemaRagApiDocExtraction) -> Vec<String> {
+    extraction
+        .api_fields
+        .iter()
+        .map(|fact| fact.id.as_str())
+        .chain(extraction.business_concepts.iter().map(|fact| fact.id.as_str()))
+        .chain(extraction.join_candidates.iter().map(|fact| fact.id.as_str()))
+        .map(|id| format!("api-doc-fact:{id}"))
+        .collect()
+}
+
+fn is_imported_api_doc_document(
+    doc: &SchemaRagDocument,
+    imported_source_ids: &HashSet<String>,
+    old_fact_document_ids: &HashSet<String>,
+) -> bool {
+    match doc.kind {
+        SchemaRagDocumentKind::ApiDoc => imported_source_ids.contains(&doc.table),
+        SchemaRagDocumentKind::ApiDocFact => {
+            imported_source_ids.contains(&doc.table) || old_fact_document_ids.contains(&doc.id)
+        }
+        SchemaRagDocumentKind::Table | SchemaRagDocumentKind::Column => false,
+    }
+}
+
 async fn load_api_doc_chunk_count(docs_dir: &Path) -> Result<usize, String> {
     let mut entries = match tokio::fs::read_dir(docs_dir).await {
         Ok(entries) => entries,
@@ -3260,6 +4386,7 @@ pub fn validate_api_doc_extraction(
         join.status = validate_join_candidate_status(join, tables);
     }
 
+    extraction.status = summarize_api_doc_extraction_status(&extraction);
     extraction
 }
 
@@ -3597,6 +4724,17 @@ mod tests {
             table_units: Vec::new(),
             api_doc_sources: Vec::new(),
             api_doc_chunk_count: 0,
+        }
+    }
+
+    fn kuzu_count(graph_path: &Path, query: &str) -> i64 {
+        let database = kuzu::Database::new(graph_path.to_str().unwrap(), kuzu::SystemConfig::default()).unwrap();
+        let connection = kuzu::Connection::new(&database).unwrap();
+        let mut result = connection.query(query).unwrap();
+        let row = result.next().unwrap();
+        match row.first().unwrap() {
+            kuzu::Value::Int64(value) => *value,
+            other => panic!("unexpected count value: {other:?}"),
         }
     }
 
@@ -4096,6 +5234,234 @@ GET /api/refund/list
     }
 
     #[test]
+    fn api_doc_fact_documents_embed_verified_and_candidate_facts() {
+        let extraction = SchemaRagApiDocExtraction {
+            source_id: "api-doc:birth".to_string(),
+            extracted_at: "2026-06-03T00:00:00Z".to_string(),
+            status: ApiDocExtractionStatus::Extracted,
+            api_fields: vec![
+                SchemaRagApiFieldFact {
+                    id: "field:verified".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    name: "applyStatus".to_string(),
+                    meaning: "申请状态".to_string(),
+                    candidate_schema: Some("public".to_string()),
+                    candidate_table: Some("mc_birth_apply".to_string()),
+                    candidate_column: Some("apply_status".to_string()),
+                    status: SchemaRagFactStatus::Verified,
+                    confidence: 0.86,
+                    evidence: "表格写明 applyStatus 对应 apply_status".to_string(),
+                },
+                SchemaRagApiFieldFact {
+                    id: "field:rejected".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    name: "unknown".to_string(),
+                    meaning: "未知".to_string(),
+                    candidate_schema: Some("public".to_string()),
+                    candidate_table: Some("mc_birth_apply".to_string()),
+                    candidate_column: Some("missing".to_string()),
+                    status: SchemaRagFactStatus::Rejected,
+                    confidence: 0.4,
+                    evidence: "低置信度猜测".to_string(),
+                },
+            ],
+            business_concepts: vec![],
+            join_candidates: vec![],
+            errors: vec![],
+        };
+
+        let docs = build_api_doc_fact_documents("public", &extraction);
+
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].kind, SchemaRagDocumentKind::ApiDocFact);
+        assert_eq!(docs[0].table, "mc_birth_apply");
+        assert_eq!(docs[0].column.as_deref(), Some("apply_status"));
+        assert!(docs[0].text_for_embedding.contains("接口字段: applyStatus"));
+        assert!(docs[0].text_for_embedding.contains("候选映射: public.mc_birth_apply.apply_status"));
+        assert!(docs[0].text_for_embedding.contains("状态: verified"));
+        assert!(docs[0].text_for_embedding.contains("表格写明"));
+    }
+
+    #[test]
+    fn graph_expansion_returns_facts_matching_table_and_column_seeds() {
+        let extraction = SchemaRagApiDocExtraction {
+            source_id: "api-doc:birth".to_string(),
+            extracted_at: "2026-06-03T00:00:00Z".to_string(),
+            status: ApiDocExtractionStatus::Extracted,
+            api_fields: vec![
+                SchemaRagApiFieldFact {
+                    id: "field:verified".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    name: "applyStatus".to_string(),
+                    meaning: "申请状态".to_string(),
+                    candidate_schema: Some("public".to_string()),
+                    candidate_table: Some("mc_birth_apply".to_string()),
+                    candidate_column: Some("apply_status".to_string()),
+                    status: SchemaRagFactStatus::Verified,
+                    confidence: 0.86,
+                    evidence: "表格写明 applyStatus 对应 apply_status".to_string(),
+                },
+                SchemaRagApiFieldFact {
+                    id: "field:candidate".to_string(),
+                    source_id: "api-doc:birth".to_string(),
+                    section_id: "api-doc:birth#section-1".to_string(),
+                    name: "motherName".to_string(),
+                    meaning: "母亲姓名".to_string(),
+                    candidate_schema: Some("public".to_string()),
+                    candidate_table: Some("mc_birth_apply".to_string()),
+                    candidate_column: Some("mother_name".to_string()),
+                    status: SchemaRagFactStatus::Candidate,
+                    confidence: 0.66,
+                    evidence: "字段名相似".to_string(),
+                },
+            ],
+            business_concepts: vec![],
+            join_candidates: vec![SchemaRagJoinCandidateFact {
+                id: "join:verified".to_string(),
+                source_id: "api-doc:birth".to_string(),
+                section_id: "api-doc:birth#section-1".to_string(),
+                left_schema: "public".to_string(),
+                left_table: "mc_birth_apply".to_string(),
+                left_columns: vec!["id".to_string()],
+                right_schema: "public".to_string(),
+                right_table: "mc_birth_detail".to_string(),
+                right_columns: vec!["apply_id".to_string()],
+                relation: "申请对应详情".to_string(),
+                status: SchemaRagFactStatus::Verified,
+                confidence: 0.8,
+                evidence: "详情接口关联申请ID".to_string(),
+            }],
+            errors: vec![],
+        };
+
+        let result = expand_schema_graph_from_extractions(
+            &[extraction],
+            &[SchemaRagGraphSeed {
+                kind: "column".to_string(),
+                id: None,
+                schema: Some("public".to_string()),
+                table: Some("mc_birth_apply".to_string()),
+                column: Some("apply_status".to_string()),
+            }],
+            true,
+            10,
+        );
+
+        assert_eq!(result.verified_mappings.len(), 1);
+        assert_eq!(result.verified_mappings[0].name, "applyStatus");
+        assert!(result.candidate_mappings.is_empty());
+        assert!(result.join_candidates.is_empty());
+        assert!(result.source_evidence.iter().any(|line| line.contains("applyStatus")));
+    }
+
+    #[test]
+    fn kuzu_graph_writes_verified_api_field_mapping_edges() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let table = fake_table();
+        let extraction = SchemaRagApiDocExtraction {
+            source_id: "api-doc:birth".to_string(),
+            extracted_at: "2026-06-03T00:00:00Z".to_string(),
+            status: ApiDocExtractionStatus::Extracted,
+            api_fields: vec![SchemaRagApiFieldFact {
+                id: "field:verified".to_string(),
+                source_id: "api-doc:birth".to_string(),
+                section_id: "api-doc:birth#section-1".to_string(),
+                name: "applyStatus".to_string(),
+                meaning: "申请状态".to_string(),
+                candidate_schema: Some("public".to_string()),
+                candidate_table: Some("mc_birth_apply".to_string()),
+                candidate_column: Some("apply_status".to_string()),
+                status: SchemaRagFactStatus::Verified,
+                confidence: 0.86,
+                evidence: "接口文档字段表写明 applyStatus 对应 apply_status".to_string(),
+            }],
+            business_concepts: Vec::new(),
+            join_candidates: Vec::new(),
+            errors: Vec::new(),
+        };
+        let graph_path = temp_dir.path().join("graph.kuzu");
+        let stored = StoredSchemaRagIndex {
+            manifest: fake_manifest(1, table.columns.len()),
+            tables: vec![table],
+            documents: Vec::new(),
+            api_doc_extractions: vec![extraction],
+        };
+
+        write_kuzu_index_blocking(&graph_path, &stored).unwrap();
+
+        assert_eq!(kuzu_count(&graph_path, "MATCH (f:ApiField) RETURN count(f) AS count"), 1);
+        assert_eq!(
+            kuzu_count(
+                &graph_path,
+                "MATCH (f:ApiField)-[r:API_FIELD_MAPS_TO_COLUMN]->(c:ColumnNode) RETURN count(r) AS count",
+            ),
+            1,
+        );
+        assert_eq!(
+            kuzu_count(
+                &graph_path,
+                "MATCH (section:ApiDocSection)-[r:SECTION_DESCRIBES_COLUMN]->(c:ColumnNode) RETURN count(r) AS count",
+            ),
+            1,
+        );
+    }
+
+    #[test]
+    fn kuzu_graph_keeps_unresolved_api_field_without_mapping_edges() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let table = fake_table();
+        let extraction = SchemaRagApiDocExtraction {
+            source_id: "api-doc:birth".to_string(),
+            extracted_at: "2026-06-03T00:00:00Z".to_string(),
+            status: ApiDocExtractionStatus::Partial,
+            api_fields: vec![SchemaRagApiFieldFact {
+                id: "field:unresolved".to_string(),
+                source_id: "api-doc:birth".to_string(),
+                section_id: "api-doc:birth#section-1".to_string(),
+                name: "unknownCode".to_string(),
+                meaning: "接口文档中的未知编码".to_string(),
+                candidate_schema: None,
+                candidate_table: None,
+                candidate_column: None,
+                status: SchemaRagFactStatus::Unresolved,
+                confidence: 0.2,
+                evidence: "文档有字段，但当前 schema 中没有可靠匹配".to_string(),
+            }],
+            business_concepts: Vec::new(),
+            join_candidates: Vec::new(),
+            errors: Vec::new(),
+        };
+        let graph_path = temp_dir.path().join("graph.kuzu");
+        let stored = StoredSchemaRagIndex {
+            manifest: fake_manifest(1, table.columns.len()),
+            tables: vec![table],
+            documents: Vec::new(),
+            api_doc_extractions: vec![extraction],
+        };
+
+        write_kuzu_index_blocking(&graph_path, &stored).unwrap();
+
+        assert_eq!(kuzu_count(&graph_path, "MATCH (f:ApiField) RETURN count(f) AS count"), 1);
+        assert_eq!(
+            kuzu_count(
+                &graph_path,
+                "MATCH (f:ApiField)-[r:API_FIELD_MAPS_TO_COLUMN]->(c:ColumnNode) RETURN count(r) AS count",
+            ),
+            0,
+        );
+        assert_eq!(
+            kuzu_count(
+                &graph_path,
+                "MATCH (section:ApiDocSection)-[r:SECTION_MENTIONS_FIELD]->(f:ApiField) RETURN count(r) AS count",
+            ),
+            1,
+        );
+    }
+
+    #[test]
     fn field_search_promotes_owning_table_without_cross_scope_confusion() {
         let mut table = fake_table();
         table.schema = "public".to_string();
@@ -4349,6 +5715,7 @@ GET /api/refund/list
                 manifest: fake_manifest(1, table.columns.len()),
                 tables: vec![table],
                 documents: docs,
+                api_doc_extractions: Vec::new(),
             },
         )
         .await
@@ -4481,6 +5848,7 @@ GET /api/refund/list
                 manifest: fake_manifest(1, table.columns.len()),
                 tables: vec![table],
                 documents: docs,
+                api_doc_extractions: Vec::new(),
             },
         )
         .await

@@ -1007,7 +1007,8 @@ export default {
     schemaRagNoIndex: "当前 Schema 尚未分析",
     schemaRagApiDocMarkdownFilter: "Markdown 接口文档",
     schemaRagApiDocFutureFilter: "Word / PDF（暂存为不支持）",
-    schemaRagApiDocsImportSuccess: "接口文档导入完成：{sources} 个文档源，{chunks} 个片段，不支持 {unsupported} 个文件",
+    schemaRagApiDocsImportSuccess:
+      "接口文档导入完成：{sources} 个文档源，{chunks} 个片段，{facts} 个图谱事实，verified {verified} 个，待确认 {unresolved} 个，不支持 {unsupported} 个文件",
     schemaRagProgress: "正在分析 {done}/{total}：{table}",
     schemaRagProgressScan: "扫描表结构 {done}/{total}：{table}",
     schemaRagProgressBuildDocuments: "正在生成表/字段 embedding 文档",
@@ -1035,6 +1036,13 @@ export default {
     schemaRagApiDocChunkCount: "文档片段",
     schemaRagApiDocSources: "已导入接口文档",
     schemaRagApiDocSections: "{count} 片段",
+    schemaRagApiDocExtractionSummary: "{status}，字段 {fields}，概念 {concepts}，关系 {joins}，待确认 {unresolved}",
+    schemaRagApiDocExtractionStatus: {
+      pending: "待抽取",
+      extracted: "已抽取",
+      partial: "部分抽取",
+      failed: "抽取失败",
+    },
   },
   visibleDatabases: {
     title: "显示数据库",

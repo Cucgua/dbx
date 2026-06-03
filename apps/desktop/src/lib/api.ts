@@ -75,6 +75,7 @@ export const saveSchemaRagConfig = forward("saveSchemaRagConfig");
 export const loadSchemaRagConfig = forward("loadSchemaRagConfig");
 export const analyzeSchemaRag = forward("analyzeSchemaRag");
 export const importSchemaRagApiDocs = forward("importSchemaRagApiDocs");
+export const expandSchemaRagGraph = forward("expandSchemaRagGraph");
 export const refreshSchemaRagTable = forward("refreshSchemaRagTable");
 export const searchSchemaRag = forward("searchSchemaRag");
 export const searchTableColumnsRag = forward("searchTableColumnsRag");
