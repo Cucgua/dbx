@@ -4559,10 +4559,10 @@ fn push_api_doc_chunk(chunks: &mut Vec<String>, current: &mut String) {
         return;
     }
     chunks.push(chunk.to_string());
-    let overlap = trailing_chars(chunk, API_DOC_SECTION_OVERLAP_CHARS);
+    let overlap = trailing_chars(chunk, API_DOC_SECTION_OVERLAP_CHARS).trim_start().to_string();
     current.clear();
     if !overlap.trim().is_empty() {
-        current.push_str(overlap.trim_start());
+        current.push_str(&overlap);
     }
 }
 
