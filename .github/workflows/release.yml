@@ -22,6 +22,12 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
 
+      - name: Setup Ninja
+        shell: pwsh
+        run: |
+          choco install ninja --no-progress -y
+          ninja --version
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
