@@ -4,8 +4,10 @@ mod db;
 mod models;
 mod window_state_guard;
 
+use async_trait::async_trait;
 use commands::connection::AppState;
 use dbx_core::storage::{DesktopIconTheme, DesktopSettings, Storage};
+use dbx_mcp::{DesktopEventSink, McpExecuteQueryEvent, McpOpenTableEvent};
 use std::sync::Arc;
 use std::time::Instant;
 #[cfg(target_os = "macos")]
@@ -22,6 +24,26 @@ const DESKTOP_TRAY_ID: &str = "main-tray";
 #[cfg(target_os = "macos")]
 const MACOS_TRAY_ICON: tauri::image::Image<'_> = tauri::include_image!("icons/tray-macos-template.png");
 const BLACK_APP_ICON: tauri::image::Image<'_> = tauri::include_image!("icons/icon-black.png");
+
+#[derive(Clone)]
+struct TauriMcpEvents {
+    app: tauri::AppHandle,
+}
+
+#[async_trait]
+impl DesktopEventSink for TauriMcpEvents {
+    async fn open_table(&self, event: McpOpenTableEvent) -> Result<(), String> {
+        self.app.emit("mcp-open-table", event).map_err(|e| e.to_string())
+    }
+
+    async fn execute_query(&self, event: McpExecuteQueryEvent) -> Result<(), String> {
+        self.app.emit("mcp-execute-query", event).map_err(|e| e.to_string())
+    }
+
+    async fn reload_connections(&self) -> Result<(), String> {
+        self.app.emit("mcp-reload-connections", ()).map_err(|e| e.to_string())
+    }
+}
 
 fn should_hide_window_on_close(target_os: &str) -> bool {
     matches!(target_os, "macos" | "windows")
@@ -309,7 +331,17 @@ pub fn run() {
             open_connection_deep_links(app.handle(), startup_links);
 
             let app_handle = app.handle().clone();
-            commands::mcp_bridge::start(app_handle, state);
+            commands::mcp_bridge::start(app_handle.clone(), state.clone());
+            let mcp_options = dbx_mcp::McpRuntimeOptions {
+                app_data_dir: data_dir.clone(),
+                state: state.clone(),
+                events: Arc::new(TauriMcpEvents { app: app_handle.clone() }),
+            };
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = dbx_mcp::run(mcp_options).await {
+                    log::warn!("DBX MCP HTTP server stopped: {err}");
+                }
+            });
             eprintln!("[STARTUP] setup complete in {:?} (total {:?})", setup_start.elapsed(), startup_begin.elapsed());
 
             #[cfg(not(target_os = "macos"))]
@@ -354,6 +386,7 @@ pub fn run() {
             commands::app_settings::save_desktop_settings,
             commands::app_settings::load_pinned_tree_node_ids,
             commands::app_settings::save_pinned_tree_node_ids,
+            commands::app_settings::load_mcp_http_status,
             commands::cloud_sync::webdav_sync_test,
             commands::cloud_sync::webdav_password_status,
             commands::cloud_sync::save_webdav_saved_password,

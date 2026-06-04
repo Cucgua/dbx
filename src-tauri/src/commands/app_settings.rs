@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbx_core::storage::DesktopSettings;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use super::connection::AppState;
 use crate::apply_desktop_settings;
@@ -32,4 +32,10 @@ pub async fn load_pinned_tree_node_ids(state: State<'_, Arc<AppState>>) -> Resul
 #[tauri::command]
 pub async fn save_pinned_tree_node_ids(state: State<'_, Arc<AppState>>, ids: Vec<String>) -> Result<(), String> {
     state.storage.save_pinned_tree_node_ids(&ids).await
+}
+
+#[tauri::command]
+pub async fn load_mcp_http_status(app: AppHandle) -> Result<Option<dbx_mcp::McpHttpStatus>, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    dbx_mcp::read_status(&data_dir)
 }

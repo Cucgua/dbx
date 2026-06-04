@@ -1,0 +1,17 @@
+[package]
+name = "dbx-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+dbx-core = { path = "../dbx-core" }
+log = "0.4"
+rmcp = { version = "1.6", features = ["transport-streamable-http-server"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+uuid = { version = "1", features = ["v4", "serde"] }
