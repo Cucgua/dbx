@@ -627,12 +627,8 @@ pub fn normalized_embedding_concurrency(config: &SchemaRagConfig) -> usize {
     config.embedding_concurrency.clamp(1, MAX_EMBEDDING_CONCURRENCY)
 }
 
-fn normalized_embedding_batch_size(config: &SchemaRagConfig, single_input_only: bool) -> usize {
-    if single_input_only {
-        1
-    } else {
-        config.embedding_batch_size.clamp(1, MAX_EMBEDDING_BATCH_SIZE)
-    }
+fn normalized_embedding_batch_size(config: &SchemaRagConfig, max_batch_size: usize) -> usize {
+    config.embedding_batch_size.clamp(1, max_batch_size.max(1))
 }
 
 pub fn validate_schema_rag_config(config: &SchemaRagConfig) -> Result<(), String> {
@@ -2551,8 +2547,7 @@ where
     let client = build_http_client(config)?;
     let endpoint = resolve_embedding_endpoint(&config.embedding_endpoint);
     let client = Arc::new(client);
-    let single_input_only = embedding_endpoint_requires_single_input(&endpoint);
-    let batch_size = normalized_embedding_batch_size(config, single_input_only);
+    let batch_size = normalized_embedding_batch_size(config, embedding_endpoint_max_batch_size(&endpoint));
     let concurrency = normalized_embedding_concurrency(config);
     let jobs = build_embedding_batch_jobs(texts, batch_size);
     let batch_total = jobs.len();
@@ -2607,13 +2602,7 @@ where
             failed_batches,
         )
         .await?;
-        futures.push(send_embedding_batch(
-            Arc::clone(&client),
-            endpoint.clone(),
-            config.clone(),
-            job,
-            single_input_only,
-        ));
+        futures.push(send_embedding_batch(Arc::clone(&client), endpoint.clone(), config.clone(), job));
     }
 
     while let Some(result) = futures.next().await {
@@ -2701,13 +2690,7 @@ where
                 failed_batches,
             )
             .await?;
-            futures.push(send_embedding_batch(
-                Arc::clone(&client),
-                endpoint.clone(),
-                config.clone(),
-                job,
-                single_input_only,
-            ));
+            futures.push(send_embedding_batch(Arc::clone(&client), endpoint.clone(), config.clone(), job));
         }
     }
 
@@ -2725,7 +2708,6 @@ async fn embed_query_text(config: &SchemaRagConfig, query: &str, index_dir: &Pat
 
     let endpoint = resolve_embedding_endpoint(&config.embedding_endpoint);
     let client = Arc::new(build_http_client(config)?);
-    let single_input_only = embedding_endpoint_requires_single_input(&endpoint);
     append_sidecar_log(
         index_dir,
         &format!(
@@ -2738,7 +2720,7 @@ async fn embed_query_text(config: &SchemaRagConfig, query: &str, index_dir: &Pat
     .await?;
     let job = EmbeddingBatchJob { batch_index: 0, start: 0, texts: vec![query.to_string()] };
     let started_at = Instant::now();
-    match send_embedding_batch(client, endpoint, config.clone(), job, single_input_only).await {
+    match send_embedding_batch(client, endpoint, config.clone(), job).await {
         Ok(result) => {
             let embedding = result
                 .embeddings
@@ -2858,10 +2840,9 @@ async fn send_embedding_batch(
     endpoint: String,
     config: SchemaRagConfig,
     job: EmbeddingBatchJob,
-    single_input_only: bool,
 ) -> Result<EmbeddingBatchResult, EmbeddingBatchError> {
     let started_at = Instant::now();
-    let request_body = embedding_request_body(&config, &job.texts, single_input_only);
+    let request_body = embedding_request_body(&config, &job.texts);
     let mut request = client.post(&endpoint).json(&request_body);
     if !config.embedding_api_key.trim().is_empty() {
         request = request.bearer_auth(config.embedding_api_key.trim());
@@ -2926,8 +2907,8 @@ fn build_http_client(config: &SchemaRagConfig) -> Result<reqwest::Client, String
     builder.build().map_err(|err| err.to_string())
 }
 
-fn embedding_request_body(config: &SchemaRagConfig, batch: &[String], single_input_only: bool) -> serde_json::Value {
-    let input = if single_input_only || batch.len() == 1 {
+fn embedding_request_body(config: &SchemaRagConfig, batch: &[String]) -> serde_json::Value {
+    let input = if batch.len() == 1 {
         serde_json::Value::String(batch[0].clone())
     } else {
         serde_json::Value::Array(batch.iter().cloned().map(serde_json::Value::String).collect())
@@ -2941,8 +2922,12 @@ fn embedding_request_body(config: &SchemaRagConfig, batch: &[String], single_inp
     })
 }
 
-fn embedding_endpoint_requires_single_input(endpoint: &str) -> bool {
-    endpoint.contains("ai.gitee.com/")
+fn embedding_endpoint_max_batch_size(endpoint: &str) -> usize {
+    if endpoint.to_ascii_lowercase().contains("ai.gitee.com/") {
+        25
+    } else {
+        MAX_EMBEDDING_BATCH_SIZE
+    }
 }
 
 fn resolve_embedding_endpoint(endpoint: &str) -> String {
@@ -6017,7 +6002,7 @@ GET /api/refund/list
     fn embedding_request_uses_string_input_for_single_item_batches() {
         let config = fake_config();
 
-        let body = embedding_request_body(&config, &["hello".to_string()], true);
+        let body = embedding_request_body(&config, &["hello".to_string()]);
 
         assert_eq!(body["model"], "Qwen3-Embedding-0.6B");
         assert_eq!(body["input"], "hello");
@@ -6031,16 +6016,17 @@ GET /api/refund/list
         let mut config = fake_config();
         config.embedding_batch_size = 2;
 
-        let body = embedding_request_body(&config, &["hello".to_string(), "world".to_string()], false);
+        let body = embedding_request_body(&config, &["hello".to_string(), "world".to_string()]);
 
         assert_eq!(body["input"], serde_json::json!(["hello", "world"]));
     }
 
     #[test]
-    fn gitee_endpoint_forces_single_input_batches() {
-        assert!(embedding_endpoint_requires_single_input("https://ai.gitee.com/v1/embeddings"));
-        assert!(embedding_endpoint_requires_single_input("https://ai.gitee.com/v1"));
-        assert!(!embedding_endpoint_requires_single_input("https://api.openai.com/v1/embeddings"));
+    fn gitee_endpoint_allows_array_input_but_caps_batch_size_to_api_limit() {
+        assert_eq!(embedding_endpoint_max_batch_size("https://ai.gitee.com/v1/embeddings"), 25);
+        assert_eq!(embedding_endpoint_max_batch_size("https://AI.GITEE.COM/v1/embeddings"), 25);
+        assert_eq!(embedding_endpoint_max_batch_size("https://ai.gitee.com/v1"), 25);
+        assert_eq!(embedding_endpoint_max_batch_size("https://api.openai.com/v1/embeddings"), MAX_EMBEDDING_BATCH_SIZE);
     }
 
     #[test]
@@ -6058,12 +6044,15 @@ GET /api/refund/list
     }
 
     #[test]
-    fn single_input_endpoint_keeps_batch_size_one_but_preserves_concurrency() {
+    fn gitee_endpoint_caps_batch_size_but_preserves_concurrency() {
         let mut config = fake_config();
         config.embedding_batch_size = 64;
         config.embedding_concurrency = 6;
 
-        assert_eq!(normalized_embedding_batch_size(&config, true), 1);
+        assert_eq!(
+            normalized_embedding_batch_size(&config, embedding_endpoint_max_batch_size("https://ai.gitee.com/v1")),
+            25
+        );
         assert_eq!(normalized_embedding_concurrency(&config), 6);
     }
 
