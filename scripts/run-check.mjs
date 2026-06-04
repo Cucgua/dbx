@@ -29,6 +29,7 @@ function runTask(task) {
   const child = spawn(task.command, task.args, {
     cwd: process.cwd(),
     env: process.env,
+    shell: process.platform === "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });
   const stdout = [];
