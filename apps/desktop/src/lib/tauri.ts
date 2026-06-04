@@ -1098,8 +1098,36 @@ export interface McpServerStatus {
   error: string | null;
 }
 
+export interface McpHttpStatus {
+  enabled: boolean;
+  host: string;
+  port: number;
+  endpoint: string;
+  token: string;
+  started_at: string;
+}
+
+export interface McpHttpConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  token: string;
+}
+
 export async function checkMcpServerStatus(): Promise<McpServerStatus> {
   return invoke("check_mcp_server_status");
+}
+
+export async function loadMcpHttpStatus(): Promise<McpHttpStatus | null> {
+  return invoke("load_mcp_http_status");
+}
+
+export async function loadMcpHttpConfig(): Promise<McpHttpConfig> {
+  return invoke("load_mcp_http_config");
+}
+
+export async function saveMcpHttpConfig(config: McpHttpConfig): Promise<McpHttpConfig> {
+  return invoke("save_mcp_http_config", { config });
 }
 
 export async function checkForUpdates(): Promise<UpdateInfo> {

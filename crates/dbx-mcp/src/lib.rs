@@ -7,7 +7,7 @@ mod tools;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use config::{read_status, McpHttpConfig, McpHttpStatus};
+pub use config::{read_config, read_status, write_config, McpHttpConfig, McpHttpStatus};
 pub use events::{DesktopEventSink, McpExecuteQueryEvent, McpOpenTableEvent};
 
 pub struct McpRuntimeOptions {

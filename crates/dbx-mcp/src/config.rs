@@ -58,13 +58,31 @@ fn default_host() -> String {
     DEFAULT_HOST.to_string()
 }
 
-fn read_config(app_data_dir: &Path) -> Result<Option<McpHttpConfig>, String> {
+pub fn read_config(app_data_dir: &Path) -> Result<Option<McpHttpConfig>, String> {
     let path = app_data_dir.join(CONFIG_FILE);
     match fs::read_to_string(path) {
         Ok(json) => serde_json::from_str(&json).map(Some).map_err(|e| e.to_string()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err.to_string()),
     }
+}
+
+pub fn write_config(app_data_dir: &Path, config: &McpHttpConfig) -> Result<McpHttpConfig, String> {
+    let token = config.token.trim();
+    let normalized = McpHttpConfig {
+        enabled: config.enabled,
+        host: match config.host.trim() {
+            "" => default_host(),
+            host => host.to_string(),
+        },
+        port: if config.port == 0 { DEFAULT_PORT } else { config.port },
+        token: if token.is_empty() { load_or_create_token(app_data_dir) } else { token.to_string() },
+    };
+    fs::create_dir_all(app_data_dir).map_err(|e| e.to_string())?;
+    let path = app_data_dir.join(CONFIG_FILE);
+    let json = serde_json::to_string_pretty(&normalized).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(normalized)
 }
 
 pub fn write_status(app_data_dir: &Path, config: &McpHttpConfig) -> Result<(), String> {
@@ -139,5 +157,22 @@ mod tests {
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.port, 8123);
         assert_eq!(config.token, "dbx-saved");
+    }
+
+    #[test]
+    fn write_config_normalizes_empty_host_port_and_token() {
+        let dir = std::env::temp_dir().join(format!("dbx-mcp-test-{}", Uuid::new_v4().simple()));
+        fs::create_dir_all(&dir).expect("create temp config dir");
+
+        let config = McpHttpConfig { enabled: false, host: " ".to_string(), port: 0, token: " ".to_string() };
+        let saved = write_config(&dir, &config).expect("write config");
+        let loaded = read_config(&dir).expect("read config").expect("config exists");
+        let _ = fs::remove_dir_all(dir);
+
+        assert!(!saved.enabled);
+        assert_eq!(saved.host, DEFAULT_HOST);
+        assert_eq!(saved.port, DEFAULT_PORT);
+        assert!(saved.token.starts_with("dbx-"));
+        assert_eq!(loaded, saved);
     }
 }

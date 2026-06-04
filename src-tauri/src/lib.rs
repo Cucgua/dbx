@@ -389,6 +389,8 @@ pub fn run() {
             commands::app_settings::load_pinned_tree_node_ids,
             commands::app_settings::save_pinned_tree_node_ids,
             commands::app_settings::load_mcp_http_status,
+            commands::app_settings::load_mcp_http_config,
+            commands::app_settings::save_mcp_http_config,
             commands::cloud_sync::webdav_sync_test,
             commands::cloud_sync::webdav_password_status,
             commands::cloud_sync::save_webdav_saved_password,

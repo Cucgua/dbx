@@ -248,6 +248,9 @@ export const deleteHistoryEntry = forward("deleteHistoryEntry");
 
 // Updates
 export const checkMcpServerStatus = forward("checkMcpServerStatus");
+export const loadMcpHttpStatus = forward("loadMcpHttpStatus");
+export const loadMcpHttpConfig = forward("loadMcpHttpConfig");
+export const saveMcpHttpConfig = forward("saveMcpHttpConfig");
 export const checkForUpdates = forward("checkForUpdates");
 export const getSystemProxyUrl = forward("getSystemProxyUrl");
 export const getAppVersion = forward("getAppVersion");
@@ -301,6 +304,8 @@ export type {
   WebDavSyncSummary,
   WebDavDownloadResult,
   McpServerStatus,
+  McpHttpStatus,
+  McpHttpConfig,
   UpdateInfo,
   RedisDatabaseInfo,
   RedisKeyInfo,

@@ -39,3 +39,18 @@ pub async fn load_mcp_http_status(app: AppHandle) -> Result<Option<dbx_mcp::McpH
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     dbx_mcp::read_status(&data_dir)
 }
+
+#[tauri::command]
+pub async fn load_mcp_http_config(app: AppHandle) -> Result<dbx_mcp::McpHttpConfig, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    dbx_mcp::McpHttpConfig::load(&data_dir)
+}
+
+#[tauri::command]
+pub async fn save_mcp_http_config(
+    app: AppHandle,
+    config: dbx_mcp::McpHttpConfig,
+) -> Result<dbx_mcp::McpHttpConfig, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    dbx_mcp::write_config(&data_dir, &config)
+}

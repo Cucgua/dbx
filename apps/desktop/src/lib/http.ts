@@ -1576,6 +1576,25 @@ export async function checkMcpServerStatus(): Promise<import("./tauri").McpServe
   };
 }
 
+export async function loadMcpHttpStatus(): Promise<import("./tauri").McpHttpStatus | null> {
+  return null;
+}
+
+export async function loadMcpHttpConfig(): Promise<import("./tauri").McpHttpConfig> {
+  return {
+    enabled: false,
+    host: "127.0.0.1",
+    port: 7424,
+    token: "",
+  };
+}
+
+export async function saveMcpHttpConfig(
+  config: import("./tauri").McpHttpConfig,
+): Promise<import("./tauri").McpHttpConfig> {
+  return config;
+}
+
 export async function getSystemProxyUrl(): Promise<string | null> {
   return null;
 }
