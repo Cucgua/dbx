@@ -72,6 +72,18 @@ export const listDatabases = forward("listDatabases");
 export const saveSchemaCache = forward("saveSchemaCache");
 export const loadSchemaCache = forward("loadSchemaCache");
 export const deleteSchemaCachePrefix = forward("deleteSchemaCachePrefix");
+export const saveSchemaRagConfig = forward("saveSchemaRagConfig");
+export const loadSchemaRagConfig = forward("loadSchemaRagConfig");
+export const analyzeSchemaRag = forward("analyzeSchemaRag");
+export const importSchemaRagApiDocs = forward("importSchemaRagApiDocs");
+export const expandSchemaRagGraph = forward("expandSchemaRagGraph");
+export const refreshSchemaRagTable = forward("refreshSchemaRagTable");
+export const searchSchemaRag = forward("searchSchemaRag");
+export const searchTableColumnsRag = forward("searchTableColumnsRag");
+export const saveSchemaRagEnrichment = forward("saveSchemaRagEnrichment");
+export const loadSchemaRagStatus = forward("loadSchemaRagStatus");
+export const deleteSchemaRagIndex = forward("deleteSchemaRagIndex");
+export const listenSchemaRagProgress = forward("listenSchemaRagProgress");
 export const listSchemas = forward("listSchemas");
 export const listTables = forward("listTables");
 export const listObjects = forward("listObjects");
@@ -140,6 +152,7 @@ export const buildDataCompareSyncPlan = forward("buildDataCompareSyncPlan");
 
 // AI
 export const aiComplete = forward("aiComplete");
+export const aiRawChat = forward("aiRawChat");
 export const aiStream = forward("aiStream");
 export const aiCancelStream = forward("aiCancelStream");
 export const aiTestConnection = forward("aiTestConnection");
@@ -250,10 +263,33 @@ export const loadSidebarLayout = forward("loadSidebarLayout");
 export type {
   AiMessage,
   AiCompletionRequest,
+  AiRawChatRequest,
+  AiRawChatResponse,
+  AiRawToolCall,
   AiStreamChunk,
   AiModelInfo,
   AiChatMessage,
   AiConversation,
+  AnalyzeSchemaRagRequest,
+  AnalyzeSchemaRagResponse,
+  ExpandSchemaRagGraphRequest,
+  ExpandSchemaRagGraphResponse,
+  ImportSchemaRagApiDocsRequest,
+  ImportSchemaRagApiDocsResponse,
+  RefreshSchemaRagTableRequest,
+  RefreshSchemaRagTableResponse,
+  SaveSchemaRagEnrichmentRequest,
+  SaveSchemaRagEnrichmentResponse,
+  SchemaRagBusinessAliasInput,
+  SchemaRagColumnSearchResult,
+  SchemaRagConfig,
+  SchemaRagManifest,
+  SchemaRagProgressEvent,
+  SchemaRagScopeRequest,
+  SchemaRagSearchResult,
+  SchemaRagStatus,
+  SearchSchemaRagRequest,
+  SearchTableColumnsRagRequest,
   AgentDriverInfo,
   DriverStoreUsage,
   DriverStoreUsageItem,

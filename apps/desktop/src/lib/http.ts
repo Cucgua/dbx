@@ -24,6 +24,8 @@ import type { AiConfig } from "@/stores/settingsStore";
 import type {
   AgentDriverInfo,
   AiCompletionRequest,
+  AiRawChatRequest,
+  AiRawChatResponse,
   AiStreamChunk,
   AiConversation,
   AiModelInfo,
@@ -63,6 +65,27 @@ import type {
   ExplainSqlBuildResult,
   DroppedFilePreviewSqlOptions,
 } from "./tauri";
+import type {
+  AnalyzeSchemaRagRequest,
+  AnalyzeSchemaRagResponse,
+  ExpandSchemaRagGraphRequest,
+  ExpandSchemaRagGraphResponse,
+  ImportSchemaRagApiDocsRequest,
+  ImportSchemaRagApiDocsResponse,
+  RefreshSchemaRagTableRequest,
+  RefreshSchemaRagTableResponse,
+  SaveSchemaRagEnrichmentRequest,
+  SaveSchemaRagEnrichmentResponse,
+  SchemaRagColumnSearchResult,
+  SchemaRagConfig,
+  SchemaRagProgressEvent,
+  SchemaRagScopeRequest,
+  SchemaRagSearchResult,
+  SchemaRagStatus,
+  SearchSchemaRagRequest,
+  SearchTableColumnsRagRequest,
+} from "@/lib/schemaRagApi";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { QueryEditability } from "@/lib/sqlAnalysis";
 import type {
   DataGridColumnValueFilterConditionOptions,
@@ -357,6 +380,66 @@ export async function loadSchemaCache<T = unknown>(cacheKey: string): Promise<T 
 
 export async function deleteSchemaCachePrefix(prefix: string): Promise<void> {
   return del(`/api/schema/cache-prefix?${qs({ prefix })}`);
+}
+
+export async function saveSchemaRagConfig(_config: SchemaRagConfig): Promise<void> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function loadSchemaRagConfig(): Promise<SchemaRagConfig | null> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function analyzeSchemaRag(_request: AnalyzeSchemaRagRequest): Promise<AnalyzeSchemaRagResponse> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function importSchemaRagApiDocs(
+  _request: ImportSchemaRagApiDocsRequest,
+): Promise<ImportSchemaRagApiDocsResponse> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function expandSchemaRagGraph(
+  _request: ExpandSchemaRagGraphRequest,
+): Promise<ExpandSchemaRagGraphResponse> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function refreshSchemaRagTable(
+  _request: RefreshSchemaRagTableRequest,
+): Promise<RefreshSchemaRagTableResponse> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function searchSchemaRag(_request: SearchSchemaRagRequest): Promise<SchemaRagSearchResult> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function searchTableColumnsRag(
+  _request: SearchTableColumnsRagRequest,
+): Promise<SchemaRagColumnSearchResult> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function saveSchemaRagEnrichment(
+  _request: SaveSchemaRagEnrichmentRequest,
+): Promise<SaveSchemaRagEnrichmentResponse> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function loadSchemaRagStatus(_request: SchemaRagScopeRequest): Promise<SchemaRagStatus> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function deleteSchemaRagIndex(_request: SchemaRagScopeRequest): Promise<boolean> {
+  throw new Error("Schema RAG is only available in the desktop app.");
+}
+
+export async function listenSchemaRagProgress(
+  _handler: (progress: SchemaRagProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return () => {};
 }
 
 export async function listSchemas(connectionId: string, database: string): Promise<string[]> {
@@ -752,6 +835,10 @@ export async function buildDataCompareSyncPlan(options: DataCompareSyncPlanOptio
 
 export async function aiComplete(request: AiCompletionRequest): Promise<string> {
   return post("/api/ai/complete", { request });
+}
+
+export async function aiRawChat(_request: AiRawChatRequest): Promise<AiRawChatResponse> {
+  throw new Error("AI tool calls are only available in the desktop app.");
 }
 
 export async function aiStream(

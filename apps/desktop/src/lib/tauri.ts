@@ -61,6 +61,48 @@ import type {
   TableAdminSqlOptions,
 } from "@/lib/dbAdminSql";
 import type { BuildDatabaseSqlExportOptions, BuildExportInsertStatementsOptions } from "@/lib/databaseExport";
+import type {
+  AnalyzeSchemaRagRequest,
+  AnalyzeSchemaRagResponse,
+  ExpandSchemaRagGraphRequest,
+  ExpandSchemaRagGraphResponse,
+  ImportSchemaRagApiDocsRequest,
+  ImportSchemaRagApiDocsResponse,
+  RefreshSchemaRagTableRequest,
+  RefreshSchemaRagTableResponse,
+  SaveSchemaRagEnrichmentRequest,
+  SaveSchemaRagEnrichmentResponse,
+  SchemaRagColumnSearchResult,
+  SchemaRagConfig,
+  SchemaRagProgressEvent,
+  SchemaRagScopeRequest,
+  SchemaRagSearchResult,
+  SchemaRagStatus,
+  SearchSchemaRagRequest,
+  SearchTableColumnsRagRequest,
+} from "@/lib/schemaRagApi";
+export type {
+  AnalyzeSchemaRagRequest,
+  AnalyzeSchemaRagResponse,
+  ExpandSchemaRagGraphRequest,
+  ExpandSchemaRagGraphResponse,
+  ImportSchemaRagApiDocsRequest,
+  ImportSchemaRagApiDocsResponse,
+  RefreshSchemaRagTableRequest,
+  RefreshSchemaRagTableResponse,
+  SaveSchemaRagEnrichmentRequest,
+  SaveSchemaRagEnrichmentResponse,
+  SchemaRagBusinessAliasInput,
+  SchemaRagColumnSearchResult,
+  SchemaRagConfig,
+  SchemaRagManifest,
+  SchemaRagProgressEvent,
+  SchemaRagScopeRequest,
+  SchemaRagSearchResult,
+  SchemaRagStatus,
+  SearchSchemaRagRequest,
+  SearchTableColumnsRagRequest,
+} from "@/lib/schemaRagApi";
 
 export interface AgentDriverInfo {
   db_type: string;
@@ -225,6 +267,30 @@ export interface AiCompletionRequest {
   temperature?: number;
 }
 
+export interface AiRawToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface AiRawChatResponse {
+  content: string;
+  toolCalls: AiRawToolCall[];
+  rawMessage: unknown;
+}
+
+export interface AiRawChatRequest {
+  config: AiConfig;
+  systemPrompt: string;
+  messages: unknown[];
+  tools: unknown[];
+  toolChoice?: unknown;
+  maxTokens?: number;
+  temperature?: number;
+  responseFormat?: unknown;
+  debugLabel?: string;
+}
+
 export interface AiModelInfo {
   id: string;
   displayName?: string;
@@ -232,6 +298,10 @@ export interface AiModelInfo {
 
 export async function aiComplete(request: AiCompletionRequest): Promise<string> {
   return invoke("ai_complete", { request });
+}
+
+export async function aiRawChat(request: AiRawChatRequest): Promise<AiRawChatResponse> {
+  return invoke("ai_raw_chat", { request });
 }
 
 export interface AiStreamChunk {
@@ -407,6 +477,66 @@ export async function loadSchemaCache<T = unknown>(cacheKey: string): Promise<T 
 
 export async function deleteSchemaCachePrefix(prefix: string): Promise<void> {
   return invoke("delete_schema_cache_prefix", { prefix });
+}
+
+export async function saveSchemaRagConfig(config: SchemaRagConfig): Promise<void> {
+  return invoke("save_schema_rag_config", { config });
+}
+
+export async function loadSchemaRagConfig(): Promise<SchemaRagConfig | null> {
+  return invoke("load_schema_rag_config");
+}
+
+export async function analyzeSchemaRag(request: AnalyzeSchemaRagRequest): Promise<AnalyzeSchemaRagResponse> {
+  return invoke("analyze_schema_rag", { request });
+}
+
+export async function importSchemaRagApiDocs(
+  request: ImportSchemaRagApiDocsRequest,
+): Promise<ImportSchemaRagApiDocsResponse> {
+  return invoke("import_schema_rag_api_docs", { request });
+}
+
+export async function expandSchemaRagGraph(
+  request: ExpandSchemaRagGraphRequest,
+): Promise<ExpandSchemaRagGraphResponse> {
+  return invoke("expand_schema_rag_graph", { request });
+}
+
+export async function refreshSchemaRagTable(
+  request: RefreshSchemaRagTableRequest,
+): Promise<RefreshSchemaRagTableResponse> {
+  return invoke("refresh_schema_rag_table", { request });
+}
+
+export async function searchSchemaRag(request: SearchSchemaRagRequest): Promise<SchemaRagSearchResult> {
+  return invoke("search_schema_rag", { request });
+}
+
+export async function searchTableColumnsRag(
+  request: SearchTableColumnsRagRequest,
+): Promise<SchemaRagColumnSearchResult> {
+  return invoke("search_table_columns_rag", { request });
+}
+
+export async function saveSchemaRagEnrichment(
+  request: SaveSchemaRagEnrichmentRequest,
+): Promise<SaveSchemaRagEnrichmentResponse> {
+  return invoke("save_schema_rag_enrichment", { request });
+}
+
+export async function loadSchemaRagStatus(request: SchemaRagScopeRequest): Promise<SchemaRagStatus> {
+  return invoke("load_schema_rag_status", { request });
+}
+
+export async function deleteSchemaRagIndex(request: SchemaRagScopeRequest): Promise<boolean> {
+  return invoke("delete_schema_rag_index", { request });
+}
+
+export async function listenSchemaRagProgress(
+  handler: (progress: SchemaRagProgressEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<SchemaRagProgressEvent>("schema-rag-progress", (event) => handler(event.payload));
 }
 
 export async function listTables(

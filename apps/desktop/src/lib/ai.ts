@@ -14,6 +14,13 @@ import { currentLocale, type Locale } from "@/i18n";
 import { aiTableMentionKey, type AiTableMention } from "@/lib/aiTableMentions";
 import { aiSkillForAction } from "@/lib/aiSkills";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
+import {
+  buildSchemaRagAiTools,
+  createSchemaRagAiToolBudget,
+  executeSchemaRagAiTool,
+  getSchemaRagSubtaskAllowedToolNames,
+  supportsSchemaRagAiToolLoop,
+} from "@/lib/schemaRagAiTools";
 
 export type AiAction = "generate" | "explain" | "optimize" | "fix" | "convert" | "sampleData";
 export type AiAssistantMode = "ask" | "agent";
@@ -35,11 +42,14 @@ export interface AiSchemaTable {
 export interface AiContext {
   connectionName: string;
   databaseType: DatabaseType;
+  connectionId?: string;
   database: string;
+  schema?: string;
   currentSql: string;
   lastError?: string;
   lastResultPreview?: string;
   tables: AiSchemaTable[];
+  schemaRagContext?: string;
   schemaScope?: "focused_table" | "database";
   truncated: boolean;
 }
@@ -102,6 +112,14 @@ export async function runAiStream(
   const params = actionParams(input.action);
   const maxTokens = input.config.enableThinking ? Math.max(params.maxTokens, 8192) : params.maxTokens;
 
+  const toolLoopResult = await runSchemaRagToolLoop(input, messages, maxTokens, params.temperature).catch(
+    () => undefined,
+  );
+  if (toolLoopResult != null) {
+    await emitBufferedText(toolLoopResult, onDelta);
+    return;
+  }
+
   await api.aiStream(
     sid,
     {
@@ -118,6 +136,85 @@ export async function runAiStream(
       }
     },
   );
+}
+
+async function runSchemaRagToolLoop(
+  input: AiRequestInput,
+  messages: api.AiMessage[],
+  maxTokens: number,
+  temperature: number,
+): Promise<string | undefined> {
+  if (input.mode !== "agent") return undefined;
+  if (!supportsSchemaRagAiToolLoop(input.config, input.context)) return undefined;
+
+  const tools = buildSchemaRagAiTools();
+  const toolMessages: unknown[] = messages.map((message) => ({
+    role: message.role,
+    content: message.content,
+  }));
+  const budget = createSchemaRagAiToolBudget();
+  const systemPrompt = buildToolSystemPrompt(input.action, input.context, input.mode);
+
+  for (let round = 0; round < 4; round += 1) {
+    const response = await api.aiRawChat({
+      config: input.config,
+      systemPrompt,
+      messages: toolMessages,
+      tools,
+      maxTokens,
+      temperature,
+    });
+
+    toolMessages.push({
+      role: "assistant",
+      content: response.content || "",
+      tool_calls: response.toolCalls.map((call) => ({
+        id: call.id,
+        type: "function",
+        function: {
+          name: call.name,
+          arguments: call.arguments,
+        },
+      })),
+    });
+
+    if (!response.toolCalls.length) return response.content;
+
+    for (const call of response.toolCalls) {
+      const output = await executeSchemaRagAiTool(call.name, call.arguments, input.context, budget);
+      toolMessages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        name: call.name,
+        content: JSON.stringify(output),
+      });
+    }
+  }
+
+  toolMessages.push({
+    role: "user",
+    content:
+      "Stop calling tools. Use only verified table and column evidence from prior tool outputs. If evidence is still insufficient, ask a concise clarification question instead of inventing schema.",
+  });
+  const finalResponse = await api.aiRawChat({
+    config: input.config,
+    systemPrompt,
+    messages: toolMessages,
+    tools: [],
+    toolChoice: "none",
+    maxTokens,
+    temperature,
+  });
+  return finalResponse.content;
+}
+
+async function emitBufferedText(text: string, onDelta: (delta: string) => void): Promise<void> {
+  if (!text) return;
+  const chunks = text.match(/[\s\S]{1,32}/g) || [];
+  for (const chunk of chunks) {
+    onDelta(chunk);
+    await new Promise((resolve) => setTimeout(resolve, 8));
+  }
 }
 
 function actionParams(action: AiAction): { maxTokens: number; temperature: number } {
@@ -141,6 +238,9 @@ export function buildSystemPrompt(action: AiAction, context: AiContext, mode: Ai
   const schema = formatSchema(context);
   const resultPreview = context.lastResultPreview ? `\nLast result preview:\n${context.lastResultPreview}\n` : "";
   const lastError = context.lastError ? `\nLast error:\n${context.lastError}\n` : "";
+  const schemaRag = context.schemaRagContext
+    ? `\n${isChineseLocale(currentLocale()) ? "Schema 智能检索结果" : "Smart schema retrieval"}:\n${context.schemaRagContext}\n`
+    : "";
   const schemaScope = context.schemaScope ?? "database";
 
   const isZh = isChineseLocale(currentLocale());
@@ -178,10 +278,42 @@ export function buildSystemPrompt(action: AiAction, context: AiContext, mode: Ai
     `Current SQL:\n${context.currentSql.trim() || "(empty)"}`,
     lastError,
     resultPreview,
+    schemaRag,
     `Schema:\n${schema}`,
   );
 
   return lines.filter(Boolean).join("\n");
+}
+
+export function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAssistantMode = "ask"): string {
+  const isZh = isChineseLocale(currentLocale());
+  const prompt = buildSystemPrompt(action, context, mode);
+  const toolRules = isZh
+    ? [
+        "Schema RAG 工具规则：",
+        "- 可以调用 dbx_search_schema 查找候选表和字段。",
+        "- 可以调用 dbx_search_table_columns 在已知表内找字段。",
+        "- 字段进入最终 SQL 前必须用 dbx_load_table_schema 读取实时结构核实。",
+        "- 可以调用 dbx_expand_schema_graph 查看 API 文档映射、业务概念或候选关系。",
+        "- 工具结果是候选证据；最终 SQL 只能使用实时 schema 已核实的表和字段。",
+      ]
+    : [
+        "Schema RAG tool rules:",
+        "- Use dbx_search_schema to find candidate tables and columns.",
+        "- Use dbx_search_table_columns to search columns inside a known table.",
+        "- Before a column appears in final SQL, verify live metadata with dbx_load_table_schema.",
+        "- Use dbx_expand_schema_graph for API-doc mappings, business concepts, or candidate joins.",
+        "- Tool results are candidate evidence; final SQL may use only live-schema verified tables and columns.",
+      ];
+  return [prompt, "", ...toolRules].join("\n");
+}
+
+export function buildAiSchemaTools(): unknown[] {
+  return buildSchemaRagAiTools();
+}
+
+export function schemaResearchSubtaskAllowedToolNamesForTest(): string[] {
+  return getSchemaRagSubtaskAllowedToolNames();
 }
 
 function buildBasePromptLines(isZh: boolean): string[] {
@@ -319,6 +451,7 @@ export async function buildAiContext(
   const tableKeys = new Set<string>();
   let truncated = false;
   let schemaScope: AiContext["schemaScope"] = "database";
+  let activeSchema: string | undefined = tab.tableMeta?.schema;
 
   if (tab.tableMeta) {
     schemaScope = "focused_table";
@@ -354,6 +487,7 @@ export async function buildAiContext(
   if (!tab.tableMeta && !["redis", "mongodb"].includes(connection.db_type)) {
     try {
       const schemas = await loadCandidateSchemas(tab, connection);
+      activeSchema = schemas[0] || activeSchema;
       for (const schema of schemas) {
         const tableList = await api.listTables(tab.connectionId, tab.database, schema);
         const candidates = tableList.slice(0, maxTables - tables.length);
@@ -395,10 +529,15 @@ export async function buildAiContext(
     }
   }
 
+  const contextSchema =
+    activeSchema || tables[0]?.schema || (!isSchemaAware(connection.db_type) ? tab.database || connection.database || "main" : undefined);
+
   return {
     connectionName: connection.name,
     databaseType: connection.db_type,
+    connectionId: tab.connectionId,
     database: tab.database,
+    schema: contextSchema,
     currentSql: tab.sql,
     lastError: extractLastError(tab.result),
     lastResultPreview: formatResultPreview(tab.result),

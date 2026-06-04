@@ -101,6 +101,38 @@ pub struct AiCompletionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRawChatRequest {
+    pub config: AiConfig,
+    pub system_prompt: String,
+    pub messages: Vec<serde_json::Value>,
+    pub tools: Vec<serde_json::Value>,
+    pub tool_choice: Option<serde_json::Value>,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRawToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiRawChatResponse {
+    pub content: String,
+    pub tool_calls: Vec<AiRawToolCall>,
+    pub raw_message: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiStreamChunk {
     pub session_id: String,
     pub delta: String,
@@ -500,6 +532,80 @@ pub async fn call_openai_compatible(client: &reqwest::Client, request: AiComplet
     Ok(data["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string())
 }
 
+pub async fn call_openai_raw_chat(
+    client: &reqwest::Client,
+    request: AiRawChatRequest,
+) -> Result<AiRawChatResponse, String> {
+    if request.config.api_style != AiApiStyle::Completions {
+        return Err("AI tool calls currently require chat/completions API style".to_string());
+    }
+    if matches!(request.config.provider, AiProvider::Claude | AiProvider::Gemini) {
+        return Err("AI tool calls currently require an OpenAI-compatible chat endpoint".to_string());
+    }
+    validate_config(&request.config)?;
+    let headers = maybe_bearer_headers(&request.config)?;
+
+    let mut messages = vec![json!({ "role": "system", "content": request.system_prompt })];
+    messages.extend(request.messages.clone());
+
+    let mut body_obj = json!({
+        "model": request.config.model,
+        "messages": messages,
+        "max_tokens": request.max_tokens.unwrap_or(2048),
+        "temperature": request.temperature.unwrap_or(0.2),
+    });
+    if !request.tools.is_empty() {
+        body_obj["tools"] = json!(request.tools);
+        body_obj["tool_choice"] = request.tool_choice.unwrap_or_else(|| json!("auto"));
+    }
+    if !request.config.enable_thinking {
+        body_obj["extra_body"] = json!({
+            "chat_template_kwargs": { "enable_thinking": false }
+        });
+    }
+    if matches!(request.config.provider, AiProvider::Deepseek) {
+        if let Some(response_format) = request.response_format {
+            body_obj["response_format"] = response_format;
+        }
+    }
+
+    let res = client
+        .post(resolve_endpoint(&request.config))
+        .headers(headers)
+        .json(&body_obj)
+        .send()
+        .await
+        .map_err(|e| format!("AI request failed: {e}"))?;
+
+    let status = res.status();
+    let data: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(extract_error(&data).unwrap_or_else(|| format!("API error: {status}")));
+    }
+
+    let message = data["choices"].get(0).and_then(|choice| choice.get("message")).cloned().unwrap_or_default();
+    let content = message["content"].as_str().unwrap_or_default().to_string();
+    let tool_calls = message["tool_calls"]
+        .as_array()
+        .map(|calls| {
+            calls
+                .iter()
+                .filter_map(|call| {
+                    let function = &call["function"];
+                    let name = function["name"].as_str()?.to_string();
+                    Some(AiRawToolCall {
+                        id: call["id"].as_str().unwrap_or_default().to_string(),
+                        name,
+                        arguments: function["arguments"].as_str().unwrap_or_default().to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(AiRawChatResponse { content, tool_calls, raw_message: message })
+}
+
 pub async fn call_responses_api(client: &reqwest::Client, request: AiCompletionRequest) -> Result<String, String> {
     let headers = maybe_bearer_headers(&request.config)?;
 
@@ -623,6 +729,11 @@ pub async fn complete(request: &AiCompletionRequest) -> Result<String, String> {
             }
         }
     }
+}
+
+pub async fn raw_chat(request: &AiRawChatRequest) -> Result<AiRawChatResponse, String> {
+    let client = build_ai_http_client(&request.config, 60)?;
+    call_openai_raw_chat(&client, request.clone()).await
 }
 
 // ---------------------------------------------------------------------------
