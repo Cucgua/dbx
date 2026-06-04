@@ -315,7 +315,9 @@ export function findSchemaRagTableUnit(
   if (!schema || !table) return null;
   return (
     manifest?.tableUnits?.find(
-      (unit) => unit.schema.trim().toLowerCase() === schema.toLowerCase() && unit.table.trim().toLowerCase() === table.toLowerCase(),
+      (unit) =>
+        unit.schema.trim().toLowerCase() === schema.toLowerCase() &&
+        unit.table.trim().toLowerCase() === table.toLowerCase(),
     ) || null
   );
 }
@@ -375,7 +377,11 @@ export function normalizeSchemaRagConfig(
       1,
       16,
     ),
-    rerankProvider: nonEmptyStringValue(value.rerankProvider, value.rerank_provider, DEFAULT_SCHEMA_RAG_CONFIG.rerankProvider),
+    rerankProvider: nonEmptyStringValue(
+      value.rerankProvider,
+      value.rerank_provider,
+      DEFAULT_SCHEMA_RAG_CONFIG.rerankProvider,
+    ),
     rerankEndpoint: stringValue(value.rerankEndpoint, value.rerank_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.rerankEndpoint),
     rerankModel: stringValue(value.rerankModel, value.rerank_model, DEFAULT_SCHEMA_RAG_CONFIG.rerankModel),
     rerankApiKey: normalizeSchemaRagApiKey(
@@ -418,9 +424,7 @@ export function formatSchemaRagContext(result: SchemaRagSearchResult | undefined
     lines.push(`- ${tableName}: score ${table.score.toFixed(2)}; ${table.reason}`);
     if (table.matchedColumns.length) {
       lines.push(
-        `  matched columns: ${table.matchedColumns
-          .map((column) => `${column.name} (${column.reason})`)
-          .join(", ")}`,
+        `  matched columns: ${table.matchedColumns.map((column) => `${column.name} (${column.reason})`).join(", ")}`,
       );
     }
     if (table.relatedTables.length) {

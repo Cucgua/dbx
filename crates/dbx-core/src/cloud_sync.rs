@@ -496,9 +496,7 @@ mod tests {
         decrypt_sensitive_payload, encrypt_sensitive_payload, normalized_remote_path, parent_collection_paths,
         scrub_connection_secrets, ConnectionSecretSnapshot, SensitiveSyncPayload,
     };
-    use crate::models::connection::{
-        ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType, SshTunnelConfig,
-    };
+    use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType, SshTunnelConfig};
 
     #[test]
     fn normalizes_empty_remote_path_to_default() {

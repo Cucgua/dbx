@@ -1228,8 +1228,7 @@ export default {
       partial: "Partially extracted",
       failed: "Extraction failed",
     },
-
-},
+  },
   visibleDatabases: {
     title: "Visible Databases",
     description: 'Choose which databases are shown under "{connection}".',

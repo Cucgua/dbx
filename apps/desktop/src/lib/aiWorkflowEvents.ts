@@ -91,20 +91,14 @@ export function createAiWorkflowEvent(input: AiWorkflowEventInput): AiWorkflowEv
   } as AiWorkflowEvent;
 }
 
-export function applyAiWorkflowEvent(
-  nodes: AiThoughtNodeState[],
-  event: AiWorkflowEvent,
-): AiThoughtNodeState[] {
+export function applyAiWorkflowEvent(nodes: AiThoughtNodeState[], event: AiWorkflowEvent): AiThoughtNodeState[] {
   const existing = findThoughtNode(nodes, event.nodeId);
   const nextNode = eventToThoughtNode(event, existing);
   if (!nextNode) return cloneThoughtNodes(nodes);
   return upsertThoughtNode(cloneThoughtNodes(nodes), nextNode);
 }
 
-function eventToThoughtNode(
-  event: AiWorkflowEvent,
-  existing?: AiThoughtNodeState,
-): AiThoughtNodeState | undefined {
+function eventToThoughtNode(event: AiWorkflowEvent, existing?: AiThoughtNodeState): AiThoughtNodeState | undefined {
   const base = existing || createDefaultThoughtNode(event);
   if (event.type === "node.start") {
     return {
@@ -210,10 +204,7 @@ function shouldExpandThoughtNode(status: AiWorkflowNodeStatus): boolean {
   return status === "loading" || status === "waiting" || status === "error";
 }
 
-function upsertThoughtNode(
-  nodes: AiThoughtNodeState[],
-  node: AiThoughtNodeState,
-): AiThoughtNodeState[] {
+function upsertThoughtNode(nodes: AiThoughtNodeState[], node: AiThoughtNodeState): AiThoughtNodeState[] {
   const withoutNode = removeThoughtNode(nodes, node.id);
   const adoptedChildren = collectDetachedChildren(withoutNode, node.id);
   const nodeWithChildren = mergeThoughtNodeChildren(node, adoptedChildren);
@@ -238,10 +229,7 @@ function upsertThoughtNode(
   return [...withoutAdoptedChildren, nodeWithChildren];
 }
 
-function collectDetachedChildren(
-  nodes: AiThoughtNodeState[],
-  parentId: string,
-): AiThoughtNodeState[] {
+function collectDetachedChildren(nodes: AiThoughtNodeState[], parentId: string): AiThoughtNodeState[] {
   const children: AiThoughtNodeState[] = [];
   for (const node of nodes) {
     if (node.parentId === parentId) children.push(node);
@@ -250,10 +238,7 @@ function collectDetachedChildren(
   return children;
 }
 
-function mergeThoughtNodeChildren(
-  node: AiThoughtNodeState,
-  adoptedChildren: AiThoughtNodeState[],
-): AiThoughtNodeState {
+function mergeThoughtNodeChildren(node: AiThoughtNodeState, adoptedChildren: AiThoughtNodeState[]): AiThoughtNodeState {
   if (!adoptedChildren.length) return node;
   const existingIds = new Set(node.children.map((child) => child.id));
   const children = [...node.children];
@@ -266,10 +251,7 @@ function mergeThoughtNodeChildren(
   };
 }
 
-function removeThoughtNode(
-  nodes: AiThoughtNodeState[],
-  nodeId: string,
-): AiThoughtNodeState[] {
+function removeThoughtNode(nodes: AiThoughtNodeState[], nodeId: string): AiThoughtNodeState[] {
   const result: AiThoughtNodeState[] = [];
   for (const node of nodes) {
     if (node.id === nodeId) continue;
@@ -281,10 +263,7 @@ function removeThoughtNode(
   return result;
 }
 
-function findThoughtNode(
-  nodes: AiThoughtNodeState[],
-  nodeId: string,
-): AiThoughtNodeState | undefined {
+function findThoughtNode(nodes: AiThoughtNodeState[], nodeId: string): AiThoughtNodeState | undefined {
   for (const node of nodes) {
     if (node.id === nodeId) return node;
     const child = findThoughtNode(node.children, nodeId);

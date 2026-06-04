@@ -446,7 +446,9 @@ export async function searchSchemaRag(_request: SearchSchemaRagRequest): Promise
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
-export async function searchTableColumnsRag(_request: SearchTableColumnsRagRequest): Promise<SchemaRagColumnSearchResult> {
+export async function searchTableColumnsRag(
+  _request: SearchTableColumnsRagRequest,
+): Promise<SchemaRagColumnSearchResult> {
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
@@ -464,7 +466,9 @@ export async function deleteSchemaRagIndex(_request: SchemaRagScopeRequest): Pro
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
-export async function listenSchemaRagProgress(_handler: (progress: SchemaRagProgressEvent) => void): Promise<UnlistenFn> {
+export async function listenSchemaRagProgress(
+  _handler: (progress: SchemaRagProgressEvent) => void,
+): Promise<UnlistenFn> {
   return () => {};
 }
 

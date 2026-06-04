@@ -1177,8 +1177,7 @@ export default {
       partial: "部分抽取",
       failed: "抽取失败",
     },
-
-},
+  },
   visibleDatabases: {
     title: "顯示資料庫",
     description: "選擇「{connection}」下要在側邊欄顯示的資料庫。",

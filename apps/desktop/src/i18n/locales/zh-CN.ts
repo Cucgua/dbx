@@ -1197,8 +1197,7 @@ export default {
       partial: "部分抽取",
       failed: "抽取失败",
     },
-
-},
+  },
   visibleDatabases: {
     title: "显示数据库",
     description: "选择「{connection}」下要在侧边栏显示的数据库。",

@@ -78,11 +78,7 @@ import { isSchemaAware } from "@/lib/databaseCapabilities";
 import { copyToClipboard } from "@/lib/clipboard";
 import { formatAiTableMention, parseAiTableMentions, type AiTableMention } from "@/lib/aiTableMentions";
 import { isAiPromptImeCompositionEvent, shouldSubmitAiPromptOnKeydown } from "@/lib/aiPromptKeyboard";
-import {
-  applyAiWorkflowEvent,
-  type AiThoughtNodeState,
-  type AiWorkflowEvent,
-} from "@/lib/aiWorkflowEvents";
+import { applyAiWorkflowEvent, type AiThoughtNodeState, type AiWorkflowEvent } from "@/lib/aiWorkflowEvents";
 
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -325,10 +321,7 @@ function appendAssistantWorkflowEvent(assistantIdx: number, event: AiWorkflowEve
   if (!msg) return;
   msg.workflowEvents = [...(msg.workflowEvents || []), event];
   msg.thoughtNodes = applyAiWorkflowEvent(msg.thoughtNodes || [], event);
-  msg.isThinking =
-    event.type !== "node.update" ||
-    event.status === "loading" ||
-    event.status === "waiting";
+  msg.isThinking = event.type !== "node.update" || event.status === "loading" || event.status === "waiting";
   scrollToBottom();
 }
 
@@ -1167,16 +1160,32 @@ const messageRenderer = computed(() => {
             </div>
           </div>
 
-          <div v-else-if="msg.content || msg.thoughtNodes?.length || msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking" class="flex">
+          <div
+            v-else-if="
+              msg.content ||
+              msg.thoughtNodes?.length ||
+              msg.timeline?.length ||
+              msg.reasoning ||
+              msg.toolTraces?.length ||
+              msg.isThinking
+            "
+            class="flex"
+          >
             <div class="max-w-[95%] text-xs leading-relaxed">
               <AiThoughtChain v-if="msg.thoughtNodes?.length" :nodes="msg.thoughtNodes" class="mb-2" />
-              <div v-else-if="msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking" class="mb-2">
+              <div
+                v-else-if="msg.timeline?.length || msg.reasoning || msg.toolTraces?.length || msg.isThinking"
+                class="mb-2"
+              >
                 <div class="space-y-1.5">
                   <div
                     v-for="item in msg.timeline || buildLegacyTimeline(msg.reasoning, msg.toolTraces) || []"
                     :key="item.id"
                   >
-                    <div v-if="item.kind === 'reasoning'" class="rounded border border-border/50 bg-background/35 px-2 py-1.5">
+                    <div
+                      v-if="item.kind === 'reasoning'"
+                      class="rounded border border-border/50 bg-background/35 px-2 py-1.5"
+                    >
                       <button
                         class="flex w-full items-center gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground transition-colors"
                         @click="toggleReasoning(i)"
@@ -1185,13 +1194,17 @@ const messageRenderer = computed(() => {
                           class="h-3 w-3 shrink-0 transition-transform duration-200"
                           :class="{ 'rotate-90': expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) }"
                         />
-                        <Loader2 v-if="isActiveReasoningTimelineItem(msg, item)" class="h-3 w-3 shrink-0 animate-spin" />
+                        <Loader2
+                          v-if="isActiveReasoningTimelineItem(msg, item)"
+                          class="h-3 w-3 shrink-0 animate-spin"
+                        />
                         <span>{{ t("ai.reasoningProcess") }}</span>
                       </button>
                       <div
                         class="overflow-hidden transition-all duration-200 ease-in-out"
                         :style="{
-                          maxHeight: expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) ? '12000px' : '0px',
+                          maxHeight:
+                            expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) ? '12000px' : '0px',
                           opacity: expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) ? '1' : '0',
                         }"
                       >
@@ -1213,7 +1226,9 @@ const messageRenderer = computed(() => {
                         <AlertTriangle v-else class="h-3 w-3 shrink-0 text-amber-500" />
                         <span class="shrink-0 font-medium text-foreground/75">{{ t("ai.toolCall") }}</span>
                         <span class="truncate font-mono">{{ item.toolTrace.name }}</span>
-                        <span class="shrink-0 text-[10px] opacity-70">{{ t(toolStatusLabelKey(item.toolTrace.status)) }}</span>
+                        <span class="shrink-0 text-[10px] opacity-70">{{
+                          t(toolStatusLabelKey(item.toolTrace.status))
+                        }}</span>
                       </div>
                       <div v-if="item.toolTrace.arguments" class="mt-1 break-words font-mono text-[10px] opacity-80">
                         {{ item.toolTrace.arguments }}
@@ -1228,14 +1243,13 @@ const messageRenderer = computed(() => {
                           class="rounded border border-border/45 bg-background/40 px-2 py-1"
                         >
                           <div class="flex min-w-0 items-center gap-1.5">
-                            <Check
-                              v-if="childTrace.status === 'success'"
-                              class="h-3 w-3 shrink-0 text-emerald-500"
-                            />
+                            <Check v-if="childTrace.status === 'success'" class="h-3 w-3 shrink-0 text-emerald-500" />
                             <AlertTriangle v-else class="h-3 w-3 shrink-0 text-amber-500" />
                             <span class="shrink-0 text-[10px] text-foreground/70">{{ t("ai.toolCall") }}</span>
                             <span class="truncate font-mono text-[10px]">{{ childTrace.name }}</span>
-                            <span class="shrink-0 text-[10px] opacity-70">{{ t(toolStatusLabelKey(childTrace.status)) }}</span>
+                            <span class="shrink-0 text-[10px] opacity-70">{{
+                              t(toolStatusLabelKey(childTrace.status))
+                            }}</span>
                           </div>
                           <div v-if="childTrace.arguments" class="mt-1 break-words font-mono text-[10px] opacity-75">
                             {{ childTrace.arguments }}
@@ -1379,7 +1393,11 @@ const messageRenderer = computed(() => {
                 type="button"
                 size="sm"
                 class="h-7 px-2 text-xs"
-                :disabled="pendingTableChoice.manualMode ? !pendingTableChoice.manualTable.trim() : !pendingTableChoice.selectedKey"
+                :disabled="
+                  pendingTableChoice.manualMode
+                    ? !pendingTableChoice.manualTable.trim()
+                    : !pendingTableChoice.selectedKey
+                "
                 @click="confirmPendingTableChoice"
               >
                 {{ t("ai.confirmChoice") }}
@@ -1394,7 +1412,9 @@ const messageRenderer = computed(() => {
             <span class="truncate">{{ t("ai.columnChoiceTitle") }}</span>
           </div>
           <div class="mb-2 text-[11px] text-muted-foreground">
-            <span class="font-mono">{{ pendingColumnChoice.request.schema }}.{{ pendingColumnChoice.request.table }}</span>
+            <span class="font-mono"
+              >{{ pendingColumnChoice.request.schema }}.{{ pendingColumnChoice.request.table }}</span
+            >
             <span class="mx-1">·</span>
             <span>{{ pendingColumnChoice.request.question }}</span>
             <span v-if="pendingColumnChoice.request.reason"> · {{ pendingColumnChoice.request.reason }}</span>
@@ -1479,9 +1499,13 @@ const messageRenderer = computed(() => {
             <span class="truncate">{{ t("ai.relationConfirmTitle") }}</span>
           </div>
           <div class="mb-2 text-[11px] text-muted-foreground">
-            <span class="font-mono">{{ pendingRelation.request.left.schema }}.{{ pendingRelation.request.left.table }}</span>
+            <span class="font-mono"
+              >{{ pendingRelation.request.left.schema }}.{{ pendingRelation.request.left.table }}</span
+            >
             <span class="mx-1">↔</span>
-            <span class="font-mono">{{ pendingRelation.request.right.schema }}.{{ pendingRelation.request.right.table }}</span>
+            <span class="font-mono"
+              >{{ pendingRelation.request.right.schema }}.{{ pendingRelation.request.right.table }}</span
+            >
             <span v-if="pendingRelation.request.reason"> · {{ pendingRelation.request.reason }}</span>
           </div>
           <div class="space-y-1.5">

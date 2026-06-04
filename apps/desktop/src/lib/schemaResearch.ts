@@ -344,7 +344,8 @@ function normalizeRelations(value: unknown): SchemaEvidenceRelation[] {
     ) {
       continue;
     }
-    const key = `${relation.leftSchema}.${relation.leftTable}.${relation.leftColumn}:${relation.rightSchema}.${relation.rightTable}.${relation.rightColumn}`.toLowerCase();
+    const key =
+      `${relation.leftSchema}.${relation.leftTable}.${relation.leftColumn}:${relation.rightSchema}.${relation.rightTable}.${relation.rightColumn}`.toLowerCase();
     if (!unique.has(key)) unique.set(key, relation);
   }
   return [...unique.values()];

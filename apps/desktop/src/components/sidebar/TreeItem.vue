@@ -125,7 +125,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import LightTooltip from "@/components/ui/LightTooltip.vue";
-import { findSchemaRagTableUnit, type SchemaRagApiDocExtraction, type SchemaRagScopeRequest, type SchemaRagStatus } from "@/lib/schemaRag";
+import {
+  findSchemaRagTableUnit,
+  type SchemaRagApiDocExtraction,
+  type SchemaRagScopeRequest,
+  type SchemaRagStatus,
+} from "@/lib/schemaRag";
 import {
   apiDocSourceId,
   buildApiDocExtractionRequest,
@@ -846,11 +851,14 @@ function formatSchemaRagProgress(progress: any): string {
     case "finished":
       return t("contextMenu.schemaRagProgressFinished");
     default:
-      return progress.message || t("contextMenu.schemaRagProgress", {
-        done: progress.done,
-        total: progress.total,
-        table: progress.table || "",
-      });
+      return (
+        progress.message ||
+        t("contextMenu.schemaRagProgress", {
+          done: progress.done,
+          total: progress.total,
+          table: progress.table || "",
+        })
+      );
   }
 }
 
@@ -1001,7 +1009,9 @@ async function importSchemaRagApiDocs() {
     );
   } catch (e: any) {
     updateSchemaDocImportProgress({ stage: "failed" });
-    appendSchemaDocImportProgressLog(t("contextMenu.schemaRagApiDocProgressFailed", { message: e?.message || String(e) }));
+    appendSchemaDocImportProgressLog(
+      t("contextMenu.schemaRagApiDocProgressFailed", { message: e?.message || String(e) }),
+    );
     toast(t("contextMenu.schemaRagOperationFailed", { message: e?.message || String(e) }), 6000);
   } finally {
     schemaRagBusy.value = "";
@@ -1067,7 +1077,9 @@ async function extractApiDocFactsForImport(
         }),
       );
     } catch (error) {
-      extractions.push(emptyFailedApiDocExtraction(sourceId, error instanceof Error ? error.message : String(error || "")));
+      extractions.push(
+        emptyFailedApiDocExtraction(sourceId, error instanceof Error ? error.message : String(error || "")),
+      );
       updateSchemaDocImportProgress({
         processedFiles: index + 1,
         failedFiles: schemaDocImportProgress.value.failedFiles + 1,
@@ -3203,9 +3215,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
             </div>
             <div>
               <div class="text-muted-foreground">{{ t("contextMenu.schemaRagApiDocProgressConceptFacts") }}</div>
-              <div>
-                {{ schemaDocImportProgress.businessConcepts }} / {{ schemaDocImportProgress.joinCandidates }}
-              </div>
+              <div>{{ schemaDocImportProgress.businessConcepts }} / {{ schemaDocImportProgress.joinCandidates }}</div>
             </div>
           </div>
           <div v-if="schemaDocImportProgress.logs.length" class="space-y-1">
@@ -3224,10 +3234,16 @@ function treeItemMenuItems(): ContextMenuItem[] {
         <p v-else-if="schemaRagStatusError" class="text-destructive">{{ schemaRagStatusError }}</p>
         <div v-else-if="schemaRagStatus?.indexed && schemaRagStatus.manifest" class="space-y-2">
           <div v-if="schemaRagStatusTable" class="space-y-2">
-            <div v-if="selectedSchemaRagTableUnit" class="grid grid-cols-2 gap-2 rounded-md border bg-muted/20 p-3 text-xs">
+            <div
+              v-if="selectedSchemaRagTableUnit"
+              class="grid grid-cols-2 gap-2 rounded-md border bg-muted/20 p-3 text-xs"
+            >
               <div>
                 <div class="text-muted-foreground">{{ t("contextMenu.schemaRagTableName") }}</div>
-                <div class="truncate" :title="`${selectedSchemaRagTableUnit.schema}.${selectedSchemaRagTableUnit.table}`">
+                <div
+                  class="truncate"
+                  :title="`${selectedSchemaRagTableUnit.schema}.${selectedSchemaRagTableUnit.table}`"
+                >
                   {{ selectedSchemaRagTableUnit.schema }}.{{ selectedSchemaRagTableUnit.table }}
                 </div>
               </div>
@@ -3293,11 +3309,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
           <div v-if="!schemaRagStatusTable && schemaRagStatus.manifest.apiDocSources?.length" class="space-y-1">
             <div class="text-xs text-muted-foreground">{{ t("contextMenu.schemaRagApiDocSources") }}</div>
             <div class="max-h-24 space-y-1 overflow-auto rounded-md border bg-muted/20 p-2 text-xs">
-              <div
-                v-for="source in schemaRagStatus.manifest.apiDocSources"
-                :key="source.sourceId"
-                class="space-y-0.5"
-              >
+              <div v-for="source in schemaRagStatus.manifest.apiDocSources" :key="source.sourceId" class="space-y-0.5">
                 <div class="flex items-center justify-between gap-2">
                   <span class="truncate" :title="source.sourcePath">{{ source.sourcePath }}</span>
                   <span class="shrink-0 text-muted-foreground">
