@@ -429,6 +429,7 @@ impl ConnectionConfig {
                         suffix.push_str("&directConnection=true");
                     }
                 }
+                let db_part = mongo_url_database_part(self.effective_database(), !suffix.is_empty());
                 format!("mongodb://{host}:{port}{db_part}{suffix}")
             }
             DatabaseType::Oracle => format!("oracle://{host}:{port}{db_part}"),
@@ -532,6 +533,7 @@ impl ConnectionConfig {
                         suffix.push_str("&directConnection=true");
                     }
                 }
+                let db_part = mongo_url_database_part(self.effective_database(), !suffix.is_empty());
                 if self.username.is_empty() {
                     format!("mongodb://{host}:{port}{db_part}{suffix}")
                 } else {
@@ -692,6 +694,17 @@ fn url_params_contains_flag(params: Option<&str>, key: &str, expected: &str) -> 
     params.unwrap_or("").trim().trim_start_matches('?').split(['&', ';']).filter_map(|part| part.split_once('=')).any(
         |(part_key, value)| part_key.trim().eq_ignore_ascii_case(key) && value.trim().eq_ignore_ascii_case(expected),
     )
+}
+
+fn mongo_url_database_part(database: Option<&str>, has_query_options: bool) -> String {
+    if let Some(database) = database.filter(|database| !database.trim().is_empty()) {
+        return format!("/{}", encode_url_part(database));
+    }
+    if has_query_options {
+        "/".to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn normalize_bare_mysql_url_params(value: &str) -> String {
@@ -1653,6 +1666,14 @@ mod tests {
     }
 
     #[test]
+    fn mongodb_params_without_database_use_required_path_separator() {
+        let mut config = mongodb_config("root", "secret", None);
+        config.url_params = Some("authSource=admin".to_string());
+
+        assert_eq!(config.connection_url(), "mongodb://root:secret@10.1.2.3:17000/?authSource=admin");
+    }
+
+    #[test]
     fn redacted_mysql_url_omits_credentials() {
         let config = mysql_config("user@tenant#cluster", "p@ss:word#1", Some("db/name"));
 
@@ -1717,6 +1738,18 @@ mod tests {
         let url = config.redacted_connection_url();
 
         assert_eq!(url, "mongodb://10.1.2.3:17000/admin?authSource=admin&authMechanism=SCRAM-SHA-1");
+        assert!(!url.contains("root"));
+        assert!(!url.contains("secret"));
+    }
+
+    #[test]
+    fn redacted_mongodb_params_without_database_use_required_path_separator() {
+        let mut config = mongodb_config("root", "secret", None);
+        config.url_params = Some("authSource=admin".to_string());
+
+        let url = config.redacted_connection_url();
+
+        assert_eq!(url, "mongodb://10.1.2.3:17000/?authSource=admin");
         assert!(!url.contains("root"));
         assert!(!url.contains("secret"));
     }

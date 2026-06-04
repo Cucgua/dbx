@@ -7,8 +7,8 @@ pub use dbx_core::agent_connection::{
 };
 pub use dbx_core::connection::{
     connect_bare_metadata_pool, connect_mysql_metadata_pool, connection_url_for_endpoint, expand_tilde,
-    metadata_connection_config, probe_connection_endpoint, redacted_connection_url_for_endpoint, AppState, MysqlMode,
-    OraclePool, PoolKind,
+    metadata_connection_config, probe_connection_endpoint, redacted_connection_url_for_endpoint,
+    should_fallback_mongo_to_legacy_agent, uses_agent_connection_runtime, AppState, MysqlMode, OraclePool, PoolKind,
 };
 use dbx_core::database_capabilities;
 use dbx_core::db;
@@ -347,7 +347,7 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                     }
                     Err(e) => e,
                 };
-                if native_err.contains("wire version") {
+                if should_fallback_mongo_to_legacy_agent(&native_err) {
                     let am = &state.agent_manager;
                     let mut client = am.spawn(&config.db_type, config.driver_profile.as_deref()).await?;
                     client
@@ -373,6 +373,9 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                 db::clickhouse_driver::test_connection(&client, connect_timeout)
                     .await
                     .map(|_| "Connection successful".to_string())
+            }
+            DatabaseType::Oracle if uses_agent_connection_runtime(&config) => {
+                test_agent_connection(state.inner(), &config, &host, port).await
             }
             DatabaseType::Oracle => {
                 let app_settings =
@@ -510,7 +513,7 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
                 }
                 Err(e) => e,
             };
-            if native_err.contains("wire version") {
+            if should_fallback_mongo_to_legacy_agent(&native_err) {
                 log::info!("Native MongoDB driver failed ({native_err}), falling back to agent driver");
                 let mut client =
                     state.agent_manager.spawn(&db_config.db_type, db_config.driver_profile.as_deref()).await?;
@@ -545,6 +548,9 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
             )
             .await?;
             PoolKind::SqlServer(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
+        }
+        DatabaseType::Oracle if uses_agent_connection_runtime(&db_config) => {
+            connect_agent_pool(state.inner(), &db_config, &host, port).await?
         }
         DatabaseType::Oracle => {
             let app_settings =

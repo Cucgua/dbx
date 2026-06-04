@@ -115,6 +115,20 @@ pub fn database_connection_config(config: &ConnectionConfig, database: Option<&s
     db_config
 }
 
+pub fn uses_agent_connection_runtime(config: &ConnectionConfig) -> bool {
+    match config.db_type {
+        DatabaseType::Oracle => database_capabilities::agent_key(&config.db_type, config.driver_profile.as_deref())
+            .is_some_and(|key| key != "oracle"),
+        DatabaseType::MongoDb => false,
+        _ => database_capabilities::is_agent_type(&config.db_type),
+    }
+}
+
+pub fn should_fallback_mongo_to_legacy_agent(error: &str) -> bool {
+    let error = error.to_lowercase();
+    error.contains("wire version") || error.contains("unexpected end of file")
+}
+
 pub async fn connect_mysql_metadata_pool(
     config: &ConnectionConfig,
     db_config: &ConnectionConfig,
@@ -410,7 +424,7 @@ impl AppState {
                     },
                     Err(e) => e,
                 };
-                if native_err.contains("wire version") {
+                if should_fallback_mongo_to_legacy_agent(&native_err) {
                     log::info!("Native MongoDB driver failed ({native_err}), falling back to agent driver");
                     let connect_params = serde_json::json!({ "connection": agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or("")) });
                     let mut client = self.agent_manager.spawn(&DatabaseType::MongoDb, None).await?;
@@ -445,62 +459,7 @@ impl AppState {
                 .await?;
                 PoolKind::SqlServer(Arc::new(tokio::sync::Mutex::new(client)))
             }
-            DatabaseType::Oracle => {
-                let pool = if db_config.is_oracle_oci() {
-                    let client =
-                        db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()).await?;
-                    OraclePool::new(vec![client])
-                } else {
-                    let (first, second, third) = tokio::try_join!(
-                        db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()),
-                        db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()),
-                        db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()),
-                    )?;
-                    OraclePool::new(vec![first, second, third])
-                };
-                PoolKind::Oracle(Arc::new(pool))
-            }
-            DatabaseType::Elasticsearch => {
-                let mut client = db::elasticsearch_driver::EsClient::from_config(
-                    &url,
-                    Some(&db_config.username),
-                    Some(&db_config.password),
-                    db_config.ssl,
-                    db_config.url_params.as_deref(),
-                    connect_timeout,
-                );
-                db::elasticsearch_driver::test_connection(&mut client, connect_timeout).await?;
-                PoolKind::Elasticsearch(client)
-            }
-            DatabaseType::Dameng
-            | DatabaseType::Kingbase
-            | DatabaseType::Highgo
-            | DatabaseType::Vastbase
-            | DatabaseType::Goldendb
-            | DatabaseType::Yashandb
-            | DatabaseType::Databricks
-            | DatabaseType::SapHana
-            | DatabaseType::Teradata
-            | DatabaseType::Vertica
-            | DatabaseType::Firebird
-            | DatabaseType::Exasol
-            | DatabaseType::OceanbaseOracle
-            | DatabaseType::Gbase
-            | DatabaseType::H2
-            | DatabaseType::Snowflake
-            | DatabaseType::Trino
-            | DatabaseType::Hive
-            | DatabaseType::Db2
-            | DatabaseType::Informix
-            | DatabaseType::Neo4j
-            | DatabaseType::Cassandra
-            | DatabaseType::Bigquery
-            | DatabaseType::Kylin
-            | DatabaseType::Sundb
-            | DatabaseType::Tdengine
-            | DatabaseType::Xugu
-            | DatabaseType::Iris
-            | DatabaseType::Access => {
+            _ if uses_agent_connection_runtime(&db_config) => {
                 let connect_params =
                     agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or(""));
                 let mut client =
@@ -570,6 +529,33 @@ impl AppState {
                 }
                 PoolKind::Agent(Arc::new(tokio::sync::Mutex::new(client)))
             }
+            DatabaseType::Oracle => {
+                let pool = if db_config.is_oracle_oci() {
+                    let client =
+                        db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()).await?;
+                    OraclePool::new(vec![client])
+                } else {
+                    let (first, second, third) = tokio::try_join!(
+                        db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()),
+                        db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()),
+                        db::oracle_driver::connect_config(&db_config, &host, port, app_settings.as_ref()),
+                    )?;
+                    OraclePool::new(vec![first, second, third])
+                };
+                PoolKind::Oracle(Arc::new(pool))
+            }
+            DatabaseType::Elasticsearch => {
+                let mut client = db::elasticsearch_driver::EsClient::from_config(
+                    &url,
+                    Some(&db_config.username),
+                    Some(&db_config.password),
+                    db_config.ssl,
+                    db_config.url_params.as_deref(),
+                    connect_timeout,
+                );
+                db::elasticsearch_driver::test_connection(&mut client, connect_timeout).await?;
+                PoolKind::Elasticsearch(client)
+            }
             DatabaseType::Jdbc => {
                 let mut jdbc_config = db_config.clone();
                 if host != config.host || port != config.port {
@@ -579,6 +565,7 @@ impl AppState {
                 }
                 self.external_driver_pool("jdbc", &jdbc_config).await?
             }
+            db_type => return Err(format!("Unsupported database type: {db_type:?}")),
         };
 
         self.connections.write().await.insert(pool_key.clone(), pool);
@@ -1145,7 +1132,8 @@ async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &db::mysql::MySq
 mod tests {
     use super::{
         connection_url_for_endpoint, database_connection_config, metadata_connection_config,
-        mysql_metadata_fallback_url, redacted_connection_url_for_endpoint, uses_tcp_probe, AppState, PoolKind,
+        mysql_metadata_fallback_url, redacted_connection_url_for_endpoint, should_fallback_mongo_to_legacy_agent,
+        uses_agent_connection_runtime, uses_tcp_probe, AppState, PoolKind,
     };
     use crate::agent_connection::{
         agent_connect_params, mongo_legacy_error_with_auth_hint, oracle_alternate_connect_config,
@@ -1247,6 +1235,22 @@ mod tests {
     }
 
     #[test]
+    fn agent_connect_params_build_mongodb_params_without_database_connection_string() {
+        let mut config = mysql_config(None);
+        config.db_type = DatabaseType::MongoDb;
+        config.host = "172.22.4.42".to_string();
+        config.port = 27017;
+        config.username = "mongouser".to_string();
+        config.password = "secret".to_string();
+        config.url_params = Some("authSource=admin".to_string());
+
+        let params = agent_connect_params(&config, "172.22.4.42", 27017, "");
+
+        assert_eq!(params["database"], "admin");
+        assert_eq!(params["connection_string"], "mongodb://mongouser:secret@172.22.4.42:27017/?authSource=admin");
+    }
+
+    #[test]
     fn agent_connect_params_mongodb_uses_connection_string_database_when_database_is_empty() {
         let mut config = mysql_config(None);
         config.db_type = DatabaseType::MongoDb;
@@ -1266,6 +1270,15 @@ mod tests {
             mongo_legacy_error_with_auth_hint(err),
             "Agent RPC error: Exception authenticating MongoCredential{mechanism=SCRAM-SHA-1, userName='rwuser', source='gray_lite_twin_fat'}\n\nCurrent authentication database: gray_lite_twin_fat. If this user was created in admin, set Authentication database to admin or add authSource=admin to URL params."
         );
+    }
+
+    #[test]
+    fn mongo_native_eof_errors_use_legacy_agent_fallback() {
+        let eof_error = r#"MongoDB connection failed: Kind: Server selection timeout: No available servers. Topology: { Type: Unknown, Servers: [ { Address: 10.67.78.92:28001, Type: Unknown, Error: Kind: I/O error: unexpected end of file, labels: {"SystemOverloadedError", "RetryableError"}, source: None, server response: None } ] }"#;
+
+        assert!(should_fallback_mongo_to_legacy_agent(eof_error));
+        assert!(should_fallback_mongo_to_legacy_agent("Server at 127.0.0.1 reports maximum wire version 2"));
+        assert!(!should_fallback_mongo_to_legacy_agent("MongoDB connection failed: Authentication failed."));
     }
 
     #[test]
@@ -1349,6 +1362,27 @@ mod tests {
         let params = agent_connect_params(&config, "127.0.0.1", 11521, "ORCL");
 
         assert_eq!(params["connection_string"], "jdbc:oracle:thin:@//127.0.0.1:11521/ORCL");
+    }
+
+    #[test]
+    fn oracle_legacy_profiles_use_agent_runtime() {
+        let mut config = mysql_config(Some("ORCL"));
+        config.db_type = DatabaseType::Oracle;
+
+        config.driver_profile = None;
+        assert!(!uses_agent_connection_runtime(&config));
+
+        config.driver_profile = Some("oracle".to_string());
+        assert!(!uses_agent_connection_runtime(&config));
+
+        config.driver_profile = Some("oracle_oci".to_string());
+        assert!(!uses_agent_connection_runtime(&config));
+
+        config.driver_profile = Some("oracle-legacy".to_string());
+        assert!(uses_agent_connection_runtime(&config));
+
+        config.driver_profile = Some("oracle-10g".to_string());
+        assert!(uses_agent_connection_runtime(&config));
     }
 
     #[test]
