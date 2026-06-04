@@ -452,7 +452,8 @@ function identifierRangeAt(sql: string, pos: number): { from: number; to: number
 }
 
 function completionCacheKey(table: { name: string; schema?: string | null }) {
-  return table.schema ? `${table.schema}.${table.name}` : table.name;
+  const schema = table.schema ?? props.schema;
+  return schema ? `${schema}.${table.name}` : table.name;
 }
 
 function withActiveSchema<T extends { name: string; schema?: string | null }>(table: T): T {
@@ -477,7 +478,7 @@ async function ensureColumnsForTable(table: { name: string; schema?: string | nu
 async function ensureForeignKeysForTable(table: { name: string; schema?: string | null }) {
   const cacheKey = completionCacheKey(table);
   if (cachedForeignKeysByTable.has(cacheKey) || !props.connectionId || props.database == null) return;
-  const querySchema = table.schema ?? props.database;
+  const querySchema = table.schema ?? props.schema ?? props.database;
   try {
     const foreignKeys = await api.listForeignKeys(props.connectionId, props.database, querySchema, table.name);
     cachedForeignKeysByTable.set(
@@ -708,6 +709,7 @@ async function enrichSemanticDiagnosticTables(tables: SqlTableReference[]) {
         props.database,
         table.name,
         MAX_COMPLETION_TABLES,
+        props.schema,
       );
       cachedTables = [...cachedTables, ...matches];
       const match = matches.find((item) => item.name.toLowerCase() === table.name.toLowerCase());
@@ -1027,12 +1029,13 @@ async function performAsyncCompletionWithResult(
         props.connectionId!,
         props.database!,
         completionContext.insertTable,
-        completionContext.insertSchema,
+        completionContext.insertSchema ?? props.schema,
       );
       if (epoch !== completionEpoch) return null;
       if (insertCols.length > 0) {
-        const insertKey = completionContext.insertSchema
-          ? `${completionContext.insertSchema}.${completionContext.insertTable}`
+        const insertSchema = completionContext.insertSchema ?? props.schema;
+        const insertKey = insertSchema
+          ? `${insertSchema}.${completionContext.insertTable}`
           : completionContext.insertTable;
         insertColumnsByTable.set(insertKey, insertCols);
       }
@@ -1065,6 +1068,7 @@ async function performAsyncCompletionWithResult(
         props.database!,
         completionContext.qualifier || completionContext.prefix,
         MAX_COMPLETION_TABLES,
+        props.schema,
       )
     : cachedCompletionObjects;
   if (epoch !== completionEpoch) return null;
@@ -1737,6 +1741,8 @@ watch(
   () => props.schema,
   () => {
     refreshCompletionCache();
+    setSemanticDiagnostics([]);
+    scheduleSemanticDiagnostics();
   },
 );
 

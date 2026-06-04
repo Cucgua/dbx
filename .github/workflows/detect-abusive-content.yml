@@ -51,31 +51,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'issues'
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Evaluate issue content
         id: check
-        run: |
-          python3 - <<'PYEOF'
-          import json
-          import os
-          import re
-
-          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
-              event = json.load(f)
-
-          issue = event["issue"]
-          text = "\n".join([
-              issue.get("title") or "",
-              issue.get("body") or "",
-          ])
-
-          # Keep this intentionally narrow. It only matches "刷星" and
-          # case-insensitive variants of "刷star", including optional spaces.
-          matched = re.search(r"刷\s*(?:星|star)", text, re.IGNORECASE) is not None
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"matched={'true' if matched else 'false'}\n")
-              f.write(f"issue_number={issue['number']}\n")
-          PYEOF
+        run: bash .github/scripts/evaluate-issue-content.sh
 
       - name: Apply issue policy
         if: steps.check.outputs.matched == 'true'

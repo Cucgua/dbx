@@ -2183,7 +2183,14 @@ function openExternalUrl(url: string) {
                     <div class="grid grid-cols-4 items-center gap-4">
                       <Label class="text-right">{{ t("connection.host") }}</Label>
                       <Input v-model="form.host" class="col-span-2" />
-                      <Input v-model.number="form.port" type="number" class="col-span-1" />
+                      <Input v-model.number="form.port" type="number" class="col-span-1" :disabled="form.ssl" />
+                    </div>
+                    <div class="grid grid-cols-4 items-center gap-4">
+                      <span />
+                      <label class="col-span-3 flex items-center gap-2 text-sm">
+                        <input type="checkbox" v-model="form.ssl" class="mr-0" />
+                        <span>SRV (MongoDB Atlas)</span>
+                      </label>
                     </div>
                     <div class="grid grid-cols-4 items-center gap-4">
                       <Label class="text-right">{{ t("connection.user") }}</Label>

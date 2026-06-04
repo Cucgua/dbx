@@ -130,8 +130,11 @@ function removeGlobalListeners() {
   document.removeEventListener("contextmenu", close, true);
 }
 
+const slots = defineSlots<{ default(): any; content?(): any }>();
+const hasContent = computed(() => !!props.text || !!slots.content);
+
 function open() {
-  if (isDisabled() || !props.text) return;
+  if (isDisabled() || !hasContent.value) return;
   if (!isTriggerActive()) return;
   updatePosition();
   show.value = true;
@@ -139,7 +142,7 @@ function open() {
 }
 
 function scheduleOpen() {
-  if (isDisabled() || !props.text) return;
+  if (isDisabled() || !hasContent.value) return;
   clearTimer();
   timer = setTimeout(open, props.delay);
 }
@@ -169,12 +172,15 @@ watch(
   <Teleport to="body">
     <div
       v-if="show"
-      class="pointer-events-none fixed z-50 inline-flex w-fit max-w-xs items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-xs text-background"
-      :class="tooltipTransformClass"
+      class="pointer-events-none fixed z-50 rounded-md bg-foreground text-xs text-background"
+      :class="[
+        slots.content ? '' : 'inline-flex w-fit max-w-xs items-center gap-1.5 px-3 py-1.5',
+        tooltipTransformClass,
+      ]"
       :style="{ left: `${x}px`, top: `${y}px` }"
       role="tooltip"
     >
-      {{ text }}
+      <slot name="content">{{ text }}</slot>
       <span :class="[arrowClass, 'size-2.5 rotate-45 rounded-[2px] bg-foreground']" aria-hidden="true" />
     </div>
   </Teleport>

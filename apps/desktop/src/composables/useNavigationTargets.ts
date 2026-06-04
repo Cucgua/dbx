@@ -23,7 +23,20 @@ async function openTableTarget(target: NavigationTarget) {
   connectionStore.activeConnectionId = target.connectionId;
   const config = connectionStore.getConfig(target.connectionId);
   const tabTitle = target.schema ? `${target.schema}.${target.tableName}` : target.tableName;
-  const tabId = queryStore.createTab(target.connectionId, target.database, tabTitle, "data", target.schema);
+  const tabId = (() => {
+    if (settingsStore.editorSettings.reuseDataTab) {
+      const existing = queryStore.tabs.find(
+        (tab) => tab.mode === "data" && tab.connectionId === target.connectionId && tab.database === target.database,
+      );
+      if (existing) {
+        existing.title = tabTitle;
+        existing.schema = target.schema;
+        queryStore.activeTabId = existing.id;
+        return existing.id;
+      }
+    }
+    return queryStore.createTab(target.connectionId, target.database, tabTitle, "data", target.schema);
+  })();
   queryStore.setExecuting(tabId, true);
 
   try {

@@ -1730,6 +1730,8 @@ export default {
       "關閉資料表資料、物件瀏覽和結構等分頁，保留 SQL 查詢分頁與 SQL 文字，同時清理執行狀態與結果工作階段。",
     disconnectTabHandlingModeKeepTabsKeepResults: "不關閉相關分頁",
     disconnectTabHandlingModeKeepTabsKeepResultsDescription: "保留相關分頁、SQL 文字與目前結果，不另外做清理。",
+    reuseDataTab: "重複使用資料分頁",
+    reuseDataTabDescription: "點擊側邊欄資料表名稱時，重複使用現有的資料分頁而不是建立新分頁，避免開啟過多分頁。",
     sidebarHiddenTablePrefixes: "隱藏資料表名稱字首",
     sidebarHiddenTablePrefixesDescription:
       "每行一個字首。只縮短側邊欄中的資料表、檢視和集合標籤；工具提示和實際操作仍使用完整名稱。",

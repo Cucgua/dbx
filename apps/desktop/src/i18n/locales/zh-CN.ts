@@ -1752,6 +1752,8 @@ export default {
       "关闭表数据、对象浏览和结构等页签，保留 SQL 查询页签和 SQL 文本，同时清理执行状态与结果会话。",
     disconnectTabHandlingModeKeepTabsKeepResults: "不关闭相关页签",
     disconnectTabHandlingModeKeepTabsKeepResultsDescription: "保留相关页签、SQL 文本和当前结果，不做额外处理。",
+    reuseDataTab: "复用数据标签页",
+    reuseDataTabDescription: "单击侧边栏表名时，复用已有的数据标签页而不是创建新标签页，避免打开过多标签。",
     sidebarHiddenTablePrefixes: "隐藏表名前缀",
     sidebarHiddenTablePrefixesDescription:
       "每行一个前缀，仅影响侧边栏表、视图和集合的显示名称，悬浮提示和实际操作仍使用完整名称。",

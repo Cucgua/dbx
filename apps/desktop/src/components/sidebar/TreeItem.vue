@@ -531,7 +531,20 @@ async function openData() {
     table: node.label,
     dbType: config?.db_type,
   });
-  const tabId = queryStore.createTab(node.connectionId, node.database, node.label, "data", node.schema);
+  const tabId = (() => {
+    if (settingsStore.editorSettings.reuseDataTab) {
+      const existing = queryStore.tabs.find(
+        (tab) => tab.mode === "data" && tab.connectionId === node.connectionId && tab.database === node.database,
+      );
+      if (existing) {
+        existing.title = node.label;
+        existing.schema = node.schema;
+        queryStore.activeTabId = existing.id;
+        return existing.id;
+      }
+    }
+    return queryStore.createTab(node.connectionId, node.database, node.label, "data", node.schema);
+  })();
   console.info("[DBX][openData:tab-created]", { traceId, tabId, elapsed: elapsed() });
   queryStore.setExecuting(tabId, true);
 

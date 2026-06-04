@@ -70,6 +70,41 @@ impl<'a> FromSql<'a> for PgAnyString {
     }
 }
 
+/// A `FromSql` adapter that accepts any PostgreSQL type and returns the raw
+/// bytes unchanged. Used to decode custom types like pgvector whose binary
+/// format we handle ourselves.
+struct PgRawBytes(Vec<u8>);
+
+impl<'a> FromSql<'a> for PgRawBytes {
+    fn from_sql(_: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        Ok(PgRawBytes(raw.to_vec()))
+    }
+
+    fn accepts(_: &Type) -> bool {
+        true
+    }
+}
+
+/// Decode pgvector binary format into a Vec<f32>.
+///
+/// pgvector binary layout (big-endian):
+/// - 2 bytes: dimensions (uint16)
+/// - 2 bytes: unused (padding)
+/// - N*4 bytes: IEEE 754 f32 values
+fn decode_pgvector_bytes(raw: &[u8]) -> Option<Vec<f32>> {
+    if raw.len() < 4 {
+        return None;
+    }
+    let dims = u16::from_be_bytes([raw[0], raw[1]]) as usize;
+    let expected_len = 4 + dims * 4;
+    if raw.len() != expected_len {
+        return None;
+    }
+    let floats: Vec<f32> =
+        raw[4..].chunks_exact(4).map(|chunk| f32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect();
+    Some(floats)
+}
+
 fn pg_u32_number(v: u32) -> serde_json::Value {
     serde_json::Value::Number(serde_json::Number::from(v))
 }
@@ -205,6 +240,24 @@ fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value
 
     if upper.starts_with('_') {
         return pg_array_to_json_value(row, idx).unwrap_or(serde_json::Value::Null);
+    }
+
+    if upper == "VECTOR" || upper.starts_with("VECTOR(") {
+        if let Ok(PgRawBytes(raw)) = row.try_get::<_, PgRawBytes>(idx) {
+            if let Some(floats) = decode_pgvector_bytes(&raw) {
+                return serde_json::Value::Array(
+                    floats
+                        .into_iter()
+                        .map(|v| {
+                            serde_json::Number::from_f64((v as f64 * 1_000_000.0).round() / 1_000_000.0)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or(serde_json::Value::Null)
+                        })
+                        .collect(),
+                );
+            }
+        }
+        return serde_json::Value::Null;
     }
 
     row.try_get::<_, String>(idx)

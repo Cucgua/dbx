@@ -41,6 +41,7 @@ import { useTheme } from "@/composables/useTheme";
 import { useToast } from "@/composables/useToast";
 import { type SqlHighlighter, createShikiSqlHighlighter } from "@/lib/sqlHighlighter";
 import { copyToClipboard } from "@/lib/clipboard";
+import { queryTimeoutSecsForConnection } from "@/lib/queryTimeout";
 import { type EditableStructureColumn, type EditableStructureIndex } from "@/lib/tableStructureEditorSql";
 import { getTableStructureCapabilities } from "@/lib/tableStructureCapabilities";
 import {
@@ -676,7 +677,15 @@ async function applyChanges() {
   const sql = previewSqlText.value;
   const startedAt = Date.now();
   try {
-    const result = await api.executeBatch(props.connectionId, props.database, pendingStatements.value);
+    const connection = store.getConfig(props.connectionId);
+    const timeoutSecs = queryTimeoutSecsForConnection(connection);
+    const result = await api.executeBatch(
+      props.connectionId,
+      props.database,
+      pendingStatements.value,
+      props.schema,
+      timeoutSecs,
+    );
     await recordStructureHistory(sql, startedAt, true, result);
     toast(t("structureEditor.saved"), 2500);
     emit("saved", tableComment.value !== originalTableComment.value);

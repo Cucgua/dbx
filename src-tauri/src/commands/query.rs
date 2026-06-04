@@ -145,8 +145,10 @@ pub async fn execute_batch(
     database: String,
     statements: Vec<String>,
     schema: Option<String>,
+    timeout_secs: Option<u64>,
 ) -> Result<db::QueryResult, String> {
-    dbx_core::query::execute_statements(&state, &connection_id, &database, &statements, schema.as_deref()).await
+    dbx_core::query::execute_statements(&state, &connection_id, &database, &statements, schema.as_deref(), timeout_secs)
+        .await
 }
 
 #[tauri::command]
@@ -171,6 +173,7 @@ pub async fn execute_script(
             |db_type| dbx_core::sql::split_sql_statements_for_database(&sql, db_type),
         ),
         schema.as_deref(),
+        None,
     )
     .await
 }

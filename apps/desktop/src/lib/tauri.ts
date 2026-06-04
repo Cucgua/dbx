@@ -718,8 +718,9 @@ export async function executeBatch(
   database: string,
   statements: string[],
   schema?: string,
+  timeoutSecs?: number,
 ): Promise<QueryResult> {
-  return invoke("execute_batch", { connectionId, database, statements, schema });
+  return invoke("execute_batch", { connectionId, database, statements, schema, timeoutSecs });
 }
 
 export async function executeScript(

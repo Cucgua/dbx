@@ -3,8 +3,10 @@ node_modules/
 .claude/
 .codex/
 .superpowers/
+.trellis/
 openspec/
 .mcp.json
+AGENTS.md
 
 # Build output
 dist/

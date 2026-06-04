@@ -42,6 +42,7 @@ import {
   type EditorTheme,
   type DesktopIconTheme,
   type SchemaResearchModelConfig,
+  type DisconnectTabHandlingMode,
 } from "@/stores/settingsStore";
 import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
@@ -142,6 +143,10 @@ const mcpStatusStartedAt = computed(() => {
 const editSidebarObjectDisplay = ref(settingsStore.editorSettings.sidebarObjectDisplay);
 const sidebarObjectDisplayHelp = ref<"grouped" | "simple" | null>(null);
 const editAutoSelectActiveSidebarNode = ref(settingsStore.editorSettings.autoSelectActiveSidebarNode);
+const editDisconnectTabHandlingMode = ref<DisconnectTabHandlingMode>(
+  settingsStore.editorSettings.disconnectTabHandlingMode,
+);
+const editReuseDataTab = ref(settingsStore.editorSettings.reuseDataTab);
 const editSidebarHiddenTablePrefixes = ref(settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n"));
 const editSidebarHideTableComments = ref(settingsStore.editorSettings.sidebarHideTableComments);
 const redisScanPageSizeOptions = [200, 1000, 5000, 10000];
@@ -286,6 +291,8 @@ watch(
       void refreshMcpHttpStatus();
       editSidebarObjectDisplay.value = settingsStore.editorSettings.sidebarObjectDisplay;
       editAutoSelectActiveSidebarNode.value = settingsStore.editorSettings.autoSelectActiveSidebarNode;
+      editDisconnectTabHandlingMode.value = settingsStore.editorSettings.disconnectTabHandlingMode;
+      editReuseDataTab.value = settingsStore.editorSettings.reuseDataTab;
       editSidebarHiddenTablePrefixes.value = settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n");
       editSidebarHideTableComments.value = settingsStore.editorSettings.sidebarHideTableComments;
       editSnippets.value = settingsStore.editorSettings.snippets.map((s) => ({ ...s }));
@@ -325,6 +332,8 @@ function hasChanges(): boolean {
     editSidebarActivation.value !== settingsStore.editorSettings.sidebarActivation ||
     editSidebarObjectDisplay.value !== settingsStore.editorSettings.sidebarObjectDisplay ||
     editAutoSelectActiveSidebarNode.value !== settingsStore.editorSettings.autoSelectActiveSidebarNode ||
+    editDisconnectTabHandlingMode.value !== settingsStore.editorSettings.disconnectTabHandlingMode ||
+    editReuseDataTab.value !== settingsStore.editorSettings.reuseDataTab ||
     editSidebarHideTableComments.value !== settingsStore.editorSettings.sidebarHideTableComments ||
     JSON.stringify(normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value)) !==
       JSON.stringify(settingsStore.editorSettings.sidebarHiddenTablePrefixes) ||
@@ -351,6 +360,8 @@ async function persistSettings() {
     sidebarActivation: editSidebarActivation.value,
     sidebarObjectDisplay: editSidebarObjectDisplay.value,
     autoSelectActiveSidebarNode: editAutoSelectActiveSidebarNode.value,
+    disconnectTabHandlingMode: editDisconnectTabHandlingMode.value,
+    reuseDataTab: editReuseDataTab.value,
     sidebarHideTableComments: editSidebarHideTableComments.value,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value),
     snippets: editSnippets.value,
@@ -390,6 +401,8 @@ function resetDefaults() {
   editSidebarActivation.value = DEFAULT_EDITOR_SETTINGS.sidebarActivation;
   editSidebarObjectDisplay.value = DEFAULT_EDITOR_SETTINGS.sidebarObjectDisplay;
   editAutoSelectActiveSidebarNode.value = DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode;
+  editDisconnectTabHandlingMode.value = DEFAULT_EDITOR_SETTINGS.disconnectTabHandlingMode;
+  editReuseDataTab.value = DEFAULT_EDITOR_SETTINGS.reuseDataTab;
   editSidebarHideTableComments.value = DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments;
   editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
   editSnippets.value = DEFAULT_SQL_SNIPPETS.map((s) => ({ ...s }));
@@ -1568,6 +1581,20 @@ watch(
                     </div>
                   </Button>
                 </div>
+              </div>
+              <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                <div class="flex items-center gap-2">
+                  <Label for="reuse-data-tab">{{ t("settings.reuseDataTab") }}</Label>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <CircleHelp class="h-3.5 w-3.5 cursor-help text-muted-foreground hover:text-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent class="max-w-[320px] text-xs leading-relaxed" side="top" align="start">
+                      {{ t("settings.reuseDataTabDescription") }}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Switch id="reuse-data-tab" v-model="editReuseDataTab" />
               </div>
               <div class="space-y-2">
                 <Label>{{ t("settings.sidebarObjectDisplay") }}</Label>

@@ -230,8 +230,16 @@ final class DbxJdbcPluginTest {
         assertEquals(true, DbxJdbcPlugin.driverQuirks(yashan).useOracleMetadata());
         assertEquals(true, DbxJdbcPlugin.driverQuirks(iris).skipExecutionContext());
         assertEquals(false, DbxJdbcPlugin.driverQuirks(iris).useOracleMetadata());
+        assertEquals(true, DbxJdbcPlugin.driverQuirks(iris).caseInsensitiveSchemaMetadata());
         assertEquals(false, DbxJdbcPlugin.driverQuirks(h2).skipExecutionContext());
         assertEquals(false, DbxJdbcPlugin.driverQuirks(h2).useOracleMetadata());
+        assertEquals(false, DbxJdbcPlugin.driverQuirks(h2).caseInsensitiveSchemaMetadata());
+    }
+
+    @Test
+    void schemaDisplayNamePrefersMixedCaseOverAllUppercaseDuplicate() {
+        assertEquals(true, DbxJdbcPlugin.preferSchemaDisplayName("SQLUSER", "SQLUser"));
+        assertEquals(false, DbxJdbcPlugin.preferSchemaDisplayName("SQLUser", "SQLUSER"));
     }
 
     @Test

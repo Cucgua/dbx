@@ -1692,6 +1692,9 @@ export default {
     disconnectTabHandlingModeKeepTabsKeepResults: "No cerrar pestañas relacionadas",
     disconnectTabHandlingModeKeepTabsKeepResultsDescription:
       "Conserva las pestañas relacionadas, el texto SQL y los resultados actuales sin limpieza adicional.",
+    reuseDataTab: "Reutilizar pestaña de datos",
+    reuseDataTabDescription:
+      "Al hacer clic en una tabla en la barra lateral, reutiliza la pestaña de datos existente en lugar de crear una nueva cada vez.",
     sidebarHiddenTablePrefixes: "Prefijos ocultos de tablas",
     sidebarHiddenTablePrefixesDescription:
       "Un prefijo por linea. Solo acorta etiquetas de tablas, vistas y colecciones en la barra lateral; las acciones y ayudas usan el nombre completo.",

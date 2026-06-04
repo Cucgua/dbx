@@ -1031,6 +1031,7 @@ pub async fn execute_statements(
     database: &str,
     statements: &[String],
     schema: Option<&str>,
+    timeout_secs: Option<u64>,
 ) -> Result<db::QueryResult, String> {
     let pool_key = if database.is_empty() {
         connection_id.to_string()
@@ -1051,7 +1052,7 @@ pub async fn execute_statements(
             sql,
             schema,
             None,
-            QueryExecutionOptions::default(),
+            QueryExecutionOptions { timeout_secs, ..Default::default() },
         )
         .await
         {

@@ -53,6 +53,7 @@ pub struct ExecuteBatchRequest {
     pub database: String,
     pub statements: Vec<String>,
     pub schema: Option<String>,
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -336,6 +337,7 @@ pub async fn execute_batch(
         &req.database,
         &req.statements,
         req.schema.as_deref(),
+        req.timeout_secs,
     )
     .await
     .map_err(AppError)?;
@@ -399,6 +401,7 @@ pub async fn execute_script(
         &req.database,
         &statements,
         req.schema.as_deref(),
+        None,
     )
     .await
     .map_err(AppError)?;
