@@ -88,8 +88,7 @@ export function buildSchemaRagAiTools(): unknown[] {
       type: "function",
       function: {
         name: "dbx_search_table_columns",
-        description:
-          "Search the analyzed Schema RAG index for semantically relevant columns inside a specific table.",
+        description: "Search the analyzed Schema RAG index for semantically relevant columns inside a specific table.",
         parameters: {
           type: "object",
           properties: {

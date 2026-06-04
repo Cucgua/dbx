@@ -530,7 +530,9 @@ export async function buildAiContext(
   }
 
   const contextSchema =
-    activeSchema || tables[0]?.schema || (!isSchemaAware(connection.db_type) ? tab.database || connection.database || "main" : undefined);
+    activeSchema ||
+    tables[0]?.schema ||
+    (!isSchemaAware(connection.db_type) ? tab.database || connection.database || "main" : undefined);
 
   return {
     connectionName: connection.name,
