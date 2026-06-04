@@ -46,6 +46,7 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       DBX_SKIP_SCHEMA_RAG_SIDECAR_BUILD: "1"
+      TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
     steps:
       - uses: actions/checkout@v4
 
