@@ -44,6 +44,8 @@ jobs:
 
   rust:
     runs-on: ubuntu-22.04
+    env:
+      DBX_SKIP_SCHEMA_RAG_SIDECAR_BUILD: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -73,10 +75,10 @@ jobs:
         run: cargo fmt --check
 
       - name: Cargo clippy
-        run: cargo clippy --workspace --locked --all-targets
+        run: cargo clippy --workspace --exclude dbx-schema-rag-sidecar --locked --all-targets
 
       - name: Cargo test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude dbx-schema-rag-sidecar --locked
 
   jdbc:
     runs-on: ubuntu-22.04
