@@ -384,6 +384,7 @@ pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate
            WHEN 'VIEW' THEN 'VIEW' \
            WHEN 'PROCEDURE' THEN 'PROCEDURE' \
            WHEN 'FUNCTION' THEN 'FUNCTION' \
+           WHEN 'PACKAGE BODY' THEN 'PACKAGE_BODY' \
            ELSE o.OBJECT_TYPE \
          END AS OBJECT_TYPE, \
          c.COMMENTS, \
@@ -392,13 +393,15 @@ pub async fn list_objects(conn: &OracleClient, schema: &str) -> Result<Vec<crate
          FROM ALL_OBJECTS o \
          LEFT JOIN ALL_TAB_COMMENTS c ON c.OWNER = o.OWNER AND c.TABLE_NAME = o.OBJECT_NAME \
          WHERE o.OWNER = {s} \
-           AND o.OBJECT_TYPE IN ('TABLE','VIEW','PROCEDURE','FUNCTION') \
+           AND o.OBJECT_TYPE IN ('TABLE','VIEW','PROCEDURE','FUNCTION','PACKAGE','PACKAGE BODY') \
            AND o.OBJECT_NAME NOT LIKE 'BIN$%' \
          ORDER BY CASE o.OBJECT_TYPE \
            WHEN 'TABLE' THEN 0 \
            WHEN 'VIEW' THEN 1 \
            WHEN 'PROCEDURE' THEN 2 \
            WHEN 'FUNCTION' THEN 3 \
+           WHEN 'PACKAGE' THEN 4 \
+           WHEN 'PACKAGE BODY' THEN 5 \
            ELSE 4 \
          END, o.OBJECT_NAME"
     );
@@ -636,13 +639,14 @@ fn index_from_oci_row(row: &oracle_oci::Row) -> IndexInfo {
 
 pub async fn list_foreign_keys(conn: &OracleClient, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
     let sql = format!(
-        "SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME, rc.TABLE_NAME, rcc.COLUMN_NAME \
+        "SELECT c.CONSTRAINT_NAME, cc.COLUMN_NAME, rc.OWNER, rc.TABLE_NAME, rcc.COLUMN_NAME \
          FROM ALL_CONSTRAINTS c \
          JOIN ALL_CONS_COLUMNS cc ON c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME AND c.OWNER = cc.OWNER \
          JOIN ALL_CONSTRAINTS rc ON c.R_CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND c.R_OWNER = rc.OWNER \
          JOIN ALL_CONS_COLUMNS rcc ON rc.CONSTRAINT_NAME = rcc.CONSTRAINT_NAME AND rc.OWNER = rcc.OWNER \
+           AND cc.POSITION = rcc.POSITION \
          WHERE c.CONSTRAINT_TYPE = 'R' AND c.OWNER = '{s}' AND c.TABLE_NAME = '{t}' \
-         ORDER BY c.CONSTRAINT_NAME",
+         ORDER BY c.CONSTRAINT_NAME, cc.POSITION",
         s = schema.replace('\'', "''"),
         t = table.replace('\'', "''")
     );
@@ -669,8 +673,9 @@ fn foreign_key_from_thin_row(row: &rust_oracle::Row) -> ForeignKeyInfo {
     ForeignKeyInfo {
         name: row.get_string(0).unwrap_or("").to_string(),
         column: row.get_string(1).unwrap_or("").to_string(),
-        ref_table: row.get_string(2).unwrap_or("").to_string(),
-        ref_column: row.get_string(3).unwrap_or("").to_string(),
+        ref_schema: Some(row.get_string(2).unwrap_or("").to_string()),
+        ref_table: row.get_string(3).unwrap_or("").to_string(),
+        ref_column: row.get_string(4).unwrap_or("").to_string(),
     }
 }
 
@@ -678,8 +683,9 @@ fn foreign_key_from_oci_row(row: &oracle_oci::Row) -> ForeignKeyInfo {
     ForeignKeyInfo {
         name: oci_string(row, 0),
         column: oci_string(row, 1),
-        ref_table: oci_string(row, 2),
-        ref_column: oci_string(row, 3),
+        ref_schema: Some(oci_string(row, 2)),
+        ref_table: oci_string(row, 3),
+        ref_column: oci_string(row, 4),
     }
 }
 
@@ -1037,6 +1043,7 @@ mod tests {
             ssh_password: String::new(),
             ssh_key_path: String::new(),
             ssh_key_passphrase: String::new(),
+            ssh_tunnels: Vec::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: crate::models::connection::default_ssh_connect_timeout_secs(),
             connect_timeout_secs: crate::models::connection::default_connect_timeout_secs(),

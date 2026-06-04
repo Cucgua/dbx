@@ -538,6 +538,43 @@ pub async fn list_objects_core(
     .await
 }
 
+pub async fn list_completion_objects_core(
+    state: &AppState,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+) -> Result<Vec<db::ObjectInfo>, String> {
+    retry_metadata_connection(state, connection_id, Some(database), || {
+        list_completion_objects_once(state, connection_id, database, schema)
+    })
+    .await
+}
+
+async fn list_completion_objects_once(
+    state: &AppState,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+) -> Result<Vec<db::ObjectInfo>, String> {
+    let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
+
+    {
+        let connections = state.connections.read().await;
+        if let Some(PoolKind::Mysql(pool, mode)) = connections.get(&pool_key) {
+            let pool = pool.clone();
+            let mode = *mode;
+            drop(connections);
+            return if mode == MysqlMode::OceanBaseOracle {
+                db::ob_oracle::list_objects(&pool, schema).await
+            } else {
+                db::mysql::list_completion_objects(&pool, database).await
+            };
+        }
+    }
+
+    list_objects_once(state, connection_id, database, schema).await
+}
+
 async fn list_objects_once(
     state: &AppState,
     connection_id: &str,
@@ -896,7 +933,10 @@ fn mysql_ident(value: &str) -> String {
 fn sqlite_object_type(kind: &db::ObjectSourceKind) -> &'static str {
     match kind {
         db::ObjectSourceKind::View => "view",
-        db::ObjectSourceKind::Procedure | db::ObjectSourceKind::Function => "routine",
+        db::ObjectSourceKind::Procedure
+        | db::ObjectSourceKind::Function
+        | db::ObjectSourceKind::Package
+        | db::ObjectSourceKind::PackageBody => "routine",
     }
 }
 
@@ -905,6 +945,7 @@ fn sqlserver_object_type_filter(kind: &db::ObjectSourceKind) -> &'static str {
         db::ObjectSourceKind::View => "'V'",
         db::ObjectSourceKind::Procedure => "'P'",
         db::ObjectSourceKind::Function => "'FN','IF','TF','FS','FT'",
+        db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => "''",
     }
 }
 
@@ -946,6 +987,9 @@ pub fn postgres_object_source_sql(schema: &str, name: &str, kind: &db::ObjectSou
                 prokind
             )
         }
+        db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => {
+            "SELECT NULL::text WHERE FALSE".to_string()
+        }
     }
 }
 
@@ -954,6 +998,8 @@ pub fn oracle_object_source_sql(schema: &str, name: &str, kind: &db::ObjectSourc
         db::ObjectSourceKind::View => "VIEW",
         db::ObjectSourceKind::Procedure => "PROCEDURE",
         db::ObjectSourceKind::Function => "FUNCTION",
+        db::ObjectSourceKind::Package => "PACKAGE",
+        db::ObjectSourceKind::PackageBody => "PACKAGE_BODY",
     };
     format!(
         "SELECT DBMS_METADATA.GET_DDL({}, {}, {}) FROM DUAL",
@@ -976,6 +1022,7 @@ pub fn mysql_object_source_sql(name: &str, kind: &db::ObjectSourceKind) -> Strin
         db::ObjectSourceKind::View => format!("SHOW CREATE VIEW {}", mysql_ident(name)),
         db::ObjectSourceKind::Procedure => format!("SHOW CREATE PROCEDURE {}", mysql_ident(name)),
         db::ObjectSourceKind::Function => format!("SHOW CREATE FUNCTION {}", mysql_ident(name)),
+        db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => "SELECT NULL WHERE FALSE".to_string(),
     }
 }
 
@@ -1150,6 +1197,10 @@ mod object_source_tests {
         assert_eq!(
             oracle_object_source_sql("HR", "ACTIVE_USERS", &ObjectSourceKind::View),
             "SELECT DBMS_METADATA.GET_DDL('VIEW', 'ACTIVE_USERS', 'HR') FROM DUAL"
+        );
+        assert_eq!(
+            oracle_object_source_sql("HR", "PAYROLL", &ObjectSourceKind::PackageBody),
+            "SELECT DBMS_METADATA.GET_DDL('PACKAGE_BODY', 'PAYROLL', 'HR') FROM DUAL"
         );
     }
 }
