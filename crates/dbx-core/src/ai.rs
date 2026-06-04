@@ -160,7 +160,7 @@ pub struct AiCompletionRequest {
     pub system_prompt: String,
     pub messages: Vec<AiMessage>,
     pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,7 +172,7 @@ pub struct AiRawChatRequest {
     pub tools: Vec<serde_json::Value>,
     pub tool_choice: Option<serde_json::Value>,
     pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_format: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -490,14 +490,14 @@ fn add_responses_reasoning_options(body: &mut serde_json::Value, config: &AiConf
     }
 }
 
-fn openai_compatible_temperature(config: &AiConfig, requested: Option<f32>) -> Option<f32> {
+fn openai_compatible_temperature(config: &AiConfig, requested: Option<f64>) -> Option<f64> {
     if matches!(config.provider, AiProvider::Deepseek) && config.enable_thinking {
         return None;
     }
     Some(requested.unwrap_or(0.2))
 }
 
-fn add_openai_compatible_sampling_options(body: &mut serde_json::Value, config: &AiConfig, temperature: Option<f32>) {
+fn add_openai_compatible_sampling_options(body: &mut serde_json::Value, config: &AiConfig, temperature: Option<f64>) {
     if let Some(temperature) = openai_compatible_temperature(config, temperature) {
         body["temperature"] = json!(temperature);
     }
@@ -525,7 +525,7 @@ fn build_openai_compatible_chat_body(
     config: &AiConfig,
     messages: serde_json::Value,
     max_tokens: Option<u32>,
-    temperature: Option<f32>,
+    temperature: Option<f64>,
     stream: bool,
 ) -> serde_json::Value {
     let mut body = json!({
