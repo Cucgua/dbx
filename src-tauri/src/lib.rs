@@ -324,6 +324,7 @@ pub fn run() {
                 ))
             };
             app.manage(state.clone());
+            app.manage(commands::schema_rag::SchemaRagRuntimeState { data_dir: data_dir.clone() });
             app.manage(commands::external_sql::ExternalSqlOpenState::default());
             app.manage(commands::external_db::ExternalDbOpenState::default());
             app.manage(commands::deep_link::DeepLinkOpenState::default());
@@ -423,6 +424,17 @@ pub fn run() {
             commands::schema::get_table_ddl,
             commands::schema_diff::prepare_schema_diff,
             commands::schema_diff::generate_schema_sync_sql,
+            commands::schema_rag::analyze_schema_rag,
+            commands::schema_rag::search_schema_rag,
+            commands::schema_rag::search_table_columns_rag,
+            commands::schema_rag::save_schema_rag_enrichment,
+            commands::schema_rag::import_schema_rag_api_docs,
+            commands::schema_rag::expand_schema_rag_graph,
+            commands::schema_rag::refresh_schema_rag_table,
+            commands::schema_rag::load_schema_rag_status,
+            commands::schema_rag::delete_schema_rag_index,
+            commands::schema_rag::save_schema_rag_config,
+            commands::schema_rag::load_schema_rag_config,
             commands::schema_cache::save_schema_cache,
             commands::schema_cache::load_schema_cache,
             commands::schema_cache::delete_schema_cache_prefix,
