@@ -33,7 +33,7 @@ import {
   Table2,
   ZoomIn,
   ZoomOut,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { useToast } from "@/composables/useToast";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 

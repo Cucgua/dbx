@@ -32,3 +32,12 @@ test("keeps fuzzy subsequence matching inside a single identifier word", () => {
   assert.equal(matchSidebarLabel("user_profile", "up")?.kind, "abbreviation");
   assert.equal(matchSidebarLabel("user_profile", "urf"), null);
 });
+
+test("matches slash-delimited regular expression queries case-insensitively by default", () => {
+  assert.equal(matchSidebarLabel("SYS_USER_LOG", "/^sys_.*_log$/")?.kind, "regex");
+  assert.equal(matchSidebarLabel("sys_user_archive", "/^sys_.*_log$/"), null);
+});
+
+test("keeps invalid regular expression queries from matching every label", () => {
+  assert.equal(matchSidebarLabel("orders", "/["), null);
+});

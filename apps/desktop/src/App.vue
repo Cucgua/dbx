@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from "vue";
 import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
+import { ChevronsRight } from "@lucide/vue";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import AppToolbar from "@/components/layout/AppToolbar.vue";
 import AppTabBar from "@/components/layout/AppTabBar.vue";
@@ -113,6 +114,7 @@ const showDriverStore = ref(false);
 const agentDriverUpdateCount = ref(0);
 const showHistory = ref(false);
 const showAiPanel = ref(safeLocalStorageGet("dbx-ai-panel-open") === "true");
+const sidebarOpen = ref(safeLocalStorageGet("dbx-sidebar-open") !== "false");
 const aiPanelReady = ref(false);
 const { sidebarWidth, aiPanelWidth, historyWidth, startSidebarResize, startAiPanelResize, startHistoryResize } =
   usePanelResize();
@@ -709,6 +711,11 @@ function openMcpGuide() {
   openUrl("https://github.com/Cucgua/dbx/blob/main/docs/mcp-guide.md");
 }
 
+function setSidebarOpen(open: boolean) {
+  sidebarOpen.value = open;
+  safeLocalStorageSet("dbx-sidebar-open", open ? "true" : "false");
+}
+
 function ensureQueryTab(): string {
   const tab = activeTab.value;
   if (tab && tab.mode === "query") return tab.id;
@@ -866,17 +873,17 @@ function initApp() {
 }
 
 async function reconnectRestoredTabs() {
-  if (isDesktop) return;
-  const connectionIds = new Set(queryStore.tabs.map((t) => t.connectionId).filter(Boolean));
-  for (const id of connectionIds) {
+  const activeConnectionId = activeTab.value?.connectionId || connectionStore.activeConnectionId;
+  if (activeConnectionId && connectionStore.getConfig(activeConnectionId)) {
+    connectionStore.activeConnectionId = activeConnectionId;
     try {
-      await connectionStore.ensureConnected(id);
+      await connectionStore.ensureConnected(activeConnectionId);
     } catch {}
   }
-  for (const tab of queryStore.tabs) {
-    if (tab.mode === "data" && tab.tableMeta && tab.sql) {
-      queryStore.executeTabSql(tab.id, tab.sql).catch(() => {});
-    }
+
+  const tab = activeTab.value;
+  if (tab?.mode === "data" && tab.tableMeta && tab.sql) {
+    queryStore.executeTabSql(tab.id, tab.sql).catch(() => {});
   }
 }
 
@@ -967,10 +974,10 @@ onUnmounted(() => {
     :setup-mode="setupRequired"
     @authenticated="onLoginSuccess"
   />
-  <div v-show="!setupRequired && (!needsAuth || authenticated)">
+  <div v-show="!setupRequired && (!needsAuth || authenticated)" class="h-screen w-screen overflow-hidden">
     <TooltipProvider :delay-duration="300">
       <div
-        class="h-screen w-screen min-w-[900px] min-h-[600px] flex flex-col bg-background text-foreground overflow-hidden"
+        class="h-screen w-screen max-w-full min-w-[760px] min-h-[600px] flex flex-col bg-background text-foreground overflow-hidden"
       >
         <AppToolbar
           :is-dark="isDark"
@@ -1006,13 +1013,31 @@ onUnmounted(() => {
           "
         >
           <AppSidebar
+            v-show="sidebarOpen"
             ref="appSidebarRef"
             :sidebar-width="sidebarWidth"
             :classic-layout="isClassicLayout"
             @import="dialogs.onImportClick"
             @export="dialogs.onExportClick"
             @start-resize="startSidebarResize"
+            @collapse="setSidebarOpen(false)"
           />
+          <div
+            v-show="!sidebarOpen"
+            class="flex h-full w-8 shrink-0 items-start justify-center border-r bg-background/80 pt-2"
+            :class="isClassicLayout ? '' : 'rounded-md border border-border/80'"
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-7 w-7"
+              :title="t('sidebar.expand')"
+              :aria-label="t('sidebar.expand')"
+              @click="setSidebarOpen(true)"
+            >
+              <ChevronsRight class="h-4 w-4" />
+            </Button>
+          </div>
 
           <div
             :class="
@@ -1051,7 +1076,7 @@ onUnmounted(() => {
                   @set-default-database="setActiveDatabaseAsDefault"
                   @clear-default-database="clearActiveDefaultDatabase"
                 />
-                <KeepAlive :max="20">
+                <KeepAlive :max="8">
                   <ContentArea
                     ref="contentAreaRef"
                     :key="activeTab.id"

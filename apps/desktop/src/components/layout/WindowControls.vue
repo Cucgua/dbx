@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Minus, Square, Copy, X } from "lucide-vue-next";
+import { Minus, Square, Copy, X } from "@lucide/vue";
 
 defineProps<{
   isMaximized: boolean;

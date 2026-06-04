@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, onMounted, onUnmounted, watch } from "vue";
+import { computed, nextTick, ref, onMounted, onUnmounted, onActivated, onDeactivated, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Search,
@@ -13,7 +13,8 @@ import {
   Plus,
   KeyRound,
   TerminalSquare,
-} from "lucide-vue-next";
+  Asterisk,
+} from "@lucide/vue";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import { Splitpanes, Pane } from "splitpanes";
@@ -42,6 +43,7 @@ import { isRedisClearScreenCommand, nextRedisCommandDb, redisKeyTextToRaw } from
 import { formatRedisCommandResult, formatRedisStringValue } from "@/lib/redisValuePresentation";
 import { isCancelSearchShortcut } from "@/lib/keyboardShortcuts";
 import { useEditorFontFamilyStyle } from "@/composables/useEditorFontFamilyStyle";
+import { redisKeySearchPattern } from "@/lib/redisKeyPattern";
 
 const { t } = useI18n();
 const connectionStore = useConnectionStore();
@@ -72,6 +74,7 @@ const rootRef = ref<HTMLElement>();
 const commandTerminalRef = ref<HTMLElement>();
 const searchPattern = ref("");
 const searchMode = ref<RedisSearchMode>("key");
+const fuzzyKeySearch = ref(false);
 const selectedKeyRaw = ref<string | null>(null);
 const hasMore = ref(false);
 const scanCursor = ref(0);
@@ -95,14 +98,22 @@ const createKeyField = ref("");
 const createKeyScore = ref("0");
 const createKeyError = ref("");
 let searchRequestId = 0;
+let redisBrowserIsActive = true;
+let redisDbFlushedListenerRegistered = false;
 
 const valueQuery = computed(() => searchPattern.value.trim());
-const effectivePattern = computed(() => (searchMode.value === "key" ? searchPattern.value.trim() || "*" : "*"));
+const effectivePattern = computed(() =>
+  searchMode.value === "key" ? redisKeySearchPattern(searchPattern.value, fuzzyKeySearch.value) : "*",
+);
 const isSearchMode = computed(() =>
   searchMode.value === "key" ? effectivePattern.value !== "*" : valueQuery.value !== "",
 );
 const searchPlaceholder = computed(() =>
-  searchMode.value === "key" ? t("redis.pattern") : t("redis.valueSearchPlaceholder"),
+  searchMode.value === "key"
+    ? fuzzyKeySearch.value
+      ? t("redis.fuzzyPattern")
+      : t("redis.pattern")
+    : t("redis.valueSearchPlaceholder"),
 );
 const loadingEmptyText = computed(() =>
   searchMode.value === "value" && valueQuery.value ? t("redis.searchingValues") : t("redis.loadingKeys"),
@@ -216,6 +227,7 @@ async function fillInitialKeyBatch(requestId: number) {
 }
 
 async function loadKeys() {
+  if (!redisBrowserIsActive) return;
   const requestId = ++searchRequestId;
   loading.value = true;
   flatKeys.value = [];
@@ -547,6 +559,11 @@ function setSearchMode(mode: RedisSearchMode) {
   void loadKeys();
 }
 
+function toggleFuzzyKeySearch() {
+  fuzzyKeySearch.value = !fuzzyKeySearch.value;
+  if (searchMode.value === "key") void loadKeys();
+}
+
 function getSearchInput(): HTMLInputElement | null {
   return rootRef.value?.querySelector<HTMLInputElement>("[data-redis-search-input]") ?? null;
 }
@@ -574,22 +591,49 @@ function onSearchKeydown(event: KeyboardEvent) {
   void loadKeys();
 }
 
-onUnmounted(() => {
-  searchRequestId++;
-  if (searchTimer) clearTimeout(searchTimer);
-  window.removeEventListener("dbx-redis-db-flushed", onRedisDbFlushed);
-});
-
 function onRedisDbFlushed(event: Event) {
   const detail = (event as CustomEvent<{ connectionId: string; db: number }>).detail;
   if (!detail || detail.connectionId !== props.connectionId || detail.db !== props.db) return;
   resetLoadedKeys();
 }
 
-onMounted(() => {
+function registerRedisDbFlushedListener() {
+  if (redisDbFlushedListenerRegistered) return;
   window.addEventListener("dbx-redis-db-flushed", onRedisDbFlushed);
+  redisDbFlushedListenerRegistered = true;
+}
+
+function unregisterRedisDbFlushedListener() {
+  if (!redisDbFlushedListenerRegistered) return;
+  window.removeEventListener("dbx-redis-db-flushed", onRedisDbFlushed);
+  redisDbFlushedListenerRegistered = false;
+}
+
+function pauseRedisBrowserBackgroundWork() {
+  redisBrowserIsActive = false;
+  searchRequestId++;
+  loading.value = false;
+  loadingMore.value = false;
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = null;
+  unregisterRedisDbFlushedListener();
+}
+
+function resumeRedisBrowserBackgroundWork() {
+  redisBrowserIsActive = true;
+  registerRedisDbFlushedListener();
+}
+
+onMounted(() => {
+  resumeRedisBrowserBackgroundWork();
   void loadKeys();
 });
+
+onActivated(resumeRedisBrowserBackgroundWork);
+
+onDeactivated(pauseRedisBrowserBackgroundWork);
+
+onUnmounted(pauseRedisBrowserBackgroundWork);
 
 watch(
   () => props.db,
@@ -644,6 +688,19 @@ defineExpose({ focusSearch });
               @input="onSearchInput"
               @keydown="onSearchKeydown"
             />
+            <Button
+              v-if="searchMode === 'key'"
+              variant="ghost"
+              size="sm"
+              class="h-6 shrink-0 px-2 text-xs"
+              :class="fuzzyKeySearch ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'"
+              :title="t('redis.fuzzyMatchTitle')"
+              :aria-pressed="fuzzyKeySearch"
+              @click="toggleFuzzyKeySearch"
+            >
+              <Asterisk class="h-3 w-3 mr-1" />
+              {{ t("redis.fuzzyMatch") }}
+            </Button>
             <Button variant="ghost" size="icon" class="h-6 w-6 shrink-0" @click="loadKeys">
               <Loader2 v-if="loading" class="h-3 w-3 animate-spin" />
               <RefreshCw v-else class="h-3 w-3" />
@@ -810,7 +867,7 @@ defineExpose({ focusSearch });
 
             <TabsContent value="command" class="m-0 min-h-0 flex-1 flex flex-col">
               <div
-                class="dbx-editor-font-family relative flex min-h-0 flex-1 flex-col bg-[#090c10] text-[13px] leading-5 text-slate-100"
+                class="dbx-editor-font-family relative flex min-h-0 flex-1 flex-col bg-[#171b21] text-[13px] leading-5 text-slate-200"
                 @click="getCommandInput()?.focus()"
               >
                 <div ref="commandTerminalRef" class="min-h-0 flex-1 overflow-auto px-4 pb-3 pt-4">
@@ -821,7 +878,7 @@ defineExpose({ focusSearch });
                   <div v-for="entry in commandHistory" :key="entry.id" class="mb-2">
                     <div class="flex min-w-0 items-start gap-2 whitespace-pre-wrap break-words">
                       <span class="shrink-0 text-[#d7ba7d]">{{ entry.prompt }}</span>
-                      <span class="min-w-0 text-slate-100">{{ entry.command }}</span>
+                      <span class="min-w-0 text-slate-200">{{ entry.command }}</span>
                     </div>
                     <pre
                       v-if="entry.output"
@@ -833,14 +890,14 @@ defineExpose({ focusSearch });
                 </div>
 
                 <form
-                  class="flex shrink-0 items-center gap-2 border-t border-white/10 bg-[#090c10] px-4 py-2"
+                  class="flex shrink-0 items-center gap-2 border-t border-white/10 bg-[#171b21] px-4 py-2"
                   @submit.prevent="executeCommand"
                 >
                   <span class="shrink-0 text-[#d7ba7d]">{{ commandPrompt }}</span>
                   <input
                     v-model="commandText"
                     data-redis-command-input
-                    class="dbx-editor-font-family min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] text-slate-100 caret-[#d7ba7d] outline-none placeholder:text-slate-600"
+                    class="dbx-editor-font-family min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] text-slate-200 caret-[#d7ba7d] outline-none placeholder:text-slate-500"
                     :disabled="commandRunning"
                     autocomplete="off"
                     autocapitalize="off"

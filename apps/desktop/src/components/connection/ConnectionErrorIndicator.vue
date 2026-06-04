@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { AlertTriangle, X } from "lucide-vue-next";
+import { AlertTriangle, X } from "@lucide/vue";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useConnectionStore } from "@/stores/connectionStore";
 

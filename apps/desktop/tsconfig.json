@@ -8,6 +8,8 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/vue-tsc/desktop.tsbuildinfo",
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "preserve",
@@ -15,7 +17,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     }

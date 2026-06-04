@@ -18,6 +18,11 @@ export interface MongoAggregateCommand {
   pipeline: string;
 }
 
+export type MongoWriteCommand =
+  | { kind: "insert"; collection: string; docsJson: string }
+  | { kind: "update"; collection: string; filter: string; update: string; many: boolean }
+  | { kind: "delete"; collection: string; filter: string; many: boolean };
+
 export interface MongoAggregateSafetyOptions {
   allowWrites?: boolean;
   allowDangerous?: boolean;
@@ -107,6 +112,51 @@ export function parseMongoAggregateCommand(input: string): MongoAggregateCommand
   };
 }
 
+export function parseMongoWriteCommand(input: string): MongoWriteCommand | null {
+  const source = input.trim().replace(/;$/, "").trim();
+  const insertOne = parseCollectionMethodTarget(source, "insertOne");
+  if (insertOne) {
+    const args = parseMethodArgs(source, insertOne.methodCallIndex);
+    if (!args || args.length !== 1) return null;
+    const doc = normalizeJsonArgument(args[0]);
+    return doc ? { kind: "insert", collection: insertOne.collection, docsJson: doc } : null;
+  }
+
+  const insertMany = parseCollectionMethodTarget(source, "insertMany");
+  if (insertMany) {
+    const args = parseMethodArgs(source, insertMany.methodCallIndex);
+    if (!args || args.length !== 1) return null;
+    const docs = normalizeJsonArgument(args[0]);
+    if (!docs) return null;
+    return Array.isArray(JSON.parse(docs))
+      ? { kind: "insert", collection: insertMany.collection, docsJson: docs }
+      : null;
+  }
+
+  for (const method of ["updateOne", "updateMany"] as const) {
+    const target = parseCollectionMethodTarget(source, method);
+    if (!target) continue;
+    const args = parseMethodArgs(source, target.methodCallIndex);
+    if (!args || args.length !== 2) return null;
+    const filter = normalizeJsonArgument(args[0]);
+    const update = normalizeJsonArgument(args[1]);
+    if (!filter || !update) return null;
+    return { kind: "update", collection: target.collection, filter, update, many: method === "updateMany" };
+  }
+
+  for (const method of ["deleteOne", "deleteMany"] as const) {
+    const target = parseCollectionMethodTarget(source, method);
+    if (!target) continue;
+    const args = parseMethodArgs(source, target.methodCallIndex);
+    if (!args || args.length !== 1) return null;
+    const filter = normalizeJsonArgument(args[0]);
+    if (!filter) return null;
+    return { kind: "delete", collection: target.collection, filter, many: method === "deleteMany" };
+  }
+
+  return null;
+}
+
 export function mongoAggregateWriteStage(pipelineJson: string): "$out" | "$merge" | null {
   try {
     const pipeline = JSON.parse(pipelineJson);
@@ -179,6 +229,15 @@ export function mongoCountToQueryResult(total: number, executionTimeMs: number):
   };
 }
 
+export function mongoWriteToQueryResult(affectedRows: number, executionTimeMs: number): QueryResult {
+  return {
+    columns: [],
+    rows: [],
+    affected_rows: affectedRows,
+    execution_time_ms: Math.max(0, Math.round(executionTimeMs)),
+  };
+}
+
 function parseFindTarget(source: string): { collection: string; findCallIndex: number } | null {
   const direct = parseCollectionMethodTarget(source, "find");
   if (direct) {
@@ -217,13 +276,114 @@ function parseCollectionMethodTarget(
 function normalizeJsonArgument(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return "{}";
-  const preprocessed = trimmed.replace(/ObjectId\s*\(\s*["']([^"']+)["']\s*\)/g, '{"$oid":"$1"}');
+  const preprocessed = quoteUnquotedObjectKeys(
+    convertSingleQuotedStrings(trimmed.replace(/ObjectId\s*\(\s*["']([^"']+)["']\s*\)/g, '{"$oid":"$1"}')),
+  );
   try {
     JSON.parse(preprocessed);
     return preprocessed;
   } catch {
     return null;
   }
+}
+
+function parseMethodArgs(source: string, methodCallIndex: number): string[] | null {
+  const openIndex = source.indexOf("(", methodCallIndex);
+  const closeIndex = findMatchingParen(source, openIndex);
+  if (closeIndex < 0 || source.slice(closeIndex + 1).trim()) return null;
+  return splitTopLevel(source.slice(openIndex + 1, closeIndex));
+}
+
+function convertSingleQuotedStrings(source: string): string {
+  let result = "";
+  let copiedUntil = 0;
+  let quote: string | null = null;
+  let start = 0;
+  let value = "";
+  let escaped = false;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (!quote) {
+      if (char === "'") {
+        quote = char;
+        start = i;
+        value = "";
+        escaped = false;
+      } else if (char === '"') {
+        quote = char;
+      }
+      continue;
+    }
+
+    if (quote === '"') {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quote = null;
+      continue;
+    }
+
+    if (escaped) {
+      value += char;
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (char === "'") {
+      result += source.slice(copiedUntil, start) + JSON.stringify(value);
+      copiedUntil = i + 1;
+      quote = null;
+    } else {
+      value += char;
+    }
+  }
+
+  return quote === "'" ? source : result + source.slice(copiedUntil);
+}
+
+function quoteUnquotedObjectKeys(source: string): string {
+  let result = "";
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (quote) {
+      result += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      result += char;
+      continue;
+    }
+
+    if (/[A-Za-z_$]/.test(char) && shouldQuoteObjectKey(source, i)) {
+      let end = i + 1;
+      while (/[\w$]/.test(source[end] || "")) end += 1;
+      result += `"${source.slice(i, end)}"`;
+      i = end - 1;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function shouldQuoteObjectKey(source: string, index: number): boolean {
+  let before = index - 1;
+  while (/\s/.test(source[before] || "")) before -= 1;
+  if (source[before] !== "{" && source[before] !== ",") return false;
+
+  let after = index + 1;
+  while (/[\w$]/.test(source[after] || "")) after += 1;
+  while (/\s/.test(source[after] || "")) after += 1;
+  return source[after] === ":";
 }
 
 function readChainedIntegerArgument(source: string, name: string, fallback: number): number | null {

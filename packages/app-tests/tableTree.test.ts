@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildGroupedObjectTreeNodes, buildTableTreeNodes } from "../../apps/desktop/src/lib/tableTree.ts";
+import {
+  buildGroupedObjectTreeNodes,
+  buildTableTreeNodes,
+  mergeTableInfosIntoObjects,
+} from "../../apps/desktop/src/lib/tableTree.ts";
 import type { ObjectInfo, TableInfo, TreeNode } from "../../apps/desktop/src/types/database.ts";
 
 function table(name: string, parent?: string): TableInfo {
@@ -75,7 +79,7 @@ test("buildTableTreeNodes keeps partitions visible when their parent is not load
   );
 });
 
-test("buildTableTreeNodes keeps base-prefixed tables before prefixed variants", () => {
+test("buildTableTreeNodes keeps sidebar tables in natural name order", () => {
   const nodes = buildTableTreeNodes({
     nodeId: "conn:app:public",
     connectionId: "conn",
@@ -86,7 +90,21 @@ test("buildTableTreeNodes keeps base-prefixed tables before prefixed variants", 
 
   assert.deepEqual(
     nodes.map((node) => node.label),
-    ["staff", "staff_his", "chat_staff", "chat_staff_his"],
+    ["chat_staff", "chat_staff_his", "staff", "staff_his"],
+  );
+});
+
+test("buildTableTreeNodes does not relocate prefixed business tables by suffix", () => {
+  const nodes = buildTableTreeNodes({
+    nodeId: "conn:app",
+    connectionId: "conn",
+    database: "app",
+    tables: [table("CurrentStock"), table("YonSuite_CurrentStock"), table("YonSuite_LocationStock")],
+  });
+
+  assert.deepEqual(
+    nodes.map((node) => node.label),
+    ["CurrentStock", "YonSuite_CurrentStock", "YonSuite_LocationStock"],
   );
 });
 
@@ -112,7 +130,7 @@ test("buildGroupedObjectTreeNodes nests partitions inside the tables group", () 
   );
 });
 
-test("buildGroupedObjectTreeNodes applies prefix-priority sorting inside object groups", () => {
+test("buildGroupedObjectTreeNodes applies natural name sorting inside object groups", () => {
   const groups = buildGroupedObjectTreeNodes({
     nodeId: "conn:app:public",
     connectionId: "conn",
@@ -124,6 +142,77 @@ test("buildGroupedObjectTreeNodes applies prefix-priority sorting inside object 
   const tableGroup = groups.find((node) => node.type === "group-tables");
   assert.deepEqual(
     tableGroup?.children?.map((node) => node.label),
-    ["staff", "staff_his", "chat_staff", "chat_staff_his"],
+    ["chat_staff", "chat_staff_his", "staff", "staff_his"],
+  );
+});
+
+test("buildGroupedObjectTreeNodes groups Oracle packages and package bodies", () => {
+  const groups = buildGroupedObjectTreeNodes({
+    nodeId: "conn:app:HR",
+    connectionId: "conn",
+    database: "app",
+    schema: "HR",
+    objects: [
+      { name: "PAYROLL", object_type: "PACKAGE", schema: "HR" },
+      { name: "PAYROLL", object_type: "PACKAGE_BODY", schema: "HR" },
+    ],
+  });
+
+  const packageGroup = groups.find((node) => node.type === "group-packages");
+  assert.equal(packageGroup?.label, "tree.packages");
+  assert.deepEqual(
+    packageGroup?.children?.map((node) => ({ label: node.label, type: node.type, id: node.id })),
+    [
+      { label: "PAYROLL", type: "package", id: "conn:app:HR:__packages:HR:PAYROLL:PACKAGE" },
+      { label: "PAYROLL", type: "package-body", id: "conn:app:HR:__packages:HR:PAYROLL:PACKAGE_BODY" },
+    ],
+  );
+});
+
+test("mergeTableInfosIntoObjects restores views missing from object metadata", () => {
+  const merged = mergeTableInfosIntoObjects(
+    [object("orders")],
+    [
+      table("orders"),
+      {
+        name: "active_orders",
+        table_type: "VIEW",
+        comment: "current orders",
+        parent_schema: null,
+        parent_name: null,
+      },
+    ],
+    "public",
+  );
+
+  assert.deepEqual(
+    merged.map((item) => ({ name: item.name, type: item.object_type, schema: item.schema, comment: item.comment })),
+    [
+      { name: "orders", type: "TABLE", schema: "public", comment: null },
+      { name: "active_orders", type: "VIEW", schema: "public", comment: "current orders" },
+    ],
+  );
+});
+
+test("mergeTableInfosIntoObjects dedupes MySQL tables when object metadata carries database as schema", () => {
+  const merged = mergeTableInfosIntoObjects(
+    [
+      {
+        name: "orders",
+        object_type: "TABLE",
+        schema: "app",
+        comment: null,
+        created_at: null,
+        updated_at: null,
+        parent_schema: null,
+        parent_name: null,
+      },
+    ],
+    [table("orders")],
+  );
+
+  assert.deepEqual(
+    merged.map((item) => ({ name: item.name, type: item.object_type, schema: item.schema })),
+    [{ name: "orders", type: "TABLE", schema: "app" }],
   );
 });

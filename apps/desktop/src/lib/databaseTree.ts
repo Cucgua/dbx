@@ -1,5 +1,12 @@
-import type { DatabaseInfo, TreeNode } from "@/types/database";
+import type { ConnectionConfig, DatabaseInfo, TreeNode } from "@/types/database";
 import { DEFAULT_DATABASE_TREE_LABEL } from "./treeNodeContext";
+
+export function shouldIncludeDefaultDatabaseNode(
+  connection: Pick<ConnectionConfig, "db_type"> | undefined,
+  databases: DatabaseInfo[],
+): boolean {
+  return connection?.db_type === "mysql" && databases.some((database) => !database.name.trim());
+}
 
 export function buildDatabaseTreeNodes(
   connectionId: string,

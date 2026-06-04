@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { parseConnectionUrl } from "../../apps/desktop/src/lib/connectionUrl.ts";
+import { normalizeMongoConnectionString, parseConnectionUrl } from "../../apps/desktop/src/lib/connectionUrl.ts";
 
 test("parses postgres connection URLs", () => {
   assert.deepEqual(parseConnectionUrl("postgresql://alice:secret@db.example.com:5433/app?sslmode=require"), {
@@ -120,6 +120,22 @@ test("parses XuguDB JDBC URLs", () => {
   assert.equal(parsed.urlParams, "charset=utf8");
 });
 
+test("parses GBase 8s JDBC URLs", () => {
+  const parsed = parseConnectionUrl(
+    "jdbc:gbasedbt-sqli://gbasedbt:secret@gbase.example.com:20013/testdb:GBASEDBTSERVER=gbase01;CLIENT_LOCALE=zh_cn.utf8",
+  );
+
+  assert.equal(parsed.dbType, "gbase");
+  assert.equal(parsed.driverProfile, "gbase8s");
+  assert.equal(parsed.driverLabel, "GBase 8s");
+  assert.equal(parsed.host, "gbase.example.com");
+  assert.equal(parsed.port, 20013);
+  assert.equal(parsed.username, "gbasedbt");
+  assert.equal(parsed.password, "secret");
+  assert.equal(parsed.database, "testdb");
+  assert.equal(parsed.urlParams, "GBASEDBTSERVER=gbase01;CLIENT_LOCALE=zh_cn.utf8");
+});
+
 test("parses UCanAccess JDBC URLs as Access database files", () => {
   const parsed = parseConnectionUrl("jdbc:ucanaccess:///Users/me/data/Northwind.accdb;memory=false");
 
@@ -195,6 +211,21 @@ test("keeps MongoDB URLs as connection strings", () => {
   assert.equal(parsed.connectionString, source);
   assert.equal(parsed.useMongoUrl, true);
   assert.equal(parsed.ssl, true);
+});
+
+test("normalizes MongoDB URL credentials when reserved characters can be parsed safely", () => {
+  const parsed = parseConnectionUrl("mongodb://reader:pa@ss:word@mongo.example.com/admin?authSource=admin");
+
+  assert.equal(parsed.username, "reader");
+  assert.equal(parsed.password, "pa@ss:word");
+  assert.equal(parsed.connectionString, "mongodb://reader:pa%40ss%3Aword@mongo.example.com/admin?authSource=admin");
+});
+
+test("normalizes invalid percent escapes in MongoDB URL credentials", () => {
+  assert.equal(
+    normalizeMongoConnectionString("mongodb://reader:pa%ss@mongo.example.com/admin"),
+    "mongodb://reader:pa%25ss@mongo.example.com/admin",
+  );
 });
 
 test("uses selected HTTP-compatible profile for HTTP URLs", () => {

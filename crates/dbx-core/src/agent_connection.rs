@@ -5,12 +5,14 @@ use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMet
 pub fn agent_connect_params(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> serde_json::Value {
     let agent_database = if config.db_type == DatabaseType::MongoDb {
         mongo_agent_database(config, database)
+    } else if matches!(config.db_type, DatabaseType::Oracle | DatabaseType::OceanbaseOracle) {
+        oracle_agent_database(config, database)
     } else {
         database.to_string()
     };
     let connection_string = if config.db_type == DatabaseType::MongoDb {
         config.connection_url_with_host(host, port)
-    } else if config.db_type == DatabaseType::Oracle {
+    } else if matches!(config.db_type, DatabaseType::Oracle | DatabaseType::OceanbaseOracle) {
         oracle_jdbc_connection_string(config, host, port, database)
     } else if matches!(config.db_type, DatabaseType::Kingbase | DatabaseType::Highgo | DatabaseType::Vastbase) {
         postgres_like_agent_jdbc_connection_string(config, host, port, database)
@@ -26,9 +28,22 @@ pub fn agent_connect_params(config: &ConnectionConfig, host: &str, port: u16, da
         "database": agent_database,
         "username": config.username,
         "password": config.password,
+        "sysdba": oracle_uses_sysdba(config),
         "url_params": config.url_params.as_deref().unwrap_or(""),
         "connection_string": connection_string,
     })
+}
+
+fn oracle_uses_sysdba(config: &ConnectionConfig) -> bool {
+    config.sysdba || (config.db_type == DatabaseType::Oracle && config.username.trim().eq_ignore_ascii_case("sys"))
+}
+
+fn oracle_agent_database(config: &ConnectionConfig, database: &str) -> String {
+    let database = database.trim();
+    if database.is_empty() || !oracle_uses_sysdba(config) || database.to_uppercase().starts_with("SYSDBA:") {
+        return database.to_string();
+    }
+    format!("SYSDBA:{database}")
 }
 
 fn mongo_agent_database(config: &ConnectionConfig, database: &str) -> String {
@@ -78,7 +93,11 @@ pub fn mongo_legacy_error_with_auth_hint(err: &str) -> String {
 
 fn oracle_jdbc_connection_string(config: &ConnectionConfig, host: &str, port: u16, database: &str) -> String {
     if let Some(connection_string) = config.connection_string.as_deref().filter(|value| !value.trim().is_empty()) {
-        return crate::models::connection::rewrite_jdbc_url_host(connection_string.trim(), host, port);
+        let connection_string = connection_string.trim();
+        if host == config.host && port == config.port {
+            return connection_string.to_string();
+        }
+        return crate::models::connection::rewrite_jdbc_url_host(connection_string, host, port);
     }
 
     let database = database.trim();
@@ -215,6 +234,7 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
+            ssh_tunnels: Vec::new(),
             connect_timeout_secs: default_connect_timeout_secs(),
             query_timeout_secs: default_query_timeout_secs(),
             proxy_enabled: false,
@@ -277,6 +297,44 @@ mod tests {
     }
 
     #[test]
+    fn oracle_sys_user_connects_as_sysdba_for_agent_protocol() {
+        let mut cfg = config(DatabaseType::Oracle, Some("ORCLPDB1"));
+        cfg.username = "SYS".to_string();
+        cfg.oracle_connection_type = Some("service_name".to_string());
+
+        let params = agent_connect_params(&cfg, "oracle.example.com", 1521, "ORCLPDB1");
+
+        assert_eq!(params["database"], "SYSDBA:ORCLPDB1");
+        assert_eq!(params["sysdba"], true);
+        assert_eq!(params["connection_string"], "jdbc:oracle:thin:@//oracle.example.com:1521/ORCLPDB1");
+    }
+
+    #[test]
+    fn oracle_sysdba_checkbox_connects_as_sysdba_for_agent_protocol() {
+        let mut cfg = config(DatabaseType::Oracle, Some("ORCLPDB1"));
+        cfg.username = "system".to_string();
+        cfg.sysdba = true;
+
+        let params = agent_connect_params(&cfg, "oracle.example.com", 1521, "ORCLPDB1");
+
+        assert_eq!(params["database"], "SYSDBA:ORCLPDB1");
+        assert_eq!(params["sysdba"], true);
+    }
+
+    #[test]
+    fn oceanbase_oracle_uses_oracle_jdbc_connection_string_for_agent_protocol() {
+        let mut cfg = config(DatabaseType::OceanbaseOracle, Some("sys"));
+        cfg.host = "oceanbase.example.com".to_string();
+        cfg.port = 2881;
+
+        let params = agent_connect_params(&cfg, "oceanbase.example.com", 2881, "sys");
+
+        assert_eq!(params["database"], "sys");
+        assert_eq!(params["sysdba"], false);
+        assert_eq!(params["connection_string"], "jdbc:oracle:thin:@//oceanbase.example.com:2881/sys");
+    }
+
+    #[test]
     fn oracle_url_preserves_custom_jdbc_descriptor_and_rewrites_host_port() {
         let mut cfg = config(DatabaseType::Oracle, Some("ORCL"));
         cfg.host = "oracle.example.com".to_string();
@@ -291,6 +349,24 @@ mod tests {
         assert_eq!(
             params["connection_string"],
             "jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=127.0.0.1)(PORT=11521))(CONNECT_DATA=(SERVICE_NAME=ORCL)))"
+        );
+    }
+
+    #[test]
+    fn oracle_url_preserves_custom_jdbc_descriptor_without_forwarding() {
+        let mut cfg = config(DatabaseType::Oracle, Some("ORCL"));
+        cfg.host = "form-host.example.com".to_string();
+        cfg.port = 1521;
+        cfg.connection_string = Some(
+            "jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=descriptor-host.example.com)(PORT=1522))(CONNECT_DATA=(SERVICE_NAME=ORCL)))"
+                .to_string(),
+        );
+
+        let params = agent_connect_params(&cfg, "form-host.example.com", 1521, "ORCL");
+
+        assert_eq!(
+            params["connection_string"],
+            "jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=descriptor-host.example.com)(PORT=1522))(CONNECT_DATA=(SERVICE_NAME=ORCL)))"
         );
     }
 

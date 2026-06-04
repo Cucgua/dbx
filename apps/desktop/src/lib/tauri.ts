@@ -55,6 +55,7 @@ import type { BuildRenameObjectSqlOptions } from "@/lib/objectRenameSql";
 import type { CreateDatabaseSqlOptions } from "@/lib/createDatabaseSql";
 import type {
   DatabaseNameSqlOptions,
+  DropTableChildObjectSqlOptions,
   DropObjectSqlOptions,
   DuplicateTableStructureSqlOptions,
   SchemaNameSqlOptions,
@@ -116,6 +117,21 @@ export interface AgentDriverInfo {
   jre_installed: boolean;
 }
 
+export interface AgentDriverUpdateIssue {
+  db_type: string;
+  error: string;
+}
+
+export interface UpgradeAllAgentDriversResult {
+  upgraded: number;
+  failed: AgentDriverUpdateIssue[];
+}
+
+export interface AgentUpdateBlocker {
+  db_type: string;
+  label: string;
+}
+
 export type JavaRuntimeMode = "managed" | "system" | "custom";
 
 export interface JavaRuntimeConfig {
@@ -132,6 +148,7 @@ export interface DriverStoreUsage {
   total_bytes: number;
   jre_bytes: number;
   agent_driver_bytes: number;
+  download_cache_bytes?: number;
   jdbc_plugin_bytes: number;
   jdbc_driver_bytes: number;
   jres: DriverStoreUsageItem[];
@@ -604,6 +621,14 @@ export async function listObjects(connectionId: string, database: string, schema
   return invoke("list_objects", { connectionId, database, schema });
 }
 
+export async function listCompletionObjects(
+  connectionId: string,
+  database: string,
+  schema: string,
+): Promise<ObjectInfo[]> {
+  return invoke("list_completion_objects", { connectionId, database, schema });
+}
+
 export async function getObjectSource(
   connectionId: string,
   database: string,
@@ -778,6 +803,10 @@ export async function buildDropTableSql(options: TableAdminSqlOptions): Promise<
   return invoke("build_drop_table_sql", { options });
 }
 
+export async function buildDropTableChildObjectSql(options: DropTableChildObjectSqlOptions): Promise<string> {
+  return invoke("build_drop_table_child_object_sql", { options });
+}
+
 export async function buildEmptyTableSql(options: TableAdminSqlOptions): Promise<string> {
   return invoke("build_empty_table_sql", { options });
 }
@@ -912,6 +941,12 @@ export async function prepareDataCompareFromTables(
   return invoke("prepare_data_compare_from_tables", { options });
 }
 
+export async function prepareDataCompareMissingTarget(
+  options: import("@/lib/dataCompare").DataCompareMissingTargetOptions,
+): Promise<DataCompareFromTablesPreparation> {
+  return invoke("prepare_data_compare_missing_target", { options });
+}
+
 export async function buildDataCompareSyncPlan(options: DataCompareSyncPlanOptions): Promise<DataCompareSyncPlan> {
   return invoke("build_data_compare_sync_plan", { options });
 }
@@ -1026,8 +1061,12 @@ export async function installAgent(dbType: string): Promise<void> {
   return invoke("install_agent", { dbType });
 }
 
-export async function upgradeAllAgents(): Promise<number> {
+export async function upgradeAllAgents(): Promise<UpgradeAllAgentDriversResult> {
   return invoke("upgrade_all_agents");
+}
+
+export async function checkAgentUpdateBlockers(dbTypes: string[]): Promise<AgentUpdateBlocker[]> {
+  return invoke("check_agent_update_blockers", { dbTypes });
 }
 
 export async function uninstallAgent(dbType: string): Promise<void> {
@@ -1339,6 +1378,16 @@ export async function mongoInsertDocument(
   return invoke("mongo_insert_document", { connectionId, database, collection, docJson });
 }
 
+export async function mongoInsertDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  docsJson: string,
+): Promise<{ affected_rows: number }> {
+  const affectedRows = await invoke<number>("mongo_insert_documents", { connectionId, database, collection, docsJson });
+  return { affected_rows: affectedRows };
+}
+
 export async function mongoUpdateDocument(
   connectionId: string,
   database: string,
@@ -1349,6 +1398,25 @@ export async function mongoUpdateDocument(
   return invoke("mongo_update_document", { connectionId, database, collection, id, docJson });
 }
 
+export async function mongoUpdateDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  filterJson: string,
+  updateJson: string,
+  many: boolean,
+): Promise<{ affected_rows: number }> {
+  const affectedRows = await invoke<number>("mongo_update_documents", {
+    connectionId,
+    database,
+    collection,
+    filterJson,
+    updateJson,
+    many,
+  });
+  return { affected_rows: affectedRows };
+}
+
 export async function mongoDeleteDocument(
   connectionId: string,
   database: string,
@@ -1356,6 +1424,23 @@ export async function mongoDeleteDocument(
   id: string,
 ): Promise<number> {
   return invoke("mongo_delete_document", { connectionId, database, collection, id });
+}
+
+export async function mongoDeleteDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  filterJson: string,
+  many: boolean,
+): Promise<{ affected_rows: number }> {
+  const affectedRows = await invoke<number>("mongo_delete_documents", {
+    connectionId,
+    database,
+    collection,
+    filterJson,
+    many,
+  });
+  return { affected_rows: affectedRows };
 }
 
 // --- History ---
@@ -1478,23 +1563,25 @@ export async function startTransfer(
   request: TransferRequest,
   onProgress: (progress: TransferProgress) => void,
 ): Promise<void> {
-  return new Promise(async (resolve, reject) => {
+  return new Promise((resolve, reject) => {
     let unlisten: UnlistenFn | null = null;
-    try {
-      unlisten = await listen<TransferProgress>("transfer-progress", (event) => {
-        if (event.payload.transferId !== request.transferId) return;
-        onProgress(event.payload);
-        if (event.payload.status === "done" || event.payload.status === "cancelled") {
-          unlisten?.();
-          resolve();
-        }
-      });
+    void (async () => {
+      try {
+        unlisten = await listen<TransferProgress>("transfer-progress", (event) => {
+          if (event.payload.transferId !== request.transferId) return;
+          onProgress(event.payload);
+          if (event.payload.status === "done" || event.payload.status === "cancelled") {
+            unlisten?.();
+            resolve();
+          }
+        });
 
-      await invoke("start_transfer", { request });
-    } catch (e) {
-      unlisten?.();
-      reject(e);
-    }
+        await invoke("start_transfer", { request });
+      } catch (e) {
+        unlisten?.();
+        reject(e);
+      }
+    })();
   });
 }
 
@@ -1601,6 +1688,93 @@ export interface ExportProgress {
   error: string | null;
 }
 
+// --- Table Export ---
+export type TableExportStatus = "Running" | "Writing" | "Done" | "Error" | "Cancelled";
+
+export interface TableExportRequest {
+  exportId: string;
+  connectionId: string;
+  database: string;
+  schema?: string;
+  tableName: string;
+  filePath: string;
+  format: "csv" | "xlsx" | "json" | "markdown" | "sql";
+  columns?: string[];
+  primaryKeys?: string[];
+  whereInput?: string;
+  orderBy?: string;
+  skipCount?: boolean;
+  batchSize?: number;
+}
+
+export interface TableCsvExportOptions {
+  filePath: string;
+  connectionId: string;
+  database: string;
+  schema?: string;
+  tableName: string;
+  columns?: string[];
+  pageSize?: number;
+  timeoutSecs?: number;
+}
+
+export interface TableExportProgress {
+  exportId: string;
+  tableName: string;
+  rowsExported: number;
+  totalRows: number | null;
+  status: TableExportStatus;
+  errorMessage?: string;
+}
+
+export async function startTableExport(
+  request: TableExportRequest,
+  onProgress: (progress: TableExportProgress) => void,
+): Promise<TableExportProgress> {
+  let unlisten: UnlistenFn | undefined;
+  let settled = false;
+  let resolveTerminal: (progress: TableExportProgress) => void = () => {};
+  let rejectTerminal: (error: unknown) => void = () => {};
+
+  const terminalProgress = new Promise<TableExportProgress>((resolve, reject) => {
+    resolveTerminal = resolve;
+    rejectTerminal = reject;
+  });
+
+  const finish = (callback: () => void) => {
+    if (settled) return;
+    settled = true;
+    unlisten?.();
+    callback();
+  };
+
+  try {
+    unlisten = await listen<TableExportProgress>("table-export-progress", (event) => {
+      if (event.payload.exportId !== request.exportId) return;
+      onProgress(event.payload);
+      if (event.payload.status === "Done" || event.payload.status === "Error" || event.payload.status === "Cancelled") {
+        if (event.payload.status === "Error") {
+          finish(() => rejectTerminal(new Error(event.payload.errorMessage || "Export failed")));
+        } else {
+          finish(() => resolveTerminal(event.payload));
+        }
+      }
+    });
+    await invoke("start_table_export", { request });
+    return await terminalProgress;
+  } catch (error) {
+    if (!settled) {
+      settled = true;
+      unlisten?.();
+    }
+    throw error;
+  }
+}
+
+export async function cancelTableExport(exportId: string): Promise<void> {
+  return invoke("cancel_table_export", { exportId });
+}
+
 export async function exportDatabaseSql(
   request: DatabaseExportRequest,
   onProgress: (progress: ExportProgress) => void,
@@ -1637,6 +1811,10 @@ export async function exportQueryResultCsv(
       rows,
     },
   });
+}
+
+export async function exportTableDataCsv(options: TableCsvExportOptions): Promise<number> {
+  return invoke("export_table_data_csv", { request: options });
 }
 
 export async function exportQueryResultXlsx(

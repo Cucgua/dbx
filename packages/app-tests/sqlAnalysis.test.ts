@@ -15,12 +15,14 @@ test("recognizes a simple single-table SELECT as editable", () => {
   assert.equal(result.editable, true);
   assert.deepEqual(result.analysis, {
     schema: "public",
+    schemaQuoted: false,
     tableName: "users",
+    tableNameQuoted: false,
     tableAlias: undefined,
     selectStar: false,
     columns: [
-      { sourceName: "id", resultName: "id", expression: "id" },
-      { sourceName: "name", resultName: "name", expression: "name" },
+      { sourceName: "id", sourceNameQuoted: false, resultName: "id", expression: "id" },
+      { sourceName: "name", sourceNameQuoted: false, resultName: "name", expression: "name" },
     ],
   });
 });
@@ -31,12 +33,14 @@ test("recognizes quoted table names and table aliases", () => {
   assert.equal(result.editable, true);
   assert.deepEqual(result.analysis, {
     schema: "app schema",
+    schemaQuoted: true,
     tableName: "user table",
+    tableNameQuoted: true,
     tableAlias: "u",
     selectStar: false,
     columns: [
-      { sourceName: "id", resultName: "id", expression: 'u."id"' },
-      { sourceName: "full name", resultName: "full name", expression: 'u."full name"' },
+      { sourceName: "id", sourceNameQuoted: true, resultName: "id", expression: 'u."id"' },
+      { sourceName: "full name", sourceNameQuoted: true, resultName: "full name", expression: 'u."full name"' },
     ],
   });
 });
@@ -44,7 +48,9 @@ test("recognizes quoted table names and table aliases", () => {
 test("keeps the legacy analyzer API for editable SELECT queries", () => {
   assert.deepEqual(analyzeEditableQuery("select * from users"), {
     schema: undefined,
+    schemaQuoted: false,
     tableName: "users",
+    tableNameQuoted: false,
     tableAlias: undefined,
     selectStar: true,
     columns: [],
@@ -87,10 +93,10 @@ test("keeps single-table expression columns while mapping writable source column
 
   assert.equal(result.editable, true);
   assert.deepEqual(result.analysis.columns, [
-    { sourceName: "iso3", resultName: "iso3", expression: "iso3" },
-    { sourceName: "year", resultName: "year", expression: "year" },
-    { sourceName: "country_name", resultName: "country_name", expression: "country_name" },
-    { sourceName: undefined, resultName: "score", expression: "ihli / gdp_pc" },
+    { sourceName: "iso3", sourceNameQuoted: false, resultName: "iso3", expression: "iso3" },
+    { sourceName: "year", sourceNameQuoted: false, resultName: "year", expression: "year" },
+    { sourceName: "country_name", sourceNameQuoted: false, resultName: "country_name", expression: "country_name" },
+    { sourceName: undefined, sourceNameQuoted: false, resultName: "score", expression: "ihli / gdp_pc" },
   ]);
   assert.equal(
     allPrimaryKeysPresent(["iso3", "year"], ["iso3", "year", "country_name", "score"], result.analysis),

@@ -1,4 +1,4 @@
-import type { ObjectSourceKind, TreeNodeType } from "@/types/database";
+import type { ObjectSourceKind, TreeNode, TreeNodeType } from "@/types/database";
 import { matchesShortcut, type ShortcutLikeEvent } from "@/lib/keyboardShortcuts";
 
 export type TreeNodeRowAction = "open-data" | "toggle" | "none";
@@ -16,12 +16,28 @@ export type SidebarActivation = "single" | "double";
 const dataNodeTypes = new Set<TreeNodeType>(["table", "view"]);
 const toggleLeafNodeTypes = new Set<TreeNodeType>(["redis-db", "mongo-collection"]);
 const objectBrowserNodeTypes = new Set<TreeNodeType>(["database", "schema", "object-browser"]);
-const sourceNodeTypes = new Set<TreeNodeType>(["procedure", "function"]);
+const sourceNodeTypes = new Set<TreeNodeType>(["procedure", "function", "package", "package-body"]);
+const tableChildGroupNodeTypes = new Set<TreeNodeType>([
+  "group-columns",
+  "group-indexes",
+  "group-fkeys",
+  "group-triggers",
+  "group-partitions",
+]);
+const databaseChildGroupNodeTypes = new Set<TreeNodeType>([
+  "group-tables",
+  "group-views",
+  "group-procedures",
+  "group-functions",
+  "group-packages",
+]);
 
 export function objectSourceKindForTreeNode(type: TreeNodeType): ObjectSourceKind | null {
   if (type === "view") return "VIEW";
   if (type === "procedure") return "PROCEDURE";
   if (type === "function") return "FUNCTION";
+  if (type === "package") return "PACKAGE";
+  if (type === "package-body") return "PACKAGE_BODY";
   return null;
 }
 
@@ -58,4 +74,14 @@ export function treeNodeRowDoubleClickAction(
 
 export function sidebarSelectionCopyAction(event: ShortcutLikeEvent): SidebarSelectionCopyAction {
   return matchesShortcut(event, "Mod+C") ? "copy-name" : "none";
+}
+
+export function copyNameForTreeNode(node: TreeNode): string {
+  if (tableChildGroupNodeTypes.has(node.type) && node.tableName) return node.tableName;
+  if (databaseChildGroupNodeTypes.has(node.type)) return node.schema || node.database || node.label;
+  if (node.type === "column") {
+    if (node.meta && "name" in node.meta) return node.meta.name;
+    return node.label.replace(/\s+\(.+\)$/, "");
+  }
+  return node.label;
 }

@@ -60,7 +60,9 @@ export function useDataGridSelection(options: UseDataGridSelectionOptions) {
     if (hasColumnSelection.value) {
       return extractColumnsSelection(columns.value, visibleSelectionRows.value, selectedColumnIndexes.value);
     }
-    return extractSelection(columns.value, visibleSelectionRows.value, selectedRange.value);
+    const range = selectedRange.value;
+    if (!range) return { columns: [], rows: [] };
+    return extractSelection(columns.value, visibleSelectionRows.value, range);
   });
 
   const selectedCellCount = computed(() => selectedCells.value.columns.length * selectedCells.value.rows.length);

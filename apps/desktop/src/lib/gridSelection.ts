@@ -17,6 +17,12 @@ export interface SelectionData {
   rows: GridCellValue[][];
 }
 
+export function parseClipboardTable(text: string): string[][] {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n$/, "");
+  if (!normalized) return [[""]];
+  return normalized.split("\n").map((row) => row.split("\t"));
+}
+
 export function normalizeSelectedColumnIndexes(columnIndexes: Iterable<number>): number[] {
   return [...new Set(columnIndexes)].filter((index) => index >= 0).sort((a, b) => a - b);
 }

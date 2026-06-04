@@ -27,6 +27,11 @@ export function isPreviewTab(tab: QueryTab): boolean {
   return !!config?.name.startsWith("[Preview]");
 }
 
+function queryTitle(tab: QueryTab): string | undefined {
+  if (tab.customTitle || tab.savedSqlId || tab.objectSource) return tab.title.trim() || undefined;
+  return undefined;
+}
+
 export function tabDisplayTitle(tab: QueryTab, t: Translate): string {
   const database = databaseDisplayNameForTab(tab.connectionId, tab.database, t);
   const settingsStore = useSettingsStore();
@@ -41,6 +46,8 @@ export function tabDisplayTitle(tab: QueryTab, t: Translate): string {
     return `${tab.tableMeta.tableName}${suffix}`;
   }
   if (tab.mode === "query") {
+    const title = queryTitle(tab);
+    if (title) return title;
     if (compact) return connectionDisplayName(tab.connectionId);
     return `${connectionDisplayName(tab.connectionId)}@${database}`;
   }
@@ -67,6 +74,9 @@ export function tabTooltipLines(tab: QueryTab, t: Translate): { label: string; v
     { label: t("tabs.tooltipConnection"), value: connName },
     { label: t("tabs.tooltipDatabase"), value: database },
   ];
+  if (tab.mode === "query" && queryTitle(tab)) {
+    lines.unshift({ label: t("tabs.tooltipTitle"), value: tab.title });
+  }
   if (tab.mode === "data" && tab.tableMeta?.tableName) {
     lines.push({ label: t("tabs.tooltipTable"), value: tab.tableMeta.tableName });
   }
@@ -77,6 +87,15 @@ export function tabTooltipLines(tab: QueryTab, t: Translate): { label: string; v
     lines.push({ label: t("tabs.tooltipSchema"), value: tab.objectBrowser.schema });
   }
   return lines;
+}
+
+export function shouldShowTabOverflowControls(
+  tabCount: number,
+  hasTabOverflow: boolean,
+  canScrollLeft: boolean,
+  canScrollRight: boolean,
+): boolean {
+  return tabCount > 0 && (hasTabOverflow || canScrollLeft || canScrollRight);
 }
 
 export function tabModeLabel(tab: QueryTab, t: Translate): string {

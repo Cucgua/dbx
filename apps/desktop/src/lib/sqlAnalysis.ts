@@ -23,7 +23,9 @@ export function isBinaryType(dataType: string): boolean {
 
 export interface EditableQueryInfo {
   schema: string | undefined;
+  schemaQuoted?: boolean;
   tableName: string;
+  tableNameQuoted?: boolean;
   tableAlias?: string;
   selectStar: boolean;
   columns: EditableQueryColumn[]; // empty array if SELECT *
@@ -31,6 +33,7 @@ export interface EditableQueryInfo {
 
 export interface EditableQueryColumn {
   sourceName?: string;
+  sourceNameQuoted?: boolean;
   resultName: string;
   expression: string;
 }
@@ -101,7 +104,9 @@ export function analyzeEditableQueryEditability(sql: string): QueryEditability {
     editable: true,
     analysis: {
       schema: source.schema,
+      schemaQuoted: source.schemaQuoted,
       tableName: source.tableName,
+      tableNameQuoted: source.tableNameQuoted,
       tableAlias: source.alias,
       selectStar,
       columns,
@@ -166,6 +171,7 @@ function parseSelectColumn(col: string): EditableQueryColumn | null {
   if (alias === null) return parseComputedSelectColumn(col);
   return {
     sourceName: source.parts[source.parts.length - 1],
+    sourceNameQuoted: source.quoted[source.quoted.length - 1],
     resultName: alias ?? source.parts[source.parts.length - 1],
     expression: col.slice(0, source.end).trim(),
   };
@@ -176,6 +182,7 @@ function parseComputedSelectColumn(col: string): EditableQueryColumn | null {
   if (!alias) return null;
   return {
     sourceName: undefined,
+    sourceNameQuoted: false,
     resultName: alias.resultName,
     expression: alias.expression,
   };
@@ -207,7 +214,9 @@ function isSelectStar(body: string, alias: string | undefined): boolean {
   return new RegExp(`^${escapeRegExp(alias)}\\s*\\.\\s*\\*$`, "i").test(trimmed);
 }
 
-function parseFromSource(body: string): { schema?: string; tableName: string; alias?: string } | null {
+function parseFromSource(
+  body: string,
+): { schema?: string; schemaQuoted?: boolean; tableName: string; tableNameQuoted?: boolean; alias?: string } | null {
   if (!body || /[,()]/.test(body) || /\bJOIN\b/i.test(body)) return null;
   const ident = parseQualifiedIdentifier(body);
   if (!ident || ident.parts.length < 1 || ident.parts.length > 2) return null;
@@ -220,8 +229,10 @@ function parseFromSource(body: string): { schema?: string; tableName: string; al
     alias = aliasIdent.value;
   }
   const tableName = ident.parts[ident.parts.length - 1];
+  const tableNameQuoted = ident.quoted[ident.quoted.length - 1];
   const schema = ident.parts.length === 2 ? ident.parts[0] : undefined;
-  return { schema, tableName, alias };
+  const schemaQuoted = ident.parts.length === 2 ? ident.quoted[0] : false;
+  return { schema, schemaQuoted, tableName, tableNameQuoted, alias };
 }
 
 function isExternalFromSource(body: string): boolean {
@@ -229,36 +240,40 @@ function isExternalFromSource(body: string): boolean {
   return /^'(?:''|[^'])*'(?:\s+(?:AS\s+)?[A-Za-z_][\w$]*)?$/i.test(trimmed) || /^[A-Za-z_][\w$]*\s*\(/.test(trimmed);
 }
 
-function parseQualifiedIdentifier(text: string): { parts: string[]; end: number; rest: string; done: boolean } | null {
+function parseQualifiedIdentifier(
+  text: string,
+): { parts: string[]; quoted: boolean[]; end: number; rest: string; done: boolean } | null {
   const parts: string[] = [];
+  const quoted: boolean[] = [];
   let pos = 0;
   while (pos < text.length) {
     pos = skipWhitespace(text, pos);
     const ident = readIdentifier(text, pos);
     if (!ident) break;
     parts.push(ident.value);
+    quoted.push(ident.quoted);
     pos = skipWhitespace(text, ident.end);
     if (text[pos] !== ".") break;
     pos++;
   }
   if (parts.length === 0) return null;
-  return { parts, end: pos, rest: text.slice(pos), done: text.slice(pos).trim() === "" };
+  return { parts, quoted, end: pos, rest: text.slice(pos), done: text.slice(pos).trim() === "" };
 }
 
-function readIdentifier(text: string, start: number): { value: string; end: number } | null {
+function readIdentifier(text: string, start: number): { value: string; quoted: boolean; end: number } | null {
   const pos = skipWhitespace(text, start);
   const quote = text[pos];
   if (quote === '"' || quote === "`" || quote === "[") {
     const close = quote === "[" ? "]" : quote;
     let value = "";
     for (let i = pos + 1; i < text.length; i++) {
-      if (text[i] === close) return { value, end: i + 1 };
+      if (text[i] === close) return { value, quoted: true, end: i + 1 };
       value += text[i];
     }
     return null;
   }
   const match = text.slice(pos).match(/^[A-Za-z_][\w$]*/);
-  return match ? { value: match[0], end: pos + match[0].length } : null;
+  return match ? { value: match[0], quoted: false, end: pos + match[0].length } : null;
 }
 
 function skipWhitespace(text: string, pos: number): number {

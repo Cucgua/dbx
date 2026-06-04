@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { Settings2 } from "lucide-vue-next";
+import { Settings2 } from "@lucide/vue";
 import type { AiProvider } from "@/stores/settingsStore";
 import { useTheme } from "@/composables/useTheme";
 

@@ -32,6 +32,8 @@ pub enum ObjectSourceKind {
     View,
     Procedure,
     Function,
+    Package,
+    PackageBody,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +88,8 @@ pub struct IndexInfo {
 pub struct ForeignKeyInfo {
     pub name: String,
     pub column: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_schema: Option<String>,
     pub ref_table: String,
     pub ref_column: String,
 }

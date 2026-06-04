@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  copyNameForTreeNode,
   objectSourceKindForTreeNode,
   sidebarSelectionCopyAction,
   treeNodeRowAction,
@@ -53,6 +54,8 @@ test("maps source-capable sidebar nodes to object source kinds", () => {
   assert.equal(objectSourceKindForTreeNode("view"), "VIEW");
   assert.equal(objectSourceKindForTreeNode("procedure"), "PROCEDURE");
   assert.equal(objectSourceKindForTreeNode("function"), "FUNCTION");
+  assert.equal(objectSourceKindForTreeNode("package"), "PACKAGE");
+  assert.equal(objectSourceKindForTreeNode("package-body"), "PACKAGE_BODY");
   assert.equal(objectSourceKindForTreeNode("table"), null);
 });
 
@@ -89,4 +92,78 @@ test("double click navigation mode copies the selected sidebar row name", () => 
 test("single click navigation mode copies the selected sidebar row name", () => {
   assert.equal(sidebarSelectionCopyAction({ key: "c", metaKey: true }), "copy-name");
   assert.equal(sidebarSelectionCopyAction({ key: "C", ctrlKey: true }), "copy-name");
+});
+
+test("copying table child group rows uses the parent table name", () => {
+  assert.equal(
+    copyNameForTreeNode({
+      id: "conn:db:public:orders:__columns",
+      label: "tree.columns",
+      type: "group-columns",
+      tableName: "orders",
+    }),
+    "orders",
+  );
+  assert.equal(
+    copyNameForTreeNode({
+      id: "conn:db:public:orders:__indexes",
+      label: "tree.indexes",
+      type: "group-indexes",
+      tableName: "orders",
+    }),
+    "orders",
+  );
+});
+
+test("copying database object group rows uses the parent schema or database name", () => {
+  assert.equal(
+    copyNameForTreeNode({
+      id: "conn:db:public:__tables",
+      label: "tree.tables",
+      type: "group-tables",
+      database: "db",
+      schema: "public",
+    }),
+    "public",
+  );
+  assert.equal(
+    copyNameForTreeNode({
+      id: "conn:db:__views",
+      label: "tree.views",
+      type: "group-views",
+      database: "db",
+    }),
+    "db",
+  );
+});
+
+test("copying column rows uses the column name without type suffix", () => {
+  assert.equal(
+    copyNameForTreeNode({
+      id: "conn:db:public:orders:__columns:status",
+      label: "status (varchar)",
+      type: "column",
+      meta: {
+        name: "status",
+        data_type: "varchar",
+        is_nullable: true,
+        column_default: null,
+        is_primary_key: false,
+        extra: null,
+        comment: null,
+        numeric_precision: null,
+        numeric_scale: null,
+        character_maximum_length: null,
+      },
+    }),
+    "status",
+  );
+  assert.equal(
+    copyNameForTreeNode({
+      id: "conn:db:public:orders:__columns:status",
+      label: "status (varchar)",
+      type: "column",
+    }),
+    "status",
+  );
 });

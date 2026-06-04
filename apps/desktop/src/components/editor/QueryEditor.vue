@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, shallowRef, computed } from "vue";
-import { Play, Copy, TextSelect } from "lucide-vue-next";
+import { ref, onMounted, onBeforeUnmount, onActivated, onDeactivated, watch, shallowRef, computed } from "vue";
+import { Play, Copy, TextSelect } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import type { CompletionContext } from "@codemirror/autocomplete";
 import type { EditorView as EditorViewType } from "@codemirror/view";
@@ -22,6 +22,13 @@ import {
   shouldAutoOpenSqlCompletion,
   extractCteDefinitions,
 } from "@/lib/sqlCompletion";
+import {
+  buildElasticsearchCompletionItemsFromContext,
+  getElasticsearchCompletionContext,
+  getElasticsearchCompletionResultValidFor,
+  shouldAutoOpenElasticsearchCompletion,
+  type ElasticsearchCompletionItem,
+} from "@/lib/elasticsearchCompletion";
 import { extractIdentifierAt, isSqlKeyword, matchTable } from "@/lib/sqlNavigation";
 import { lineColumnToOffset, parseSqlErrorLocation } from "@/lib/sqlDiagnostics";
 import {
@@ -57,8 +64,19 @@ import {
   shouldRunSqlSemanticDiagnostics,
   type SqlSemanticDiagnostic,
 } from "@/lib/sqlSemanticDiagnostics";
-import type { SqlCompletionColumn } from "@/lib/sqlCompletion";
-import type { DatabaseType, SqlReferenceAnalysis, SqlTableReference, SqlTextSpan } from "@/types/database";
+import type {
+  SqlCompletionColumn,
+  SqlCompletionForeignKey,
+  SqlCompletionItem,
+  SqlCompletionObject,
+} from "@/lib/sqlCompletion";
+import type {
+  DatabaseType,
+  ForeignKeyInfo,
+  SqlReferenceAnalysis,
+  SqlTableReference,
+  SqlTextSpan,
+} from "@/types/database";
 import { vscodeSelectionLayer } from "@/lib/codemirrorVscodeSelectionLayer";
 
 const props = defineProps<{
@@ -187,6 +205,8 @@ let setSqlDiagnosticsEffect: import("@codemirror/state").StateEffectType<SqlSema
 let semanticDiagnostics: SqlSemanticDiagnostic[] = [];
 let semanticDiagnosticTimer: ReturnType<typeof setTimeout> | null = null;
 let semanticDiagnosticRunId = 0;
+let editorIsActive = true;
+let tableReferenceDropListenerRegistered = false;
 
 function editorThemeAppearance() {
   return isDark.value ? "dark" : "light";
@@ -194,8 +214,10 @@ function editorThemeAppearance() {
 
 // Completion cache
 let cachedTables: Array<{ name: string; schema?: string; type?: "table" | "view" }> = [];
+let cachedCompletionObjects: SqlCompletionObject[] = [];
 // Persistent column cache keyed by "schema.table" or "table"
 const cachedColumnsByTable = new Map<string, SqlCompletionColumn[]>();
+const cachedForeignKeysByTable = new Map<string, SqlCompletionForeignKey[]>();
 
 const zoomCommitScheduler = createEditorZoomCommitScheduler((fontSize) => {
   if (settingsStore.editorSettings.fontSize === fontSize) return;
@@ -323,6 +345,22 @@ function selectAllSqlFromContextMenu() {
   focusEditor();
 }
 
+function selectSqlLineFromGutter(
+  currentView: EditorViewType,
+  line: { from: number; to: number },
+  event: Event,
+): boolean {
+  if (!(event instanceof MouseEvent) || event.button !== 0) return false;
+  event.preventDefault();
+  currentView.dispatch({
+    selection: { anchor: line.from, head: line.to },
+    scrollIntoView: true,
+    userEvent: "select.pointer",
+  });
+  currentView.focus();
+  return true;
+}
+
 const contextMenuItems = computed<ContextMenuItem[]>(() => [
   {
     label: executeContextMenuLabel.value,
@@ -434,6 +472,28 @@ async function ensureColumnsForTable(table: { name: string; schema?: string | nu
   );
   if (columns.length === 0) return;
   cachedColumnsByTable.set(cacheKey, columns);
+}
+
+async function ensureForeignKeysForTable(table: { name: string; schema?: string | null }) {
+  const cacheKey = completionCacheKey(table);
+  if (cachedForeignKeysByTable.has(cacheKey) || !props.connectionId || props.database == null) return;
+  const querySchema = table.schema ?? props.database;
+  try {
+    const foreignKeys = await api.listForeignKeys(props.connectionId, props.database, querySchema, table.name);
+    cachedForeignKeysByTable.set(
+      cacheKey,
+      foreignKeys.map((foreignKey: ForeignKeyInfo) => ({
+        name: foreignKey.name,
+        column: foreignKey.column,
+        ref_schema: foreignKey.ref_schema,
+        ref_table: foreignKey.ref_table,
+        ref_column: foreignKey.ref_column,
+      })),
+    );
+  } catch (e) {
+    console.warn(`[DBX] Failed to load foreign keys for ${cacheKey}:`, e);
+    cachedForeignKeysByTable.set(cacheKey, []);
+  }
 }
 
 function createHoverDom(title: string, detail: string, rows: string[] = []) {
@@ -560,6 +620,7 @@ async function resolveSqlHoverTooltip(currentView: EditorViewType, pos: number) 
         create: () => ({
           dom: createHoverDom(column.name, column.dataType || "column", [
             column.schema ? `${column.schema}.${column.table}` : column.table,
+            ...(column.comment?.trim() ? [column.comment.trim()] : []),
           ]),
         }),
       };
@@ -704,6 +765,7 @@ async function refreshSemanticDiagnostics() {
 }
 
 function scheduleSemanticDiagnostics(delay = 500) {
+  if (!editorIsActive) return;
   if (semanticDiagnosticTimer) clearTimeout(semanticDiagnosticTimer);
   semanticDiagnosticTimer = setTimeout(() => {
     semanticDiagnosticTimer = null;
@@ -789,18 +851,27 @@ function onTableReferenceDropEvent(event: Event) {
   }
 }
 
+function registerTableReferenceDropListener() {
+  if (tableReferenceDropListenerRegistered) return;
+  window.addEventListener(DBX_TABLE_REFERENCE_DROP_EVENT, onTableReferenceDropEvent);
+  tableReferenceDropListenerRegistered = true;
+}
+
+function unregisterTableReferenceDropListener() {
+  if (!tableReferenceDropListenerRegistered) return;
+  window.removeEventListener(DBX_TABLE_REFERENCE_DROP_EVENT, onTableReferenceDropEvent);
+  tableReferenceDropListenerRegistered = false;
+}
+
 let completionEpoch = 0;
 let completionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-function buildCompletionResult(
-  items: ReturnType<typeof buildSqlCompletionItemsFromContext>,
-  position: number,
-  prefixLength: number,
-  fullDoc: string,
-) {
+type QueryCompletionItem = SqlCompletionItem | ElasticsearchCompletionItem;
+
+function buildCompletionResult(items: QueryCompletionItem[], from: number, validFor?: RegExp) {
   if (items.length === 0) return null;
   return {
-    from: position - prefixLength,
+    from,
     filter: false,
     options: items.map((item) =>
       (item.type === "snippet" || item.type === "function") && item.apply
@@ -808,17 +879,45 @@ function buildCompletionResult(
             label: item.label,
             type: item.type,
             detail: item.detail,
+            info: item.info,
             boost: item.boost,
           })
         : {
             label: item.label,
             type: item.type,
             detail: item.detail,
+            info: item.info,
+            apply: item.apply,
             boost: item.boost,
           },
     ),
-    validFor: getSqlCompletionResultValidFor(fullDoc, position),
+    validFor,
   };
+}
+
+async function provideElasticsearchCompletions(
+  currentState: import("@codemirror/state").EditorState,
+  position: number,
+  explicit: boolean,
+) {
+  if (!props.connectionId) return null;
+  const epoch = ++completionEpoch;
+  const fullDoc = currentState.doc.toString();
+  if (!explicit && !shouldAutoOpenElasticsearchCompletion(fullDoc, position)) return null;
+
+  const completionContext = getElasticsearchCompletionContext(fullDoc, position);
+  let indices: string[] = [];
+  if (props.database != null && completionContext.mode === "path") {
+    try {
+      indices = await connectionStore.listElasticsearchCompletionIndices(props.connectionId, props.database);
+    } catch {
+      indices = [];
+    }
+  }
+  if (epoch !== completionEpoch) return null;
+
+  const items = buildElasticsearchCompletionItemsFromContext(completionContext, { indices });
+  return buildCompletionResult(items, completionContext.from, getElasticsearchCompletionResultValidFor());
 }
 
 async function provideSqlCompletions(
@@ -827,6 +926,9 @@ async function provideSqlCompletions(
   explicit: boolean,
 ) {
   if (!props.connectionId) return null;
+  if (props.databaseType === "elasticsearch") {
+    return provideElasticsearchCompletions(currentState, position, explicit);
+  }
   const hasDatabase = props.database != null;
 
   const epoch = ++completionEpoch;
@@ -840,16 +942,25 @@ async function provideSqlCompletions(
     if (!hasDatabase) {
       const items = buildSqlCompletionItemsFromContext(completionContext, {
         tables: [],
+        objects: [],
         columnsByTable: new Map(),
         schemas: [],
         translations: completionTranslations.value,
         snippets: settingsStore.editorSettings.snippets,
+        dialect: props.dialect,
+        databaseType: props.databaseType,
       });
-      return buildCompletionResult(items, position, completionContext.prefix.length, fullDoc);
+      return buildCompletionResult(
+        items,
+        position - completionContext.prefix.length,
+        getSqlCompletionResultValidFor(fullDoc, position),
+      );
     }
 
     const needsAsyncData =
       completionContext.suggestTables ||
+      completionContext.suggestRoutines ||
+      completionContext.exclusiveRoutineSuggestions ||
       !!completionContext.qualifier ||
       !!completionContext.insertTable ||
       completionContext.exclusiveColumnSuggestions ||
@@ -858,12 +969,19 @@ async function provideSqlCompletions(
     if (!needsAsyncData) {
       const items = buildSqlCompletionItemsFromContext(completionContext, {
         tables: [],
+        objects: [],
         columnsByTable: new Map(),
         schemas: [],
         translations: completionTranslations.value,
         snippets: settingsStore.editorSettings.snippets,
+        dialect: props.dialect,
+        databaseType: props.databaseType,
       });
-      return buildCompletionResult(items, position, completionContext.prefix.length, fullDoc);
+      return buildCompletionResult(
+        items,
+        position - completionContext.prefix.length,
+        getSqlCompletionResultValidFor(fullDoc, position),
+      );
     }
 
     // Cancel any pending debounced completion
@@ -923,7 +1041,9 @@ async function performAsyncCompletionWithResult(
     }
   }
 
-  const shouldLoadTables = completionContext.suggestTables || !!completionContext.qualifier;
+  const shouldLoadTables =
+    completionContext.suggestTables ||
+    (!!completionContext.qualifier && !isReferencedTableQualifier(completionContext));
   let tables = shouldLoadTables
     ? await connectionStore.listCompletionTables(
         props.connectionId!,
@@ -934,6 +1054,35 @@ async function performAsyncCompletionWithResult(
       )
     : cachedTables;
   if (epoch !== completionEpoch) return null;
+
+  const shouldLoadObjects =
+    completionContext.suggestRoutines ||
+    completionContext.exclusiveRoutineSuggestions ||
+    (!!completionContext.qualifier && !completionContext.exclusiveColumnSuggestions);
+  let completionObjects = shouldLoadObjects
+    ? await connectionStore.listCompletionObjects(
+        props.connectionId!,
+        props.database!,
+        completionContext.qualifier || completionContext.prefix,
+        MAX_COMPLETION_TABLES,
+      )
+    : cachedCompletionObjects;
+  if (epoch !== completionEpoch) return null;
+
+  if (completionContext.qualifier && completionObjects.length === 0) {
+    const schemaObjects = await connectionStore.listCompletionObjects(
+      props.connectionId!,
+      props.database!,
+      completionContext.prefix,
+      MAX_COMPLETION_TABLES,
+      completionContext.qualifier,
+    );
+    if (schemaObjects.length > 0) {
+      completionObjects = schemaObjects;
+    }
+    if (epoch !== completionEpoch) return null;
+  }
+  cachedCompletionObjects = mergeCompletionObjects(cachedCompletionObjects, completionObjects);
 
   // Fetch schemas for schema completion
   let schemaNames: string[] = [];
@@ -1033,8 +1182,19 @@ async function performAsyncCompletionWithResult(
   );
   if (epoch !== completionEpoch) return null;
 
+  if (completionContext.suggestJoinConditions) {
+    await Promise.all(
+      refs.map(async (refTable) => {
+        if (refTable.columns && refTable.columns.length > 0) return;
+        await ensureForeignKeysForTable(refTable);
+      }),
+    );
+    if (epoch !== completionEpoch) return null;
+  }
+
   // Build columnsByTable — from cache or CTE definitions
   const columnsByTable = new Map<string, SqlCompletionColumn[]>();
+  const foreignKeysByTable = new Map<string, SqlCompletionForeignKey[]>();
   if (insertColumnsByTable.size > 0) {
     for (const [key, cols] of insertColumnsByTable.entries()) {
       columnsByTable.set(key, cols);
@@ -1058,6 +1218,10 @@ async function performAsyncCompletionWithResult(
       if (cached) {
         columnsByTable.set(cacheKey, cached);
       }
+      const cachedForeignKeys = cachedForeignKeysByTable.get(cacheKey);
+      if (cachedForeignKeys) {
+        foreignKeysByTable.set(cacheKey, cachedForeignKeys);
+      }
     }
   }
 
@@ -1073,18 +1237,52 @@ async function performAsyncCompletionWithResult(
 
   const items = buildSqlCompletionItemsFromContext(effectiveContext, {
     tables,
+    objects: completionObjects,
     columnsByTable,
+    foreignKeysByTable,
     schemas: schemaNames,
     translations: completionTranslations.value,
     snippets: settingsStore.editorSettings.snippets,
+    dialect: props.dialect,
+    databaseType: props.databaseType,
   });
 
-  return buildCompletionResult(items, position, completionContext.prefix.length, fullDoc);
+  return buildCompletionResult(
+    items,
+    position - completionContext.prefix.length,
+    getSqlCompletionResultValidFor(fullDoc, position),
+  );
+}
+
+function isReferencedTableQualifier(completionContext: ReturnType<typeof getSqlCompletionContext>): boolean {
+  if (!completionContext.qualifier) return false;
+  const qualifier = completionContext.qualifier.toLowerCase();
+  return completionContext.referencedTables.some(
+    (table) => table.alias?.toLowerCase() === qualifier || table.name.toLowerCase() === qualifier,
+  );
+}
+
+function mergeCompletionObjects(existing: SqlCompletionObject[], incoming: SqlCompletionObject[]) {
+  const merged = [...existing];
+  const seen = new Set(
+    existing.map((object) =>
+      `${object.type}:${object.schema ?? ""}:${object.name}:${object.parentName ?? ""}`.toLowerCase(),
+    ),
+  );
+  for (const object of incoming) {
+    const key = `${object.type}:${object.schema ?? ""}:${object.name}:${object.parentName ?? ""}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(object);
+  }
+  return merged;
 }
 
 async function refreshCompletionCache() {
   cachedTables = [];
+  cachedCompletionObjects = [];
   cachedColumnsByTable.clear();
+  cachedForeignKeysByTable.clear();
 }
 
 onMounted(async () => {
@@ -1260,7 +1458,11 @@ onMounted(async () => {
           return { dom };
         },
       }),
-      lineNumbers(),
+      lineNumbers({
+        domEventHandlers: {
+          mousedown: selectSqlLineFromGutter,
+        },
+      }),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
       history(),
@@ -1481,9 +1683,10 @@ onMounted(async () => {
   view.value = new EditorView({ state, parent: editorRef.value });
   syncContextMenuState(view.value);
   syncEditorFontCssVars(liveFontSize.value, ss.fontFamily);
-  window.addEventListener(DBX_TABLE_REFERENCE_DROP_EVENT, onTableReferenceDropEvent);
+  registerTableReferenceDropListener();
 
   cachedTables = [];
+  cachedCompletionObjects = [];
   scheduleSemanticDiagnostics();
 });
 
@@ -1593,10 +1796,28 @@ watch(
   { deep: true },
 );
 
-onBeforeUnmount(() => {
-  zoomCommitScheduler.dispose();
+function pauseQueryEditorBackgroundWork() {
+  editorIsActive = false;
+  semanticDiagnosticRunId++;
   if (semanticDiagnosticTimer) clearTimeout(semanticDiagnosticTimer);
-  window.removeEventListener(DBX_TABLE_REFERENCE_DROP_EVENT, onTableReferenceDropEvent);
+  semanticDiagnosticTimer = null;
+  completionEpoch++;
+  unregisterTableReferenceDropListener();
+}
+
+function resumeQueryEditorBackgroundWork() {
+  editorIsActive = true;
+  registerTableReferenceDropListener();
+  scheduleSemanticDiagnostics();
+}
+
+onActivated(resumeQueryEditorBackgroundWork);
+
+onDeactivated(pauseQueryEditorBackgroundWork);
+
+onBeforeUnmount(() => {
+  pauseQueryEditorBackgroundWork();
+  zoomCommitScheduler.dispose();
   view.value?.destroy();
 });
 

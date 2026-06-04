@@ -24,6 +24,12 @@ test("normalizes saved query result page size", () => {
   assert.equal(normalizeEditorSettings({ pageSize: 0 }).pageSize, 100);
 });
 
+test("defaults export batch size to 10000 rows", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.exportBatchSize, 10000);
+  assert.equal(normalizeEditorSettings({}).exportBatchSize, 10000);
+  assert.equal(normalizeEditorSettings({ exportBatchSize: 2000 }).exportBatchSize, 2000);
+});
+
 test("normalizes editor theme settings", () => {
   assert.equal(DEFAULT_EDITOR_SETTINGS.theme, "app");
   assert.equal(normalizeEditorSettings({}).theme, "app");
@@ -77,6 +83,11 @@ test("defaults active tab sidebar selection to off", () => {
   assert.equal(normalizeEditorSettings({}).autoSelectActiveSidebarNode, false);
 });
 
+test("defaults sidebar horizontal scroll to off", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll, false);
+  assert.equal(normalizeEditorSettings({}).sidebarAllowHorizontalScroll, false);
+});
+
 test("defaults data grid header display settings", () => {
   assert.equal(DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader, false);
   assert.equal(DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions, true);
@@ -94,6 +105,13 @@ test("keeps saved data grid header display settings", () => {
   assert.equal(settings.compactColumnHeaderActions, false);
 });
 
+test("normalizes data grid render mode", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.dataGridRenderMode, "canvas");
+  assert.equal(normalizeEditorSettings({}).dataGridRenderMode, "canvas");
+  assert.equal(normalizeEditorSettings({ dataGridRenderMode: "canvas" as any }).dataGridRenderMode, "canvas");
+  assert.equal(normalizeEditorSettings({ dataGridRenderMode: "unknown" as any }).dataGridRenderMode, "canvas");
+});
+
 test("normalizes table structure editor density", () => {
   assert.equal(DEFAULT_EDITOR_SETTINGS.structureEditorDensity, "compact");
   assert.equal(normalizeEditorSettings({}).structureEditorDensity, "compact");
@@ -108,16 +126,27 @@ test("normalizes table structure editor density", () => {
 test("normalizes grid drawer widths", () => {
   assert.equal(DEFAULT_EDITOR_SETTINGS.tableInfoDrawerWidth, 320);
   assert.equal(DEFAULT_EDITOR_SETTINGS.cellDetailDrawerWidth, 320);
+  assert.equal(DEFAULT_EDITOR_SETTINGS.cellDetailPanelLayout, "bottom");
   assert.equal(normalizeEditorSettings({}).tableInfoDrawerWidth, 320);
   assert.equal(normalizeEditorSettings({}).cellDetailDrawerWidth, 320);
+  assert.equal(normalizeEditorSettings({}).cellDetailPanelLayout, "bottom");
   assert.equal(normalizeEditorSettings({ tableInfoDrawerWidth: 200 } as any).tableInfoDrawerWidth, 240);
   assert.equal(normalizeEditorSettings({ cellDetailDrawerWidth: 200 } as any).cellDetailDrawerWidth, 260);
   assert.equal(normalizeEditorSettings({ tableInfoDrawerWidth: 1000 } as any).tableInfoDrawerWidth, 900);
   assert.equal(normalizeEditorSettings({ cellDetailDrawerWidth: 456.7 } as any).cellDetailDrawerWidth, 457);
+  assert.equal(normalizeEditorSettings({ cellDetailPanelLayout: "right" } as any).cellDetailPanelLayout, "right");
+  assert.equal(normalizeEditorSettings({ cellDetailPanelLayout: "invalid" } as any).cellDetailPanelLayout, "bottom");
 });
 
 test("keeps saved active tab sidebar selection", () => {
   assert.equal(normalizeEditorSettings({ autoSelectActiveSidebarNode: true } as any).autoSelectActiveSidebarNode, true);
+});
+
+test("keeps saved sidebar horizontal scroll preference", () => {
+  assert.equal(
+    normalizeEditorSettings({ sidebarAllowHorizontalScroll: true } as any).sidebarAllowHorizontalScroll,
+    true,
+  );
 });
 
 test("keeps saved sidebar activation", () => {

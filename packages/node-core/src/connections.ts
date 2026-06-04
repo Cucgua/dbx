@@ -18,6 +18,7 @@ export interface ConnectionConfig {
   visible_databases?: string[];
   url_params?: string;
   ssh_enabled: boolean;
+  ssh_tunnels?: SshTunnelConfig[];
   proxy_enabled?: boolean;
   proxy_type?: "socks5" | "http";
   proxy_host?: string;
@@ -33,6 +34,20 @@ export interface ConnectionConfig {
   redis_sentinel_username?: string;
   redis_sentinel_password?: string;
   redis_sentinel_tls?: boolean;
+}
+
+export interface SshTunnelConfig {
+  id: string;
+  name?: string;
+  enabled?: boolean;
+  host: string;
+  port: number;
+  user: string;
+  password?: string;
+  key_path?: string;
+  key_passphrase?: string;
+  connect_timeout_secs?: number;
+  expose_lan?: boolean;
 }
 
 export interface ConnectionStoreOptions {
@@ -201,6 +216,7 @@ export async function addConnection(config: Omit<ConnectionConfig, "id">): Promi
     ssh_key_path: "",
     ssh_key_passphrase: "",
     ssh_expose_lan: false,
+    ssh_tunnels: normalized.ssh_tunnels ?? [],
     proxy_enabled: normalized.proxy_enabled ?? false,
     proxy_type: normalized.proxy_type ?? "socks5",
     proxy_host: normalized.proxy_host ?? "",

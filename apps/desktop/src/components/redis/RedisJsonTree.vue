@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, ref, type VNodeChild } from "vue";
-import { ChevronDown, ChevronRight } from "lucide-vue-next";
+import { ChevronDown, ChevronRight } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 
 defineOptions({ name: "RedisJsonTree" });

@@ -1,6 +1,11 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { canTreeNodeExpand, canTreeNodeShowExpander, treeItemPaddingLeft } from "../../apps/desktop/src/lib/sidebarTreeItemLayout.ts";
+import {
+  canTreeNodeExpand,
+  canTreeNodeShowExpander,
+  treeItemPaddingLeft,
+  usesFullWidthTreeLabel,
+} from "../../apps/desktop/src/lib/sidebarTreeItemLayout.ts";
 
 test("treeItemPaddingLeft converts tree depth to sidebar indentation", () => {
   assert.equal(treeItemPaddingLeft(0), "8px");
@@ -30,4 +35,15 @@ test("canTreeNodeShowExpander hides empty saved SQL containers", () => {
   assert.equal(canTreeNodeShowExpander({ type: "saved-sql-folder", childCount: 0 }), false);
   assert.equal(canTreeNodeShowExpander({ type: "saved-sql-root", childCount: 1 }), true);
   assert.equal(canTreeNodeShowExpander({ type: "saved-sql-folder", childCount: 1 }), true);
+});
+
+test("usesFullWidthTreeLabel only expands object names when horizontal scroll is enabled", () => {
+  assert.equal(usesFullWidthTreeLabel("table", true), true);
+  assert.equal(usesFullWidthTreeLabel("view", true), true);
+  assert.equal(usesFullWidthTreeLabel("mongo-collection", true), true);
+
+  assert.equal(usesFullWidthTreeLabel("table", false), false);
+  assert.equal(usesFullWidthTreeLabel("connection", true), false);
+  assert.equal(usesFullWidthTreeLabel("schema", true), false);
+  assert.equal(usesFullWidthTreeLabel("column", true), false);
 });

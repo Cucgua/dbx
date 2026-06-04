@@ -41,6 +41,15 @@ test("mysql system databases are hidden by default but can be explicitly selecte
   assert.equal(isSystemDatabaseName("postgres", "information_schema"), false);
 });
 
+test("gbase8s does not inherit base gbase system database filtering", () => {
+  const databases = ["app", "information_schema", "mysql", "performance_schema", "sys"];
+  assert.deepEqual(filterDatabaseNamesForConnection(databases, { db_type: "gbase" }), ["app"]);
+  assert.deepEqual(
+    filterDatabaseNamesForConnection(databases, { db_type: "gbase", driver_profile: "gbase8s" }),
+    databases,
+  );
+});
+
 test("system database detection is registered per database type", () => {
   assert.deepEqual(filterDatabaseNamesForConnection(["default", "system"], { db_type: "clickhouse" }), ["default"]);
   assert.deepEqual(filterDatabaseNamesForConnection(["master", "app", "tempdb"], { db_type: "sqlserver" }), ["app"]);

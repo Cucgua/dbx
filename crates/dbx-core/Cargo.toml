@@ -11,6 +11,7 @@ duckdb-bundled = ["duckdb/bundled"]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 regex = "1"
+rayon = "1"
 percent-encoding = "2"
 encoding_rs = "0.8"
 log = "0.4"
@@ -24,7 +25,7 @@ tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"
 deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
 tokio-postgres-rustls = "0.13"
 webpki-roots = "0.26"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
 mysql_async = { version = "0.36", default-features = false, features = ["default-rustls", "client_ed25519", "chrono", "rust_decimal"] }
 sqlparser = "0.62.0"
 redis = { version = "0.32.2", features = ["tokio-comp", "tls-rustls", "tokio-rustls-comp", "sentinel", "cluster-async"] }

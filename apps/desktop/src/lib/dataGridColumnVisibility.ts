@@ -44,3 +44,48 @@ export function invertedHiddenColumnIndexes(
   }
   return next;
 }
+
+export function allNullColumnIndexes(
+  rows: ReadonlyArray<ReadonlyArray<unknown>>,
+  availableIndexes: number[],
+): number[] {
+  if (rows.length === 0) return [];
+  return availableIndexes.filter((index) => rows.every((row) => row[index] === null));
+}
+
+export function hiddenColumnIndexesWithAllNullColumns(options: {
+  availableIndexes: number[];
+  hiddenIndexes: ReadonlySet<number>;
+  allNullIndexes: ReadonlySet<number>;
+}): { hiddenIndexes: Set<number>; autoHiddenIndexes: Set<number> } {
+  const next = new Set(options.hiddenIndexes);
+  const autoHidden = new Set<number>();
+  const available = new Set(options.availableIndexes);
+
+  for (const index of options.allNullIndexes) {
+    if (!available.has(index) || next.has(index)) continue;
+    next.add(index);
+    autoHidden.add(index);
+  }
+
+  const hasVisibleColumn = options.availableIndexes.some((index) => !next.has(index));
+  if (!hasVisibleColumn && options.availableIndexes.length > 0) {
+    const restoredIndex =
+      options.availableIndexes.find((index) => autoHidden.has(index)) ?? options.availableIndexes[0];
+    next.delete(restoredIndex);
+    autoHidden.delete(restoredIndex);
+  }
+
+  return { hiddenIndexes: next, autoHiddenIndexes: autoHidden };
+}
+
+export function removeAutoHiddenColumnIndexes(
+  hiddenIndexes: ReadonlySet<number>,
+  autoHiddenIndexes: ReadonlySet<number>,
+): Set<number> {
+  const next = new Set(hiddenIndexes);
+  for (const index of autoHiddenIndexes) {
+    next.delete(index);
+  }
+  return next;
+}

@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 pub struct EditableQueryInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    pub schema_quoted: bool,
     pub table_name: String,
+    pub table_name_quoted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table_alias: Option<String>,
     pub select_star: bool,
@@ -17,6 +19,7 @@ pub struct EditableQueryInfo {
 pub struct EditableQueryColumn {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_name: Option<String>,
+    pub source_name_quoted: bool,
     pub result_name: String,
     pub expression: String,
 }
@@ -51,19 +54,22 @@ pub struct QueryEditability {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FromSource {
     schema: Option<String>,
+    schema_quoted: bool,
     table_name: String,
+    table_name_quoted: bool,
     alias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct QualifiedIdentifier {
-    parts: Vec<String>,
+    parts: Vec<Identifier>,
     end: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Identifier {
     value: String,
+    quoted: bool,
     end: usize,
 }
 
@@ -131,7 +137,9 @@ pub fn analyze_editable_query_editability(sql: &str) -> QueryEditability {
         editable: true,
         analysis: Some(EditableQueryInfo {
             schema: source.schema,
+            schema_quoted: source.schema_quoted,
             table_name: source.table_name,
+            table_name_quoted: source.table_name_quoted,
             table_alias: source.alias,
             select_star,
             columns,
@@ -195,9 +203,11 @@ fn parse_select_column(column: &str) -> Option<EditableQueryColumn> {
     let Some(alias) = parse_column_alias(rest) else {
         return parse_computed_select_column(column);
     };
-    let source_name = source.parts.last()?.clone();
+    let source = source.parts.last()?;
+    let source_name = source.value.clone();
     Some(EditableQueryColumn {
         source_name: Some(source_name.clone()),
+        source_name_quoted: source.quoted,
         result_name: alias.unwrap_or(source_name),
         expression: column[..source.end].trim().to_string(),
     })
@@ -205,7 +215,12 @@ fn parse_select_column(column: &str) -> Option<EditableQueryColumn> {
 
 fn parse_computed_select_column(column: &str) -> Option<EditableQueryColumn> {
     let alias = parse_expression_alias(column)?;
-    Some(EditableQueryColumn { source_name: None, result_name: alias.result_name, expression: alias.expression })
+    Some(EditableQueryColumn {
+        source_name: None,
+        source_name_quoted: false,
+        result_name: alias.result_name,
+        expression: alias.expression,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,9 +322,16 @@ fn parse_from_source(body: &str) -> Option<FromSource> {
         }
         Some(alias_ident.value)
     };
-    let table_name = ident.parts.last()?.clone();
-    let schema = if ident.parts.len() == 2 { Some(ident.parts[0].clone()) } else { None };
-    Some(FromSource { schema, table_name, alias })
+    let table = ident.parts.last()?;
+    let table_name = table.value.clone();
+    let table_name_quoted = table.quoted;
+    let (schema, schema_quoted) = if ident.parts.len() == 2 {
+        let schema = &ident.parts[0];
+        (Some(schema.value.clone()), schema.quoted)
+    } else {
+        (None, false)
+    };
+    Some(FromSource { schema, schema_quoted, table_name, table_name_quoted, alias })
 }
 
 fn is_external_from_source(body: &str) -> bool {
@@ -354,8 +376,9 @@ fn parse_qualified_identifier(text: &str) -> Option<QualifiedIdentifier> {
         let Some(ident) = read_identifier(text, pos) else {
             break;
         };
-        parts.push(ident.value);
-        pos = skip_whitespace(text, ident.end);
+        let ident_end = ident.end;
+        parts.push(ident);
+        pos = skip_whitespace(text, ident_end);
         if !text[pos..].starts_with('.') {
             break;
         }
@@ -376,7 +399,7 @@ fn read_identifier(text: &str, start: usize) -> Option<Identifier> {
         let mut value = String::new();
         for (offset, ch) in chars {
             if ch == close {
-                return Some(Identifier { value, end: pos + offset + ch.len_utf8() });
+                return Some(Identifier { value, quoted: true, end: pos + offset + ch.len_utf8() });
             }
             value.push(ch);
         }
@@ -389,11 +412,11 @@ fn read_identifier(text: &str, start: usize) -> Option<Identifier> {
     let mut end = pos + first.len_utf8();
     for (offset, ch) in text[end..].char_indices() {
         if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') {
-            return Some(Identifier { value: text[pos..end + offset].to_string(), end: end + offset });
+            return Some(Identifier { value: text[pos..end + offset].to_string(), quoted: false, end: end + offset });
         }
     }
     end = text.len();
-    Some(Identifier { value: text[pos..end].to_string(), end })
+    Some(Identifier { value: text[pos..end].to_string(), quoted: false, end })
 }
 
 fn skip_whitespace(text: &str, pos: usize) -> usize {
@@ -532,17 +555,21 @@ mod tests {
                 editable: true,
                 analysis: Some(EditableQueryInfo {
                     schema: Some("public".to_string()),
+                    schema_quoted: false,
                     table_name: "users".to_string(),
+                    table_name_quoted: false,
                     table_alias: None,
                     select_star: false,
                     columns: vec![
                         EditableQueryColumn {
                             source_name: Some("id".to_string()),
+                            source_name_quoted: false,
                             result_name: "id".to_string(),
                             expression: "id".to_string(),
                         },
                         EditableQueryColumn {
                             source_name: Some("name".to_string()),
+                            source_name_quoted: false,
                             result_name: "name".to_string(),
                             expression: "name".to_string(),
                         },
@@ -562,17 +589,21 @@ mod tests {
             result.analysis.unwrap(),
             EditableQueryInfo {
                 schema: Some("app schema".to_string()),
+                schema_quoted: true,
                 table_name: "user table".to_string(),
+                table_name_quoted: true,
                 table_alias: Some("u".to_string()),
                 select_star: false,
                 columns: vec![
                     EditableQueryColumn {
                         source_name: Some("id".to_string()),
+                        source_name_quoted: true,
                         result_name: "id".to_string(),
                         expression: r#"u."id""#.to_string(),
                     },
                     EditableQueryColumn {
                         source_name: Some("full name".to_string()),
+                        source_name_quoted: true,
                         result_name: "full name".to_string(),
                         expression: r#"u."full name""#.to_string(),
                     },
@@ -587,7 +618,9 @@ mod tests {
             analyze_editable_query("select * from users").unwrap(),
             EditableQueryInfo {
                 schema: None,
+                schema_quoted: false,
                 table_name: "users".to_string(),
+                table_name_quoted: false,
                 table_alias: None,
                 select_star: true,
                 columns: Vec::new(),
@@ -631,21 +664,25 @@ mod tests {
             vec![
                 EditableQueryColumn {
                     source_name: Some("iso3".to_string()),
+                    source_name_quoted: false,
                     result_name: "iso3".to_string(),
                     expression: "iso3".to_string(),
                 },
                 EditableQueryColumn {
                     source_name: Some("year".to_string()),
+                    source_name_quoted: false,
                     result_name: "year".to_string(),
                     expression: "year".to_string(),
                 },
                 EditableQueryColumn {
                     source_name: Some("country_name".to_string()),
+                    source_name_quoted: false,
                     result_name: "country_name".to_string(),
                     expression: "country_name".to_string(),
                 },
                 EditableQueryColumn {
                     source_name: None,
+                    source_name_quoted: false,
                     result_name: "score".to_string(),
                     expression: "ihli / gdp_pc".to_string(),
                 },

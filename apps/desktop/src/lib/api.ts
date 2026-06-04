@@ -51,6 +51,7 @@ export const listInstalledAgents = forward("listInstalledAgents");
 export const getDriverStoreUsage = forward("getDriverStoreUsage");
 export const installAgent = forward("installAgent");
 export const upgradeAllAgents = forward("upgradeAllAgents");
+export const checkAgentUpdateBlockers = forward("checkAgentUpdateBlockers");
 export const uninstallAgent = forward("uninstallAgent");
 export const getAgentJavaRuntimeConfig = forward("getAgentJavaRuntimeConfig");
 export const setAgentJavaRuntimeConfig = forward("setAgentJavaRuntimeConfig");
@@ -86,6 +87,7 @@ export const listenSchemaRagProgress = forward("listenSchemaRagProgress");
 export const listSchemas = forward("listSchemas");
 export const listTables = forward("listTables");
 export const listObjects = forward("listObjects");
+export const listCompletionObjects = forward("listCompletionObjects");
 export const getObjectSource = forward("getObjectSource");
 export const getColumns = forward("getColumns");
 export const listIndexes = forward("listIndexes");
@@ -118,6 +120,7 @@ export const buildCreateDatabaseSql = forward("buildCreateDatabaseSql");
 export const buildDuckDbAttachDatabaseSql = forward("buildDuckDbAttachDatabaseSql");
 export const buildDropObjectSql = forward("buildDropObjectSql");
 export const buildDropTableSql = forward("buildDropTableSql");
+export const buildDropTableChildObjectSql = forward("buildDropTableChildObjectSql");
 export const buildEmptyTableSql = forward("buildEmptyTableSql");
 export const buildTruncateTableSql = forward("buildTruncateTableSql");
 export const buildDropDatabaseSql = forward("buildDropDatabaseSql");
@@ -144,6 +147,7 @@ export const buildExportSqlInsert = forward("buildExportSqlInsert");
 export const buildDatabaseSqlExport = forward("buildDatabaseSqlExport");
 export const prepareDataCompare = forward("prepareDataCompare");
 export const prepareDataCompareFromTables = forward("prepareDataCompareFromTables");
+export const prepareDataCompareMissingTarget = forward("prepareDataCompareMissingTarget");
 export const buildDataCompareSyncPlan = forward("buildDataCompareSyncPlan");
 
 // AI
@@ -201,9 +205,12 @@ export const cancelTableImport = forward("cancelTableImport");
 export const exportDatabaseSql = forward("exportDatabaseSql");
 export const cancelDatabaseExport = forward("cancelDatabaseExport");
 export const exportQueryResultCsv = forward("exportQueryResultCsv");
+export const exportTableDataCsv = forward("exportTableDataCsv");
 export const exportQueryResultXlsx = forward("exportQueryResultXlsx");
 export const exportQueryResultJson = forward("exportQueryResultJson");
 export const exportQueryResultMarkdown = forward("exportQueryResultMarkdown");
+export const startTableExport = forward("startTableExport");
+export const cancelTableExport = forward("cancelTableExport");
 
 // Redis
 export const redisListDatabases = forward("redisListDatabases");
@@ -233,8 +240,11 @@ export const mongoListCollections = forward("mongoListCollections");
 export const mongoFindDocuments = forward("mongoFindDocuments");
 export const mongoAggregateDocuments = forward("mongoAggregateDocuments");
 export const mongoInsertDocument = forward("mongoInsertDocument");
+export const mongoInsertDocuments = forward("mongoInsertDocuments");
 export const mongoUpdateDocument = forward("mongoUpdateDocument");
+export const mongoUpdateDocuments = forward("mongoUpdateDocuments");
 export const mongoDeleteDocument = forward("mongoDeleteDocument");
+export const mongoDeleteDocuments = forward("mongoDeleteDocuments");
 
 // History
 export const saveHistory = forward("saveHistory");
@@ -322,4 +332,7 @@ export type {
   TableImportProgress,
   DatabaseExportRequest,
   ExportProgress,
+  TableExportProgress,
+  TableExportStatus,
+  TableExportRequest,
 } from "./tauri";

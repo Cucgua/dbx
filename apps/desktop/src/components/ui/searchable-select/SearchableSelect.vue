@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import type { HTMLAttributes } from "vue";
-import { Check, ChevronDown, Search } from "lucide-vue-next";
+import { Check, ChevronDown, Search } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -43,7 +43,7 @@ const listContainer = ref<HTMLDivElement>();
 const highlightIndex = ref(-1);
 
 const selectedLabel = computed(() => {
-  if (!props.modelValue) return props.placeholder;
+  if (!props.modelValue && !props.options.includes("")) return props.placeholder;
   return props.displayName(props.modelValue);
 });
 

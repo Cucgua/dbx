@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ExternalLink, Maximize2, X, ZoomIn, ZoomOut } from "lucide-vue-next";
+import { ExternalLink, Maximize2, X, ZoomIn, ZoomOut } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { imagePreviewFitScale, imagePreviewTransform, nextImagePreviewScale } from "@/lib/imagePreviewViewer";

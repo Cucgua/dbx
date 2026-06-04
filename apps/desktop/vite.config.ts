@@ -5,6 +5,55 @@ import path from "path";
 
 const host = process.env.TAURI_DEV_HOST;
 const isTauri = !!host || !!process.env.TAURI_ENV_ARCH;
+const manualChunks: Record<string, string[]> = {
+  codemirror: [
+    "codemirror",
+    "@codemirror/lang-sql",
+    "@codemirror/view",
+    "@codemirror/state",
+    "@codemirror/autocomplete",
+    "@codemirror/commands",
+    "@codemirror/theme-one-dark",
+  ],
+  "sql-formatter": ["sql-formatter"],
+  "vue-echarts": ["vue-echarts"],
+  ui: ["reka-ui"],
+  marked: ["marked"],
+};
+
+function chunkNameForEchartsModule(id: string): string {
+  const echartsPath = id.split("/node_modules/echarts/").pop() ?? "";
+
+  if (echartsPath === "charts.js" || echartsPath.startsWith("lib/chart/")) {
+    return "echarts-charts";
+  }
+
+  if (echartsPath === "components.js" || echartsPath.startsWith("lib/component/")) {
+    return "echarts-components";
+  }
+
+  if (echartsPath === "renderers.js" || echartsPath.startsWith("lib/renderer/")) {
+    return "echarts-renderers";
+  }
+
+  return "echarts-core";
+}
+
+function chunkNameForModule(id: string): string | undefined {
+  const normalizedId = id.replaceAll("\\", "/");
+
+  if (normalizedId.includes("/node_modules/echarts/")) {
+    return chunkNameForEchartsModule(normalizedId);
+  }
+
+  for (const [chunkName, packages] of Object.entries(manualChunks)) {
+    if (packages.some((pkg) => normalizedId.includes(`/node_modules/${pkg}/`))) {
+      return chunkName;
+    }
+  }
+
+  return undefined;
+}
 
 export default defineConfig(async () => ({
   root: __dirname,
@@ -20,20 +69,7 @@ export default defineConfig(async () => ({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          codemirror: [
-            "codemirror",
-            "@codemirror/lang-sql",
-            "@codemirror/view",
-            "@codemirror/state",
-            "@codemirror/autocomplete",
-            "@codemirror/commands",
-            "@codemirror/theme-one-dark",
-          ],
-          "sql-formatter": ["sql-formatter"],
-          ui: ["reka-ui"],
-          marked: ["marked"],
-        },
+        manualChunks: chunkNameForModule,
       },
     },
   },

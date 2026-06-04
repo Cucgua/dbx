@@ -7,14 +7,22 @@ const leafTypes: Set<TreeNodeType> = new Set([
   "trigger",
   "procedure",
   "function",
+  "package",
+  "package-body",
   "object-browser",
   "redis-db",
   "mongo-collection",
   "saved-sql-file",
 ]);
 
+const fullWidthLabelTypes: Set<TreeNodeType> = new Set(["table", "view", "mongo-collection"]);
+
 export function treeItemPaddingLeft(depth: number): string {
   return `${depth * 16 + 8}px`;
+}
+
+export function usesFullWidthTreeLabel(type: TreeNodeType, allowHorizontalScroll: boolean): boolean {
+  return allowHorizontalScroll && fullWidthLabelTypes.has(type);
 }
 
 export function canTreeNodeExpand(type: TreeNodeType): boolean {

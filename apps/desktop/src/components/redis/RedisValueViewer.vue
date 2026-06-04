@@ -2,7 +2,7 @@
 import { computed, ref, onBeforeUnmount, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { DynamicScroller, DynamicScrollerItem, RecycleScroller } from "vue-virtual-scroller";
-import { Braces, Copy, Eye, FileText, Trash2, Save, RefreshCw, Plus, Loader2, Pencil, WrapText } from "lucide-vue-next";
+import { Braces, Copy, Eye, FileText, Trash2, Save, RefreshCw, Plus, Loader2, Pencil, WrapText } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";

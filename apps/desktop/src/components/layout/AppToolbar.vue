@@ -5,7 +5,7 @@ import {
   DatabaseZap,
   FilePlus2,
   Loader2,
-  Globe,
+  Languages,
   Moon,
   Sun,
   SunMoon,
@@ -18,20 +18,16 @@ import {
   Settings,
   CloudDownload,
   Package,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import LightDropdown from "@/components/ui/LightDropdown.vue";
 import WindowControls from "@/components/layout/WindowControls.vue";
+import ExportProgressPopover from "@/components/export/ExportProgressPopover.vue";
 import { shouldReserveMacTrafficLightInset, useWindowControls } from "@/composables/useWindowControls";
 import { currentLocale, setLocale, type Locale } from "@/i18n";
 import type { AppThemeMode } from "@/lib/appTheme";
-
-const localeOptions: { value: Locale; flag: string; label: string }[] = [
-  { value: "en", flag: "🇺🇸", label: "English" },
-  { value: "es", flag: "🇪🇸", label: "Español" },
-  { value: "zh-CN", flag: "🇨🇳", label: "简体中文" },
-];
+import { LOCALE_OPTIONS } from "@/lib/localeOptions";
 
 const props = defineProps<{
   isDark: boolean;
@@ -72,7 +68,7 @@ const themeItems = computed(() => [
   { value: "system", label: t("toolbar.themeSystem"), icon: SunMoon },
 ]);
 const localeItems = computed(() =>
-  localeOptions.map((option) => ({
+  LOCALE_OPTIONS.map((option) => ({
     value: option.value,
     label: option.label,
     leadingText: option.flag,
@@ -198,6 +194,8 @@ function onToolbarDblClick(e: MouseEvent) {
       <TooltipContent>{{ t("updates.check") }}</TooltipContent>
     </Tooltip>
 
+    <ExportProgressPopover />
+
     <Tooltip>
       <TooltipTrigger as-child>
         <Button
@@ -257,7 +255,7 @@ function onToolbarDblClick(e: MouseEvent) {
             :model-value="currentLocale()"
             :items="localeItems"
             :aria-label="t('common.language')"
-            :trigger-icon="Globe"
+            :trigger-icon="Languages"
             trigger-class="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
             trigger-icon-class="h-4 w-4"
             :show-trigger-label="false"

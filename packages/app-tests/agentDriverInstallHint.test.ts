@@ -61,3 +61,28 @@ test("uses the selected Oracle driver profile for install hints", () => {
   );
   assert.equal(showAgentDriverInstallHint("oracle", [{ db_type: "oracle", installed: false }], "oracle"), true);
 });
+
+test("uses selected non-Oracle agent driver profiles for install hints", () => {
+  assert.equal(
+    showAgentDriverInstallHint(
+      "gbase",
+      [
+        { db_type: "gbase", installed: true },
+        { db_type: "gbase8s", installed: false },
+      ],
+      "gbase8s",
+    ),
+    true,
+  );
+  assert.equal(
+    showAgentDriverInstallHint(
+      "gbase",
+      [
+        { db_type: "gbase", installed: false },
+        { db_type: "gbase8s", installed: true },
+      ],
+      "gbase8s",
+    ),
+    false,
+  );
+});

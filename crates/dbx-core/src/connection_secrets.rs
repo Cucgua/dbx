@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 pub const MAIN_PASSWORD_KEY: &str = "password";
 pub const SSH_PASSWORD_KEY: &str = "ssh_password";
 pub const SSH_KEY_PASSPHRASE_KEY: &str = "ssh_key_passphrase";
+pub const SSH_TUNNEL_SECRET_PREFIX: &str = "ssh_tunnels.";
 pub const PROXY_PASSWORD_KEY: &str = "proxy_password";
 pub const REDIS_SENTINEL_PASSWORD_KEY: &str = "redis_sentinel_password";
 pub const CONNECTION_STRING_KEY: &str = "connection_string";
@@ -14,6 +15,9 @@ pub trait ConnectionSecretStore {
     fn set_secret(&self, connection_id: &str, key: &str, secret: &str) -> Result<(), String>;
     fn get_secret(&self, connection_id: &str, key: &str) -> Result<Option<String>, String>;
     fn delete_secret(&self, connection_id: &str, key: &str) -> Result<(), String>;
+    fn delete_secret_prefix(&self, _connection_id: &str, _key_prefix: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub struct FileSecretStore {
@@ -51,6 +55,13 @@ impl ConnectionSecretStore for FileSecretStore {
         map.remove(&secret_account(connection_id, key));
         self.write_store(&map)
     }
+
+    fn delete_secret_prefix(&self, connection_id: &str, key_prefix: &str) -> Result<(), String> {
+        let mut map = self.read_store();
+        let account_prefix = secret_account(connection_id, key_prefix);
+        map.retain(|key, _| !key.starts_with(&account_prefix));
+        self.write_store(&map)
+    }
 }
 
 pub fn save_connections_to_file(
@@ -63,6 +74,11 @@ pub fn save_connections_to_file(
         persist_secret(store, &config.id, MAIN_PASSWORD_KEY, &config.password)?;
         persist_secret(store, &config.id, SSH_PASSWORD_KEY, &config.ssh_password)?;
         persist_secret(store, &config.id, SSH_KEY_PASSPHRASE_KEY, &config.ssh_key_passphrase)?;
+        delete_secret_prefix(store, &config.id, SSH_TUNNEL_SECRET_PREFIX)?;
+        for (index, hop) in config.ssh_tunnels.iter().enumerate() {
+            persist_secret(store, &config.id, &ssh_tunnel_password_key(index, hop), &hop.password)?;
+            persist_secret(store, &config.id, &ssh_tunnel_key_passphrase_key(index, hop), &hop.key_passphrase)?;
+        }
         persist_secret(store, &config.id, PROXY_PASSWORD_KEY, &config.proxy_password)?;
         persist_secret(store, &config.id, REDIS_SENTINEL_PASSWORD_KEY, &config.redis_sentinel_password)?;
         persist_optional_secret(store, &config.id, CONNECTION_STRING_KEY, config.connection_string.as_deref())?;
@@ -107,6 +123,25 @@ pub fn load_connections_from_file(
         } else {
             store.set_secret(&config.id, SSH_KEY_PASSPHRASE_KEY, &config.ssh_key_passphrase)?;
             needs_rewrite = true;
+        }
+
+        for (index, hop) in config.ssh_tunnels.iter_mut().enumerate() {
+            if hop.password.is_empty() {
+                if let Some(secret) = store.get_secret(&config.id, &ssh_tunnel_password_key(index, hop))? {
+                    hop.password = secret;
+                }
+            } else {
+                store.set_secret(&config.id, &ssh_tunnel_password_key(index, hop), &hop.password)?;
+                needs_rewrite = true;
+            }
+            if hop.key_passphrase.is_empty() {
+                if let Some(secret) = store.get_secret(&config.id, &ssh_tunnel_key_passphrase_key(index, hop))? {
+                    hop.key_passphrase = secret;
+                }
+            } else {
+                store.set_secret(&config.id, &ssh_tunnel_key_passphrase_key(index, hop), &hop.key_passphrase)?;
+                needs_rewrite = true;
+            }
         }
 
         if config.proxy_password.is_empty() {
@@ -168,6 +203,7 @@ fn delete_removed_connection_secrets(
         store.delete_secret(&config.id, MAIN_PASSWORD_KEY)?;
         store.delete_secret(&config.id, SSH_PASSWORD_KEY)?;
         store.delete_secret(&config.id, SSH_KEY_PASSPHRASE_KEY)?;
+        delete_secret_prefix(store, &config.id, SSH_TUNNEL_SECRET_PREFIX)?;
         store.delete_secret(&config.id, CONNECTION_STRING_KEY)?;
     }
     Ok(())
@@ -198,6 +234,30 @@ fn persist_optional_secret(
     }
 }
 
+fn delete_secret_prefix(
+    store: &dyn ConnectionSecretStore,
+    connection_id: &str,
+    key_prefix: &str,
+) -> Result<(), String> {
+    store.delete_secret_prefix(connection_id, key_prefix)
+}
+
+fn ssh_tunnel_secret_segment(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    if hop.id.trim().is_empty() {
+        index.to_string()
+    } else {
+        hop.id.clone()
+    }
+}
+
+fn ssh_tunnel_password_key(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    format!("{}{}.password", SSH_TUNNEL_SECRET_PREFIX, ssh_tunnel_secret_segment(index, hop))
+}
+
+fn ssh_tunnel_key_passphrase_key(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    format!("{}{}.key_passphrase", SSH_TUNNEL_SECRET_PREFIX, ssh_tunnel_secret_segment(index, hop))
+}
+
 fn read_connections(path: &Path) -> Result<Vec<ConnectionConfig>, String> {
     let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     serde_json::from_str(&json).map_err(|e| e.to_string())
@@ -217,6 +277,10 @@ fn sanitize_connections(configs: &[ConnectionConfig]) -> Vec<ConnectionConfig> {
             config.password.clear();
             config.ssh_password.clear();
             config.ssh_key_passphrase.clear();
+            for hop in &mut config.ssh_tunnels {
+                hop.password.clear();
+                hop.key_passphrase.clear();
+            }
             config.proxy_password.clear();
             config.redis_sentinel_password.clear();
             config.connection_string = None;
@@ -235,7 +299,7 @@ mod tests {
         load_connections_from_file, save_connections_to_file, ConnectionSecretStore, CONNECTION_STRING_KEY,
         MAIN_PASSWORD_KEY, REDIS_SENTINEL_PASSWORD_KEY, SSH_PASSWORD_KEY,
     };
-    use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
+    use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType, SshTunnelConfig};
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::path::Path;
@@ -273,6 +337,13 @@ mod tests {
         fn delete_secret(&self, connection_id: &str, key: &str) -> Result<(), String> {
             self.values.borrow_mut().remove(&secret_key(connection_id, key));
             self.deleted.borrow_mut().push(secret_key(connection_id, key));
+            Ok(())
+        }
+
+        fn delete_secret_prefix(&self, connection_id: &str, key_prefix: &str) -> Result<(), String> {
+            let prefix = secret_key(connection_id, key_prefix);
+            self.values.borrow_mut().retain(|key, _| !key.starts_with(&prefix));
+            self.deleted.borrow_mut().push(prefix);
             Ok(())
         }
     }
@@ -313,6 +384,7 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: crate::models::connection::default_ssh_connect_timeout_secs(),
+            ssh_tunnels: Vec::new(),
             connect_timeout_secs: crate::models::connection::default_connect_timeout_secs(),
             query_timeout_secs: crate::models::connection::default_query_timeout_secs(),
             proxy_enabled: false,
@@ -341,6 +413,22 @@ mod tests {
         }
     }
 
+    fn ssh_hop(id: &str, password: &str, passphrase: &str) -> SshTunnelConfig {
+        SshTunnelConfig {
+            id: id.to_string(),
+            name: String::new(),
+            enabled: true,
+            host: "bastion".to_string(),
+            port: 22,
+            user: "user".to_string(),
+            password: password.to_string(),
+            key_path: "~/.ssh/id_ed25519".to_string(),
+            key_passphrase: passphrase.to_string(),
+            connect_timeout_secs: 5,
+            expose_lan: false,
+        }
+    }
+
     fn read_configs(path: &Path) -> Vec<ConnectionConfig> {
         let json = std::fs::read_to_string(path).unwrap();
         serde_json::from_str(&json).unwrap()
@@ -351,6 +439,7 @@ mod tests {
         let path = temp_connections_file("save-redacts");
         let store = MemorySecretStore::default();
         let mut config = connection("main", "db-secret", "ssh-secret");
+        config.ssh_tunnels = vec![ssh_hop("hop-1", "hop-secret", "hop-key")];
         config.redis_sentinel_password = "sentinel-secret".to_string();
         let configs = vec![config];
 
@@ -358,10 +447,14 @@ mod tests {
 
         assert_eq!(store.get_existing("main", MAIN_PASSWORD_KEY).as_deref(), Some("db-secret"));
         assert_eq!(store.get_existing("main", SSH_PASSWORD_KEY).as_deref(), Some("ssh-secret"));
+        assert_eq!(store.get_existing("main", "ssh_tunnels.hop-1.password").as_deref(), Some("hop-secret"));
+        assert_eq!(store.get_existing("main", "ssh_tunnels.hop-1.key_passphrase").as_deref(), Some("hop-key"));
         assert_eq!(store.get_existing("main", REDIS_SENTINEL_PASSWORD_KEY).as_deref(), Some("sentinel-secret"));
         let persisted = read_configs(&path);
         assert_eq!(persisted[0].password, "");
         assert_eq!(persisted[0].ssh_password, "");
+        assert_eq!(persisted[0].ssh_tunnels[0].password, "");
+        assert_eq!(persisted[0].ssh_tunnels[0].key_passphrase, "");
         assert_eq!(persisted[0].redis_sentinel_password, "");
     }
 
@@ -371,14 +464,20 @@ mod tests {
         let store = MemorySecretStore::default();
         store.set_existing("main", MAIN_PASSWORD_KEY, "db-secret");
         store.set_existing("main", SSH_PASSWORD_KEY, "ssh-secret");
+        store.set_existing("main", "ssh_tunnels.hop-1.password", "hop-secret");
+        store.set_existing("main", "ssh_tunnels.hop-1.key_passphrase", "hop-key");
         store.set_existing("main", REDIS_SENTINEL_PASSWORD_KEY, "sentinel-secret");
-        let sanitized = vec![connection("main", "", "")];
+        let mut sanitized_config = connection("main", "", "");
+        sanitized_config.ssh_tunnels = vec![ssh_hop("hop-1", "", "")];
+        let sanitized = vec![sanitized_config];
         std::fs::write(&path, serde_json::to_string_pretty(&sanitized).unwrap()).unwrap();
 
         let loaded = load_connections_from_file(&path, &store).unwrap();
 
         assert_eq!(loaded[0].password, "db-secret");
         assert_eq!(loaded[0].ssh_password, "ssh-secret");
+        assert_eq!(loaded[0].ssh_tunnels[0].password, "hop-secret");
+        assert_eq!(loaded[0].ssh_tunnels[0].key_passphrase, "hop-key");
         assert_eq!(loaded[0].redis_sentinel_password, "sentinel-secret");
     }
 

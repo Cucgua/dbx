@@ -61,6 +61,7 @@ export interface SchemaDiffPreparationOptions {
   targetDetails: TableSchemaDetail[];
   databaseType: DatabaseType;
   targetSchema?: string;
+  ignoreComments?: boolean;
 }
 
 export interface SchemaDiffPreparation {

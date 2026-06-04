@@ -73,6 +73,7 @@ test("oracle-like databases expose oracle-compatible structure editing capabilit
     assert.equal(caps.createIndex, true);
     assert.equal(caps.dropIndex, true);
     assert.equal(caps.rebuildIndex, true);
+    assert.equal(caps.reorderColumn, false);
     assert.equal(canEditTableStructure(dbType), true);
   }
 });

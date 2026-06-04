@@ -25,6 +25,26 @@ test("builds unique row ids for overloaded routines with the same visible name",
   );
 });
 
+test("object browser rows normalize Oracle package body objects", () => {
+  const rows = buildObjectBrowserRows({
+    objects: [
+      { name: "PAYROLL", object_type: "PACKAGE", schema: "HR" },
+      { name: "PAYROLL", object_type: "PACKAGE BODY", schema: "HR" },
+    ],
+    database: "orcl",
+    fallbackSchema: "HR",
+    needsSchema: true,
+  });
+
+  assert.deepEqual(
+    rows.map((row) => ({ id: row.id, type: row.type })),
+    [
+      { id: "HR:PAYROLL:PACKAGE:0", type: "PACKAGE" },
+      { id: "HR:PAYROLL:PACKAGE_BODY:0", type: "PACKAGE_BODY" },
+    ],
+  );
+});
+
 test("object browser search matches names, types, and comments but not schema names", () => {
   const rows = buildObjectBrowserRows({
     objects: [
@@ -40,6 +60,24 @@ test("object browser search matches names, types, and comments but not schema na
   assert.deepEqual(
     filterObjectBrowserRows(rows, "exam").map((row) => row.name),
     ["orders", "refresh_exam_stats"],
+  );
+});
+
+test("object browser search supports slash-delimited regular expression queries", () => {
+  const rows = buildObjectBrowserRows({
+    objects: [
+      { name: "sys_user_log", object_type: "TABLE", schema: "public" },
+      { name: "sys_order_archive", object_type: "TABLE", schema: "public" },
+      { name: "app_user_log", object_type: "TABLE", schema: "public" },
+    ],
+    database: "app",
+    fallbackSchema: "public",
+    needsSchema: true,
+  });
+
+  assert.deepEqual(
+    filterObjectBrowserRows(rows, "/^sys_.*_log$/").map((row) => row.name),
+    ["sys_user_log"],
   );
 });
 

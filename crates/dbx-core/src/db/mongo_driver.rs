@@ -1,5 +1,6 @@
 use mongodb::{
     bson::{doc, oid::ObjectId, Bson, Document},
+    options::ClientOptions,
     Client,
 };
 use serde::{Deserialize, Serialize};
@@ -15,15 +16,20 @@ pub struct MongoDocumentResult {
 
 pub async fn connect(url: &str, timeout: Duration) -> Result<Client, String> {
     with_connection_timeout("MongoDB", timeout, async {
-        Client::with_uri_str(url).await.map_err(|e| format!("MongoDB connection failed: {e}"))
+        let mut options = ClientOptions::parse(url).await.map_err(|e| format!("MongoDB connection failed: {e}"))?;
+        options.connect_timeout = Some(timeout);
+        options.server_selection_timeout = Some(timeout);
+        Client::with_options(options).map_err(|e| format!("MongoDB connection failed: {e}"))
     })
     .await
 }
 
-pub async fn test_connection(client: &Client, timeout: Duration) -> Result<(), String> {
-    tokio::time::timeout(timeout, client.list_database_names())
+pub async fn test_connection(client: &Client, _timeout: Duration, database: Option<&str>) -> Result<(), String> {
+    let database = database.map(str::trim).filter(|value| !value.is_empty()).unwrap_or("admin");
+    client
+        .database(database)
+        .run_command(doc! { "ping": 1 })
         .await
-        .map_err(|_| format!("MongoDB connection timed out ({}s)", timeout.as_secs()))?
         .map(|_| ())
         .map_err(|e| format!("MongoDB connection failed: {e}"))
 }
@@ -149,12 +155,16 @@ pub async fn update_document(
     id: &str,
     doc_json: &str,
 ) -> Result<u64, String> {
-    let oid = mongodb::bson::oid::ObjectId::parse_str(id).map_err(|e| format!("Invalid ObjectId: {e}"))?;
     let mut new_doc: Document = serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
     new_doc.remove("_id");
     let col = client.database(database).collection::<Document>(collection);
-    let result = col.replace_one(doc! { "_id": oid }, new_doc).await.map_err(|e| e.to_string())?;
-    Ok(result.modified_count)
+    for filter in document_id_filters(id) {
+        let result = col.replace_one(filter, new_doc.clone()).await.map_err(|e| e.to_string())?;
+        if result.matched_count > 0 {
+            return Ok(result.modified_count);
+        }
+    }
+    Ok(0)
 }
 
 pub async fn update_documents(
@@ -181,10 +191,22 @@ pub async fn update_documents(
 }
 
 pub async fn delete_document(client: &Client, database: &str, collection: &str, id: &str) -> Result<u64, String> {
-    let oid = mongodb::bson::oid::ObjectId::parse_str(id).map_err(|e| format!("Invalid ObjectId: {e}"))?;
     let col = client.database(database).collection::<Document>(collection);
-    let result = col.delete_one(doc! { "_id": oid }).await.map_err(|e| e.to_string())?;
-    Ok(result.deleted_count)
+    for filter in document_id_filters(id) {
+        let result = col.delete_one(filter).await.map_err(|e| e.to_string())?;
+        if result.deleted_count > 0 {
+            return Ok(result.deleted_count);
+        }
+    }
+    Ok(0)
+}
+
+fn document_id_filters(id: &str) -> Vec<Document> {
+    let string_filter = doc! { "_id": Bson::String(id.to_string()) };
+    match ObjectId::parse_str(id) {
+        Ok(oid) => vec![doc! { "_id": Bson::ObjectId(oid) }, string_filter],
+        Err(_) => vec![string_filter],
+    }
 }
 
 pub async fn delete_documents(
@@ -264,5 +286,29 @@ fn json_value_to_bson(value: &serde_json::Value) -> Bson {
             let doc: Document = obj.iter().map(|(k, v)| (k.clone(), json_value_to_bson(v))).collect();
             Bson::Document(doc)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_id_filters_try_object_id_then_string_for_hex_ids() {
+        let id = "507f1f77bcf86cd799439011";
+        let filters = document_id_filters(id);
+
+        assert_eq!(filters.len(), 2);
+        assert!(matches!(filters[0].get("_id"), Some(Bson::ObjectId(_))));
+        assert!(matches!(filters[1].get("_id"), Some(Bson::String(value)) if value == id));
+    }
+
+    #[test]
+    fn document_id_filters_use_string_only_for_non_hex_ids() {
+        let id = "customer-42";
+        let filters = document_id_filters(id);
+
+        assert_eq!(filters.len(), 1);
+        assert!(matches!(filters[0].get("_id"), Some(Bson::String(value)) if value == id));
     }
 }

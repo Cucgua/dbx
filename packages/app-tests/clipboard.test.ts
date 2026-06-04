@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { copyToClipboard } from "../../apps/desktop/src/lib/clipboard.ts";
+import { copyToClipboard, readTextFromClipboard } from "../../apps/desktop/src/lib/clipboard.ts";
 
 test("copyToClipboard falls back when navigator clipboard is unavailable", async () => {
   const appended: unknown[] = [];
@@ -47,4 +47,16 @@ test("copyToClipboard falls back when navigator clipboard is unavailable", async
   assert.deepEqual(commands, ["copy"]);
   assert.equal(appended[0], textarea);
   assert.equal(removed[0], textarea);
+});
+
+test("readTextFromClipboard uses navigator clipboard when available", async () => {
+  const text = await readTextFromClipboard({
+    navigator: {
+      clipboard: {
+        readText: async () => "orders\t42",
+      },
+    },
+  });
+
+  assert.equal(text, "orders\t42");
 });

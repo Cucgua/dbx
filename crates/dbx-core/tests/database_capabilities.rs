@@ -107,8 +107,8 @@ fn identifies_single_connection_pool_types() {
 #[test]
 fn identifies_metadata_connections_that_drop_database_scope() {
     assert!(is_metadata_connection_scoped(&DatabaseType::Mysql));
-    assert!(is_metadata_connection_scoped(&DatabaseType::Doris));
-    assert!(is_metadata_connection_scoped(&DatabaseType::StarRocks));
+    assert!(!is_metadata_connection_scoped(&DatabaseType::Doris));
+    assert!(!is_metadata_connection_scoped(&DatabaseType::StarRocks));
     assert!(!is_metadata_connection_scoped(&DatabaseType::Postgres));
     assert!(!is_metadata_connection_scoped(&DatabaseType::Oracle));
 }
@@ -203,7 +203,7 @@ fn catalog_marks_runtime_only_agent_entries_explicitly() {
     let runtime_only: Vec<&str> =
         agent_catalog::entries().iter().filter(|entry| !entry.store_visible).map(|entry| entry.key).collect();
 
-    assert_eq!(runtime_only, vec!["iris"]);
+    assert!(runtime_only.is_empty());
     assert!(is_agent_type(&DatabaseType::Iris));
     assert_eq!(agent_key(&DatabaseType::Iris, None), Some("iris"));
 }

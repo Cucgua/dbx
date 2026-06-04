@@ -287,6 +287,13 @@ pub fn build_drop_table_sql(options: dbx_core::db_admin_sql::TableAdminSqlOption
 }
 
 #[tauri::command]
+pub fn build_drop_table_child_object_sql(
+    options: dbx_core::db_admin_sql::DropTableChildObjectSqlOptions,
+) -> Result<String, String> {
+    dbx_core::db_admin_sql::build_drop_table_child_object_sql(options)
+}
+
+#[tauri::command]
 pub fn build_empty_table_sql(options: dbx_core::db_admin_sql::TableAdminSqlOptions) -> Result<String, String> {
     Ok(dbx_core::db_admin_sql::build_empty_table_sql(options))
 }

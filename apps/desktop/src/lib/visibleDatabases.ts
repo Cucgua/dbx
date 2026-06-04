@@ -90,11 +90,14 @@ export function isSystemDatabaseName(databaseType: DatabaseType | undefined, dat
 
 export function filterDatabaseNamesForConnection(
   databaseNames: string[],
-  connection: Pick<ConnectionConfig, "db_type" | "visible_databases"> | undefined,
+  connection: Pick<ConnectionConfig, "db_type" | "driver_profile" | "visible_databases"> | undefined,
 ): string[] {
   const visibleDatabases = connection?.visible_databases;
   if (visibleDatabaseFilterIsEnabled(visibleDatabases)) {
     return filterVisibleDatabaseNames(databaseNames, visibleDatabases);
+  }
+  if (connection?.db_type === "gbase" && connection.driver_profile === "gbase8s") {
+    return databaseNames;
   }
   return databaseNames.filter((name) => !isSystemDatabaseName(connection?.db_type, name));
 }

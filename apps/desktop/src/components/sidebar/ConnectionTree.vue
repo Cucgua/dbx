@@ -1,24 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, type Component } from "vue";
 import { useI18n } from "vue-i18n";
-import {
-  Search,
-  X,
-  ListFilter,
-  FolderPlus,
-  Crosshair,
-  Server,
-  Database,
-  FolderTree,
-  Table2,
-  Eye,
-  RotateCcw,
-} from "lucide-vue-next";
+import { Search, X, ListFilter, Crosshair, Server, Database, FolderTree, Table2, Eye, RotateCcw } from "@lucide/vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { QueryTab, TreeNode, TreeNodeType } from "@/types/database";
-import { filterSidebarTree } from "@/lib/sidebarSearchTree";
+import { filterSidebarSearchRootsByConnectionState, filterSidebarTree } from "@/lib/sidebarSearchTree";
 import { isCancelSearchShortcut } from "@/lib/keyboardShortcuts";
 import { usesTreeSchemaMode } from "@/lib/databaseFeatureSupport";
 import {
@@ -151,18 +139,21 @@ const filteredNodes = computed(() => {
   const q = deferredSearchQuery.value;
   if (q) {
     nodes = filterSidebarTree(nodes, q, searchCollapsedIds.value, searchableNodeTypes.value);
-    nodes = nodes.filter((node) => {
-      if (node.type === "connection-group") return true;
-      return node.connectionId ? store.connectedIds.has(node.connectionId) : true;
-    });
+    nodes = filterSidebarSearchRootsByConnectionState(nodes, store.connectedIds);
   }
 
   return nodes;
 });
 
 const flatNodes = computed<FlatTreeNode[]>(() => flattenTree(filteredNodes.value));
+const visibleNodes = computed<TreeNode[]>(() => flatNodes.value.map((item) => item.node));
 const useVirtualTree = computed(() => shouldVirtualizeFlatTree(flatNodes.value.length));
 const activeTab = computed(() => queryStore.tabs.find((tab) => tab.id === queryStore.activeTabId));
+const sidebarTreeOverflowClass = computed(() =>
+  settingsStore.editorSettings.sidebarAllowHorizontalScroll
+    ? "overflow-x-auto sidebar-tree-horizontal-scroll"
+    : "overflow-x-hidden",
+);
 
 const pendingRenameGroupId = ref<string | null>(null);
 const highlightedNodeId = ref<string | null>(null);
@@ -420,7 +411,7 @@ function onSearchKeydown(event: KeyboardEvent) {
   searchQuery.value = "";
 }
 
-defineExpose({ focusSearch });
+defineExpose({ focusSearch, createNewGroup });
 </script>
 
 <template>
@@ -454,13 +445,6 @@ defineExpose({ focusSearch });
         >
           <Crosshair class="h-3.5 w-3.5" />
         </button>
-        <button
-          class="shrink-0 h-6 w-6 flex items-center justify-center rounded border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
-          :title="t('connectionGroup.createGroup')"
-          @click="createNewGroup"
-        >
-          <FolderPlus class="h-3.5 w-3.5" />
-        </button>
         <LightDropdown
           v-if="searchScopeOptions.length > 0"
           model-value=""
@@ -492,7 +476,8 @@ defineExpose({ focusSearch });
     <RecycleScroller
       v-if="flatNodes.length > 0 && useVirtualTree"
       ref="treeScrollerRef"
-      class="sidebar-tree connection-tree-scroller min-h-0 flex-1 overflow-y-auto overflow-x-auto"
+      class="sidebar-tree connection-tree-scroller min-h-0 flex-1 overflow-y-auto"
+      :class="sidebarTreeOverflowClass"
       :items="flatNodes"
       :item-size="SIDEBAR_TREE_ROW_HEIGHT"
       :buffer="SIDEBAR_TREE_SCROLL_BUFFER"
@@ -509,6 +494,7 @@ defineExpose({ focusSearch });
           :drag-disabled="isFiltering"
           :pending-rename="pendingRenameGroupId === item.node.id"
           :highlighted="highlightedNodeId === item.node.id"
+          :visible-nodes="visibleNodes"
           @node-toggled="onNodeToggled"
           @search-toggle="onSearchToggle"
           @rename-started="pendingRenameGroupId = null"
@@ -518,7 +504,8 @@ defineExpose({ focusSearch });
     <div
       v-else-if="flatNodes.length > 0"
       ref="plainTreeScrollerRef"
-      class="sidebar-tree min-h-0 flex-1 overflow-y-auto overflow-x-auto"
+      class="sidebar-tree min-h-0 flex-1 overflow-y-auto"
+      :class="sidebarTreeOverflowClass"
     >
       <TreeItem
         v-for="item in flatNodes"
@@ -528,6 +515,7 @@ defineExpose({ focusSearch });
         :drag-disabled="isFiltering"
         :pending-rename="pendingRenameGroupId === item.node.id"
         :highlighted="highlightedNodeId === item.id"
+        :visible-nodes="visibleNodes"
         @node-toggled="onNodeToggled"
         @search-toggle="onSearchToggle"
         @rename-started="pendingRenameGroupId = null"
@@ -546,6 +534,11 @@ defineExpose({ focusSearch });
 }
 
 .connection-tree-scroller :deep(.vue-recycle-scroller__item-view) {
-  contain: layout style paint;
+  min-width: 100%;
+  contain: style;
+}
+
+.connection-tree-scroller.sidebar-tree-horizontal-scroll :deep(.vue-recycle-scroller__item-view) {
+  width: max-content;
 }
 </style>

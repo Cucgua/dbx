@@ -1,9 +1,12 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import {
+  allNullColumnIndexes,
   filterColumnVisibilityOptions,
+  hiddenColumnIndexesWithAllNullColumns,
   invertedHiddenColumnIndexes,
   nextHiddenColumnIndexes,
+  removeAutoHiddenColumnIndexes,
   visibleColumnIndexesForFilter,
 } from "../../apps/desktop/src/lib/dataGridColumnVisibility.ts";
 
@@ -49,4 +52,43 @@ test("keeps one column visible when inverting all visible columns", () => {
   const hidden = invertedHiddenColumnIndexes([0, 1, 2], new Set());
 
   assert.deepEqual([...hidden].sort(), [1, 2]);
+});
+
+test("finds columns where every row is NULL", () => {
+  const indexes = allNullColumnIndexes(
+    [
+      [1, null, null, "x"],
+      [2, null, null, null],
+    ],
+    [0, 1, 2, 3],
+  );
+
+  assert.deepEqual(indexes, [1, 2]);
+});
+
+test("does not treat empty results as all-null columns", () => {
+  assert.deepEqual(allNullColumnIndexes([], [0, 1, 2]), []);
+});
+
+test("hides all-null columns without restoring manually hidden columns", () => {
+  const result = hiddenColumnIndexesWithAllNullColumns({
+    availableIndexes: [0, 1, 2, 3],
+    hiddenIndexes: new Set([3]),
+    allNullIndexes: new Set([1, 2, 3]),
+  });
+
+  assert.deepEqual([...result.hiddenIndexes].sort(), [1, 2, 3]);
+  assert.deepEqual([...result.autoHiddenIndexes].sort(), [1, 2]);
+  assert.deepEqual([...removeAutoHiddenColumnIndexes(result.hiddenIndexes, result.autoHiddenIndexes)].sort(), [3]);
+});
+
+test("keeps one all-null column visible when every column is NULL", () => {
+  const result = hiddenColumnIndexesWithAllNullColumns({
+    availableIndexes: [0, 1, 2],
+    hiddenIndexes: new Set(),
+    allNullIndexes: new Set([0, 1, 2]),
+  });
+
+  assert.deepEqual([...result.hiddenIndexes].sort(), [1, 2]);
+  assert.deepEqual([...result.autoHiddenIndexes].sort(), [1, 2]);
 });

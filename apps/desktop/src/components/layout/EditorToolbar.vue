@@ -13,7 +13,7 @@ import {
   Save,
   FolderOpen,
   Layers,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -25,7 +25,7 @@ import { useSchemaOptions } from "@/composables/useSchemaOptions";
 import { connectionIconType } from "@/lib/connectionPresentation";
 import { isDefaultDatabase } from "@/lib/defaultDatabase";
 import { connectionDisplayName } from "@/lib/tabPresentation";
-import { isSingleDatabase } from "@/lib/databaseCapabilities";
+import { isSingleDatabase, usesTreeSchemaMode } from "@/lib/databaseCapabilities";
 import { hexToRgba } from "@/lib/color";
 import type { QueryTab, ConnectionConfig } from "@/types/database";
 
@@ -67,12 +67,17 @@ const isSingleDb = computed(() => isSingleDatabase(props.activeConnection?.db_ty
 const activeDefaultDatabaseValue = computed(() =>
   isSingleDb.value && activeSchemaValue.value ? activeSchemaValue.value : activeDatabaseValue.value,
 );
+const hasDefaultDatabaseOption = computed(() => activeDatabaseOptions.value.includes(""));
 const schemaDatabaseKey = computed(() => props.activeTab.database || (isSingleDb.value ? "_" : ""));
 const saveTooltip = computed(() => (props.activeTab.objectSource ? t("objects.saveSource") : t("toolbar.saveSql")));
 
 const showSchemaSelector = computed(() => {
   const connection = props.activeConnection;
-  return connection && isSchemaAware(connection.id) && (props.activeTab.database || isSingleDb.value);
+  return (
+    connection &&
+    isSchemaAware(connection.id) &&
+    (props.activeTab.database || isSingleDb.value || hasDefaultDatabaseOption.value)
+  );
 });
 
 const activeSchemaOptions = computed(() => {
@@ -83,7 +88,7 @@ const activeSchemaOptions = computed(() => {
 
 watchEffect(() => {
   const connection = props.activeConnection;
-  if (connection && showSchemaSelector.value && schemaDatabaseKey.value) {
+  if (connection && showSchemaSelector.value) {
     loadSchemaOptions(connection.id, schemaDatabaseKey.value).catch(() => {});
   }
 });
@@ -103,6 +108,7 @@ const toolbarStyle = computed(() => {
 function databaseDisplayName(database: string): string {
   const connection = props.activeConnection;
   if (connection?.db_type === "redis" && database !== "") return `db${database}`;
+  if (database === "" && usesTreeSchemaMode(connection?.db_type)) return t("editor.defaultDatabase");
   return database || t("editor.noDatabase");
 }
 

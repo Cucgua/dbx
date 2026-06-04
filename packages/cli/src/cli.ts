@@ -10,7 +10,6 @@ import {
   getDbxDiagnostics,
   isMainModule,
   postBridge,
-  sqlSafetyFromEnv,
   type Backend,
   type DbxDiagnostics,
   type SqlSafetyOptions,
@@ -174,7 +173,7 @@ export async function runCli(argv: string[], options: RunOptions = {}): Promise<
       }
       const sqlArg = usesDefaultConnection ? args[1] : args[2];
       const sql = flags.file ? await readFile(flags.file, "utf-8") : required(sqlArg, "SQL string or --file is required.");
-      const envSafety = sqlSafetyFromEnv(env);
+      const envSafety = sqlSafetyFromCliEnv(env);
       if (flags.allowDangerous && !flags.allowWrites && !envSafety.allowWrites) {
         throw new CliError("INVALID_OPTION", "--allow-dangerous-sql requires --allow-writes.");
       }
@@ -327,6 +326,19 @@ function parseDurationMs(value: string, option: string): number {
   if (unit === "ms") return amount;
   if (unit === "s") return amount * 1000;
   return amount * 60_000;
+}
+
+function parseBooleanEnv(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true";
+}
+
+function sqlSafetyFromCliEnv(env: NodeJS.ProcessEnv): Required<Pick<SqlSafetyOptions, "allowWrites" | "allowDangerous">> {
+  return {
+    allowWrites: parseBooleanEnv(env.DBX_MCP_ALLOW_WRITES),
+    allowDangerous: parseBooleanEnv(env.DBX_MCP_ALLOW_DANGEROUS_SQL),
+  };
 }
 
 function splitCsv(value: string | undefined): string[] {

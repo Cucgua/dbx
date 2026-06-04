@@ -45,7 +45,7 @@ export function buildTableTreeNodes({
 
 type TableTreeEntry = {
   key: string;
-  objectType: "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
+  objectType: DatabaseObjectTreeKind;
   schema?: string;
   parentSchema?: string;
   parentName?: string;
@@ -70,7 +70,7 @@ function makeTableTreeEntry({
   schema?: string;
   includeSchemaInId?: boolean;
   name: string;
-  objectType: "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
+  objectType: DatabaseObjectTreeKind;
   comment?: string | null;
   parentSchema?: string | null;
   parentName?: string | null;
@@ -208,8 +208,56 @@ export function sortDatabaseObjectsByPrefixPriority<T>(items: readonly T[], getN
   return [...items].sort((left, right) => compareNames(getName(left), getName(right)));
 }
 
+export function sortDatabaseObjectsByName<T>(items: readonly T[], getName: (item: T) => string): T[] {
+  return [...items].sort((left, right) => databaseObjectNameCollator.compare(getName(left), getName(right)));
+}
+
+export function mergeTableInfosIntoObjects(
+  objects: readonly ObjectInfo[],
+  tables: readonly TableInfo[],
+  schema?: string,
+): ObjectInfo[] {
+  const merged = [...objects];
+  const seen = new Set(
+    merged.map((obj) => {
+      const name = normalizeDatabaseObjectName(obj.name);
+      const objectSchema = obj.schema ? normalizeDatabaseObjectName(obj.schema) : schema || "";
+      return `${normalizeObjectType(obj.object_type)}\0${objectSchema.toLowerCase()}\0${name.toLowerCase()}`;
+    }),
+  );
+
+  for (const table of tables) {
+    const objectType = normalizeObjectType(table.table_type);
+    if (objectType !== "TABLE" && objectType !== "VIEW") continue;
+    const name = normalizeDatabaseObjectName(table.name);
+    if (!name) continue;
+    const matchingObject = objects.find((obj) => {
+      const objName = normalizeDatabaseObjectName(obj.name);
+      if (objName.toLowerCase() !== name.toLowerCase()) return false;
+      return normalizeObjectType(obj.object_type) === objectType;
+    });
+    const tableSchema =
+      schema ?? (matchingObject?.schema ? normalizeDatabaseObjectName(matchingObject.schema) : undefined);
+    const key = `${objectType}\0${(tableSchema || "").toLowerCase()}\0${name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push({
+      name,
+      object_type: objectType,
+      schema: tableSchema,
+      comment: table.comment,
+      created_at: undefined,
+      updated_at: undefined,
+      parent_schema: table.parent_schema,
+      parent_name: table.parent_name,
+    });
+  }
+
+  return merged;
+}
+
 function buildPartitionTree(entries: TableTreeEntry[], connectionId: string, database: string): TreeNode[] {
-  const orderedEntries = sortDatabaseObjectsByPrefixPriority(entries, (entry) => entry.node.label);
+  const orderedEntries = sortDatabaseObjectsByName(entries, (entry) => entry.node.label);
   const byKey = new Map<string, TableTreeEntry>();
   for (const entry of orderedEntries) {
     byKey.set(entry.key, entry);
@@ -267,6 +315,8 @@ export function hasTablePartitionGroups(node: TreeNode): boolean {
   return partitionGroupChildren(node).length > 0;
 }
 
+type DatabaseObjectTreeKind = "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION" | "PACKAGE" | "PACKAGE_BODY";
+
 function buildObjectTreeEntries({
   nodeId,
   connectionId,
@@ -323,7 +373,8 @@ export function buildSimpleObjectTreeNodes({
 
   for (const obj of objects) {
     const objectType = normalizeObjectType(obj.object_type);
-    if (objectType !== "TABLE" && objectType !== "VIEW") continue;
+    if (objectType !== "TABLE" && objectType !== "VIEW" && objectType !== "PACKAGE" && objectType !== "PACKAGE_BODY")
+      continue;
 
     const name = normalizeDatabaseObjectName(obj.name);
     if (!name) continue;
@@ -346,19 +397,33 @@ export function buildSimpleObjectTreeNodes({
     });
     if (objectType === "TABLE") {
       tableEntries.push(entry);
-    } else {
+    } else if (objectType === "VIEW") {
       viewNodes.push(entry.node);
+    } else {
+      viewNodes.push({
+        id: `${nodeId}:${childSchema ? `${childSchema}:` : ""}${name}:${objectType}`,
+        label: name,
+        type: objectType === "PACKAGE_BODY" ? "package-body" : "package",
+        comment: obj.comment,
+        connectionId,
+        database,
+        schema: childSchema,
+        isExpanded: false,
+        children: undefined,
+      });
     }
   }
 
   return [
     ...buildPartitionTree(tableEntries, connectionId, database),
-    ...sortDatabaseObjectsByPrefixPriority(viewNodes, (node) => node.label),
+    ...sortDatabaseObjectsByName(viewNodes, (node) => node.label),
   ];
 }
 
-function normalizeObjectType(type: string): "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION" {
+function normalizeObjectType(type: string): DatabaseObjectTreeKind {
   const v = type.toUpperCase();
+  if (v.includes("PACKAGE BODY") || v.includes("PACKAGE_BODY")) return "PACKAGE_BODY";
+  if (v.includes("PACKAGE")) return "PACKAGE";
   if (v.includes("VIEW")) return "VIEW";
   if (v.includes("PROC")) return "PROCEDURE";
   if (v.includes("FUNC")) return "FUNCTION";
@@ -368,25 +433,32 @@ function normalizeObjectType(type: string): "TABLE" | "VIEW" | "PROCEDURE" | "FU
 const groupDefs: Array<{
   key: string;
   label: string;
-  objectType: string;
+  objectTypes: DatabaseObjectTreeKind[];
   nodeType: TreeNodeType;
-  childType: TreeNodeType;
+  childType: TreeNodeType | ((objectType: DatabaseObjectTreeKind) => TreeNodeType);
 }> = [
-  { key: "__tables", label: "tree.tables", objectType: "TABLE", nodeType: "group-tables", childType: "table" },
-  { key: "__views", label: "tree.views", objectType: "VIEW", nodeType: "group-views", childType: "view" },
+  { key: "__tables", label: "tree.tables", objectTypes: ["TABLE"], nodeType: "group-tables", childType: "table" },
+  { key: "__views", label: "tree.views", objectTypes: ["VIEW"], nodeType: "group-views", childType: "view" },
   {
     key: "__procedures",
     label: "tree.procedures",
-    objectType: "PROCEDURE",
+    objectTypes: ["PROCEDURE"],
     nodeType: "group-procedures",
     childType: "procedure",
   },
   {
     key: "__functions",
     label: "tree.functions",
-    objectType: "FUNCTION",
+    objectTypes: ["FUNCTION"],
     nodeType: "group-functions",
     childType: "function",
+  },
+  {
+    key: "__packages",
+    label: "tree.packages",
+    objectTypes: ["PACKAGE", "PACKAGE_BODY"],
+    nodeType: "group-packages",
+    childType: (objectType) => (objectType === "PACKAGE_BODY" ? "package-body" : "package"),
   },
 ];
 
@@ -395,6 +467,7 @@ const objectGroupNodeTypes = new Set<TreeNodeType>([
   "group-views",
   "group-procedures",
   "group-functions",
+  "group-packages",
 ]);
 
 export function objectGroupRefreshParentId(node: TreeNode): string | null {
@@ -434,9 +507,9 @@ export function buildGroupedObjectTreeNodes({
 
   const groups: TreeNode[] = [];
   for (const def of groupDefs) {
-    const items = buckets.get(def.objectType);
+    const items = def.objectTypes.flatMap((objectType) => buckets.get(objectType) ?? []);
     if (!items?.length) continue;
-    const isExpandable = def.childType === "table" || def.childType === "view";
+    const isExpandable = def.nodeType === "group-tables" || def.nodeType === "group-views";
     const children = isExpandable
       ? buildObjectTreeEntries({
           nodeId: `${nodeId}:${def.key}`,
@@ -444,14 +517,17 @@ export function buildGroupedObjectTreeNodes({
           database,
           schema,
           objects: items,
-          objectType: def.objectType as "TABLE" | "VIEW",
+          objectType: def.objectTypes[0] as "TABLE" | "VIEW",
         })
-      : sortDatabaseObjectsByPrefixPriority(items, (obj) => obj.name).map((obj) => {
+      : sortDatabaseObjectsByName(items, (obj) => obj.name).map((obj) => {
           const childSchema = obj.schema ? normalizeDatabaseObjectName(obj.schema) : schema;
+          const objectType = normalizeObjectType(obj.object_type);
+          const childType = typeof def.childType === "function" ? def.childType(objectType) : def.childType;
+          const objectTypeSuffix = objectType === "PACKAGE" || objectType === "PACKAGE_BODY" ? `:${objectType}` : "";
           return {
-            id: `${nodeId}:${def.key}:${childSchema ? `${childSchema}:` : ""}${obj.name}`,
+            id: `${nodeId}:${def.key}:${childSchema ? `${childSchema}:` : ""}${obj.name}${objectTypeSuffix}`,
             label: obj.name,
-            type: def.childType,
+            type: childType,
             comment: obj.comment,
             connectionId,
             database,

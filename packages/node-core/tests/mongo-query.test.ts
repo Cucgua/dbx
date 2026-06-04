@@ -21,6 +21,24 @@ test("parseMongoFindCommand accepts shell-style find commands", () => {
   });
 });
 
+test("parseMongoFindCommand accepts Compass-style unquoted keys and ObjectId", () => {
+  const command = parseMongoFindCommand("db.products.find({_id: ObjectId('6a045a92d2971e44243771a1')}).limit(1)");
+  assert.ok(command);
+  assert.equal(command.collection, "products");
+  assert.equal(command.limit, 1);
+  assert.deepEqual(JSON.parse(command.filter), { _id: { $oid: "6a045a92d2971e44243771a1" } });
+});
+
+test("parseMongoWriteCommand accepts unquoted update operator keys", () => {
+  assert.deepEqual(parseMongoWriteCommand("db.projects.updateOne({_id: ObjectId('507f1f77bcf86cd799439011')}, {$set: {name: 'next'}})"), {
+    kind: "update",
+    collection: "projects",
+    filter: '{"_id": {"$oid":"507f1f77bcf86cd799439011"}}',
+    update: '{"$set": {"name": "next"}}',
+    many: false,
+  });
+});
+
 test("parseMongoCountDocumentsCommand accepts shell-style count commands", () => {
   assert.deepEqual(parseMongoCountDocumentsCommand('db.projects.countDocuments({"active":true})'), {
     collection: "projects",

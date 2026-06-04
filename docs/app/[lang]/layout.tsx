@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
 import { RootProvider } from 'fumadocs-ui/provider/next';
+import { StaticSearchDialog } from '@/components/StaticSearchDialog';
 import { i18nUI } from '@/lib/i18n';
 import { SITE_URL, SITE_NAME, DEFAULT_DESCRIPTION } from '@/lib/metadata';
 
@@ -58,7 +59,13 @@ export default async function LangLayout({
   const { lang } = await params;
 
   return (
-    <RootProvider i18n={i18nUI.provider(lang)} theme={{ enabled: false }}>
+    <RootProvider
+      i18n={i18nUI.provider(lang)}
+      search={{
+        SearchDialog: StaticSearchDialog,
+      }}
+      theme={{ defaultTheme: 'system', enableSystem: true }}
+    >
       {children}
     </RootProvider>
   );

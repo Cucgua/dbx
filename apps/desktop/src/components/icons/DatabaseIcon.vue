@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Database } from "lucide-vue-next";
+import { Database } from "@lucide/vue";
 
 const props = defineProps<{
   dbType: string;
@@ -61,6 +61,7 @@ const assetIcons: Record<string, string> = {
   firebird: "firebird.webp",
   exasol: "exasol.webp",
   gbase: "gbase.webp",
+  gbase8s: "gbase.webp",
   tdsql: "tdsql.webp",
   polardb: "polardb.webp",
   greatsql: "greatsql.webp",

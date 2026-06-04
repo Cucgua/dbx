@@ -255,6 +255,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
@@ -308,11 +309,20 @@ pub fn run() {
             let desktop_settings = tauri::async_runtime::block_on(storage.load_desktop_settings()).unwrap_or_default();
             eprintln!("[STARTUP] storage ready in {:?}", t.elapsed());
 
-            let state = Arc::new(AppState::new_with_plugin_dir_and_app_version(
-                storage,
-                data_dir.join("plugins"),
-                env!("CARGO_PKG_VERSION"),
-            ));
+            let state = if data_dir::uses_custom_data_dir() {
+                Arc::new(AppState::new_with_plugin_and_agent_dir_and_app_version(
+                    storage,
+                    data_dir.join("plugins"),
+                    data_dir.join("agents"),
+                    env!("CARGO_PKG_VERSION"),
+                ))
+            } else {
+                Arc::new(AppState::new_with_plugin_dir_and_app_version(
+                    storage,
+                    data_dir.join("plugins"),
+                    env!("CARGO_PKG_VERSION"),
+                ))
+            };
             app.manage(state.clone());
             app.manage(commands::schema_rag::SchemaRagRuntimeState { data_dir: data_dir.clone() });
             app.manage(commands::external_sql::ExternalSqlOpenState::default());
@@ -408,6 +418,7 @@ pub fn run() {
             commands::schema::list_databases,
             commands::schema::list_tables,
             commands::schema::list_objects,
+            commands::schema::list_completion_objects,
             commands::schema::get_object_source,
             commands::schema::list_schemas,
             commands::schema::get_columns,
@@ -453,6 +464,7 @@ pub fn run() {
             commands::query::build_duckdb_attach_database_sql,
             commands::query::build_drop_object_sql,
             commands::query::build_drop_table_sql,
+            commands::query::build_drop_table_child_object_sql,
             commands::query::build_empty_table_sql,
             commands::query::build_truncate_table_sql,
             commands::query::build_drop_database_sql,
@@ -479,6 +491,7 @@ pub fn run() {
             commands::query::build_database_sql_export,
             commands::data_compare::prepare_data_compare,
             commands::data_compare::prepare_data_compare_from_tables,
+            commands::data_compare::prepare_data_compare_missing_target,
             commands::data_compare::build_data_compare_sync_plan,
             commands::sql_file::preview_sql_file,
             commands::sql_file::execute_sql_file,
@@ -520,8 +533,11 @@ pub fn run() {
             commands::mongo_cmd::mongo_find_documents,
             commands::mongo_cmd::mongo_aggregate_documents,
             commands::mongo_cmd::mongo_insert_document,
+            commands::mongo_cmd::mongo_insert_documents,
             commands::mongo_cmd::mongo_update_document,
+            commands::mongo_cmd::mongo_update_documents,
             commands::mongo_cmd::mongo_delete_document,
+            commands::mongo_cmd::mongo_delete_documents,
             commands::history::save_history,
             commands::history::load_history,
             commands::history::clear_history,
@@ -532,7 +548,10 @@ pub fn run() {
             commands::transfer::cancel_transfer,
             commands::database_export::export_database_sql,
             commands::database_export::cancel_database_export,
+            commands::table_export::start_table_export,
+            commands::table_export::cancel_table_export,
             commands::csv_export::export_query_result_csv,
+            commands::csv_export::export_table_data_csv,
             commands::xlsx_export::export_query_result_xlsx,
             commands::text_export::export_query_result_json,
             commands::text_export::export_query_result_markdown,
@@ -541,6 +560,7 @@ pub fn run() {
             commands::agents::get_driver_store_usage,
             commands::agents::install_agent,
             commands::agents::upgrade_all_agents,
+            commands::agents::check_agent_update_blockers,
             commands::agents::uninstall_agent,
             commands::agents::check_jre_installed,
             commands::agents::get_agent_java_runtime_config,

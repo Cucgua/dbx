@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
 use futures::{SinkExt, StreamExt};
 use percent_encoding::percent_decode_str;
@@ -24,8 +24,8 @@ use crate::types::{
 };
 
 fn pg_temporal_to_json_value(row: &Row, idx: usize) -> Option<serde_json::Value> {
-    if let Ok(v) = row.try_get::<_, DateTime<Utc>>(idx) {
-        return Some(serde_json::Value::String(v.to_rfc3339()));
+    if let Ok(v) = row.try_get::<_, DateTime<Local>>(idx) {
+        return Some(serde_json::Value::String(format_pg_timestamptz(v)));
     }
     if let Ok(v) = row.try_get::<_, NaiveDateTime>(idx) {
         return Some(serde_json::Value::String(v.to_string()));
@@ -107,8 +107,8 @@ fn pg_array_to_json_value(row: &Row, idx: usize) -> Option<serde_json::Value> {
     if let Ok(values) = row.try_get::<_, Vec<Option<uuid::Uuid>>>(idx) {
         return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_string())));
     }
-    if let Ok(values) = row.try_get::<_, Vec<Option<DateTime<Utc>>>>(idx) {
-        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_rfc3339())));
+    if let Ok(values) = row.try_get::<_, Vec<Option<DateTime<Local>>>>(idx) {
+        return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(format_pg_timestamptz(v))));
     }
     if let Ok(values) = row.try_get::<_, Vec<Option<NaiveDateTime>>>(idx) {
         return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.to_string())));
@@ -144,6 +144,10 @@ fn pg_array_to_json_value(row: &Row, idx: usize) -> Option<serde_json::Value> {
         return Some(pg_optional_array_to_json(values, |v| serde_json::Value::String(v.0)));
     }
     None
+}
+
+fn format_pg_timestamptz(value: DateTime<Local>) -> String {
+    value.to_rfc3339()
 }
 
 fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value {
@@ -740,8 +744,8 @@ fn postgres_tables_sql() -> &'static str {
            WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN TABLE' \
            WHEN 'p' THEN 'BASE TABLE' END AS table_type, \
          obj_description(c.oid) AS table_comment, \
-         pn.nspname AS parent_schema, \
-         pc.relname AS parent_name \
+         CASE WHEN pc.relkind = 'p' THEN pn.nspname ELSE NULL END AS parent_schema, \
+         CASE WHEN pc.relkind = 'p' THEN pc.relname ELSE NULL END AS parent_name \
          FROM pg_catalog.pg_class c \
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
          LEFT JOIN pg_catalog.pg_inherits i ON i.inhrelid = c.oid \
@@ -766,8 +770,8 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
            THEN pg_xact_commit_timestamp(c.xmin)::text END, \
          stat.modification::text \
        ) AS updated_at, \
-       pn.nspname AS parent_schema, \
-       pc.relname AS parent_name, \
+       CASE WHEN pc.relkind = 'p' THEN pn.nspname ELSE NULL END AS parent_schema, \
+       CASE WHEN pc.relkind = 'p' THEN pc.relname ELSE NULL END AS parent_name, \
        CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
      FROM pg_catalog.pg_class c \
      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
@@ -803,8 +807,8 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
        obj_description(c.oid) AS object_comment, \
        NULL::text AS created_at, \
        NULL::text AS updated_at, \
-       pn.nspname AS parent_schema, \
-       pc.relname AS parent_name, \
+       CASE WHEN pc.relkind = 'p' THEN pn.nspname ELSE NULL END AS parent_schema, \
+       CASE WHEN pc.relkind = 'p' THEN pc.relname ELSE NULL END AS parent_name, \
        CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
      FROM pg_catalog.pg_class c \
      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
@@ -870,11 +874,7 @@ pub async fn list_schemas(pool: &Pool) -> Result<Vec<String>, String> {
     Ok(rows.iter().map(|row| row.get::<_, String>(0)).collect())
 }
 
-pub async fn get_columns(pool: &Pool, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
-    let client = pool.get().await.map_err(|e| e.to_string())?;
-    let stmt = client
-        .prepare_cached(
-            "SELECT a.attname AS column_name, \
+const POSTGRES_COLUMNS_SQL: &str = "SELECT a.attname AS column_name, \
              format_type(a.atttypid, a.atttypmod) AS full_type, \
              NOT a.attnotnull AS is_nullable, \
              pg_get_expr(ad.adbin, ad.adrelid) AS column_default, \
@@ -885,6 +885,38 @@ pub async fn get_columns(pool: &Pool, schema: &str, table: &str) -> Result<Vec<C
                AND a.attnum = ANY(i.indkey) \
              ) AS is_pk, \
              col_description(a.attrelid, a.attnum) AS column_comment, \
+             CASE a.attidentity \
+               WHEN 'd' THEN 'generated by default as identity' || CASE WHEN pseq.seqstart IS NOT NULL THEN format(' (start with %s increment by %s)', pseq.seqstart, pseq.seqincrement) ELSE '' END \
+               WHEN 'a' THEN 'generated always as identity' || CASE WHEN pseq.seqstart IS NOT NULL THEN format(' (start with %s increment by %s)', pseq.seqstart, pseq.seqincrement) ELSE '' END \
+               ELSE NULL \
+             END AS column_extra, \
+             CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
+               THEN ((a.atttypmod - 4) >> 16) & 65535 ELSE NULL END AS numeric_precision, \
+             CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
+               THEN (a.atttypmod - 4) & 65535 ELSE NULL END AS numeric_scale, \
+             CASE WHEN t.typname IN ('varchar', 'bpchar') AND a.atttypmod > 0 \
+               THEN a.atttypmod - 4 ELSE NULL END AS character_maximum_length \
+             FROM pg_attribute a \
+             JOIN pg_type t ON t.oid = a.atttypid \
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+             LEFT JOIN pg_depend dep ON dep.refobjid = a.attrelid AND dep.refobjsubid = a.attnum AND dep.deptype = 'i' \
+             LEFT JOIN pg_sequence pseq ON pseq.seqrelid = dep.objid \
+             WHERE a.attrelid = (quote_ident($1) || '.' || quote_ident($2))::regclass \
+             AND a.attnum > 0 AND NOT a.attisdropped \
+             ORDER BY a.attnum";
+
+const POSTGRES_COLUMNS_COMPAT_SQL: &str = "SELECT a.attname AS column_name, \
+             format_type(a.atttypid, a.atttypmod) AS full_type, \
+             NOT a.attnotnull AS is_nullable, \
+             pg_get_expr(ad.adbin, ad.adrelid) AS column_default, \
+             EXISTS ( \
+               SELECT 1 FROM pg_constraint co \
+               JOIN pg_index i ON i.indrelid = co.conrelid AND co.conindid = i.indexrelid \
+               WHERE co.conrelid = a.attrelid AND co.contype = 'p' \
+               AND a.attnum = ANY(i.indkey) \
+             ) AS is_pk, \
+             col_description(a.attrelid, a.attnum) AS column_comment, \
+             NULL::text AS column_extra, \
              CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
                THEN ((a.atttypmod - 4) >> 16) & 65535 ELSE NULL END AS numeric_precision, \
              CASE WHEN t.typname = 'numeric' AND a.atttypmod > 0 \
@@ -896,30 +928,87 @@ pub async fn get_columns(pool: &Pool, schema: &str, table: &str) -> Result<Vec<C
              LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
              WHERE a.attrelid = (quote_ident($1) || '.' || quote_ident($2))::regclass \
              AND a.attnum > 0 AND NOT a.attisdropped \
-             ORDER BY a.attnum",
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    let rows = client.query(&stmt, &[&schema, &table]).await.map_err(|e| e.to_string())?;
+             ORDER BY a.attnum";
 
-    Ok(rows
-        .iter()
-        .map(|row| {
-            let full_type = row.try_get::<_, Option<String>>(1).ok().flatten().unwrap_or_default();
-            ColumnInfo {
-                name: row.get::<_, String>(0),
-                data_type: full_type,
-                is_nullable: row.get::<_, bool>(2),
-                column_default: row.try_get::<_, Option<String>>(3).ok().flatten(),
-                is_primary_key: row.get::<_, bool>(4),
-                extra: None,
-                comment: row.try_get::<_, Option<String>>(5).ok().flatten(),
-                numeric_precision: row.try_get::<_, Option<i32>>(6).ok().flatten(),
-                numeric_scale: row.try_get::<_, Option<i32>>(7).ok().flatten(),
-                character_maximum_length: row.try_get::<_, Option<i32>>(8).ok().flatten(),
+const POSTGRES_COLUMNS_INFORMATION_SCHEMA_SQL: &str = "SELECT c.column_name, \
+             CASE WHEN c.data_type = 'USER-DEFINED' THEN c.udt_name ELSE c.data_type END AS full_type, \
+             c.is_nullable = 'YES' AS is_nullable, \
+             c.column_default, \
+             EXISTS ( \
+               SELECT 1 FROM information_schema.table_constraints tc \
+               JOIN information_schema.key_column_usage kcu \
+                 ON kcu.constraint_catalog = tc.constraint_catalog \
+                AND kcu.constraint_schema = tc.constraint_schema \
+                AND kcu.constraint_name = tc.constraint_name \
+                AND kcu.table_schema = tc.table_schema \
+                AND kcu.table_name = tc.table_name \
+               WHERE tc.constraint_type = 'PRIMARY KEY' \
+                 AND tc.table_schema = c.table_schema \
+                 AND tc.table_name = c.table_name \
+                 AND kcu.column_name = c.column_name \
+             ) AS is_pk, \
+             NULL::text AS column_comment, \
+             NULL::text AS column_extra, \
+             CAST(c.numeric_precision AS int) AS numeric_precision, \
+             CAST(c.numeric_scale AS int) AS numeric_scale, \
+             CAST(c.character_maximum_length AS int) AS character_maximum_length \
+             FROM information_schema.columns c \
+             WHERE c.table_schema = $1 AND c.table_name = $2 \
+             ORDER BY c.ordinal_position";
+
+fn column_info_from_row(row: &Row) -> ColumnInfo {
+    let full_type = row.try_get::<_, Option<String>>(1).ok().flatten().unwrap_or_default();
+    ColumnInfo {
+        name: row.get::<_, String>(0),
+        data_type: full_type,
+        is_nullable: row.get::<_, bool>(2),
+        column_default: row.try_get::<_, Option<String>>(3).ok().flatten(),
+        is_primary_key: row.get::<_, bool>(4),
+        extra: row.try_get::<_, Option<String>>(6).ok().flatten(),
+        comment: row.try_get::<_, Option<String>>(5).ok().flatten(),
+        numeric_precision: row.try_get::<_, Option<i32>>(7).ok().flatten(),
+        numeric_scale: row.try_get::<_, Option<i32>>(8).ok().flatten(),
+        character_maximum_length: row.try_get::<_, Option<i32>>(9).ok().flatten(),
+    }
+}
+
+async fn get_columns_with_sql(
+    client: &deadpool_postgres::Client,
+    sql: &str,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ColumnInfo>, tokio_postgres::Error> {
+    let stmt = client.prepare_cached(sql).await?;
+    let rows = client.query(&stmt, &[&schema, &table]).await?;
+
+    Ok(rows.iter().map(column_info_from_row).collect())
+}
+
+pub async fn get_columns(pool: &Pool, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    match get_columns_with_sql(&client, POSTGRES_COLUMNS_SQL, schema, table).await {
+        Ok(columns) => Ok(columns),
+        Err(primary_error) => match get_columns_with_sql(&client, POSTGRES_COLUMNS_COMPAT_SQL, schema, table).await {
+            Ok(columns) => Ok(columns),
+            Err(fallback_error) => {
+                let primary_message = pg_error_to_string(primary_error);
+                let fallback_message = pg_error_to_string(fallback_error);
+                match get_columns_with_sql(&client, POSTGRES_COLUMNS_INFORMATION_SCHEMA_SQL, schema, table).await {
+                    Ok(columns) => Ok(columns),
+                    Err(information_schema_error) => {
+                        let information_schema_message = pg_error_to_string(information_schema_error);
+                        log::debug!(
+                            "[postgres][get_columns:compat-failed] primary_error={} fallback_error={} information_schema_error={}",
+                            primary_message,
+                            fallback_message,
+                            information_schema_message
+                        );
+                        Err(information_schema_message)
+                    }
+                }
             }
-        })
-        .collect())
+        },
+    }
 }
 
 pub(crate) fn pg_quote_ident(ident: &str) -> String {
@@ -1034,11 +1123,7 @@ async fn execute_query_with_max_rows_inner(
     }
 }
 
-pub async fn list_indexes(pool: &Pool, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
-    let client = pool.get().await.map_err(|e| e.to_string())?;
-    let stmt = client
-        .prepare_cached(
-            "SELECT i.relname AS index_name, \
+const POSTGRES_INDEXES_SQL: &str = "SELECT i.relname AS index_name, \
              array_agg(COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.n::int, true)) ORDER BY k.n) AS columns, \
              ix.indisunique AS is_unique, \
              ix.indisprimary AS is_primary, \
@@ -1056,11 +1141,36 @@ pub async fn list_indexes(pool: &Pool, schema: &str, table: &str) -> Result<Vec<
              LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND k.attnum > 0 \
              WHERE n.nspname = $1 AND t.relname = $2 \
              GROUP BY i.relname, i.oid, ix.indisunique, ix.indisprimary, ix.indpred, ix.indrelid, am.amname, ix.indnkeyatts, ix.indkey \
-             ORDER BY i.relname",
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    let rows = client.query(&stmt, &[&schema, &table]).await.map_err(|e| e.to_string())?;
+             ORDER BY i.relname";
+
+const POSTGRES_INDEXES_COMPAT_SQL: &str = "SELECT i.relname AS index_name, \
+             array_agg(COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.n::int, true)) ORDER BY k.n) AS columns, \
+             ix.indisunique AS is_unique, \
+             ix.indisprimary AS is_primary, \
+             pg_get_expr(ix.indpred, ix.indrelid) AS filter_expr, \
+             am.amname AS index_type, \
+             NULL::smallint AS nkeyatts, \
+             ix.indkey AS indkey, \
+             obj_description(i.oid, 'pg_class') AS index_comment \
+             FROM pg_index ix \
+             JOIN pg_class t ON t.oid = ix.indrelid \
+             JOIN pg_class i ON i.oid = ix.indexrelid \
+             JOIN pg_namespace n ON n.oid = t.relnamespace \
+             JOIN pg_am am ON am.oid = i.relam \
+             JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, n) ON true \
+             LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND k.attnum > 0 \
+             WHERE n.nspname = $1 AND t.relname = $2 \
+             GROUP BY i.relname, i.oid, ix.indisunique, ix.indisprimary, ix.indpred, ix.indrelid, am.amname, ix.indkey \
+             ORDER BY i.relname";
+
+async fn list_indexes_with_sql(
+    client: &deadpool_postgres::Client,
+    sql: &str,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<IndexInfo>, tokio_postgres::Error> {
+    let stmt = client.prepare_cached(sql).await?;
+    let rows = client.query(&stmt, &[&schema, &table]).await?;
 
     Ok(rows
         .iter()
@@ -1084,21 +1194,48 @@ pub async fn list_indexes(pool: &Pool, schema: &str, table: &str) -> Result<Vec<
         .collect())
 }
 
+pub async fn list_indexes(pool: &Pool, schema: &str, table: &str) -> Result<Vec<IndexInfo>, String> {
+    let client = pool.get().await.map_err(|e| e.to_string())?;
+    match list_indexes_with_sql(&client, POSTGRES_INDEXES_SQL, schema, table).await {
+        Ok(indexes) => Ok(indexes),
+        Err(primary_error) => match list_indexes_with_sql(&client, POSTGRES_INDEXES_COMPAT_SQL, schema, table).await {
+            Ok(indexes) => Ok(indexes),
+            Err(fallback_error) => {
+                let primary_message = pg_error_to_string(primary_error);
+                let fallback_message = pg_error_to_string(fallback_error);
+                log::debug!(
+                    "[postgres][list_indexes:compat-failed] primary_error={} fallback_error={}",
+                    primary_message,
+                    fallback_message
+                );
+                Err(fallback_message)
+            }
+        },
+    }
+}
+
 pub async fn list_foreign_keys(pool: &Pool, schema: &str, table: &str) -> Result<Vec<ForeignKeyInfo>, String> {
     let client = pool.get().await.map_err(|e| e.to_string())?;
     let stmt = client
         .prepare_cached(
-            "SELECT kcu.constraint_name, kcu.column_name, \
-             ccu.table_name AS ref_table, ccu.column_name AS ref_column \
-             FROM information_schema.key_column_usage kcu \
+            "SELECT fk.constraint_name, fk.column_name, \
+             pk.table_schema AS ref_schema, pk.table_name AS ref_table, pk.column_name AS ref_column \
+             FROM information_schema.table_constraints tc \
+             JOIN information_schema.key_column_usage fk \
+               ON fk.constraint_name = tc.constraint_name \
+               AND fk.constraint_schema = tc.constraint_schema \
+               AND fk.table_schema = tc.table_schema \
+               AND fk.table_name = tc.table_name \
              JOIN information_schema.referential_constraints rc \
-               ON kcu.constraint_name = rc.constraint_name \
-               AND kcu.constraint_schema = rc.constraint_schema \
-             JOIN information_schema.constraint_column_usage ccu \
-               ON rc.unique_constraint_name = ccu.constraint_name \
-               AND rc.unique_constraint_schema = ccu.constraint_schema \
-             WHERE kcu.table_schema = $1 AND kcu.table_name = $2 \
-             ORDER BY kcu.constraint_name",
+               ON rc.constraint_name = tc.constraint_name \
+               AND rc.constraint_schema = tc.constraint_schema \
+             JOIN information_schema.key_column_usage pk \
+               ON pk.constraint_name = rc.unique_constraint_name \
+               AND pk.constraint_schema = rc.unique_constraint_schema \
+               AND pk.ordinal_position = fk.position_in_unique_constraint \
+             WHERE tc.constraint_type = 'FOREIGN KEY' \
+               AND fk.table_schema = $1 AND fk.table_name = $2 \
+             ORDER BY fk.constraint_name, fk.ordinal_position",
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -1109,8 +1246,9 @@ pub async fn list_foreign_keys(pool: &Pool, schema: &str, table: &str) -> Result
         .map(|row| ForeignKeyInfo {
             name: row.get::<_, String>(0),
             column: row.get::<_, String>(1),
-            ref_table: row.get::<_, String>(2),
-            ref_column: row.get::<_, String>(3),
+            ref_schema: Some(row.get::<_, String>(2)),
+            ref_table: row.get::<_, String>(3),
+            ref_column: row.get::<_, String>(4),
         })
         .collect())
 }
@@ -1279,6 +1417,12 @@ mod tests {
         assert_eq!(query_result_row_limit(Some(5)), 5);
     }
 
+    #[test]
+    fn timestamptz_display_preserves_local_offset() {
+        let text = format_pg_timestamptz(Local::now());
+        assert!(!text.ends_with("+00:00") || Local::now().offset().local_minus_utc() == 0);
+    }
+
     // --- validate_postgres_ssl_paths ---
 
     #[test]
@@ -1423,11 +1567,44 @@ mod tests {
         assert!(sql.contains("pg_catalog.pg_inherits"));
         assert!(sql.contains("parent_schema"));
         assert!(sql.contains("parent_name"));
+        assert!(sql.contains("pc.relkind = 'p'"));
         assert!(sql.contains("$1"));
         assert!(sql.contains("BASE TABLE"));
         assert!(sql.contains("VIEW"));
         assert!(sql.contains("MATERIALIZED VIEW"));
         assert!(sql.contains("FOREIGN TABLE"));
+    }
+
+    #[test]
+    fn postgres_column_metadata_reads_identity_extra() {
+        assert!(POSTGRES_COLUMNS_SQL.contains("a.attidentity"));
+        assert!(POSTGRES_COLUMNS_SQL.contains("pg_sequence"));
+        assert!(POSTGRES_COLUMNS_SQL.contains("generated by default as identity"));
+        assert!(POSTGRES_COLUMNS_SQL.contains("generated always as identity"));
+    }
+
+    #[test]
+    fn postgres_column_metadata_has_opengauss_compatible_fallback() {
+        assert!(!POSTGRES_COLUMNS_COMPAT_SQL.contains("a.attidentity"));
+        assert!(!POSTGRES_COLUMNS_COMPAT_SQL.contains("pg_sequence"));
+        assert!(POSTGRES_COLUMNS_COMPAT_SQL.contains("NULL::text AS column_extra"));
+        assert!(POSTGRES_COLUMNS_COMPAT_SQL.contains("col_description"));
+    }
+
+    #[test]
+    fn postgres_column_metadata_has_information_schema_fallback() {
+        assert!(POSTGRES_COLUMNS_INFORMATION_SCHEMA_SQL.contains("information_schema.columns"));
+        assert!(POSTGRES_COLUMNS_INFORMATION_SCHEMA_SQL.contains("information_schema.table_constraints"));
+        assert!(POSTGRES_COLUMNS_INFORMATION_SCHEMA_SQL.contains("information_schema.key_column_usage"));
+        assert!(!POSTGRES_COLUMNS_INFORMATION_SCHEMA_SQL.contains("pg_attribute"));
+        assert!(!POSTGRES_COLUMNS_INFORMATION_SCHEMA_SQL.contains("regclass"));
+    }
+
+    #[test]
+    fn postgres_index_metadata_has_legacy_catalog_fallback() {
+        assert!(POSTGRES_INDEXES_SQL.contains("ix.indnkeyatts"));
+        assert!(!POSTGRES_INDEXES_COMPAT_SQL.contains("ix.indnkeyatts"));
+        assert!(POSTGRES_INDEXES_COMPAT_SQL.contains("NULL::smallint AS nkeyatts"));
     }
 
     #[test]
@@ -1438,6 +1615,7 @@ mod tests {
         assert!(sql.contains("pg_catalog.pg_inherits"));
         assert!(sql.contains("parent_schema"));
         assert!(sql.contains("parent_name"));
+        assert!(sql.contains("pc.relkind = 'p'"));
         assert!(sql.contains("pg_stat_file"));
         assert!(sql.contains("pg_xact_commit_timestamp"));
         assert!(sql.contains("'PROCEDURE'"));

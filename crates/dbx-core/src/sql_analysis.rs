@@ -10,6 +10,8 @@ use sqlparser::dialect::{
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::Span;
 
+use crate::sql::{starts_with_duckdb_result_sql_keyword, starts_with_executable_sql_keyword};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SqlReferenceAnalysis {
     pub tables: Vec<SqlTableReference>,
@@ -57,7 +59,12 @@ struct Analyzer {
 }
 
 pub fn analyze_sql_references(sql: &str, dialect: Option<&str>) -> Result<SqlReferenceAnalysis, String> {
-    let statements = match normalize_dialect(dialect).as_str() {
+    let normalized_dialect = normalize_dialect(dialect);
+    if normalized_dialect == "duckdb" && starts_with_duckdb_parser_gap_sql(sql) {
+        return Ok(SqlReferenceAnalysis { tables: vec![], columns: vec![] });
+    }
+
+    let statements = match normalized_dialect.as_str() {
         "postgres" => Parser::parse_sql(&PostgreSqlDialect {}, sql),
         "mysql" => Parser::parse_sql(&MySqlDialect {}, sql),
         "sqlite" => Parser::parse_sql(&SQLiteDialect {}, sql),
@@ -74,6 +81,11 @@ pub fn analyze_sql_references(sql: &str, dialect: Option<&str>) -> Result<SqlRef
     }
 
     Ok(SqlReferenceAnalysis { tables: analyzer.tables, columns: analyzer.columns })
+}
+
+fn starts_with_duckdb_parser_gap_sql(sql: &str) -> bool {
+    starts_with_duckdb_result_sql_keyword(sql)
+        && starts_with_executable_sql_keyword(sql, &["FROM", "SUMMARIZE", "SUMMARISE", "PIVOT", "UNPIVOT"])
 }
 
 fn normalize_dialect(dialect: Option<&str>) -> String {

@@ -22,6 +22,16 @@ use tower_http::cors::{Any, CorsLayer};
 
 use state::WebState;
 
+fn web_body_limit_bytes() -> usize {
+    const DEFAULT_MB: usize = 1024;
+    let mb = std::env::var("DBX_MAX_UPLOAD_MB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MB);
+    mb.saturating_mul(1024 * 1024)
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -67,6 +77,7 @@ async fn main() {
         sse_channels: RwLock::new(HashMap::new()),
         sql_file_executions: RwLock::new(HashMap::new()),
         login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit { fail_count: 0, locked_until: None }),
+        export_files: RwLock::new(HashMap::new()),
     });
 
     // CORS
@@ -119,6 +130,7 @@ async fn main() {
         .route("/schema/schemas", get(routes::schema::list_schemas))
         .route("/schema/tables", get(routes::schema::list_tables))
         .route("/schema/objects", get(routes::schema::list_objects))
+        .route("/schema/completion-objects", get(routes::schema::list_completion_objects))
         .route("/schema/object-source", get(routes::schema::get_object_source))
         .route("/schema/columns", get(routes::schema::list_columns))
         .route("/schema/indexes", get(routes::schema::list_indexes))
@@ -152,6 +164,7 @@ async fn main() {
         .route("/query/build-duckdb-attach-database-sql", post(routes::query::build_duckdb_attach_database_sql))
         .route("/query/build-drop-object-sql", post(routes::query::build_drop_object_sql))
         .route("/query/build-drop-table-sql", post(routes::query::build_drop_table_sql))
+        .route("/query/build-drop-table-child-object-sql", post(routes::query::build_drop_table_child_object_sql))
         .route("/query/build-empty-table-sql", post(routes::query::build_empty_table_sql))
         .route("/query/build-truncate-table-sql", post(routes::query::build_truncate_table_sql))
         .route("/query/build-drop-database-sql", post(routes::query::build_drop_database_sql))
@@ -196,6 +209,7 @@ async fn main() {
         .route("/query/build-database-sql-export", post(routes::query::build_database_sql_export))
         .route("/data-compare/prepare", post(routes::data_compare::prepare_data_compare))
         .route("/data-compare/prepare-from-tables", post(routes::data_compare::prepare_data_compare_from_tables))
+        .route("/data-compare/prepare-missing-target", post(routes::data_compare::prepare_data_compare_missing_target))
         .route("/data-compare/build-sync-plan", post(routes::data_compare::build_data_compare_sync_plan))
         .route("/query/cancel", post(routes::query::cancel_query))
         .route("/query/close-session", post(routes::query::close_query_session))
@@ -260,6 +274,11 @@ async fn main() {
         .route("/export/database", post(routes::database_export::start_database_export))
         .route("/export/database/progress/{exportId}", get(routes::database_export::database_export_progress))
         .route("/export/database/cancel", post(routes::database_export::cancel_database_export))
+        // Table export
+        .route("/export/table", post(routes::table_export::start_table_export))
+        .route("/export/table/progress/{exportId}", get(routes::table_export::table_export_progress))
+        .route("/export/table/download/{exportId}", get(routes::table_export::table_export_download))
+        .route("/export/table/cancel", post(routes::table_export::cancel_table_export))
         // SQL file
         .route("/sql-file/preview", post(routes::sql_file::preview_sql_file))
         .route("/sql-file/execute", post(routes::sql_file::execute_sql_file))
@@ -286,7 +305,7 @@ async fn main() {
     // Build app
     let mut app = Router::new()
         .nest("/api", api)
-        .layer(DefaultBodyLimit::max(300 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(web_body_limit_bytes()))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors);
 

@@ -855,13 +855,107 @@ function readChainedIntegerArgument(chain: string, method: string, fallback: num
 }
 
 function normalizeJsonArgument(arg: string): string | null {
-  const value = (arg.trim() || "{}").replace(/ObjectId\s*\(\s*["']([^"']+)["']\s*\)/g, '{"$oid":"$1"}');
+  const value = quoteUnquotedObjectKeys(
+    convertSingleQuotedStrings((arg.trim() || "{}").replace(/ObjectId\s*\(\s*["']([^"']+)["']\s*\)/g, '{"$oid":"$1"}')),
+  );
   try {
     JSON.parse(value);
     return value;
   } catch {
     return null;
   }
+}
+
+function convertSingleQuotedStrings(source: string): string {
+  let result = "";
+  let copiedUntil = 0;
+  let quote: string | null = null;
+  let start = 0;
+  let value = "";
+  let escaped = false;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (!quote) {
+      if (char === "'") {
+        quote = char;
+        start = i;
+        value = "";
+        escaped = false;
+      } else if (char === '"') {
+        quote = char;
+      }
+      continue;
+    }
+
+    if (quote === '"') {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quote = null;
+      continue;
+    }
+
+    if (escaped) {
+      value += char;
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (char === "'") {
+      result += source.slice(copiedUntil, start) + JSON.stringify(value);
+      copiedUntil = i + 1;
+      quote = null;
+    } else {
+      value += char;
+    }
+  }
+
+  return quote === "'" ? source : result + source.slice(copiedUntil);
+}
+
+function quoteUnquotedObjectKeys(source: string): string {
+  let result = "";
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (quote) {
+      result += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      result += char;
+      continue;
+    }
+
+    if (/[A-Za-z_$]/.test(char) && shouldQuoteObjectKey(source, i)) {
+      let end = i + 1;
+      while (/[\w$]/.test(source[end] || "")) end += 1;
+      result += `"${source.slice(i, end)}"`;
+      i = end - 1;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function shouldQuoteObjectKey(source: string, index: number): boolean {
+  let before = index - 1;
+  while (/\s/.test(source[before] || "")) before -= 1;
+  if (source[before] !== "{" && source[before] !== ",") return false;
+
+  let after = index + 1;
+  while (/[\w$]/.test(source[after] || "")) after += 1;
+  while (/\s/.test(source[after] || "")) after += 1;
+  return source[after] === ":";
 }
 
 function isEmptyJsonObject(json: string): boolean {

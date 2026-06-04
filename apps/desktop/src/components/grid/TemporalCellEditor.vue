@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
 import type { FocusOutsideEvent, PointerDownOutsideEvent } from "reka-ui";
-import { CalendarClock, ChevronDown, ChevronUp, CircleSlash } from "lucide-vue-next";
+import { CalendarClock, ChevronDown, ChevronUp, CircleSlash } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatTemporalInputValue, type TemporalCellEditorKind } from "@/lib/dataGridTemporalEditor";
@@ -11,10 +11,12 @@ const props = withDefaults(
     kind: TemporalCellEditorKind;
     modelValue: string;
     variant?: "cell" | "inline";
+    cellLayout?: "grid" | "transpose";
     commitOnClose?: boolean;
   }>(),
   {
     variant: "cell",
+    cellLayout: "grid",
     commitOnClose: true,
   },
 );
@@ -35,7 +37,10 @@ const displayValue = computed(() => props.modelValue || "NULL");
 const triggerClass = computed(() =>
   props.variant === "inline"
     ? "cell-edit-input flex h-9 w-full items-center gap-2 rounded border bg-background px-2 text-left text-xs outline-none hover:border-primary/60 focus:border-primary"
-    : "cell-edit-input absolute inset-0 z-10 flex items-center gap-1 border-2 border-primary bg-background px-2 py-0.5 text-left text-xs outline-none",
+    : [
+        "cell-edit-input absolute inset-0 z-10 flex items-center gap-1 border-2 border-primary bg-background py-0 text-left text-xs outline-none",
+        props.cellLayout === "transpose" ? "px-1.5" : "px-2.5",
+      ],
 );
 const dateParts = computed(() => {
   const text = formatTemporalInputValue(props.modelValue, "date");

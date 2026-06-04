@@ -355,6 +355,9 @@ pub fn find_statement_at_cursor(sql: &str, cursor_pos: usize) -> String {
 }
 
 pub fn find_statement_at_cursor_for_database(sql: &str, cursor_pos: usize, db_type: DatabaseType) -> String {
+    if db_type == DatabaseType::SqlServer {
+        return find_sqlserver_statement_at_cursor(sql, cursor_pos);
+    }
     find_statement_at_cursor_with_options(sql, cursor_pos, SqlParsingOptions::for_database_type(db_type))
 }
 
@@ -606,6 +609,15 @@ fn dollar_quote_tag_at_str(sql: &str, index: usize) -> Option<String> {
 }
 
 pub fn split_sql_batches(sql: &str) -> Vec<String> {
+    let ranges = split_sql_batch_ranges(sql);
+    if ranges.is_empty() {
+        let trimmed = sql.trim();
+        return if trimmed.is_empty() { Vec::new() } else { vec![trimmed.to_string()] };
+    }
+    ranges.into_iter().map(|range| range.text).collect()
+}
+
+fn split_sql_batch_ranges(sql: &str) -> Vec<SqlStatementRange> {
     let mut batches = Vec::new();
     let mut current_start = 0;
     let lines: Vec<&str> = sql.split('\n').collect();
@@ -620,10 +632,7 @@ pub fn split_sql_batches(sql: &str) -> Vec<String> {
         if trimmed.eq_ignore_ascii_case("go")
             || trimmed.to_ascii_lowercase().starts_with("go ") && trimmed[2..].trim().is_empty()
         {
-            let batch = sql[current_start..line_start].trim();
-            if has_executable_sql(batch) {
-                batches.push(batch.to_string());
-            }
+            push_batch_range(&mut batches, sql, current_start, line_start);
             current_start = line_end.min(sql.len());
             if current_start < sql.len() && sql.as_bytes()[current_start] == b'\n' {
                 current_start += 1;
@@ -631,19 +640,86 @@ pub fn split_sql_batches(sql: &str) -> Vec<String> {
         }
     }
 
-    let trailing = sql[current_start..].trim();
-    if has_executable_sql(trailing) {
-        batches.push(trailing.to_string());
-    }
+    push_batch_range(&mut batches, sql, current_start, sql.len());
+    batches
+}
 
-    if batches.is_empty() {
-        let trimmed = sql.trim();
-        if !trimmed.is_empty() {
-            batches.push(trimmed.to_string());
+fn push_batch_range(ranges: &mut Vec<SqlStatementRange>, sql: &str, start: usize, end: usize) {
+    let Some((relative_start, relative_end)) = executable_sql_bounds(&sql[start..end], SqlParsingOptions::default())
+    else {
+        return;
+    };
+    let statement_start = start + relative_start;
+    let statement_end = start + relative_end;
+    let text = sql[statement_start..statement_end].to_string();
+    if !text.is_empty() {
+        ranges.push(SqlStatementRange { text, start: statement_start, end: statement_end });
+    }
+}
+
+fn find_sqlserver_statement_at_cursor(sql: &str, cursor_pos: usize) -> String {
+    let cursor = utf16_offset_to_byte_index(sql, cursor_pos);
+    let batches = split_sql_batch_ranges(sql);
+
+    for (idx, batch) in batches.iter().enumerate() {
+        if cursor >= batch.start && cursor <= batch.end {
+            if starts_with_sqlserver_module_ddl(&batch.text) {
+                return batch.text.clone();
+            }
+            let relative_cursor = sql[..cursor].encode_utf16().count() - sql[..batch.start].encode_utf16().count();
+            return find_statement_at_cursor_with_options(&batch.text, relative_cursor, SqlParsingOptions::default());
+        }
+
+        if cursor < batch.start {
+            if let Some(prev) = idx.checked_sub(1).and_then(|prev_idx| batches.get(prev_idx)) {
+                if starts_with_sqlserver_module_ddl(&prev.text) {
+                    return prev.text.clone();
+                }
+                let relative_cursor = prev.text.encode_utf16().count();
+                return find_statement_at_cursor_with_options(
+                    &prev.text,
+                    relative_cursor,
+                    SqlParsingOptions::default(),
+                );
+            }
+            return batch.text.clone();
         }
     }
 
-    batches
+    batches.last().map(|batch| batch.text.clone()).unwrap_or_else(|| sql.trim().to_string())
+}
+
+fn starts_with_sqlserver_module_ddl(sql: &str) -> bool {
+    let tokens = first_sql_tokens(sql, 4);
+    if tokens.len() >= 4
+        && tokens[0].eq_ignore_ascii_case("CREATE")
+        && tokens[1].eq_ignore_ascii_case("OR")
+        && tokens[2].eq_ignore_ascii_case("ALTER")
+    {
+        return is_sqlserver_module_keyword(&tokens[3]);
+    }
+
+    tokens.len() >= 2
+        && (tokens[0].eq_ignore_ascii_case("CREATE") || tokens[0].eq_ignore_ascii_case("ALTER"))
+        && is_sqlserver_module_keyword(&tokens[1])
+}
+
+fn is_sqlserver_module_keyword(token: &str) -> bool {
+    ["FUNCTION", "PROC", "PROCEDURE", "TRIGGER", "VIEW"].iter().any(|keyword| token.eq_ignore_ascii_case(keyword))
+}
+
+fn first_sql_tokens(sql: &str, limit: usize) -> Vec<String> {
+    let mut tokens = Vec::new();
+    for token in sql.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_') {
+        if token.is_empty() {
+            continue;
+        }
+        tokens.push(token.to_string());
+        if tokens.len() >= limit {
+            break;
+        }
+    }
+    tokens
 }
 
 fn parse_delimiter_command(line: &str) -> Option<&str> {
@@ -1042,6 +1118,25 @@ pub fn starts_with_executable_sql_keyword(sql: &str, keywords: &[&str]) -> bool 
 
 pub fn starts_with_executable_sql_keyword_for_database(sql: &str, keywords: &[&str], db_type: DatabaseType) -> bool {
     starts_with_executable_sql_keyword_with_options(sql, keywords, SqlParsingOptions::for_database_type(db_type))
+}
+
+pub fn starts_with_duckdb_result_sql_keyword(sql: &str) -> bool {
+    starts_with_executable_sql_keyword(
+        sql,
+        &[
+            "SELECT",
+            "SHOW",
+            "DESCRIBE",
+            "EXPLAIN",
+            "WITH",
+            "PRAGMA",
+            "FROM",
+            "SUMMARIZE",
+            "SUMMARISE",
+            "PIVOT",
+            "UNPIVOT",
+        ],
+    )
 }
 
 pub fn starts_with_executable_sql_keyword_with_options(
@@ -1873,6 +1968,43 @@ SELECT 2;";
 
         assert_eq!(super::find_statement_at_cursor(sql, cursor), "CREATE PROCEDURE foo()\nBEGIN\n  SELECT 1;\nEND");
         assert_eq!(super::find_statement_at_cursor(sql, next_cursor), "SELECT 2");
+    }
+
+    #[test]
+    fn sqlserver_current_statement_keeps_procedure_batch_with_inner_semicolons() {
+        let sql = "\
+CREATE OR ALTER PROCEDURE dbo.usp_demo
+AS
+BEGIN
+  SELECT 1;
+  SELECT 2;
+END
+GO
+SELECT 3;";
+        let cursor = sql[..sql.find("SELECT 2").unwrap()].encode_utf16().count();
+        let next_cursor = sql[..sql.rfind("SELECT 3").unwrap()].encode_utf16().count();
+
+        assert_eq!(
+            super::find_statement_at_cursor_for_database(sql, cursor, DatabaseType::SqlServer),
+            "CREATE OR ALTER PROCEDURE dbo.usp_demo\nAS\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND"
+        );
+        assert_eq!(super::find_statement_at_cursor_for_database(sql, next_cursor, DatabaseType::SqlServer), "SELECT 3");
+    }
+
+    #[test]
+    fn sqlserver_current_statement_keeps_alter_procedure_batch() {
+        let sql = "\
+ALTER PROC dbo.usp_demo
+AS
+BEGIN
+  UPDATE dbo.users SET name = name;
+END";
+        let cursor = sql[..sql.find("UPDATE").unwrap()].encode_utf16().count();
+
+        assert_eq!(
+            super::find_statement_at_cursor_for_database(sql, cursor, DatabaseType::SqlServer),
+            "ALTER PROC dbo.usp_demo\nAS\nBEGIN\n  UPDATE dbo.users SET name = name;\nEND"
+        );
     }
 
     #[test]

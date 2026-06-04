@@ -182,10 +182,13 @@ export function normalizeSchemaResearchModelConfig(
   config: Partial<SchemaResearchModelConfig> | null | undefined,
   mainConfig: Pick<AiConfig, "provider" | "apiKey" | "endpoint" | "model" | "apiStyle" | "proxyEnabled" | "proxyUrl">,
 ): SchemaResearchModelConfig {
-  const provider = config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : mainConfig.provider;
-  const defaults = defaultConfigs[provider];
   const useMainModel = config?.useMainModel ?? true;
   const source = useMainModel ? mainConfig : config;
+  const provider =
+    useMainModel || !config?.provider || !(config.provider in AI_PROVIDER_PRESETS)
+      ? mainConfig.provider
+      : config.provider;
+  const defaults = defaultConfigs[provider];
   return {
     enabled: config?.enabled ?? true,
     useMainModel,
@@ -232,6 +235,12 @@ export type EditorTheme =
 
 const STRUCTURE_EDITOR_DENSITIES = ["compact", "standard", "comfortable"] as const;
 export type StructureEditorDensity = (typeof STRUCTURE_EDITOR_DENSITIES)[number];
+const CELL_DETAIL_PANEL_LAYOUTS = ["bottom", "right"] as const;
+export type CellDetailPanelLayout = (typeof CELL_DETAIL_PANEL_LAYOUTS)[number];
+const DATA_GRID_RENDER_MODES = ["dom", "canvas"] as const;
+export type DataGridRenderMode = (typeof DATA_GRID_RENDER_MODES)[number];
+const DISCONNECT_TAB_HANDLING_MODES = ["close-tabs", "keep-tabs-clear-results", "keep-tabs-keep-results"] as const;
+export type DisconnectTabHandlingMode = (typeof DISCONNECT_TAB_HANDLING_MODES)[number];
 
 export interface EditorSettings {
   fontFamily: string;
@@ -247,18 +256,23 @@ export interface EditorSettings {
   mongoViewMode: "document" | "table";
   showColumnCommentsInHeader: boolean;
   compactColumnHeaderActions: boolean;
+  dataGridRenderMode: DataGridRenderMode;
   structureEditorDensity: StructureEditorDensity;
   tableInfoDrawerWidth: number;
   cellDetailDrawerWidth: number;
+  cellDetailPanelLayout: CellDetailPanelLayout;
   shortcuts: ShortcutSettings;
   sidebarActivation: SidebarActivation;
   sidebarObjectDisplay: "grouped" | "simple";
   autoSelectActiveSidebarNode: boolean;
+  disconnectTabHandlingMode: DisconnectTabHandlingMode;
   sidebarHiddenTablePrefixes: string[];
   sidebarHideTableComments: boolean;
+  sidebarAllowHorizontalScroll: boolean;
   columnFormatters: Record<string, ColumnFormatterConfig>;
   customColumnFormatters: Record<string, CustomColumnFormatterConfig>;
   snippets: SqlSnippet[];
+  exportBatchSize: number;
 }
 
 export interface AppSettings {
@@ -308,18 +322,23 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   mongoViewMode: "document",
   showColumnCommentsInHeader: false,
   compactColumnHeaderActions: true,
+  dataGridRenderMode: "canvas",
   structureEditorDensity: "compact",
   tableInfoDrawerWidth: 320,
   cellDetailDrawerWidth: 320,
+  cellDetailPanelLayout: "bottom",
   shortcuts: normalizeShortcutSettings(),
   sidebarActivation: "single",
   sidebarObjectDisplay: "grouped",
   autoSelectActiveSidebarNode: false,
+  disconnectTabHandlingMode: "close-tabs",
   sidebarHiddenTablePrefixes: [],
   sidebarHideTableComments: false,
+  sidebarAllowHorizontalScroll: false,
   columnFormatters: {},
   customColumnFormatters: {},
   snippets: DEFAULT_SQL_SNIPPETS,
+  exportBatchSize: 10000,
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -349,6 +368,33 @@ function normalizeStructureEditorDensity(value: unknown): StructureEditorDensity
   return STRUCTURE_EDITOR_DENSITIES.includes(value as StructureEditorDensity)
     ? (value as StructureEditorDensity)
     : DEFAULT_EDITOR_SETTINGS.structureEditorDensity;
+}
+
+function normalizeCellDetailPanelLayout(value: unknown): CellDetailPanelLayout {
+  return CELL_DETAIL_PANEL_LAYOUTS.includes(value as CellDetailPanelLayout)
+    ? (value as CellDetailPanelLayout)
+    : DEFAULT_EDITOR_SETTINGS.cellDetailPanelLayout;
+}
+
+function normalizeDataGridRenderMode(value: unknown): DataGridRenderMode {
+  return DATA_GRID_RENDER_MODES.includes(value as DataGridRenderMode)
+    ? (value as DataGridRenderMode)
+    : DEFAULT_EDITOR_SETTINGS.dataGridRenderMode;
+}
+
+function normalizeDisconnectTabHandlingMode(
+  value: unknown,
+  legacyCloseTabsOnDisconnect?: unknown,
+): DisconnectTabHandlingMode {
+  if (DISCONNECT_TAB_HANDLING_MODES.includes(value as DisconnectTabHandlingMode)) {
+    return value as DisconnectTabHandlingMode;
+  }
+  if (value === "clear-state") return "keep-tabs-clear-results";
+  if (value === "keep-tabs") return "keep-tabs-keep-results";
+  if (typeof legacyCloseTabsOnDisconnect === "boolean") {
+    return legacyCloseTabsOnDisconnect ? "close-tabs" : "keep-tabs-clear-results";
+  }
+  return DEFAULT_EDITOR_SETTINGS.disconnectTabHandlingMode;
 }
 
 function normalizeColumnFormatters(value: unknown): Record<string, ColumnFormatterConfig> {
@@ -414,6 +460,7 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
       settings.showColumnCommentsInHeader ?? DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader,
     compactColumnHeaderActions:
       settings.compactColumnHeaderActions ?? DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions,
+    dataGridRenderMode: normalizeDataGridRenderMode(settings.dataGridRenderMode),
     structureEditorDensity: normalizeStructureEditorDensity(settings.structureEditorDensity),
     tableInfoDrawerWidth: normalizeDrawerWidth(
       settings.tableInfoDrawerWidth,
@@ -425,6 +472,7 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
       260,
       DEFAULT_EDITOR_SETTINGS.cellDetailDrawerWidth,
     ),
+    cellDetailPanelLayout: normalizeCellDetailPanelLayout(settings.cellDetailPanelLayout),
     shortcuts: normalizeShortcutSettings(settings.shortcuts),
     sidebarActivation:
       settings.sidebarActivation === "single" || settings.sidebarActivation === "double"
@@ -436,11 +484,23 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
         : DEFAULT_EDITOR_SETTINGS.sidebarObjectDisplay,
     autoSelectActiveSidebarNode:
       settings.autoSelectActiveSidebarNode ?? DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode,
+    disconnectTabHandlingMode: normalizeDisconnectTabHandlingMode(
+      (settings as Partial<EditorSettings>).disconnectTabHandlingMode,
+      (settings as Partial<EditorSettings> & { closeQueryTabsOnDisconnect?: boolean }).closeQueryTabsOnDisconnect,
+    ),
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(settings.sidebarHiddenTablePrefixes),
     sidebarHideTableComments: settings.sidebarHideTableComments ?? DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments,
+    sidebarAllowHorizontalScroll:
+      settings.sidebarAllowHorizontalScroll ?? DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll,
     columnFormatters: normalizeColumnFormatters(settings.columnFormatters),
     customColumnFormatters: normalizeCustomColumnFormatters(settings.customColumnFormatters),
     snippets: normalizeSqlSnippets(settings.snippets, existing?.snippets),
+    exportBatchSize:
+      typeof settings.exportBatchSize === "number" &&
+      settings.exportBatchSize >= 100 &&
+      settings.exportBatchSize <= 100000
+        ? Math.round(settings.exportBatchSize)
+        : DEFAULT_EDITOR_SETTINGS.exportBatchSize,
   };
 }
 
@@ -592,28 +652,40 @@ export const useSettingsStore = defineStore("settings", () => {
       editorSettings.value.showColumnCommentsInHeader = partial.showColumnCommentsInHeader;
     if (partial.compactColumnHeaderActions !== undefined)
       editorSettings.value.compactColumnHeaderActions = partial.compactColumnHeaderActions;
+    if (partial.dataGridRenderMode !== undefined)
+      editorSettings.value.dataGridRenderMode = normalizeDataGridRenderMode(partial.dataGridRenderMode);
     if (partial.structureEditorDensity !== undefined)
       editorSettings.value.structureEditorDensity = normalizeStructureEditorDensity(partial.structureEditorDensity);
     if (partial.tableInfoDrawerWidth !== undefined)
       editorSettings.value.tableInfoDrawerWidth = normalizeDrawerWidth(partial.tableInfoDrawerWidth, 240, 320);
     if (partial.cellDetailDrawerWidth !== undefined)
       editorSettings.value.cellDetailDrawerWidth = normalizeDrawerWidth(partial.cellDetailDrawerWidth, 260, 320);
+    if (partial.cellDetailPanelLayout !== undefined)
+      editorSettings.value.cellDetailPanelLayout = normalizeCellDetailPanelLayout(partial.cellDetailPanelLayout);
     if (partial.shortcuts !== undefined) editorSettings.value.shortcuts = normalizeShortcutSettings(partial.shortcuts);
     if (partial.sidebarActivation !== undefined) editorSettings.value.sidebarActivation = partial.sidebarActivation;
     if (partial.sidebarObjectDisplay !== undefined)
       editorSettings.value.sidebarObjectDisplay = partial.sidebarObjectDisplay;
     if (partial.autoSelectActiveSidebarNode !== undefined)
       editorSettings.value.autoSelectActiveSidebarNode = partial.autoSelectActiveSidebarNode;
+    if (partial.disconnectTabHandlingMode !== undefined)
+      editorSettings.value.disconnectTabHandlingMode = normalizeDisconnectTabHandlingMode(
+        partial.disconnectTabHandlingMode,
+      );
     if (partial.sidebarHiddenTablePrefixes !== undefined)
       editorSettings.value.sidebarHiddenTablePrefixes = normalizeSidebarHiddenTablePrefixes(
         partial.sidebarHiddenTablePrefixes,
       );
     if (partial.sidebarHideTableComments !== undefined)
       editorSettings.value.sidebarHideTableComments = partial.sidebarHideTableComments;
+    if (partial.sidebarAllowHorizontalScroll !== undefined)
+      editorSettings.value.sidebarAllowHorizontalScroll = partial.sidebarAllowHorizontalScroll;
     if (partial.columnFormatters !== undefined) editorSettings.value.columnFormatters = partial.columnFormatters;
     if (partial.customColumnFormatters !== undefined)
       editorSettings.value.customColumnFormatters = partial.customColumnFormatters;
     if (partial.snippets !== undefined) editorSettings.value.snippets = normalizeSqlSnippets(partial.snippets);
+    if (partial.exportBatchSize !== undefined)
+      editorSettings.value.exportBatchSize = Math.min(100000, Math.max(100, Math.round(partial.exportBatchSize)));
     saveEditorSettings(editorSettings.value);
   }
 

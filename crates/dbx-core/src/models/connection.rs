@@ -43,6 +43,8 @@ pub struct ConnectionConfig {
     pub ssh_expose_lan: bool,
     #[serde(default = "default_ssh_connect_timeout_secs")]
     pub ssh_connect_timeout_secs: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ssh_tunnels: Vec<SshTunnelConfig>,
     #[serde(default = "default_connect_timeout_secs")]
     pub connect_timeout_secs: u64,
     #[serde(default = "default_query_timeout_secs")]
@@ -97,9 +99,39 @@ pub struct ConnectionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SshTunnelConfig {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub user: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub key_path: String,
+    #[serde(default)]
+    pub key_passphrase: String,
+    #[serde(default = "default_ssh_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    #[serde(default)]
+    pub expose_lan: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AttachedDatabaseConfig {
     pub name: String,
     pub path: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_ssh_port() -> u16 {
@@ -228,6 +260,38 @@ impl ConnectionConfig {
         }
     }
 
+    pub fn effective_ssh_tunnels(&self) -> Vec<SshTunnelConfig> {
+        if !self.ssh_enabled {
+            return Vec::new();
+        }
+
+        if !self.ssh_tunnels.is_empty() {
+            return self.ssh_tunnels.iter().filter(|hop| hop.enabled).cloned().collect();
+        }
+
+        if self.ssh_host.trim().is_empty() {
+            return Vec::new();
+        }
+
+        vec![SshTunnelConfig {
+            id: "legacy".to_string(),
+            name: String::new(),
+            enabled: true,
+            host: self.ssh_host.clone(),
+            port: self.ssh_port,
+            user: self.ssh_user.clone(),
+            password: self.ssh_password.clone(),
+            key_path: self.ssh_key_path.clone(),
+            key_passphrase: self.ssh_key_passphrase.clone(),
+            connect_timeout_secs: self.effective_ssh_connect_timeout_secs(),
+            expose_lan: self.ssh_expose_lan,
+        }]
+    }
+
+    pub fn has_effective_ssh_tunnels(&self) -> bool {
+        !self.effective_ssh_tunnels().is_empty()
+    }
+
     pub fn effective_connect_timeout_secs(&self) -> u64 {
         if self.connect_timeout_secs == 0 {
             default_connect_timeout_secs()
@@ -240,7 +304,7 @@ impl ConnectionConfig {
         if self.query_timeout_secs == 0 {
             0
         } else {
-            self.query_timeout_secs.clamp(1, 300)
+            self.query_timeout_secs.max(1)
         }
     }
 
@@ -938,6 +1002,7 @@ fn bracket_ipv6(host: &str) -> String {
 mod tests {
     use super::{
         default_query_timeout_secs, default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, ProxyType,
+        SshTunnelConfig,
     };
     use std::str::FromStr;
 
@@ -967,6 +1032,7 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
+            ssh_tunnels: Vec::new(),
             connect_timeout_secs: super::default_connect_timeout_secs(),
             query_timeout_secs: default_query_timeout_secs(),
             proxy_enabled: false,
@@ -1113,11 +1179,137 @@ mod tests {
     }
 
     #[test]
+    fn effective_ssh_tunnels_adapts_legacy_single_hop() {
+        let mut config = mysql_config("root", "", None);
+        config.ssh_enabled = true;
+        config.ssh_host = "bastion.example.com".to_string();
+        config.ssh_port = 2200;
+        config.ssh_user = "deploy".to_string();
+        config.ssh_password = "secret".to_string();
+        config.ssh_connect_timeout_secs = 0;
+        config.ssh_expose_lan = true;
+
+        let hops = config.effective_ssh_tunnels();
+
+        assert_eq!(hops.len(), 1);
+        assert_eq!(hops[0].id, "legacy");
+        assert_eq!(hops[0].host, "bastion.example.com");
+        assert_eq!(hops[0].port, 2200);
+        assert_eq!(hops[0].user, "deploy");
+        assert_eq!(hops[0].password, "secret");
+        assert_eq!(hops[0].connect_timeout_secs, default_ssh_connect_timeout_secs());
+        assert!(hops[0].expose_lan);
+    }
+
+    #[test]
+    fn effective_ssh_tunnels_prefers_explicit_hops() {
+        let mut config = mysql_config("root", "", None);
+        config.ssh_enabled = true;
+        config.ssh_host = "legacy.example.com".to_string();
+        config.ssh_tunnels = vec![SshTunnelConfig {
+            id: "hop-1".to_string(),
+            name: "Bastion".to_string(),
+            enabled: true,
+            host: "new.example.com".to_string(),
+            port: 22,
+            user: "alice".to_string(),
+            password: String::new(),
+            key_path: "~/.ssh/id_ed25519".to_string(),
+            key_passphrase: String::new(),
+            connect_timeout_secs: 7,
+            expose_lan: false,
+        }];
+
+        let hops = config.effective_ssh_tunnels();
+
+        assert_eq!(hops.len(), 1);
+        assert_eq!(hops[0].id, "hop-1");
+        assert_eq!(hops[0].host, "new.example.com");
+    }
+
+    #[test]
+    fn effective_ssh_tunnels_filters_disabled_explicit_hops() {
+        let mut config = mysql_config("root", "", None);
+        config.ssh_enabled = true;
+        config.ssh_tunnels = vec![
+            SshTunnelConfig {
+                id: "disabled".to_string(),
+                name: String::new(),
+                enabled: false,
+                host: "disabled.example.com".to_string(),
+                port: 22,
+                user: "alice".to_string(),
+                password: "secret".to_string(),
+                key_path: String::new(),
+                key_passphrase: String::new(),
+                connect_timeout_secs: 5,
+                expose_lan: false,
+            },
+            SshTunnelConfig {
+                id: "enabled".to_string(),
+                name: String::new(),
+                enabled: true,
+                host: "enabled.example.com".to_string(),
+                port: 22,
+                user: "alice".to_string(),
+                password: "secret".to_string(),
+                key_path: String::new(),
+                key_passphrase: String::new(),
+                connect_timeout_secs: 5,
+                expose_lan: false,
+            },
+        ];
+
+        let hops = config.effective_ssh_tunnels();
+
+        assert_eq!(hops.len(), 1);
+        assert_eq!(hops[0].id, "enabled");
+    }
+
+    #[test]
+    fn effective_ssh_tunnels_empty_without_explicit_or_legacy_ssh() {
+        let config = mysql_config("root", "", None);
+
+        assert!(config.effective_ssh_tunnels().is_empty());
+        assert!(!config.has_effective_ssh_tunnels());
+    }
+
+    #[test]
+    fn effective_ssh_tunnels_does_not_fall_back_when_explicit_list_is_disabled() {
+        let mut config = mysql_config("root", "", None);
+        config.ssh_enabled = true;
+        config.ssh_host = "legacy.example.com".to_string();
+        config.ssh_tunnels = vec![SshTunnelConfig {
+            id: "disabled".to_string(),
+            name: String::new(),
+            enabled: false,
+            host: "disabled.example.com".to_string(),
+            port: 22,
+            user: "alice".to_string(),
+            password: "secret".to_string(),
+            key_path: String::new(),
+            key_passphrase: String::new(),
+            connect_timeout_secs: 5,
+            expose_lan: false,
+        }];
+
+        assert!(config.effective_ssh_tunnels().is_empty());
+    }
+
+    #[test]
     fn query_timeout_zero_disables_timeout() {
         let mut config = mysql_config("root", "", None);
         config.query_timeout_secs = 0;
 
         assert_eq!(config.effective_query_timeout_secs(), 0);
+    }
+
+    #[test]
+    fn query_timeout_preserves_long_running_exports() {
+        let mut config = mysql_config("root", "", None);
+        config.query_timeout_secs = 3600;
+
+        assert_eq!(config.effective_query_timeout_secs(), 3600);
     }
 
     #[test]

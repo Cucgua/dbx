@@ -15,7 +15,7 @@ import { buildSelectedTablesPayload } from "@/lib/databaseExportSelection";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { useToast } from "@/composables/useToast";
 import { Input } from "@/components/ui/input";
-import { Download, Square, CheckSquare, Search, X } from "lucide-vue-next";
+import { Download, Square, CheckSquare, Search, X } from "@lucide/vue";
 
 const { t } = useI18n();
 const { toast } = useToast();

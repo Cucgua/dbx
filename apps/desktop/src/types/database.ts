@@ -77,6 +77,7 @@ export interface ConnectionConfig {
   ssh_key_passphrase?: string;
   ssh_expose_lan?: boolean;
   ssh_connect_timeout_secs?: number;
+  ssh_tunnels?: SshTunnelConfig[];
   connect_timeout_secs?: number;
   query_timeout_secs?: number;
   proxy_enabled?: boolean;
@@ -101,6 +102,20 @@ export interface ConnectionConfig {
   redis_sentinel_tls?: boolean;
   redis_cluster_nodes?: string;
   one_time?: boolean;
+}
+
+export interface SshTunnelConfig {
+  id: string;
+  name?: string;
+  enabled?: boolean;
+  host: string;
+  port: number;
+  user: string;
+  password?: string;
+  key_path?: string;
+  key_passphrase?: string;
+  connect_timeout_secs?: number;
+  expose_lan?: boolean;
 }
 
 export interface AttachedDatabaseConfig {
@@ -159,7 +174,7 @@ export interface TableInfo {
   parent_name?: string | null;
 }
 
-export type DatabaseObjectType = "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION";
+export type DatabaseObjectType = "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION" | "PACKAGE" | "PACKAGE_BODY";
 
 export interface ObjectInfo {
   name: string;
@@ -172,7 +187,7 @@ export interface ObjectInfo {
   parent_name?: string | null;
 }
 
-export type ObjectSourceKind = "VIEW" | "PROCEDURE" | "FUNCTION";
+export type ObjectSourceKind = "VIEW" | "PROCEDURE" | "FUNCTION" | "PACKAGE" | "PACKAGE_BODY";
 
 export interface ObjectSource {
   name: string;
@@ -208,6 +223,7 @@ export interface IndexInfo {
 export interface ForeignKeyInfo {
   name: string;
   column: string;
+  ref_schema?: string | null;
   ref_table: string;
   ref_column: string;
 }
@@ -262,6 +278,8 @@ export type TreeNodeType =
   | "view"
   | "procedure"
   | "function"
+  | "package"
+  | "package-body"
   | "group-columns"
   | "group-indexes"
   | "group-fkeys"
@@ -270,6 +288,7 @@ export type TreeNodeType =
   | "group-views"
   | "group-procedures"
   | "group-functions"
+  | "group-packages"
   | "group-partitions"
   | "object-browser"
   | "saved-sql-root"
@@ -323,6 +342,7 @@ export interface TreeNode {
 export interface QueryTab {
   id: string;
   title: string;
+  customTitle?: boolean;
   connectionId: string;
   database: string;
   schema?: string;
@@ -331,12 +351,17 @@ export interface QueryTab {
   lastExecutedSql?: string;
   resultBaseSql?: string;
   resultSortedSql?: string;
+  resultSortColumn?: string;
+  resultSortColumnIndex?: number;
+  resultSortDirection?: "asc" | "desc";
+  orderByInput?: string;
   resultPageSql?: string;
   resultPageLimit?: number;
   resultPageOffset?: number;
   resultCountSql?: string;
   resultTotalRowCount?: number;
   resultSessionId?: string;
+  resultAccessedAt?: number;
   pinned?: boolean;
   result?: QueryResult;
   results?: QueryResult[];
@@ -369,11 +394,14 @@ export interface QueryTab {
   };
   queryAnalysis?: {
     schema?: string;
+    schemaQuoted?: boolean;
     tableName: string;
+    tableNameQuoted?: boolean;
     tableAlias?: string;
     selectStar: boolean;
     columns: {
       sourceName?: string;
+      sourceNameQuoted?: boolean;
       resultName: string;
       expression: string;
     }[];

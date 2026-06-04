@@ -5,6 +5,7 @@ import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { buildTableSelectSql, quoteTableIdentifier } from "@/lib/tableSelectSql";
 import { editablePrimaryKeys, usesSyntheticRowIdKey } from "@/lib/tableEditing";
+import { tableMetaForDataTab } from "@/lib/tableDataTabMeta";
 import * as api from "@/lib/api";
 import type { QueryTab } from "@/types/database";
 import { useToast } from "@/composables/useToast";
@@ -26,20 +27,23 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     options: { orderBy?: string; limit?: number; offset?: number; whereInput?: string } = {},
   ): Promise<string> {
     const config = connectionStore.getConfig(tab.connectionId);
-    const primaryKeys = tab.tableMeta ? editablePrimaryKeys(config?.db_type, tab.tableMeta.columns) : [];
+    const tableMeta = tableMetaForDataTab(tab);
+    const primaryKeys = tab.tableMeta
+      ? editablePrimaryKeys(config?.db_type, tab.tableMeta.columns)
+      : (tableMeta?.primaryKeys ?? []);
     if (tab.tableMeta && primaryKeys.join("\0") !== tab.tableMeta.primaryKeys.join("\0")) {
       tab.tableMeta.primaryKeys = primaryKeys;
     }
     const fallbackOrderColumns =
       config?.db_type === "sqlserver" && !primaryKeys.length
-        ? tab.tableMeta?.columns.slice(0, 1).map((column) => column.name)
+        ? tableMeta?.columns.slice(0, 1).map((column) => column.name)
         : undefined;
     const useRowId = usesSyntheticRowIdKey(config?.db_type, primaryKeys);
     return buildTableSelectSql({
       databaseType: config?.db_type,
-      schema: tab.tableMeta?.schema,
-      tableName: tab.tableMeta?.tableName ?? "",
-      columns: tab.tableMeta?.columns.map((column) => column.name),
+      schema: tableMeta?.schema,
+      tableName: tableMeta?.tableName ?? "",
+      columns: tableMeta?.columns.map((column) => column.name),
       primaryKeys,
       fallbackOrderColumns,
       includeRowId: useRowId,
@@ -52,7 +56,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     const tab = activeTab.value;
     if (!tab) return;
     queryStore.updateSql(tab.id, sql);
-    await queryStore.executeTabSql(tab.id, sql);
+    await queryStore.executeTabSql(tab.id, sql, { preserveResultDuringExecution: true });
   }
 
   async function onReloadData(
@@ -65,16 +69,23 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
   ) {
     const tab = activeTab.value;
     if (!tab) return;
-    if (tab.mode === "data" && tab.tableMeta) {
+    if (tab.mode === "data" && tableMetaForDataTab(tab)) {
       tab.whereInput = whereInput ?? "";
-      queryStore.updateSql(tab.id, await buildTableSql(tab, { whereInput, orderBy, limit, offset }));
-      await queryStore.executeCurrentTab();
+      const pageLimit = limit ?? settingsStore.editorSettings.pageSize;
+      const pageOffset = offset ?? 0;
+      const nextSql = await buildTableSql(tab, { whereInput, orderBy, limit: pageLimit, offset: pageOffset });
+      queryStore.updateSql(tab.id, nextSql);
+      await queryStore.executeTabSql(tab.id, nextSql, {
+        pagination: { limit: pageLimit, offset: pageOffset },
+        preserveResultDuringExecution: true,
+      });
       return;
     }
     if (tab.resultSortedSql) {
       await queryStore.executeTabSql(tab.id, tab.resultSortedSql, {
         resultBaseSql: tab.resultBaseSql ?? tab.sql,
         resultSortedSql: tab.resultSortedSql,
+        preserveResultDuringExecution: true,
       });
       return;
     }
@@ -82,6 +93,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
       await queryStore.executeTabSql(tab.id, sql, {
         resultBaseSql: sql,
         resultSortedSql: undefined,
+        preserveResultDuringExecution: true,
       });
       return;
     }
@@ -103,23 +115,30 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
         resultBaseSql: tab.resultBaseSql ?? tab.sql,
         resultSortedSql: tab.resultSortedSql,
         pagination: { offset, limit, sessionId },
+        preserveResultDuringExecution: true,
       });
       return;
     }
 
-    if (!tab.tableMeta) return;
+    if (!tableMetaForDataTab(tab)) return;
     tab.whereInput = whereInput ?? "";
     const sql = await buildTableSql(tab, { limit, offset, whereInput, orderBy });
     queryStore.updateSql(tab.id, sql);
-    await queryStore.executeCurrentTab();
+    await queryStore.executeTabSql(tab.id, sql, {
+      pagination: { offset, limit },
+      preserveResultDuringExecution: true,
+    });
   }
 
   async function onSort(column: string, columnIndex: number, direction: "asc" | "desc" | null, whereInput?: string) {
     const tab = activeTab.value;
     if (!tab) return;
+    tab.resultSortColumn = direction ? column : undefined;
+    tab.resultSortColumnIndex = direction ? columnIndex : undefined;
+    tab.resultSortDirection = direction ?? undefined;
 
     if (tab.mode === "data") {
-      if (!tab.tableMeta) return;
+      if (!tableMetaForDataTab(tab)) return;
       tab.whereInput = whereInput ?? "";
       const config = connectionStore.getConfig(tab.connectionId);
       const quotedColumn = quoteIdent(tab, column);
@@ -128,7 +147,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
         : undefined;
       const sql = await buildTableSql(tab, { orderBy, whereInput });
       queryStore.updateSql(tab.id, sql);
-      await queryStore.executeCurrentTab();
+      await queryStore.executeTabSql(tab.id, sql, { preserveResultDuringExecution: true });
       return;
     }
 
@@ -139,6 +158,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
       await queryStore.executeTabSql(tab.id, baseSql, {
         resultBaseSql: baseSql,
         resultSortedSql: undefined,
+        preserveResultDuringExecution: true,
       });
       return;
     }
@@ -160,6 +180,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
     await queryStore.executeTabSql(tab.id, built.sql, {
       resultBaseSql: baseSql,
       resultSortedSql: built.sql,
+      preserveResultDuringExecution: true,
     });
   }
 

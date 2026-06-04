@@ -150,6 +150,12 @@ pub struct BuildTableAdminSqlRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BuildDropTableChildObjectSqlRequest {
+    pub options: dbx_core::db_admin_sql::DropTableChildObjectSqlOptions,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BuildDatabaseNameSqlRequest {
     pub options: dbx_core::db_admin_sql::DatabaseNameSqlOptions,
 }
@@ -487,6 +493,12 @@ pub async fn build_drop_object_sql(Json(req): Json<BuildDropObjectSqlRequest>) -
 
 pub async fn build_drop_table_sql(Json(req): Json<BuildTableAdminSqlRequest>) -> Json<String> {
     Json(dbx_core::db_admin_sql::build_drop_table_sql(req.options))
+}
+
+pub async fn build_drop_table_child_object_sql(
+    Json(req): Json<BuildDropTableChildObjectSqlRequest>,
+) -> Result<Json<String>, AppError> {
+    dbx_core::db_admin_sql::build_drop_table_child_object_sql(req.options).map(Json).map_err(AppError)
 }
 
 pub async fn build_empty_table_sql(Json(req): Json<BuildTableAdminSqlRequest>) -> Json<String> {

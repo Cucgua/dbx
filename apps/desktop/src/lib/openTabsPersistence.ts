@@ -3,13 +3,25 @@ import type { QueryTab } from "@/types/database";
 export interface SavedOpenTab {
   id: string;
   title: string;
+  customTitle?: boolean;
   connectionId: string;
   database: string;
   schema?: string;
   sql: string;
   savedSqlId?: string;
+  lastExecutedSql?: string;
+  resultBaseSql?: string;
+  resultSortedSql?: string;
+  resultSortColumn?: string;
+  resultSortColumnIndex?: number;
+  resultSortDirection?: QueryTab["resultSortDirection"];
+  orderByInput?: string;
+  resultPageLimit?: number;
+  resultPageOffset?: number;
+  whereInput?: string;
   pinned?: boolean;
   mode?: QueryTab["mode"];
+  structureTableName?: string;
   objectBrowser?: QueryTab["objectBrowser"];
   objectSource?: QueryTab["objectSource"];
   tableMeta?: QueryTab["tableMeta"];
@@ -24,13 +36,25 @@ export function serializeOpenTabs(tabs: QueryTab[]): SavedOpenTab[] {
   return tabs.map((tab) => ({
     id: tab.id,
     title: tab.title,
+    ...(tab.customTitle ? { customTitle: true } : {}),
     connectionId: tab.connectionId,
     database: tab.database,
     schema: tab.schema,
     sql: tab.sql,
     savedSqlId: tab.savedSqlId,
+    ...(tab.lastExecutedSql !== undefined ? { lastExecutedSql: tab.lastExecutedSql } : {}),
+    ...(tab.resultBaseSql !== undefined ? { resultBaseSql: tab.resultBaseSql } : {}),
+    ...(tab.resultSortedSql !== undefined ? { resultSortedSql: tab.resultSortedSql } : {}),
+    ...(tab.resultSortColumn !== undefined ? { resultSortColumn: tab.resultSortColumn } : {}),
+    ...(tab.resultSortColumnIndex !== undefined ? { resultSortColumnIndex: tab.resultSortColumnIndex } : {}),
+    ...(tab.resultSortDirection !== undefined ? { resultSortDirection: tab.resultSortDirection } : {}),
+    ...(tab.orderByInput !== undefined ? { orderByInput: tab.orderByInput } : {}),
+    ...(tab.resultPageLimit !== undefined ? { resultPageLimit: tab.resultPageLimit } : {}),
+    ...(tab.resultPageOffset !== undefined ? { resultPageOffset: tab.resultPageOffset } : {}),
+    ...(tab.whereInput !== undefined ? { whereInput: tab.whereInput } : {}),
     pinned: tab.pinned,
     mode: tab.mode,
+    ...(tab.structureTableName !== undefined ? { structureTableName: tab.structureTableName } : {}),
     objectBrowser: tab.objectBrowser,
     objectSource: tab.objectSource,
     tableMeta: tab.tableMeta,

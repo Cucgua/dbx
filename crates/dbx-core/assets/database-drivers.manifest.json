@@ -111,7 +111,7 @@
       "runtimeMode": "native",
       "mcpMode": "direct",
       "singleConnectionPool": false,
-      "metadataConnectionScoped": true,
+      "metadataConnectionScoped": false,
       "skipTcpProbe": false,
       "defaultPort": 9030
     },
@@ -121,7 +121,7 @@
       "runtimeMode": "native",
       "mcpMode": "direct",
       "singleConnectionPool": false,
-      "metadataConnectionScoped": true,
+      "metadataConnectionScoped": false,
       "skipTcpProbe": false,
       "defaultPort": 9030
     },
@@ -307,7 +307,10 @@
       "singleConnectionPool": false,
       "metadataConnectionScoped": false,
       "skipTcpProbe": true,
-      "defaultPort": 5258
+      "defaultPort": 5258,
+      "driverProfiles": [
+        { "profile": "gbase8s", "label": "GBase 8s", "agentKey": "gbase8s" }
+      ]
     },
     {
       "dbType": "access",
@@ -460,6 +463,17 @@
       "metadataConnectionScoped": false,
       "skipTcpProbe": true,
       "defaultPort": 5138
+    },
+    {
+      "dbType": "iris",
+      "label": "InterSystems IRIS",
+      "runtimeMode": "agent",
+      "mcpMode": "bridge",
+      "agentKey": "iris",
+      "singleConnectionPool": true,
+      "metadataConnectionScoped": false,
+      "skipTcpProbe": true,
+      "defaultPort": 1972
     },
     {
       "dbType": "jdbc",

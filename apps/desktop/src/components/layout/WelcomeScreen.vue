@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { FilePlus2, Plus, History, Upload, Database, Search, ShieldCheck, Sparkles } from "lucide-vue-next";
+import { FilePlus2, Plus, History, Download, Database, Search, ShieldCheck, Sparkles } from "@lucide/vue";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
-import { connectionDriverLabel, connectionIconType, connectionOptionSubtitle } from "@/lib/connectionPresentation";
+import {
+  connectionDriverLabel,
+  connectionIconType,
+  connectionRedactedNameLabel,
+  connectionRedactedOptionSubtitle,
+} from "@/lib/connectionPresentation";
 import type { ConnectionConfig } from "@/types/database";
 
 defineProps<{
@@ -26,9 +31,9 @@ const { t } = useI18n();
 </script>
 
 <template>
-  <div class="flex-1 overflow-auto bg-background">
-    <div class="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center gap-6 px-8 py-10">
-      <div class="grid grid-cols-3 gap-3">
+  <div class="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background">
+    <div class="mx-auto flex min-h-full w-full min-w-0 max-w-5xl flex-col justify-center gap-6 px-8 py-10">
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div class="rounded-lg border bg-muted/20 px-4 py-3">
           <div class="flex items-center gap-2 text-xs text-muted-foreground">
             <Database class="h-3.5 w-3.5" /> {{ t("welcome.connections") }}
@@ -49,7 +54,7 @@ const { t } = useI18n();
         </div>
       </div>
 
-      <div class="grid grid-cols-[1.2fr_0.8fr] gap-4">
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <div class="rounded-lg border">
           <div class="flex items-center justify-between border-b px-4 py-3">
             <div class="text-sm font-medium">{{ t("welcome.quickConnections") }}</div>
@@ -64,9 +69,9 @@ const { t } = useI18n();
               <DatabaseIcon :db-type="connectionIconType(connection)" class="h-4 w-4" />
               <span class="h-5 w-1 rounded-full shrink-0" :style="{ backgroundColor: connection.color || '#9ca3af' }" />
               <div class="min-w-0 flex-1">
-                <div class="truncate text-sm font-medium">{{ connection.name }}</div>
+                <div class="truncate text-sm font-medium">{{ connectionRedactedNameLabel(connection) }}</div>
                 <div class="truncate text-xs text-muted-foreground">
-                  {{ connectionOptionSubtitle(connection) || connectionDriverLabel(connection) }}
+                  {{ connectionRedactedOptionSubtitle(connection) || connectionDriverLabel(connection) }}
                 </div>
               </div>
               <FilePlus2 class="h-4 w-4 text-muted-foreground" />
@@ -105,7 +110,7 @@ const { t } = useI18n();
               class="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
               @click="emit('import-config')"
             >
-              <Upload class="h-4 w-4" /> {{ t("sidebar.import") }}
+              <Download class="h-4 w-4" /> {{ t("sidebar.import") }}
             </button>
             <div class="mt-2 rounded-md bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
               <Search class="mr-1 inline h-3.5 w-3.5" />
@@ -124,8 +129,10 @@ const { t } = useI18n();
             <p class="mt-1 text-xs leading-5 text-muted-foreground">
               {{ t("welcome.mcpDescription") }}
             </p>
-            <div class="mt-2 flex items-center gap-2">
-              <code class="rounded bg-muted px-2 py-0.5 text-[11px] select-all">npx @dbx-app/mcp-server</code>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <code class="max-w-full break-all rounded bg-muted px-2 py-0.5 text-[11px] select-all"
+                >npx @dbx-app/mcp-server</code
+              >
               <a href="#" class="text-xs text-primary hover:underline" @click.prevent="emit('open-mcp-guide')">{{
                 t("welcome.mcpLearnMore")
               }}</a>

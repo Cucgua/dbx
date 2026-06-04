@@ -26,6 +26,7 @@ pub mod schema_rag;
 pub mod settings;
 pub mod sql_file;
 pub mod system_fonts;
+pub mod table_export;
 pub mod table_import;
 pub mod text_export;
 pub mod transfer;

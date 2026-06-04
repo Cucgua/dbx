@@ -725,6 +725,17 @@ pub fn format_grid_sql_literal(
     if value.is_null() {
         return "NULL".to_string();
     }
+    if is_mysql_bit_literal_column(database_type, column_info) {
+        if let Some(value) = value.as_bool() {
+            return if value { "1" } else { "0" }.to_string();
+        }
+        if let Some(number) = value.as_number() {
+            return number.to_string();
+        }
+        if let Some(text) = value.as_str().and_then(format_mysql_bit_literal_text) {
+            return text;
+        }
+    }
     if let Some(value) = value.as_bool() {
         return if value { "TRUE" } else { "FALSE" }.to_string();
     }
@@ -753,6 +764,43 @@ pub fn format_grid_sql_literal(
     } else {
         escaped
     }
+}
+
+fn is_mysql_bit_literal_column(database_type: Option<DatabaseType>, column_info: Option<&DataGridColumnInfo>) -> bool {
+    is_mysql_datetime_literal_database(database_type)
+        && column_info.map(|column| is_bit_column_type(&column.data_type)).unwrap_or(false)
+}
+
+fn is_bit_column_type(data_type: &str) -> bool {
+    let lower = data_type.to_ascii_lowercase();
+    lower.split(|ch: char| !ch.is_ascii_alphanumeric()).any(|token| token == "bit")
+}
+
+fn format_mysql_bit_literal_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("true") {
+        return Some("1".to_string());
+    }
+    if trimmed.eq_ignore_ascii_case("false") {
+        return Some("0".to_string());
+    }
+    if trimmed.chars().all(|ch| ch.is_ascii_digit()) && !trimmed.is_empty() {
+        return Some(if trimmed.len() == 1 {
+            trimmed.to_string()
+        } else if trimmed.chars().all(|ch| matches!(ch, '0' | '1')) {
+            format!("b'{trimmed}'")
+        } else {
+            trimmed.to_string()
+        });
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("b'") && trimmed.ends_with('\'') {
+        let bits = &trimmed[2..trimmed.len() - 1];
+        if !bits.is_empty() && bits.chars().all(|ch| matches!(ch, '0' | '1')) {
+            return Some(format!("b'{bits}'"));
+        }
+    }
+    None
 }
 
 fn is_mysql_datetime_literal_database(database_type: Option<DatabaseType>) -> bool {
@@ -1344,6 +1392,21 @@ mod tests {
             format_grid_sql_literal(&json!("2026-05-12T00:00:00.123456Z"), Some(DatabaseType::Mysql), None),
             "'2026-05-12 00:00:00.123456'"
         );
+    }
+
+    #[test]
+    fn formats_mysql_bit_literals_without_string_quotes() {
+        let bit = column("flag", "bit(1)", true, None);
+        let bit_string = column("flags", "bit(8)", true, None);
+
+        assert_eq!(format_grid_sql_literal(&json!("0"), Some(DatabaseType::Mysql), Some(&bit)), "0");
+        assert_eq!(format_grid_sql_literal(&json!("1"), Some(DatabaseType::Mysql), Some(&bit)), "1");
+        assert_eq!(format_grid_sql_literal(&json!(true), Some(DatabaseType::Mysql), Some(&bit)), "1");
+        assert_eq!(
+            format_grid_sql_literal(&json!("10101010"), Some(DatabaseType::Mysql), Some(&bit_string)),
+            "b'10101010'"
+        );
+        assert_eq!(format_grid_sql_literal(&json!("0"), Some(DatabaseType::Postgres), Some(&bit)), "'0'");
     }
 
     #[test]

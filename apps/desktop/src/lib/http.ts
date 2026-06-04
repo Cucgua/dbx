@@ -30,6 +30,8 @@ import type {
   AiConversation,
   AiModelInfo,
   DriverStoreUsage,
+  UpgradeAllAgentDriversResult,
+  AgentUpdateBlocker,
   DesktopSettings,
   DriverInstallProgress,
   JavaRuntimeConfig,
@@ -51,6 +53,9 @@ import type {
   TableImportProgress,
   DatabaseExportRequest,
   ExportProgress,
+  TableExportRequest,
+  TableExportProgress,
+  TableCsvExportOptions,
   XlsxCellValue,
   QueryPaginationExecutionPlanOptions,
   QueryPaginationExecutionPlan,
@@ -83,6 +88,7 @@ import type { BuildRenameObjectSqlOptions } from "@/lib/objectRenameSql";
 import type { CreateDatabaseSqlOptions } from "@/lib/createDatabaseSql";
 import type {
   DatabaseNameSqlOptions,
+  DropTableChildObjectSqlOptions,
   DropObjectSqlOptions,
   DuplicateTableStructureSqlOptions,
   SchemaNameSqlOptions,
@@ -291,9 +297,12 @@ export async function installAgent(dbType: string): Promise<void> {
   await post("/api/agents/install", { dbType });
 }
 
-export async function upgradeAllAgents(): Promise<number> {
-  const result: { count: number } = await post("/api/agents/upgrade-all", {});
-  return result.count;
+export async function upgradeAllAgents(): Promise<UpgradeAllAgentDriversResult> {
+  return post("/api/agents/upgrade-all", {});
+}
+
+export async function checkAgentUpdateBlockers(_dbTypes: string[]): Promise<AgentUpdateBlocker[]> {
+  return [];
 }
 
 export async function uninstallAgent(dbType: string): Promise<void> {
@@ -475,6 +484,14 @@ export async function listTables(
 
 export async function listObjects(connectionId: string, database: string, schema: string): Promise<ObjectInfo[]> {
   return get(`/api/schema/objects?${qs({ connection_id: connectionId, database, schema })}`);
+}
+
+export async function listCompletionObjects(
+  connectionId: string,
+  database: string,
+  schema: string,
+): Promise<ObjectInfo[]> {
+  return get(`/api/schema/completion-objects?${qs({ connection_id: connectionId, database, schema })}`);
 }
 
 export async function getObjectSource(
@@ -697,6 +714,10 @@ export async function buildDropTableSql(options: TableAdminSqlOptions): Promise<
   return post("/api/query/build-drop-table-sql", { options });
 }
 
+export async function buildDropTableChildObjectSql(options: DropTableChildObjectSqlOptions): Promise<string> {
+  return post("/api/query/build-drop-table-child-object-sql", { options });
+}
+
 export async function buildEmptyTableSql(options: TableAdminSqlOptions): Promise<string> {
   return post("/api/query/build-empty-table-sql", { options });
 }
@@ -822,6 +843,12 @@ export async function prepareDataCompareFromTables(
   options: DataCompareFromTablesOptions,
 ): Promise<DataCompareFromTablesPreparation> {
   return post("/api/data-compare/prepare-from-tables", options);
+}
+
+export async function prepareDataCompareMissingTarget(
+  options: import("@/lib/dataCompare").DataCompareMissingTargetOptions,
+): Promise<DataCompareFromTablesPreparation> {
+  return post("/api/data-compare/prepare-missing-target", options);
 }
 
 export async function buildDataCompareSyncPlan(options: DataCompareSyncPlanOptions): Promise<DataCompareSyncPlan> {
@@ -1180,6 +1207,68 @@ export async function cancelDatabaseExport(exportId: string): Promise<void> {
   await post("/api/export/database/cancel", { exportId });
 }
 
+// --- Table Export ---
+
+export async function startTableExport(
+  request: TableExportRequest,
+  onProgress: (progress: TableExportProgress) => void,
+): Promise<TableExportProgress> {
+  const { exportId } = request;
+
+  return new Promise((resolve, reject) => {
+    let started = false;
+    let settled = false;
+    const eventSource = new EventSource(`/api/export/table/progress/${exportId}`);
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      eventSource.close();
+      callback();
+    };
+
+    eventSource.onopen = () => {
+      if (started) return;
+      started = true;
+      post("/api/export/table", { request }).catch((error) => {
+        finish(() => reject(error));
+      });
+    };
+
+    eventSource.onmessage = (event) => {
+      const progress: TableExportProgress = JSON.parse(event.data);
+      onProgress(progress);
+      if (progress.status === "Done" || progress.status === "Error" || progress.status === "Cancelled") {
+        if (progress.status === "Error") {
+          finish(() => reject(new Error(progress.errorMessage || "Export failed")));
+        } else if (progress.status === "Done") {
+          // Trigger browser download
+          downloadTableExportFile(exportId, request.format);
+          finish(() => resolve(progress));
+        } else {
+          finish(() => resolve(progress));
+        }
+      }
+    };
+
+    eventSource.onerror = () => {
+      finish(() => reject(new Error("Export progress connection lost")));
+    };
+  });
+}
+
+function downloadTableExportFile(exportId: string, format: string): void {
+  const ext = format === "markdown" || format === "md" ? "md" : format;
+  const a = document.createElement("a");
+  a.href = `/api/export/table/download/${exportId}`;
+  a.download = `table_export_${exportId}.${ext}`;
+  a.click();
+}
+
+export async function cancelTableExport(exportId: string): Promise<void> {
+  return post("/api/export/table/cancel", { exportId });
+}
+
 export async function exportQueryResultCsv(
   filePath: string,
   columns: string[],
@@ -1195,6 +1284,10 @@ export async function exportQueryResultCsv(
   a.download = fileName;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export async function exportTableDataCsv(_options: TableCsvExportOptions): Promise<number> {
+  throw new Error("Streaming table CSV export is only available in the desktop runtime");
 }
 
 function downloadTextFile(filePath: string, fallbackFileName: string, content: string, mimeType: string): void {
@@ -1221,7 +1314,7 @@ export async function exportQueryResultXlsx(
     rows,
   });
   const fileName = filePath.split(/[\\/]/).pop() || "export.xlsx";
-  const blob = new Blob([workbook], {
+  const blob = new Blob([new Uint8Array(workbook)], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
   const url = URL.createObjectURL(blob);
@@ -1425,6 +1518,15 @@ export async function mongoInsertDocument(
   return post("/api/mongo/insert-document", { connectionId, database, collection, docJson });
 }
 
+export async function mongoInsertDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  docsJson: string,
+): Promise<{ affected_rows: number }> {
+  return post("/api/mongo/insert-documents", { connectionId, database, collection, docsJson });
+}
+
 export async function mongoUpdateDocument(
   connectionId: string,
   database: string,
@@ -1435,6 +1537,17 @@ export async function mongoUpdateDocument(
   return post("/api/mongo/update-document", { connectionId, database, collection, id, docJson });
 }
 
+export async function mongoUpdateDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  filterJson: string,
+  updateJson: string,
+  many: boolean,
+): Promise<{ affected_rows: number }> {
+  return post("/api/mongo/update-documents", { connectionId, database, collection, filterJson, updateJson, many });
+}
+
 export async function mongoDeleteDocument(
   connectionId: string,
   database: string,
@@ -1442,6 +1555,16 @@ export async function mongoDeleteDocument(
   id: string,
 ): Promise<number> {
   return post("/api/mongo/delete-document", { connectionId, database, collection, id });
+}
+
+export async function mongoDeleteDocuments(
+  connectionId: string,
+  database: string,
+  collection: string,
+  filterJson: string,
+  many: boolean,
+): Promise<{ affected_rows: number }> {
+  return post("/api/mongo/delete-documents", { connectionId, database, collection, filterJson, many });
 }
 
 // ---------------------------------------------------------------------------

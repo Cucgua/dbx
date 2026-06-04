@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
-import { Plus, Trash2 } from "lucide-vue-next";
+import { Plus, Trash2 } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import type { EditNode, EditNodeKind } from "@/types/editor";

@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
-import { AlertCircle, Loader2, Search, Square, Table2 } from "lucide-vue-next";
+import { AlertCircle, Loader2, Search, Square, Table2 } from "@lucide/vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle } from "@/components/ui/dialog";

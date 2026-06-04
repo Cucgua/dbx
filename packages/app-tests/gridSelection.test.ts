@@ -11,6 +11,7 @@ import {
   formatSelectionAsTsv,
   isCellInSelection,
   normalizeSelectionRange,
+  parseClipboardTable,
   rowSelectionRange,
 } from "../../apps/desktop/src/lib/gridSelection.ts";
 
@@ -101,4 +102,12 @@ test("formats selected cells as TSV, CSV, JSON, and SQL values", () => {
     ),
   );
   assert.equal(formatSelectionAsSqlInList(selection), "('Ada', 'math', 'Bob', 'quote \"here\"', 'O''Hara', NULL)");
+});
+
+test("parses clipboard table text with spreadsheet line endings", () => {
+  assert.deepEqual(parseClipboardTable("0"), [["0"]]);
+  assert.deepEqual(parseClipboardTable("a\tb\r\nc\td\r\n"), [
+    ["a", "b"],
+    ["c", "d"],
+  ]);
 });

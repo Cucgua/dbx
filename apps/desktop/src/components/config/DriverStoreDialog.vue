@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { FolderOpen, Trash2, Download, RotateCcw, Loader2, RefreshCw, Check, Clock3, FileUp } from "lucide-vue-next";
+import { FolderOpen, Trash2, Download, RotateCcw, Loader2, RefreshCw, Check, Clock3, FileUp } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -212,6 +212,11 @@ async function runDriverInstall(dbType: string) {
   installing.value = dbType;
   progress.value = null;
   try {
+    const blockers = await api.checkAgentUpdateBlockers([dbType]);
+    if (blockers.length > 0) {
+      toast(t("driverStore.driverUpdateBlocked", { labels: blockers.map((blocker) => blocker.label).join(", ") }));
+      return;
+    }
     await api.installAgent(dbType);
     await refreshAgents();
     toast(t("driverStore.driverInstallSuccess", { label }));
@@ -239,9 +244,22 @@ async function upgradeAll() {
   queuedDriverInstalls.value = [];
   progress.value = null;
   try {
-    const count = await api.upgradeAllAgents();
+    const updatableDbTypes = drivers.value.filter((driver) => driver.update_available).map((driver) => driver.db_type);
+    const blockers = await api.checkAgentUpdateBlockers(updatableDbTypes);
+    if (blockers.length > 0) {
+      toast(t("driverStore.driverUpdateBlocked", { labels: blockers.map((blocker) => blocker.label).join(", ") }));
+      return;
+    }
+    const result = await api.upgradeAllAgents();
     await refreshAgents();
-    toast(t("driverStore.upgradeAllSuccess", { count }));
+    if (result.failed.length > 0) {
+      const failedLabels = result.failed
+        .map((item) => drivers.value.find((driver) => driver.db_type === item.db_type)?.label ?? item.db_type)
+        .join(", ");
+      toast(t("driverStore.upgradeAllPartial", { count: result.upgraded, failed: failedLabels }));
+    } else {
+      toast(t("driverStore.upgradeAllSuccess", { count: result.upgraded }));
+    }
   } catch (e: any) {
     toast(t("driverStore.upgradeAllFailed", { error: e }));
   } finally {

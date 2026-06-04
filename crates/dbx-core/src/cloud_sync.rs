@@ -24,6 +24,7 @@ const SECRET_KEYS: &[&str] = &[
     "redis_sentinel_password",
     "connection_string",
 ];
+const SSH_TUNNEL_SECRET_PREFIX: &str = "ssh_tunnels.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -302,6 +303,10 @@ fn scrub_connection_secrets(config: &mut ConnectionConfig) {
     config.password.clear();
     config.ssh_password.clear();
     config.ssh_key_passphrase.clear();
+    for hop in &mut config.ssh_tunnels {
+        hop.password.clear();
+        hop.key_passphrase.clear();
+    }
     config.proxy_password.clear();
     config.redis_sentinel_password.clear();
     config.connection_string = None;
@@ -324,6 +329,15 @@ async fn build_sensitive_payload(
         push_secret(&mut connection_secrets, &config.id, "password", &config.password);
         push_secret(&mut connection_secrets, &config.id, "ssh_password", &config.ssh_password);
         push_secret(&mut connection_secrets, &config.id, "ssh_key_passphrase", &config.ssh_key_passphrase);
+        for (index, hop) in config.ssh_tunnels.iter().enumerate() {
+            push_secret(&mut connection_secrets, &config.id, &ssh_tunnel_password_key(index, hop), &hop.password);
+            push_secret(
+                &mut connection_secrets,
+                &config.id,
+                &ssh_tunnel_key_passphrase_key(index, hop),
+                &hop.key_passphrase,
+            );
+        }
         push_secret(&mut connection_secrets, &config.id, "proxy_password", &config.proxy_password);
         push_secret(&mut connection_secrets, &config.id, "redis_sentinel_password", &config.redis_sentinel_password);
         if let Some(connection_string) = &config.connection_string {
@@ -347,7 +361,7 @@ fn push_secret(secrets: &mut Vec<ConnectionSecretSnapshot>, connection_id: &str,
 
 async fn apply_sensitive_payload(storage: &Storage, payload: &SensitiveSyncPayload) -> Result<(), String> {
     for secret in &payload.connection_secrets {
-        if !SECRET_KEYS.contains(&secret.key.as_str()) {
+        if !SECRET_KEYS.contains(&secret.key.as_str()) && !secret.key.starts_with(SSH_TUNNEL_SECRET_PREFIX) {
             continue;
         }
         storage.set_secret(&secret.connection_id, &secret.key, &secret.secret).await?;
@@ -363,8 +377,28 @@ async fn clear_connection_secrets(storage: &Storage, connections: &[ConnectionCo
         for key in SECRET_KEYS {
             storage.delete_secret(&config.id, key).await?;
         }
+        for (index, hop) in config.ssh_tunnels.iter().enumerate() {
+            storage.delete_secret(&config.id, &ssh_tunnel_password_key(index, hop)).await?;
+            storage.delete_secret(&config.id, &ssh_tunnel_key_passphrase_key(index, hop)).await?;
+        }
     }
     Ok(())
+}
+
+fn ssh_tunnel_secret_segment(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    if hop.id.trim().is_empty() {
+        index.to_string()
+    } else {
+        hop.id.clone()
+    }
+}
+
+fn ssh_tunnel_password_key(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    format!("{}{}.password", SSH_TUNNEL_SECRET_PREFIX, ssh_tunnel_secret_segment(index, hop))
+}
+
+fn ssh_tunnel_key_passphrase_key(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    format!("{}{}.key_passphrase", SSH_TUNNEL_SECRET_PREFIX, ssh_tunnel_secret_segment(index, hop))
 }
 
 fn encrypt_sensitive_payload(payload: &SensitiveSyncPayload, passphrase: &str) -> Result<EncryptedSecretsBlob, String> {
@@ -462,7 +496,9 @@ mod tests {
         decrypt_sensitive_payload, encrypt_sensitive_payload, normalized_remote_path, parent_collection_paths,
         scrub_connection_secrets, ConnectionSecretSnapshot, SensitiveSyncPayload,
     };
-    use crate::models::connection::{ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType};
+    use crate::models::connection::{
+        ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType, SshTunnelConfig,
+    };
 
     #[test]
     fn normalizes_empty_remote_path_to_default() {
@@ -503,6 +539,19 @@ mod tests {
             ssh_key_passphrase: "key".to_string(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: 5,
+            ssh_tunnels: vec![SshTunnelConfig {
+                id: "hop-1".to_string(),
+                name: String::new(),
+                enabled: true,
+                host: "bastion".to_string(),
+                port: 22,
+                user: "user".to_string(),
+                password: "hop-password".to_string(),
+                key_path: String::new(),
+                key_passphrase: "hop-passphrase".to_string(),
+                connect_timeout_secs: 5,
+                expose_lan: false,
+            }],
             connect_timeout_secs: 5,
             query_timeout_secs: 30,
             proxy_enabled: false,
@@ -533,6 +582,8 @@ mod tests {
         assert!(config.password.is_empty());
         assert!(config.ssh_password.is_empty());
         assert!(config.ssh_key_passphrase.is_empty());
+        assert!(config.ssh_tunnels[0].password.is_empty());
+        assert!(config.ssh_tunnels[0].key_passphrase.is_empty());
         assert!(config.proxy_password.is_empty());
         assert!(config.redis_sentinel_password.is_empty());
         assert!(config.connection_string.is_none());
@@ -541,17 +592,25 @@ mod tests {
     #[test]
     fn encrypted_sensitive_payload_round_trips() {
         let payload = SensitiveSyncPayload {
-            connection_secrets: vec![ConnectionSecretSnapshot {
-                connection_id: "c1".to_string(),
-                key: "password".to_string(),
-                secret: "secret".to_string(),
-            }],
+            connection_secrets: vec![
+                ConnectionSecretSnapshot {
+                    connection_id: "c1".to_string(),
+                    key: "password".to_string(),
+                    secret: "secret".to_string(),
+                },
+                ConnectionSecretSnapshot {
+                    connection_id: "c1".to_string(),
+                    key: "ssh_tunnels.hop-1.password".to_string(),
+                    secret: "hop-secret".to_string(),
+                },
+            ],
             ai_config: None,
         };
         let encrypted = encrypt_sensitive_payload(&payload, "sync-pass").unwrap();
         assert_ne!(encrypted.ciphertext, "secret");
         let decrypted = decrypt_sensitive_payload(&encrypted, "sync-pass").unwrap();
         assert_eq!(decrypted.connection_secrets[0].secret, "secret");
+        assert_eq!(decrypted.connection_secrets[1].secret, "hop-secret");
     }
 
     #[test]

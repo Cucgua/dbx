@@ -95,6 +95,10 @@ pub fn build_table_data_select_sql(options: TableDataSelectSqlOptions) -> String
         table
     };
 
+    if database_type == Some(DatabaseType::Iris) {
+        return format!("SELECT TOP {limit} {select_columns} FROM {table_alias}{where_clause}{order}");
+    }
+
     if database_type.is_some_and(uses_fetch_first) {
         let offset = options
             .offset
@@ -150,6 +154,10 @@ pub fn build_table_select_sql(options: TableSelectSqlOptions<'_>) -> String {
     };
     let limit = options.limit;
 
+    if database_type == Some(DatabaseType::Iris) {
+        return format!("SELECT TOP {limit} {select_columns} FROM {table}{order_by}");
+    }
+
     if database_type.is_some_and(uses_fetch_first) {
         return format!("SELECT {select_columns} FROM {table}{order_by} FETCH FIRST {limit} ROWS ONLY");
     }
@@ -174,6 +182,8 @@ pub fn qualified_table_name(database_type: Option<DatabaseType>, schema: Option<
 
 pub fn quote_table_identifier(database_type: Option<DatabaseType>, name: &str) -> String {
     match database_type {
+        Some(DatabaseType::Jdbc) if is_simple_jdbc_identifier(name) => name.to_string(),
+        Some(DatabaseType::Jdbc) => format!("`{}`", name.replace('`', "``")),
         Some(
             DatabaseType::Mysql
             | DatabaseType::Hive
@@ -368,6 +378,15 @@ fn is_simple_informix_identifier(name: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
 }
 
+fn is_simple_jdbc_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,12 +397,18 @@ mod tests {
         assert_eq!(quote_table_identifier(Some(DatabaseType::SqlServer), "user]name"), "[user]]name]");
         assert_eq!(quote_table_identifier(Some(DatabaseType::Postgres), "user\"name"), "\"user\"\"name\"");
         assert_eq!(quote_table_identifier(Some(DatabaseType::Informix), "users_1"), "users_1");
+        assert_eq!(quote_table_identifier(Some(DatabaseType::Jdbc), "users_1"), "users_1");
+        assert_eq!(quote_table_identifier(Some(DatabaseType::Jdbc), "user name"), "`user name`");
     }
 
     #[test]
     fn qualifies_schema_only_for_schema_aware_databases() {
         assert_eq!(qualified_table_name(Some(DatabaseType::Postgres), Some("public"), "users"), "\"public\".\"users\"");
         assert_eq!(qualified_table_name(Some(DatabaseType::Mysql), Some("public"), "users"), "`users`");
+        assert_eq!(
+            qualified_table_name(Some(DatabaseType::Jdbc), Some("cbsdw_dwd"), "dwd_test_df"),
+            "cbsdw_dwd.dwd_test_df"
+        );
     }
 
     #[test]
@@ -412,6 +437,28 @@ mod tests {
                 limit: 100,
             }),
             "SELECT TOP (100) [id], [name] FROM [dbo].[users] ORDER BY [id] ASC"
+        );
+        assert_eq!(
+            build_table_select_sql(TableSelectSqlOptions {
+                database_type: Some(DatabaseType::Jdbc),
+                schema: Some("cbsdw_dwd"),
+                table_name: "dwd_test_df",
+                columns: &[],
+                order_columns: &[],
+                limit: 100,
+            }),
+            "SELECT * FROM cbsdw_dwd.dwd_test_df LIMIT 100;"
+        );
+        assert_eq!(
+            build_table_select_sql(TableSelectSqlOptions {
+                database_type: Some(DatabaseType::Iris),
+                schema: Some("Ens"),
+                table_name: "AlarmResponse",
+                columns: &[],
+                order_columns: &[],
+                limit: 100,
+            }),
+            "SELECT TOP 100 * FROM \"Ens\".\"AlarmResponse\""
         );
     }
 
@@ -448,6 +495,22 @@ mod tests {
                 include_row_id: false,
             }),
             "SELECT * FROM \"public\".\"orders\" WHERE (amount > 10) LIMIT 50 OFFSET 100;"
+        );
+        assert_eq!(
+            build_table_data_select_sql(TableDataSelectSqlOptions {
+                database_type: Some(DatabaseType::Iris),
+                schema: Some("Ens".to_string()),
+                table_name: "AlarmResponse".to_string(),
+                primary_keys: Vec::new(),
+                columns: Vec::new(),
+                fallback_order_columns: Vec::new(),
+                order_by: None,
+                limit: Some(100),
+                offset: None,
+                where_input: None,
+                include_row_id: false,
+            }),
+            "SELECT TOP 100 * FROM \"Ens\".\"AlarmResponse\""
         );
     }
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use crate::agent_connection::{
     agent_connect_params, mongo_legacy_error_with_auth_hint, oracle_alternate_connect_config,
     oracle_auth_fallback_profiles, should_retry_oracle_with_10g_driver,
 };
+use crate::agent_manager::{JavaRuntimeMode, DEFAULT_JRE_KEY};
 use crate::database_capabilities;
 use crate::db;
 use crate::db::agent_driver::AgentMethod;
@@ -20,7 +21,7 @@ use crate::external;
 use crate::models::connection::{
     parse_jdbc_host_port, parse_mongo_first_host, rewrite_jdbc_url_host, ConnectionConfig, DatabaseType,
 };
-use crate::plugins::{PluginDriverSession, PluginRegistry};
+use crate::plugins::{PluginDriverSession, PluginRegistry, PluginRuntimeEnv};
 use crate::query_cancel::RunningQueries;
 use crate::storage::Storage;
 
@@ -114,6 +115,111 @@ pub fn database_connection_config(config: &ConnectionConfig, database: Option<&s
     db_config
 }
 
+pub async fn connect_mysql_metadata_pool(
+    config: &ConnectionConfig,
+    db_config: &ConnectionConfig,
+    host: &str,
+    port: u16,
+    connect_timeout: std::time::Duration,
+) -> Result<(db::mysql::MySqlPool, MysqlMode), String> {
+    let url = connection_url_for_endpoint(db_config, host, port);
+    if db_config.needs_bare_mysql() {
+        return match db::mysql::connect_bare(&url, connect_timeout).await {
+            Ok(pool) => Ok((pool, MysqlMode::Bare)),
+            Err(err) => {
+                let fallback_url = mysql_metadata_fallback_url(config, db_config, host, port);
+                if let Some(fallback_url) = fallback_url {
+                    log::info!(
+                        "MySQL metadata connection without a default database failed ({err}); retrying with configured default database."
+                    );
+                    db::mysql::connect_bare(&fallback_url, connect_timeout).await.map(|pool| (pool, MysqlMode::Bare))
+                } else {
+                    Err(err)
+                }
+            }
+        };
+    }
+
+    match db::mysql::connect_with_ca_cert(&url, Some(&db_config.ca_cert_path), connect_timeout).await {
+        Ok(pool) => {
+            let mode = detect_ob_oracle_mode(config, &pool).await;
+            Ok((pool, mode))
+        }
+        Err(err) => {
+            let fallback_url = mysql_metadata_fallback_url(config, db_config, host, port);
+            if let Some(fallback_url) = fallback_url {
+                log::info!(
+                    "MySQL metadata connection without a default database failed ({err}); retrying with configured default database."
+                );
+                let pool =
+                    db::mysql::connect_with_ca_cert(&fallback_url, Some(&config.ca_cert_path), connect_timeout).await?;
+                let mode = detect_ob_oracle_mode(config, &pool).await;
+                Ok((pool, mode))
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+pub async fn connect_bare_metadata_pool(
+    db_config: &ConnectionConfig,
+    host: &str,
+    port: u16,
+    connect_timeout: std::time::Duration,
+) -> Result<db::mysql::MySqlPool, String> {
+    let url = connection_url_for_endpoint(db_config, host, port);
+    if db_config.effective_database().is_none() {
+        return db::mysql::connect_bare(&url, connect_timeout).await;
+    }
+
+    let mut unscoped_config = db_config.clone();
+    unscoped_config.database = None;
+    let unscoped_url = connection_url_for_endpoint(&unscoped_config, host, port);
+    if unscoped_url == url {
+        return db::mysql::connect_bare(&url, connect_timeout).await;
+    }
+
+    let preferred = db::mysql::connect_bare(&url, connect_timeout);
+    let unscoped = db::mysql::connect_bare(&unscoped_url, connect_timeout);
+    tokio::pin!(preferred);
+    tokio::pin!(unscoped);
+
+    tokio::select! {
+        result = &mut preferred => match result {
+            Ok(pool) => Ok(pool),
+            Err(preferred_err) => match (&mut unscoped).await {
+                Ok(pool) => Ok(pool),
+                Err(unscoped_err) => Err(format!(
+                    "Connection with the configured database failed: {preferred_err}\n\nConnection without a default database also failed: {unscoped_err}"
+                )),
+            },
+        },
+        result = &mut unscoped => match result {
+            Ok(pool) => Ok(pool),
+            Err(unscoped_err) => match (&mut preferred).await {
+                Ok(pool) => Ok(pool),
+                Err(preferred_err) => Err(format!(
+                    "Connection with the configured database failed: {preferred_err}\n\nConnection without a default database also failed: {unscoped_err}"
+                )),
+            },
+        },
+    }
+}
+
+fn mysql_metadata_fallback_url(
+    config: &ConnectionConfig,
+    db_config: &ConnectionConfig,
+    host: &str,
+    port: u16,
+) -> Option<String> {
+    if db_config.db_type != DatabaseType::Mysql || db_config.effective_database().is_some() {
+        return None;
+    }
+    config.effective_database()?;
+    Some(connection_url_for_endpoint(config, host, port))
+}
+
 impl AppState {
     pub fn new(storage: Storage) -> Self {
         Self::new_with_plugin_dir(storage, default_plugin_dir())
@@ -128,6 +234,15 @@ impl AppState {
         plugin_dir: PathBuf,
         app_version: impl Into<String>,
     ) -> Self {
+        Self::new_with_plugin_and_agent_dir_and_app_version(storage, plugin_dir, default_agent_dir(), app_version)
+    }
+
+    pub fn new_with_plugin_and_agent_dir_and_app_version(
+        storage: Storage,
+        plugin_dir: PathBuf,
+        agent_dir: PathBuf,
+        app_version: impl Into<String>,
+    ) -> Self {
         Self {
             connections: RwLock::new(HashMap::new()),
             configs: RwLock::new(HashMap::new()),
@@ -137,7 +252,7 @@ impl AppState {
             storage,
             plugins: PluginRegistry::new(plugin_dir),
             agent_manager: crate::agent_manager::AgentManager::new_with_base_dir_and_app_version(
-                default_agent_dir(),
+                agent_dir,
                 app_version,
             ),
         }
@@ -153,15 +268,40 @@ impl AppState {
 
     pub async fn test_external_driver(&self, driver_id: &str, config: &ConnectionConfig) -> Result<String, String> {
         let params = serde_json::json!({ "connection": config });
-        self.plugins.invoke_driver::<serde_json::Value>(driver_id, "testConnection", params).await?;
+        let env = self.external_driver_runtime_env(driver_id)?;
+        self.plugins
+            .invoke_driver_with_env_and_timeout::<serde_json::Value>(
+                driver_id,
+                "testConnection",
+                params,
+                env,
+                Some(external_driver_connect_timeout(config)),
+            )
+            .await?;
         Ok("Connection successful".to_string())
     }
 
     pub async fn external_driver_pool(&self, driver_id: &str, config: &ConnectionConfig) -> Result<PoolKind, String> {
-        let session = self.plugins.start_driver_session(driver_id).await?;
+        let env = self.external_driver_runtime_env(driver_id)?;
+        let session = self.plugins.start_driver_session_with_env(driver_id, env).await?;
         let params = serde_json::json!({ "connection": config });
-        session.invoke::<serde_json::Value>("connect", params).await?;
+        session
+            .invoke_with_timeout::<serde_json::Value>("connect", params, Some(external_driver_connect_timeout(config)))
+            .await?;
         Ok(PoolKind::ExternalDriver { driver_id: driver_id.to_string(), config: Arc::new(config.clone()), session })
+    }
+
+    fn external_driver_runtime_env(&self, driver_id: &str) -> Result<PluginRuntimeEnv, String> {
+        if driver_id != "jdbc" {
+            return Ok(PluginRuntimeEnv::default());
+        }
+        let state = self.agent_manager.load_state();
+        if state.java_runtime.mode == JavaRuntimeMode::Managed && !self.agent_manager.is_jre_installed(DEFAULT_JRE_KEY)
+        {
+            return Ok(PluginRuntimeEnv::default());
+        }
+        let java = self.agent_manager.resolve_java_runtime(&state, DEFAULT_JRE_KEY)?;
+        Ok(PluginRuntimeEnv::default().with_var("DBX_JAVA_BIN", java.to_string_lossy().to_string()))
     }
 
     pub async fn get_or_create_pool(&self, connection_id: &str, database: Option<&str>) -> Result<String, String> {
@@ -201,22 +341,34 @@ impl AppState {
         let app_settings = if db_config.is_oracle_oci() { Some(self.storage.load_app_settings().await?) } else { None };
         let connect_timeout = std::time::Duration::from_secs(db_config.effective_connect_timeout_secs());
         let pool = match db_config.db_type {
-            DatabaseType::Mysql if db_config.needs_bare_mysql() => {
-                PoolKind::Mysql(db::mysql::connect_bare(&url, connect_timeout).await?, MysqlMode::Bare)
-            }
             DatabaseType::Mysql => {
-                let pool =
-                    db::mysql::connect_with_ca_cert(&url, Some(&db_config.ca_cert_path), connect_timeout).await?;
-                let mode = detect_ob_oracle_mode(&db_config, &pool).await;
+                let (pool, mode) =
+                    connect_mysql_metadata_pool(&config, &db_config, &host, port, connect_timeout).await?;
                 PoolKind::Mysql(pool, mode)
             }
             DatabaseType::Doris | DatabaseType::StarRocks => {
-                PoolKind::Mysql(db::mysql::connect_bare(&url, connect_timeout).await?, MysqlMode::Bare)
+                let pool = if database.is_none() {
+                    connect_bare_metadata_pool(&db_config, &host, port, connect_timeout).await?
+                } else {
+                    db::mysql::connect_bare(&url, connect_timeout).await?
+                };
+                PoolKind::Mysql(pool, MysqlMode::Bare)
             }
             DatabaseType::Postgres | DatabaseType::Redshift | DatabaseType::Gaussdb | DatabaseType::OpenGauss => {
                 PoolKind::Postgres(db::postgres::connect(&url, connect_timeout).await?)
             }
-            DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?),
+            DatabaseType::Sqlite => {
+                let extensions = db::sqlite::sqlite_extension_specs_from_url_params(db_config.url_params.as_deref())
+                    .into_iter()
+                    .map(|mut extension| {
+                        extension.path = expand_tilde(&extension.path);
+                        extension
+                    })
+                    .collect();
+                PoolKind::Sqlite(
+                    db::sqlite::connect_path_with_extensions(&expand_tilde(&db_config.host), extensions).await?,
+                )
+            }
             DatabaseType::Redis => {
                 let con = if db_config.uses_redis_cluster() {
                     db::redis_driver::RedisConnection::Cluster(db::redis_driver::connect_cluster(&db_config).await?)
@@ -243,7 +395,13 @@ impl AppState {
             }
             DatabaseType::MongoDb => {
                 let native_err = match db::mongo_driver::connect(&url, connect_timeout).await {
-                    Ok(client) => match db::mongo_driver::test_connection(&client, connect_timeout).await {
+                    Ok(client) => match db::mongo_driver::test_connection(
+                        &client,
+                        connect_timeout,
+                        db_config.effective_database(),
+                    )
+                    .await
+                    {
                         Ok(()) => {
                             self.connections.write().await.insert(pool_key.clone(), PoolKind::MongoDb(client));
                             return Ok(pool_key);
@@ -303,15 +461,15 @@ impl AppState {
                 PoolKind::Oracle(Arc::new(pool))
             }
             DatabaseType::Elasticsearch => {
-                let accept_invalid_certs = db_config.ssl;
-                let client = db::elasticsearch_driver::EsClient::new(
+                let mut client = db::elasticsearch_driver::EsClient::from_config(
                     &url,
                     Some(&db_config.username),
                     Some(&db_config.password),
-                    accept_invalid_certs,
+                    db_config.ssl,
+                    db_config.url_params.as_deref(),
                     connect_timeout,
                 );
-                db::elasticsearch_driver::test_connection(&client, connect_timeout).await?;
+                db::elasticsearch_driver::test_connection(&mut client, connect_timeout).await?;
                 PoolKind::Elasticsearch(client)
             }
             DatabaseType::Dameng
@@ -432,7 +590,8 @@ impl AppState {
         connection_id: &str,
         config: &ConnectionConfig,
     ) -> Result<(String, u16), String> {
-        if !config.ssh_enabled || config.ssh_host.is_empty() {
+        let ssh_hops = config.effective_ssh_tunnels();
+        if ssh_hops.is_empty() {
             if config.proxy_enabled && !config.proxy_host.is_empty() {
                 if let Some(local_port) = self.proxy_tunnels.local_port(connection_id).await {
                     return Ok(("127.0.0.1".to_string(), local_port));
@@ -496,22 +655,7 @@ impl AppState {
             (config.host.clone(), config.port)
         };
 
-        let local_port = self
-            .tunnels
-            .start_tunnel(
-                connection_id,
-                &config.ssh_host,
-                config.ssh_port,
-                &config.ssh_user,
-                &config.ssh_password,
-                &config.ssh_key_path,
-                &config.ssh_key_passphrase,
-                config.effective_ssh_connect_timeout_secs(),
-                &remote_host,
-                remote_port,
-                config.ssh_expose_lan,
-            )
-            .await?;
+        let local_port = self.tunnels.start_chain(connection_id, &ssh_hops, &remote_host, remote_port).await?;
 
         Ok(("127.0.0.1".to_string(), local_port))
     }
@@ -594,6 +738,36 @@ impl AppState {
             close_pool_kind(pool).await;
         }
         Ok(closed)
+    }
+
+    pub async fn active_agent_driver_keys(&self) -> HashSet<String> {
+        let configs = self.configs.read().await;
+        let connections = self.connections.read().await;
+        let mut keys = HashSet::new();
+
+        for (pool_key, pool) in connections.iter() {
+            if !matches!(pool, PoolKind::Agent(_)) {
+                continue;
+            }
+            let Some(config) = config_for_pool_key(pool_key, &configs) else {
+                continue;
+            };
+            if let Some(agent_key) = crate::agent_manager::AgentManager::db_type_to_agent_key(
+                &config.db_type,
+                config.driver_profile.as_deref(),
+            ) {
+                keys.insert(agent_key.to_string());
+            }
+        }
+
+        drop(connections);
+        drop(configs);
+
+        for key in self.agent_manager.active_daemon_keys().await {
+            keys.insert(key);
+        }
+
+        keys
     }
 
     pub async fn duckdb_existing_pool_is_usable_for_config(&self, config: &ConnectionConfig) -> Result<bool, String> {
@@ -688,7 +862,7 @@ impl AppState {
         // Re-establish SSH tunnels that have died
         let tunnel_connection_ids: Vec<String> = {
             let configs = self.configs.read().await;
-            configs.iter().filter(|(_, c)| c.ssh_enabled && !c.ssh_host.is_empty()).map(|(id, _)| id.clone()).collect()
+            configs.iter().filter(|(_, c)| c.has_effective_ssh_tunnels()).map(|(id, _)| id.clone()).collect()
         };
         for connection_id in tunnel_connection_ids {
             self.tunnels.stop_tunnel(&connection_id).await;
@@ -731,8 +905,7 @@ impl AppState {
     async fn uses_forwarded_transport(&self, connection_id: &str) -> bool {
         let configs = self.configs.read().await;
         configs.get(connection_id).is_some_and(|config| {
-            (config.ssh_enabled && !config.ssh_host.is_empty())
-                || (config.proxy_enabled && !config.proxy_host.is_empty())
+            config.has_effective_ssh_tunnels() || (config.proxy_enabled && !config.proxy_host.is_empty())
         })
     }
 }
@@ -745,6 +918,19 @@ fn session_scoped_pool_key(base_pool_key: String, client_session_id: Option<&str
     normalize_client_session_id(client_session_id)
         .map(|session| format!("{base_pool_key}:session:{session}"))
         .unwrap_or(base_pool_key)
+}
+
+fn config_for_pool_key<'a>(
+    pool_key: &str,
+    configs: &'a HashMap<String, ConnectionConfig>,
+) -> Option<&'a ConnectionConfig> {
+    configs
+        .iter()
+        .filter(|(connection_id, _)| {
+            pool_key.strip_prefix(connection_id.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
+        })
+        .max_by_key(|(connection_id, _)| connection_id.len())
+        .map(|(_, config)| config)
 }
 
 fn session_scoped_pool_key_for(
@@ -844,6 +1030,10 @@ pub fn redacted_connection_url_for_endpoint(config: &ConnectionConfig, host: &st
     } else {
         config.redacted_connection_url_with_host(host, port)
     }
+}
+
+fn external_driver_connect_timeout(config: &ConnectionConfig) -> std::time::Duration {
+    std::time::Duration::from_secs(config.effective_connect_timeout_secs().max(30))
 }
 
 fn native_postgres_url_config(config: &ConnectionConfig) -> Option<ConnectionConfig> {
@@ -955,12 +1145,13 @@ async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &db::mysql::MySq
 mod tests {
     use super::{
         connection_url_for_endpoint, database_connection_config, metadata_connection_config,
-        redacted_connection_url_for_endpoint, uses_tcp_probe, AppState, PoolKind,
+        mysql_metadata_fallback_url, redacted_connection_url_for_endpoint, uses_tcp_probe, AppState, PoolKind,
     };
     use crate::agent_connection::{
         agent_connect_params, mongo_legacy_error_with_auth_hint, oracle_alternate_connect_config,
         should_retry_oracle_with_10g_driver,
     };
+    use crate::agent_manager::{AgentState, JavaRuntimeConfig, JavaRuntimeMode, DEFAULT_JRE_KEY};
     use crate::db;
     use crate::models::connection::{
         default_connect_timeout_secs, ConnectionConfig, DatabaseType, OracleConnectMethod, ProxyType,
@@ -994,6 +1185,7 @@ mod tests {
             ssh_key_passphrase: String::new(),
             ssh_expose_lan: false,
             ssh_connect_timeout_secs: crate::models::connection::default_ssh_connect_timeout_secs(),
+            ssh_tunnels: Vec::new(),
             connect_timeout_secs: default_connect_timeout_secs(),
             query_timeout_secs: crate::models::connection::default_query_timeout_secs(),
             proxy_enabled: false,
@@ -1084,11 +1276,13 @@ mod tests {
         config.port = 1521;
         config.username = "system".to_string();
         config.password = "oracle".to_string();
+        config.sysdba = true;
         config.oracle_connection_type = Some("service_name".to_string());
 
         let params = agent_connect_params(&config, "oracle.example.com", 1521, "ORCLPDB1");
 
-        assert_eq!(params["database"], "ORCLPDB1");
+        assert_eq!(params["database"], "SYSDBA:ORCLPDB1");
+        assert_eq!(params["sysdba"], true);
         assert_eq!(params["connection_string"], "jdbc:oracle:thin:@//oracle.example.com:1521/ORCLPDB1");
     }
 
@@ -1254,6 +1448,107 @@ mod tests {
         (AppState::new(storage), dir)
     }
 
+    fn touch_executable(path: &std::path::Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, b"").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn app_state_uses_explicit_agent_dir() {
+        let dir = std::env::temp_dir().join(format!("dbx-core-agent-dir-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Storage::open(&dir.join("storage.db")).await.unwrap();
+        let agent_dir = dir.join("agents");
+
+        let state = AppState::new_with_plugin_and_agent_dir_and_app_version(
+            storage,
+            dir.join("plugins"),
+            agent_dir.clone(),
+            "0.0.0-test",
+        );
+
+        assert_eq!(state.agent_manager.base_dir(), &agent_dir);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn jdbc_plugin_env_uses_managed_jre_when_installed() {
+        let dir = std::env::temp_dir().join(format!("dbx-core-jdbc-managed-jre-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Storage::open(&dir.join("storage.db")).await.unwrap();
+        let state = AppState::new_with_plugin_and_agent_dir_and_app_version(
+            storage,
+            dir.join("plugins"),
+            dir.join("agents"),
+            "0.0.0-test",
+        );
+        let java = state.agent_manager.jre_java_path(DEFAULT_JRE_KEY);
+        touch_executable(&java);
+
+        let env = state.external_driver_runtime_env("jdbc").unwrap();
+
+        assert_eq!(env.get("DBX_JAVA_BIN"), Some(java.to_string_lossy().as_ref()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn jdbc_plugin_env_keeps_wrapper_fallback_when_managed_jre_is_missing() {
+        let dir = std::env::temp_dir().join(format!("dbx-core-jdbc-missing-jre-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Storage::open(&dir.join("storage.db")).await.unwrap();
+        let state = AppState::new_with_plugin_and_agent_dir_and_app_version(
+            storage,
+            dir.join("plugins"),
+            dir.join("agents"),
+            "0.0.0-test",
+        );
+
+        let env = state.external_driver_runtime_env("jdbc").unwrap();
+
+        assert_eq!(env.get("DBX_JAVA_BIN"), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn jdbc_plugin_env_uses_custom_java_runtime() {
+        let dir = std::env::temp_dir().join(format!("dbx-core-jdbc-custom-jre-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Storage::open(&dir.join("storage.db")).await.unwrap();
+        let state = AppState::new_with_plugin_and_agent_dir_and_app_version(
+            storage,
+            dir.join("plugins"),
+            dir.join("agents"),
+            "0.0.0-test",
+        );
+        let java = dir.join("custom").join("bin").join(if cfg!(windows) { "java.exe" } else { "java" });
+        touch_executable(&java);
+        state
+            .agent_manager
+            .save_state(&AgentState {
+                java_runtime: JavaRuntimeConfig {
+                    mode: JavaRuntimeMode::Custom,
+                    custom_java_path: Some(java.to_string_lossy().to_string()),
+                },
+                ..AgentState::default()
+            })
+            .unwrap();
+
+        let env = state.external_driver_runtime_env("jdbc").unwrap();
+
+        assert_eq!(env.get("DBX_JAVA_BIN"), Some(java.to_string_lossy().as_ref()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     fn live_postgres_like_config(
         db_type: DatabaseType,
         host: &str,
@@ -1295,6 +1590,25 @@ mod tests {
 
         assert_eq!(metadata.database, None);
         assert_eq!(metadata.db_type, DatabaseType::Mysql);
+    }
+
+    #[test]
+    fn mysql_metadata_fallback_uses_saved_default_database() {
+        let config = mysql_config(Some("app"));
+        let metadata = metadata_connection_config(&config);
+
+        assert_eq!(
+            mysql_metadata_fallback_url(&config, &metadata, &config.host, config.port),
+            Some("mysql://root:secret@127.0.0.1:3306/app?ssl-mode=preferred&charset=utf8mb4".to_string())
+        );
+    }
+
+    #[test]
+    fn mysql_metadata_fallback_is_unavailable_without_default_database() {
+        let config = mysql_config(None);
+        let metadata = metadata_connection_config(&config);
+
+        assert_eq!(mysql_metadata_fallback_url(&config, &metadata, &config.host, config.port), None);
     }
 
     #[test]

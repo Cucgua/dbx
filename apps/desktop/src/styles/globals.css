@@ -20,6 +20,30 @@
     U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+@font-face {
+  font-family: "Geist Variable Tabular";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-feature-settings: "tnum";
+  src: url("/fonts/geist-latin-ext-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Geist Variable Tabular";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  font-feature-settings: "tnum";
+  src: url("/fonts/geist-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @import "tailwindcss";
 @source "../**/*.{vue,ts,tsx,js,jsx,html}";
 
@@ -106,37 +130,37 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: oklch(0.19 0.004 285);
+  --foreground: oklch(0.88 0.006 285);
+  --card: oklch(0.225 0.005 285);
+  --card-foreground: oklch(0.88 0.006 285);
+  --popover: oklch(0.235 0.005 285);
+  --popover-foreground: oklch(0.89 0.006 285);
+  --primary: oklch(0.86 0.008 285);
+  --primary-foreground: oklch(0.19 0.004 285);
+  --secondary: oklch(0.285 0.006 285);
+  --secondary-foreground: oklch(0.88 0.006 285);
+  --muted: oklch(0.285 0.006 285);
+  --muted-foreground: oklch(0.68 0.008 285);
+  --accent: oklch(0.305 0.008 285);
+  --accent-foreground: oklch(0.9 0.006 285);
+  --destructive: oklch(0.68 0.18 24);
+  --border: oklch(0.54 0.006 285 / 28%);
+  --input: oklch(0.54 0.006 285 / 34%);
+  --ring: oklch(0.62 0.008 285);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar: oklch(0.215 0.005 285);
+  --sidebar-foreground: oklch(0.86 0.006 285);
   --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-primary-foreground: oklch(0.94 0.006 285);
+  --sidebar-accent: oklch(0.295 0.006 285);
+  --sidebar-accent-foreground: oklch(0.9 0.006 285);
+  --sidebar-border: oklch(0.54 0.006 285 / 28%);
+  --sidebar-ring: oklch(0.62 0.008 285);
 }
 
 html.disable-transitions,
@@ -156,6 +180,14 @@ body.dbx-table-reference-dragging * {
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
   body {
     @apply bg-background text-foreground;
@@ -207,7 +239,7 @@ body.dbx-table-reference-dragging * {
   background: oklch(0.965 0 0);
 }
 .dark .app-panel-gutter {
-  background: oklch(0.18 0 0);
+  background: oklch(0.205 0.004 285);
 }
 .app-layout-classic .panel-resize-handle {
   width: 3px;

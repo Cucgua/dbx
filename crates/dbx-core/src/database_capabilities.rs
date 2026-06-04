@@ -31,7 +31,7 @@ pub fn is_single_connection_pool(db_type: &DatabaseType) -> bool {
 }
 
 pub fn is_metadata_connection_scoped(db_type: &DatabaseType) -> bool {
-    matches!(db_type, DatabaseType::Mysql | DatabaseType::Doris | DatabaseType::StarRocks)
+    matches!(db_type, DatabaseType::Mysql)
 }
 
 pub fn skips_tcp_probe(db_type: &DatabaseType) -> bool {

@@ -3,7 +3,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Lock, Loader2, ShieldCheck } from "lucide-vue-next";
+import { Lock, Loader2, ShieldCheck } from "@lucide/vue";
 import AppLogo from "@/components/icons/AppLogo.vue";
 
 const props = withDefaults(

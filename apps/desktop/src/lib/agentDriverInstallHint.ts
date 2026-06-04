@@ -12,6 +12,6 @@ export function showAgentDriverInstallHint(
   driverProfile?: string,
 ): boolean {
   if (!supportsDriverManagement(dbType)) return false;
-  const driverKey = dbType === "oracle" && driverProfile ? driverProfile : dbType;
+  const driverKey = driverProfile && driverProfile !== dbType ? driverProfile : dbType;
   return drivers.find((driver) => driver.db_type === driverKey)?.installed !== true;
 }

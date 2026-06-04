@@ -44,6 +44,16 @@ pub async fn list_objects(
 }
 
 #[tauri::command]
+pub async fn list_completion_objects(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    database: String,
+    schema: String,
+) -> Result<Vec<db::ObjectInfo>, String> {
+    dbx_core::schema::list_completion_objects_core(&state, &connection_id, &database, &schema).await
+}
+
+#[tauri::command]
 pub async fn get_object_source(
     state: State<'_, Arc<AppState>>,
     connection_id: String,

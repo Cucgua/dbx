@@ -14,6 +14,16 @@ export interface TableAdminSqlOptions {
   tableName: string;
 }
 
+export type TableChildObjectType = "COLUMN" | "INDEX" | "FOREIGN_KEY" | "TRIGGER";
+
+export interface DropTableChildObjectSqlOptions {
+  databaseType?: DatabaseType;
+  objectType: TableChildObjectType;
+  schema?: string | null;
+  tableName: string;
+  name: string;
+}
+
 export interface DatabaseNameSqlOptions {
   databaseType?: DatabaseType;
   name: string;
@@ -37,6 +47,10 @@ export function buildDropObjectSql(options: DropObjectSqlOptions): Promise<strin
 
 export function buildDropTableSql(options: TableAdminSqlOptions): Promise<string> {
   return api.buildDropTableSql(options);
+}
+
+export function buildDropTableChildObjectSql(options: DropTableChildObjectSqlOptions): Promise<string> {
+  return api.buildDropTableChildObjectSql(options);
 }
 
 export function buildEmptyTableSql(options: TableAdminSqlOptions): Promise<string> {

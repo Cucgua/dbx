@@ -1,4 +1,7 @@
+import { isTauriRuntime } from "./tauriRuntime";
+
 interface ClipboardApi {
+  readText?: () => Promise<string> | string;
   writeText?: (text: string) => Promise<void> | void;
 }
 
@@ -15,6 +18,7 @@ interface ClipboardTextarea {
     opacity?: string;
   };
   setAttribute(name: string, value: string): void;
+  focus?(): void;
   select(): void;
   setSelectionRange?(start: number, end: number): void;
 }
@@ -33,10 +37,39 @@ export interface ClipboardEnvironment {
   document?: ClipboardDocument;
 }
 
+export async function readTextFromClipboard(
+  env: ClipboardEnvironment = globalThis as unknown as ClipboardEnvironment,
+): Promise<string> {
+  if (isTauriRuntime(env as unknown as Record<string, unknown>)) {
+    try {
+      const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+      return await readText();
+    } catch {
+      // Fall through to Web Clipboard when the native plugin is unavailable.
+    }
+  }
+
+  if (env.navigator?.clipboard?.readText) {
+    return await env.navigator.clipboard.readText();
+  }
+
+  throw new Error("Clipboard API is not available");
+}
+
 export async function copyToClipboard(
   text: string,
   env: ClipboardEnvironment = globalThis as unknown as ClipboardEnvironment,
 ): Promise<void> {
+  if (isTauriRuntime(env as unknown as Record<string, unknown>)) {
+    try {
+      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+      await writeText(text);
+      return;
+    } catch {
+      // Fall through to Web Clipboard / legacy copy when the native plugin is unavailable.
+    }
+  }
+
   try {
     if (env.navigator?.clipboard?.writeText) {
       await env.navigator.clipboard.writeText(text);
@@ -61,6 +94,7 @@ export async function copyToClipboard(
 
   document.body.appendChild(textarea);
   try {
+    textarea.focus?.();
     textarea.select();
     textarea.setSelectionRange?.(0, text.length);
     if (!document.execCommand("copy")) {

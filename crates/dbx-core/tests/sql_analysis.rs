@@ -35,3 +35,12 @@ fn extracts_unqualified_order_by_columns_for_sqlserver_queries() {
         analysis.columns.iter().map(|column| (column.qualifier.as_deref(), column.name.as_str())).collect();
     assert_eq!(columns, vec![(None, "PDReceiveDatePartInfo")]);
 }
+
+#[test]
+fn duckdb_parser_gap_queries_do_not_raise_syntax_errors() {
+    for sql in ["FROM users;", "SUMMARIZE users;", "SUMMARISE users;"] {
+        let analysis = analyze_sql_references(sql, Some("duckdb")).expect("duckdb parser gap query should analyze");
+        assert!(analysis.tables.is_empty());
+        assert!(analysis.columns.is_empty());
+    }
+}

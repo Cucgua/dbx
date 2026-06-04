@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDatabaseTreeNodes, buildDuckDbConnectionTreeNodes } from "../../apps/desktop/src/lib/databaseTree.ts";
+import {
+  buildDatabaseTreeNodes,
+  buildDuckDbConnectionTreeNodes,
+  shouldIncludeDefaultDatabaseNode,
+} from "../../apps/desktop/src/lib/databaseTree.ts";
 
 test("设置默认库后侧边栏数据库树仍保留全部数据库", () => {
   const nodes = buildDatabaseTreeNodes("conn-1", [{ name: "campaign_data" }, { name: "cms" }, { name: "mk_campaign" }]);
@@ -34,6 +38,12 @@ test("tree schema mode can show a default node when no catalog is returned", () 
   assert.equal(nodes.length, 1);
   assert.equal(nodes[0].database, "");
   assert.equal(nodes[0].label, "tree.defaultDatabase");
+});
+
+test("MySQL-compatible catalogless services can opt into the default database node", () => {
+  assert.equal(shouldIncludeDefaultDatabaseNode({ db_type: "mysql" }, [{ name: "" }]), true);
+  assert.equal(shouldIncludeDefaultDatabaseNode({ db_type: "mysql" }, [{ name: "app" }]), false);
+  assert.equal(shouldIncludeDefaultDatabaseNode({ db_type: "postgres" }, [{ name: "" }]), false);
 });
 
 test("DuckDB shows primary catalog schemas directly under the connection", () => {

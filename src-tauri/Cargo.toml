@@ -1,6 +1,6 @@
 [package]
 name = "dbx"
-version = "0.5.28"
+version = "0.5.29"
 description = "Open-source database management tool"
 authors = ["skyler"]
 license = "AGPL-3.0-only"
@@ -54,3 +54,4 @@ zip = "4.6.1"
 dbx-core = { path = "../crates/dbx-core" }
 dbx-mcp = { path = "../crates/dbx-mcp" }
 font-kit = "0.14.3"
+tauri-plugin-clipboard-manager = "2.3.2"

@@ -12,6 +12,8 @@ use crate::models::app_settings::AppSettings;
 use crate::models::connection::ConnectionConfig;
 use crate::saved_sql::{SavedSqlFile, SavedSqlFolder, SavedSqlLibrary};
 
+const SSH_TUNNEL_SECRET_PREFIX: &str = "ssh_tunnels.";
+
 pub struct Storage {
     db: SqliteHandle,
 }
@@ -172,6 +174,40 @@ fn ensure_history_columns_sync(conn: &Connection) -> Result<(), String> {
         conn.execute(&format!("ALTER TABLE history ADD COLUMN {name} {definition}"), []).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn ssh_tunnel_secret_segment(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    if hop.id.trim().is_empty() {
+        index.to_string()
+    } else {
+        hop.id.clone()
+    }
+}
+
+fn ssh_tunnel_password_key(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    format!("{}{}.password", SSH_TUNNEL_SECRET_PREFIX, ssh_tunnel_secret_segment(index, hop))
+}
+
+fn ssh_tunnel_key_passphrase_key(index: usize, hop: &crate::models::connection::SshTunnelConfig) -> String {
+    format!("{}{}.key_passphrase", SSH_TUNNEL_SECRET_PREFIX, ssh_tunnel_secret_segment(index, hop))
+}
+
+fn scrub_ssh_tunnel_secrets(config: &mut ConnectionConfig) {
+    for hop in &mut config.ssh_tunnels {
+        hop.password.clear();
+        hop.key_passphrase.clear();
+    }
+}
+
+fn delete_secret_prefix_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    connection_id: &str,
+    key_prefix: &str,
+) -> Result<(), String> {
+    let like = format!("{key_prefix}%");
+    tx.execute("DELETE FROM connection_secrets WHERE connection_id = ?1 AND key LIKE ?2", params![connection_id, like])
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 // History
@@ -564,6 +600,7 @@ impl Storage {
                 sanitized.password = String::new();
                 sanitized.ssh_password = String::new();
                 sanitized.ssh_key_passphrase = String::new();
+                scrub_ssh_tunnel_secrets(&mut sanitized);
                 sanitized.proxy_password = String::new();
                 sanitized.redis_sentinel_password = String::new();
                 sanitized.connection_string = None;
@@ -600,6 +637,7 @@ impl Storage {
                 sanitized.password = String::new();
                 sanitized.ssh_password = String::new();
                 sanitized.ssh_key_passphrase = String::new();
+                scrub_ssh_tunnel_secrets(&mut sanitized);
                 sanitized.proxy_password = String::new();
                 sanitized.redis_sentinel_password = String::new();
                 sanitized.connection_string = None;
@@ -611,6 +649,16 @@ impl Storage {
                 persist_secret_in_tx(&tx, &config.id, "password", &config.password)?;
                 persist_secret_in_tx(&tx, &config.id, "ssh_password", &config.ssh_password)?;
                 persist_secret_in_tx(&tx, &config.id, "ssh_key_passphrase", &config.ssh_key_passphrase)?;
+                delete_secret_prefix_in_tx(&tx, &config.id, SSH_TUNNEL_SECRET_PREFIX)?;
+                for (index, hop) in config.ssh_tunnels.iter().enumerate() {
+                    persist_secret_in_tx(&tx, &config.id, &ssh_tunnel_password_key(index, hop), &hop.password)?;
+                    persist_secret_in_tx(
+                        &tx,
+                        &config.id,
+                        &ssh_tunnel_key_passphrase_key(index, hop),
+                        &hop.key_passphrase,
+                    )?;
+                }
                 persist_secret_in_tx(&tx, &config.id, "proxy_password", &config.proxy_password)?;
                 persist_secret_in_tx(&tx, &config.id, "redis_sentinel_password", &config.redis_sentinel_password)?;
                 if let Some(cs) = &config.connection_string {
@@ -655,6 +703,11 @@ impl Storage {
             config.password = self.get_secret(&id, "password").await?.unwrap_or_default();
             config.ssh_password = self.get_secret(&id, "ssh_password").await?.unwrap_or_default();
             config.ssh_key_passphrase = self.get_secret(&id, "ssh_key_passphrase").await?.unwrap_or_default();
+            for (index, hop) in config.ssh_tunnels.iter_mut().enumerate() {
+                hop.password = self.get_secret(&id, &ssh_tunnel_password_key(index, hop)).await?.unwrap_or_default();
+                hop.key_passphrase =
+                    self.get_secret(&id, &ssh_tunnel_key_passphrase_key(index, hop)).await?.unwrap_or_default();
+            }
             config.proxy_password = self.get_secret(&id, "proxy_password").await?.unwrap_or_default();
             config.redis_sentinel_password = self.get_secret(&id, "redis_sentinel_password").await?.unwrap_or_default();
             config.connection_string = self.get_secret(&id, "connection_string").await?;

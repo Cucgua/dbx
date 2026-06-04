@@ -22,7 +22,7 @@ import {
   type SqlFileProgress,
   type SqlFileStatus,
 } from "@/lib/api";
-import { Check, CheckSquare, FileCode, FolderOpen, Loader2, Play, Square, X } from "lucide-vue-next";
+import { Check, CheckSquare, FileCode, FolderOpen, Loader2, Play, Square, X } from "@lucide/vue";
 
 const { t } = useI18n();
 const { toast } = useToast();

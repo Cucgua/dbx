@@ -9,6 +9,8 @@ import {
   getSqlCompletionContext,
   recordCompletionSelection,
   type SqlCompletionColumn,
+  type SqlCompletionForeignKey,
+  type SqlCompletionObject,
   type SqlCompletionTable,
 } from "../../apps/desktop/src/lib/sqlCompletion.ts";
 
@@ -38,6 +40,32 @@ const columnsByTable = new Map<string, SqlCompletionColumn[]>([
   ],
 ]);
 
+const completionObjects: SqlCompletionObject[] = [
+  { name: "refresh_user_stats", schema: "app", type: "procedure" },
+  { name: "format_user_name", schema: "app", type: "function" },
+  { name: "trg_users_audit", schema: "app", type: "trigger", parentName: "users" },
+];
+
+const postgresQuotedTables: SqlCompletionTable[] = [
+  { name: "article", schema: "public", type: "table" },
+  { name: "order_lines", schema: "public", type: "table" },
+  { name: "OrderLines", schema: "public", type: "table" },
+  { name: "User", schema: "public", type: "table" },
+  { name: 'has"quote', schema: "public", type: "table" },
+];
+
+const postgresQuotedColumnsByTable = new Map<string, SqlCompletionColumn[]>([
+  [
+    "public.OrderLines",
+    [
+      { name: "article", table: "OrderLines", schema: "public", dataType: "text" },
+      { name: "OrderId", table: "OrderLines", schema: "public", dataType: "uuid" },
+      { name: "User", table: "OrderLines", schema: "public", dataType: "text" },
+      { name: 'has"quote', table: "OrderLines", schema: "public", dataType: "text" },
+    ],
+  ],
+]);
+
 test("suggests SQL keywords for generic keyword input", () => {
   const items = buildSqlCompletionItems("sel", 3, {
     tables,
@@ -47,6 +75,127 @@ test("suggests SQL keywords for generic keyword input", () => {
   const keyword = items.find((item) => item.type === "keyword" && item.label === "SELECT");
   assert.ok(keyword);
   assert.equal(keyword.type, "keyword");
+});
+
+test("suggests PostgreSQL-specific data types and functions", () => {
+  const typeItems = buildSqlCompletionItems(
+    "create table events (payload js",
+    "create table events (payload js".length,
+    {
+      tables: [],
+      columnsByTable: new Map(),
+      databaseType: "postgres",
+    },
+  );
+  const serialItems = buildSqlCompletionItems("create table events (id ser", "create table events (id ser".length, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "postgres",
+  });
+  const functionItems = buildSqlCompletionItems("select jsonb_b", "select jsonb_b".length, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "postgres",
+  });
+  const mysqlFunctionItems = buildSqlCompletionItems("select date_f", "select date_f".length, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "mysql",
+  });
+  const postgresDateItems = buildSqlCompletionItems("select date_f", "select date_f".length, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "postgres",
+  });
+
+  assert.ok(typeItems.some((item) => item.type === "keyword" && item.label === "JSONB"));
+  assert.ok(serialItems.some((item) => item.type === "keyword" && item.label === "SERIAL"));
+  assert.ok(functionItems.some((item) => item.type === "function" && item.label === "JSONB_BUILD_OBJECT"));
+  assert.ok(mysqlFunctionItems.some((item) => item.type === "function" && item.label === "DATE_FORMAT"));
+  assert.equal(
+    postgresDateItems.some((item) => item.type === "function" && item.label === "DATE_FORMAT"),
+    false,
+  );
+});
+
+test("MongoDB completion avoids SQL keywords", () => {
+  const items = buildSqlCompletionItems("fi", 2, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "mongodb",
+  });
+
+  assert.ok(items.some((item) => item.type === "function" && item.label === "find"));
+  assert.equal(
+    items.some((item) => item.type === "keyword" && item.label === "SELECT"),
+    false,
+  );
+});
+
+test("quotes PostgreSQL table identifiers when completion inserts them", () => {
+  const sql = "select * from Order";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: postgresQuotedTables,
+    columnsByTable: new Map(),
+    dialect: "postgres",
+  });
+
+  const table = items.find((item) => item.type === "table" && item.label === "OrderLines");
+  assert.equal(table?.apply, '"OrderLines"');
+});
+
+test("leaves safe PostgreSQL table identifiers unquoted when completion inserts them", () => {
+  const sql = "select * from article";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: postgresQuotedTables,
+    columnsByTable: new Map(),
+    dialect: "postgres",
+  });
+
+  const table = items.find((item) => item.type === "table" && item.label === "article");
+  assert.equal(table?.apply, "article");
+});
+
+test("quotes PostgreSQL keyword-like and escaped table identifiers when completion inserts them", () => {
+  const userItems = buildSqlCompletionItems("select * from User", "select * from User".length, {
+    tables: postgresQuotedTables,
+    columnsByTable: new Map(),
+    dialect: "postgres",
+  });
+  const quotedItems = buildSqlCompletionItems("select * from has", "select * from has".length, {
+    tables: postgresQuotedTables,
+    columnsByTable: new Map(),
+    dialect: "postgres",
+  });
+
+  assert.equal(userItems.find((item) => item.label === "User")?.apply, '"User"');
+  assert.equal(quotedItems.find((item) => item.label === 'has"quote')?.apply, '"has""quote"');
+});
+
+test("quotes PostgreSQL column identifiers when completion inserts them", () => {
+  const sql = "select Order from public.OrderLines";
+  const cursor = "select Order".length;
+  const items = buildSqlCompletionItems(sql, cursor, {
+    tables: postgresQuotedTables,
+    columnsByTable: postgresQuotedColumnsByTable,
+    dialect: "postgres",
+  });
+
+  const column = items.find((item) => item.type === "column" && item.label === "OrderId");
+  assert.equal(column?.apply, '"OrderId"');
+});
+
+test("leaves safe PostgreSQL column identifiers unquoted when completion inserts them", () => {
+  const sql = "select arti from public.OrderLines";
+  const cursor = "select arti".length;
+  const items = buildSqlCompletionItems(sql, cursor, {
+    tables: postgresQuotedTables,
+    columnsByTable: postgresQuotedColumnsByTable,
+    dialect: "postgres",
+  });
+
+  const column = items.find((item) => item.type === "column" && item.label === "article");
+  assert.equal(column?.apply, "article");
 });
 
 test("suggests matching table names after FROM", () => {
@@ -114,6 +263,74 @@ test("keeps explicit alias column suggestions scoped to the alias table", () => 
   assert.deepEqual(
     items.map((item) => [item.label, item.type, item.detail]),
     [["status", "column", "public.orders  [varchar]"]],
+  );
+});
+
+test("shows column comments in WHERE field completions", () => {
+  const sql = "select * from public.orders where st";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables,
+    columnsByTable: new Map([
+      [
+        "public.orders",
+        [
+          {
+            name: "status",
+            table: "orders",
+            schema: "public",
+            dataType: "varchar",
+            isNullable: false,
+            comment: "Order lifecycle state",
+          },
+        ],
+      ],
+    ]),
+  });
+
+  const column = items.find((item) => item.type === "column" && item.label === "status");
+  assert.equal(column?.detail, "public.orders  [varchar]  NOT NULL  -- Order lifecycle state");
+  assert.equal(column?.info, "public.orders.status\nType: varchar\nNullable: no\nComment: Order lifecycle state");
+});
+
+test("suggests only fields after numbered table aliases in join conditions", () => {
+  const sql = "select * from public.users t1 join public.orders t2 on t1.";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables,
+    columnsByTable,
+  });
+
+  assert.deepEqual(
+    items.map((item) => [item.label, item.type]),
+    [
+      ["id", "column"],
+      ["name", "column"],
+      ["email", "column"],
+    ],
+  );
+  assert.equal(
+    items.some((item) => item.type === "table"),
+    false,
+  );
+});
+
+test("scopes numbered alias field suggestions to the requested joined table", () => {
+  const sql = "select * from public.users t1 join public.orders t2 on t2.";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables,
+    columnsByTable,
+  });
+
+  assert.deepEqual(
+    items.map((item) => [item.label, item.type]),
+    [
+      ["id", "column"],
+      ["user_id", "column"],
+      ["status", "column"],
+    ],
+  );
+  assert.equal(
+    items.some((item) => item.type === "table"),
+    false,
   );
 });
 
@@ -239,8 +456,14 @@ test("suggests SQL Server IIF and CHOOSE scalar functions", () => {
     columnsByTable,
   });
 
-  assert.ok(iifItems.some((item) => item.label === "IIF"), "IIF should appear in completion");
-  assert.ok(chooseItems.some((item) => item.label === "CHOOSE"), "CHOOSE should appear in completion");
+  assert.ok(
+    iifItems.some((item) => item.label === "IIF"),
+    "IIF should appear in completion",
+  );
+  assert.ok(
+    chooseItems.some((item) => item.label === "CHOOSE"),
+    "CHOOSE should appear in completion",
+  );
 });
 
 test("suggests SQL Server data types in CREATE TABLE column definitions", () => {
@@ -303,8 +526,31 @@ test("suggests matching table names for partial table input", () => {
   );
 });
 
+test("ranks exact table matches above prefix and fuzzy matches", () => {
+  const items = buildSqlCompletionItems("select * from toh", "select * from toh".length, {
+    tables: [
+      { name: "to_his_rec", schema: "public", type: "table" },
+      { name: "toh", schema: "public", type: "table" },
+      { name: "toh_archive", schema: "public", type: "table" },
+    ],
+    columnsByTable,
+  });
+
+  const tableItems = items.filter((item) => item.type === "table");
+  assert.deepEqual(
+    tableItems.map((item) => item.label),
+    ["toh", "toh_archive", "to_his_rec"],
+  );
+});
+
 test("does not reuse table completion results across typed prefixes", () => {
   const validFor = getSqlCompletionResultValidFor("select * from ", "select * from ".length);
+
+  assert.equal(validFor, undefined);
+});
+
+test("does not reuse keyword completion results across typed prefixes", () => {
+  const validFor = getSqlCompletionResultValidFor("select * f", "select * f".length);
 
   assert.equal(validFor, undefined);
 });
@@ -355,6 +601,45 @@ test("suggests DATE_FORMAT as parameter snippet", () => {
   const snippet = items.find((item) => item.type === "function" && item.label === "DATE_FORMAT");
   assert.ok(snippet);
   assert.equal(snippet.apply, "DATE_FORMAT(${date}, ${format})");
+});
+
+test("suggests stored procedures after CALL", () => {
+  const sql = "CALL rfs";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables,
+    objects: completionObjects,
+    columnsByTable,
+    dialect: "mysql",
+  });
+
+  const procedure = items.find((item) => item.label === "refresh_user_stats");
+  assert.ok(procedure);
+  assert.equal(procedure.type, "function");
+  assert.equal(procedure.apply, "app.refresh_user_stats()");
+  assert.equal(
+    items.some((item) => item.label === "format_user_name"),
+    false,
+  );
+});
+
+test("suggests user functions and triggers with fuzzy matching", () => {
+  const sql = "select fun";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables,
+    objects: completionObjects,
+    columnsByTable,
+    dialect: "mysql",
+  });
+
+  assert.ok(items.some((item) => item.label === "format_user_name" && item.detail === "function in app"));
+
+  const triggerItems = buildSqlCompletionItems("drop trigger tua", "drop trigger tua".length, {
+    tables,
+    objects: completionObjects,
+    columnsByTable,
+    dialect: "mysql",
+  });
+  assert.ok(triggerItems.some((item) => item.label === "trg_users_audit" && item.detail === "trigger on users"));
 });
 
 test("matches alias qualifier case-insensitively", () => {
@@ -526,10 +811,14 @@ test("suggests columns for INSERT INTO target table", () => {
 // --- Column data type in detail ---
 
 test("shows column data type in detail", () => {
-  const items = buildSqlCompletionItems("select id from public.users u where u.", "select id from public.users u where u.".length, {
-    tables,
-    columnsByTable,
-  });
+  const items = buildSqlCompletionItems(
+    "select id from public.users u where u.",
+    "select id from public.users u where u.".length,
+    {
+      tables,
+      columnsByTable,
+    },
+  );
   const emailColumn = items.find((item) => item.label === "email");
   assert.ok(emailColumn);
   assert.ok(emailColumn.detail!.includes("[varchar]"));
@@ -594,7 +883,10 @@ test("snippet boost uses label when label matches prefix better than snippet pre
   assert.ok(snippet);
   // Snippet should appear in top results even when typing full keyword
   const topFive = items.slice(0, 5);
-  assert.ok(topFive.some((item) => item.label === "select *"), "select * snippet should be in top 5");
+  assert.ok(
+    topFive.some((item) => item.label === "select *"),
+    "select * snippet should be in top 5",
+  );
 });
 
 // --- Context-aware keyword filtering ---
@@ -608,8 +900,14 @@ test("hides DDL keywords in SELECT statement context", () => {
   assert.ok(!keywords.some((item) => item.label === "CREATE"), "CREATE should not appear in SELECT context");
   assert.ok(!keywords.some((item) => item.label === "ALTER"), "ALTER should not appear in SELECT context");
   assert.ok(!keywords.some((item) => item.label === "DROP"), "DROP should not appear in SELECT context");
-  assert.ok(keywords.some((item) => item.label === "AND"), "AND should appear in SELECT context");
-  assert.ok(keywords.some((item) => item.label === "OR"), "OR should appear in SELECT context");
+  assert.ok(
+    keywords.some((item) => item.label === "AND"),
+    "AND should appear in SELECT context",
+  );
+  assert.ok(
+    keywords.some((item) => item.label === "OR"),
+    "OR should appear in SELECT context",
+  );
 });
 
 test("shows DDL keywords in CREATE TABLE context", () => {
@@ -619,7 +917,10 @@ test("shows DDL keywords in CREATE TABLE context", () => {
     columnsByTable,
   });
   // In CREATE context, data types should appear
-  assert.ok(items.some((item) => item.label === "INT" || item.label === "BIGINT"), "data types should appear in CREATE");
+  assert.ok(
+    items.some((item) => item.label === "INT" || item.label === "BIGINT"),
+    "data types should appear in CREATE",
+  );
 });
 
 test("filters data type keywords out of SELECT context", () => {
@@ -642,10 +943,22 @@ test("shows qualified column names when multiple tables share column name", () =
     columnsByTable,
   });
   const columns = items.filter((item) => item.type === "column");
-  assert.ok(columns.some((item) => item.label === "users.id"), "should show users.id");
-  assert.ok(columns.some((item) => item.label === "orders.id"), "should show orders.id");
-  assert.ok(columns.some((item) => item.label === "name"), "unique name should remain unqualified");
-  assert.ok(columns.some((item) => item.label === "user_id"), "unique user_id should remain unqualified");
+  assert.ok(
+    columns.some((item) => item.label === "users.id"),
+    "should show users.id",
+  );
+  assert.ok(
+    columns.some((item) => item.label === "orders.id"),
+    "should show orders.id",
+  );
+  assert.ok(
+    columns.some((item) => item.label === "name"),
+    "unique name should remain unqualified",
+  );
+  assert.ok(
+    columns.some((item) => item.label === "user_id"),
+    "unique user_id should remain unqualified",
+  );
 });
 
 // --- Window function OVER() ---
@@ -772,16 +1085,210 @@ test("getSqlCompletionContext returns nonAggregatedSelectColumns", () => {
 
 // --- Better FK join inference ---
 
+test("prefers explicit foreign-key join condition with table aliases", () => {
+  const foreignKeysByTable = new Map<string, SqlCompletionForeignKey[]>([
+    [
+      "public.orders",
+      [{ name: "orders_customer_id_fkey", column: "customer_id", ref_table: "customers", ref_column: "id" }],
+    ],
+  ]);
+  const sql = "select * from public.orders o join public.customers c on ";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: [
+      { name: "orders", schema: "public", type: "table" },
+      { name: "customers", schema: "public", type: "table" },
+    ],
+    columnsByTable,
+    foreignKeysByTable,
+  });
+
+  assert.deepEqual(items[0], {
+    label: "o.customer_id = c.id",
+    type: "snippet",
+    detail: "JOIN condition from foreign key",
+    apply: "o.customer_id = c.id",
+    boost: 3201,
+  });
+});
+
+test("suggests explicit foreign-key join when the joined table owns the key", () => {
+  const foreignKeysByTable = new Map<string, SqlCompletionForeignKey[]>([
+    [
+      "public.orders",
+      [{ name: "orders_customer_id_fkey", column: "customer_id", ref_table: "customers", ref_column: "id" }],
+    ],
+  ]);
+  const sql = "select * from public.customers c join public.orders o on ";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: [
+      { name: "customers", schema: "public", type: "table" },
+      { name: "orders", schema: "public", type: "table" },
+    ],
+    columnsByTable,
+    foreignKeysByTable,
+  });
+
+  const fkJoin = items.find((item) => item.label === "o.customer_id = c.id");
+  assert.ok(fkJoin, "should suggest FK join when the right side owns the foreign key");
+});
+
+test("suggests composite explicit foreign-key join conditions", () => {
+  const colsWithCompositeFk = new Map<string, SqlCompletionColumn[]>([
+    [
+      "public.products",
+      [
+        { name: "tenant_id", table: "products", schema: "public", dataType: "text" },
+        { name: "id", table: "products", schema: "public", dataType: "text" },
+      ],
+    ],
+    [
+      "public.order_lines",
+      [
+        { name: "tenant_id", table: "order_lines", schema: "public", dataType: "text" },
+        { name: "product_id", table: "order_lines", schema: "public", dataType: "text" },
+      ],
+    ],
+  ]);
+  const foreignKeysByTable = new Map<string, SqlCompletionForeignKey[]>([
+    [
+      "public.order_lines",
+      [
+        { name: "order_lines_product_fkey", column: "tenant_id", ref_table: "products", ref_column: "tenant_id" },
+        { name: "order_lines_product_fkey", column: "product_id", ref_table: "products", ref_column: "id" },
+      ],
+    ],
+  ]);
+  const sql = "select * from public.order_lines ol join public.products p on ";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: [
+      { name: "order_lines", schema: "public", type: "table" },
+      { name: "products", schema: "public", type: "table" },
+    ],
+    columnsByTable: colsWithCompositeFk,
+    foreignKeysByTable,
+  });
+
+  const fkJoin = items.find((item) => item.label === "ol.tenant_id = p.tenant_id AND ol.product_id = p.id");
+  assert.ok(fkJoin, "should suggest full composite FK join");
+  assert.equal(fkJoin?.detail, "JOIN condition from composite foreign key");
+});
+
+test("uses referenced schema to disambiguate explicit foreign-key joins", () => {
+  const foreignKeysByTable = new Map<string, SqlCompletionForeignKey[]>([
+    [
+      "sales.orders",
+      [
+        {
+          name: "orders_customer_id_fkey",
+          column: "customer_id",
+          ref_schema: "crm",
+          ref_table: "customers",
+          ref_column: "id",
+        },
+      ],
+    ],
+  ]);
+  const sql = "select * from sales.orders o join public.customers pc on ";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: [
+      { name: "orders", schema: "sales", type: "table" },
+      { name: "customers", schema: "public", type: "table" },
+      { name: "customers", schema: "crm", type: "table" },
+    ],
+    columnsByTable,
+    foreignKeysByTable,
+  });
+
+  assert.equal(
+    items.some((item) => item.label === "o.customer_id = pc.id" && item.detail === "JOIN condition from foreign key"),
+    false,
+  );
+});
+
+test("suggests likely composite joins from shared scope columns and id naming", () => {
+  const colsWithTenantRelationship = new Map<string, SqlCompletionColumn[]>([
+    [
+      "public.orders",
+      [
+        { name: "tenant_id", table: "orders", schema: "public", dataType: "text" },
+        { name: "id", table: "orders", schema: "public", dataType: "uuid" },
+      ],
+    ],
+    [
+      "public.order_lines",
+      [
+        { name: "tenant_id", table: "order_lines", schema: "public", dataType: "text" },
+        { name: "order_id", table: "order_lines", schema: "public", dataType: "uuid" },
+        { name: "article_id", table: "order_lines", schema: "public", dataType: "text" },
+      ],
+    ],
+  ]);
+  const sql = "select * from public.orders o join public.order_lines ol on ";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: [
+      { name: "orders", schema: "public", type: "table" },
+      { name: "order_lines", schema: "public", type: "table" },
+    ],
+    columnsByTable: colsWithTenantRelationship,
+  });
+
+  const compositeJoin = items.find((item) => item.label === "o.tenant_id = ol.tenant_id AND o.id = ol.order_id");
+  assert.ok(compositeJoin, "should combine tenant scope with id/FK naming");
+  assert.equal(compositeJoin?.detail, "Likely composite JOIN condition");
+});
+
+test("does not suggest heuristic joins for incompatible column types", () => {
+  const colsWithIncompatibleIds = new Map<string, SqlCompletionColumn[]>([
+    [
+      "public.users",
+      [
+        { name: "id", table: "users", schema: "public", dataType: "uuid" },
+        { name: "tenant_id", table: "users", schema: "public", dataType: "text" },
+      ],
+    ],
+    [
+      "public.orders",
+      [
+        { name: "user_id", table: "orders", schema: "public", dataType: "bigint" },
+        { name: "tenant_id", table: "orders", schema: "public", dataType: "text" },
+      ],
+    ],
+  ]);
+  const sql = "select * from public.users u join public.orders o on ";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: [
+      { name: "users", schema: "public", type: "table" },
+      { name: "orders", schema: "public", type: "table" },
+    ],
+    columnsByTable: colsWithIncompatibleIds,
+  });
+
+  assert.equal(
+    items.some((item) => item.label === "u.id = o.user_id"),
+    false,
+  );
+  assert.equal(
+    items.some((item) => item.label === "u.tenant_id = o.tenant_id AND u.id = o.user_id"),
+    false,
+  );
+});
+
 test("suggests join condition for same FK column in both tables", () => {
   const colsWithFk = new Map<string, SqlCompletionColumn[]>([
-    ["public.authors", [
-      { name: "id", table: "authors", schema: "public", dataType: "bigint" },
-      { name: "publisher_id", table: "authors", schema: "public", dataType: "bigint" },
-    ]],
-    ["public.books", [
-      { name: "id", table: "books", schema: "public", dataType: "bigint" },
-      { name: "publisher_id", table: "books", schema: "public", dataType: "bigint" },
-    ]],
+    [
+      "public.authors",
+      [
+        { name: "id", table: "authors", schema: "public", dataType: "bigint" },
+        { name: "publisher_id", table: "authors", schema: "public", dataType: "bigint" },
+      ],
+    ],
+    [
+      "public.books",
+      [
+        { name: "id", table: "books", schema: "public", dataType: "bigint" },
+        { name: "publisher_id", table: "books", schema: "public", dataType: "bigint" },
+      ],
+    ],
   ]);
   const sql = "select * from public.authors a join public.books b on ";
   const items = buildSqlCompletionItems(sql, sql.length, {
@@ -797,34 +1304,43 @@ test("suggests join condition for same FK column in both tables", () => {
 
 test("suggests join condition for parent_id self-reference", () => {
   const colsWithParent = new Map<string, SqlCompletionColumn[]>([
-    ["public.categories", [
-      { name: "id", table: "categories", schema: "public", dataType: "bigint" },
-      { name: "parent_id", table: "categories", schema: "public", dataType: "bigint" },
-      { name: "name", table: "categories", schema: "public", dataType: "varchar" },
-    ]],
+    [
+      "public.categories",
+      [
+        { name: "id", table: "categories", schema: "public", dataType: "bigint" },
+        { name: "parent_id", table: "categories", schema: "public", dataType: "bigint" },
+        { name: "name", table: "categories", schema: "public", dataType: "varchar" },
+      ],
+    ],
   ]);
   // Self-join
   const sql = "select * from public.categories c1 join public.categories c2 on ";
   const items = buildSqlCompletionItems(sql, sql.length, {
-    tables: [
-      { name: "categories", schema: "public", type: "table" },
-    ],
+    tables: [{ name: "categories", schema: "public", type: "table" }],
     columnsByTable: colsWithParent,
   });
-  const parentJoin = items.find((item) => item.label === "c1.parent_id = c2.id" || item.label === "c2.parent_id = c1.id");
+  const parentJoin = items.find(
+    (item) => item.label === "c1.parent_id = c2.id" || item.label === "c2.parent_id = c1.id",
+  );
   assert.ok(parentJoin, "should suggest parent_id = id for self-reference");
 });
 
 test("suggests join condition for created_by → id pattern", () => {
   const colsWithCreator = new Map<string, SqlCompletionColumn[]>([
-    ["public.users", [
-      { name: "id", table: "users", schema: "public", dataType: "bigint" },
-      { name: "name", table: "users", schema: "public", dataType: "varchar" },
-    ]],
-    ["public.documents", [
-      { name: "id", table: "documents", schema: "public", dataType: "bigint" },
-      { name: "created_by", table: "documents", schema: "public", dataType: "bigint" },
-    ]],
+    [
+      "public.users",
+      [
+        { name: "id", table: "users", schema: "public", dataType: "bigint" },
+        { name: "name", table: "users", schema: "public", dataType: "varchar" },
+      ],
+    ],
+    [
+      "public.documents",
+      [
+        { name: "id", table: "documents", schema: "public", dataType: "bigint" },
+        { name: "created_by", table: "documents", schema: "public", dataType: "bigint" },
+      ],
+    ],
   ]);
   const sql = "select * from public.users u join public.documents d on ";
   const items = buildSqlCompletionItems(sql, sql.length, {
@@ -838,6 +1354,37 @@ test("suggests join condition for created_by → id pattern", () => {
   assert.ok(creatorJoin, "should suggest id = created_by join");
 });
 
+test("suggests generic foreign-key to id join when table names differ from column names", () => {
+  const colsWithGenericFk = new Map<string, SqlCompletionColumn[]>([
+    [
+      "public.first_table",
+      [
+        { name: "id", table: "first_table", schema: "public", dataType: "bigint" },
+        { name: "user_id", table: "first_table", schema: "public", dataType: "bigint" },
+      ],
+    ],
+    [
+      "public.second_table",
+      [
+        { name: "id", table: "second_table", schema: "public", dataType: "bigint" },
+        { name: "name", table: "second_table", schema: "public", dataType: "varchar" },
+      ],
+    ],
+  ]);
+  const sql = "select * from public.first_table t1 join public.second_table t2 on ";
+  const items = buildSqlCompletionItems(sql, sql.length, {
+    tables: [
+      { name: "first_table", schema: "public", type: "table" },
+      { name: "second_table", schema: "public", type: "table" },
+    ],
+    columnsByTable: colsWithGenericFk,
+  });
+
+  const genericJoin = items.find((item) => item.label === "t1.user_id = t2.id");
+  assert.ok(genericJoin, "should suggest generic *_id = id joins");
+  assert.equal(genericJoin.apply, "t1.user_id = t2.id");
+});
+
 // --- Fuzzy matching ---
 
 test("fuzzy matches table names with character gaps", () => {
@@ -847,7 +1394,10 @@ test("fuzzy matches table names with character gaps", () => {
   });
   // "usrs" should fuzzy-match "users" (skip 'e')
   const tableItems = items.filter((item) => item.type === "table");
-  assert.ok(tableItems.some((item) => item.label === "users"), "should fuzzy-match users");
+  assert.ok(
+    tableItems.some((item) => item.label === "users"),
+    "should fuzzy-match users",
+  );
 });
 
 test("fuzzy matches columns with abbreviation pattern", () => {
@@ -857,7 +1407,10 @@ test("fuzzy matches columns with abbreviation pattern", () => {
     columnsByTable,
   });
   // "nm" should fuzzy-match "name"
-  assert.ok(items.some((item) => item.label === "name" && item.type === "column"), "should fuzzy-match name from 'nm'");
+  assert.ok(
+    items.some((item) => item.label === "name" && item.type === "column"),
+    "should fuzzy-match name from 'nm'",
+  );
 });
 
 test("prefix matches still rank above fuzzy matches", () => {
@@ -879,8 +1432,14 @@ test("suggests NULL and IS NULL after comparison operator", () => {
     tables,
     columnsByTable,
   });
-  assert.ok(items.some((item) => item.label === "NULL"), "should suggest NULL");
-  assert.ok(items.some((item) => item.label === "IS NULL"), "should suggest IS NULL");
+  assert.ok(
+    items.some((item) => item.label === "NULL"),
+    "should suggest NULL",
+  );
+  assert.ok(
+    items.some((item) => item.label === "IS NULL"),
+    "should suggest IS NULL",
+  );
 });
 
 test("suggests string snippet for varchar column after =", () => {

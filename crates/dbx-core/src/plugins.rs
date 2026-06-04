@@ -51,6 +51,28 @@ pub struct InstalledPlugin {
     pub path: PathBuf,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PluginRuntimeEnv {
+    vars: Vec<(String, String)>,
+}
+
+impl PluginRuntimeEnv {
+    pub fn with_var(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.vars.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.vars.iter().find_map(|(name, value)| (name == key).then_some(value.as_str()))
+    }
+
+    fn apply_to(&self, command: &mut Command) {
+        for (key, value) in &self.vars {
+            command.env(key, value);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PluginRegistry {
     root_dir: PathBuf,
@@ -106,19 +128,58 @@ impl PluginRegistry {
     where
         T: DeserializeOwned,
     {
+        self.invoke_driver_with_env(driver_id, method, params, PluginRuntimeEnv::default()).await
+    }
+
+    pub async fn invoke_driver_with_env<T>(
+        &self,
+        driver_id: &str,
+        method: &str,
+        params: serde_json::Value,
+        env: PluginRuntimeEnv,
+    ) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+    {
+        self.invoke_driver_with_env_and_timeout(driver_id, method, params, env, Some(PLUGIN_REQUEST_TIMEOUT)).await
+    }
+
+    pub async fn invoke_driver_with_env_and_timeout<T>(
+        &self,
+        driver_id: &str,
+        method: &str,
+        params: serde_json::Value,
+        env: PluginRuntimeEnv,
+        timeout_duration: Option<Duration>,
+    ) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+    {
         let plugin =
             self.find_driver(driver_id)?.ok_or_else(|| format!("Plugin driver '{driver_id}' is not installed"))?;
         ensure_plugin_protocol_compatible(&plugin.manifest)?;
-        timeout(PLUGIN_REQUEST_TIMEOUT, invoke_plugin(&plugin, driver_id, method, params)).await.map_err(|_| {
-            format!("Plugin '{}' timed out after {} seconds", plugin.manifest.id, PLUGIN_REQUEST_TIMEOUT.as_secs())
-        })?
+        let invoke = invoke_plugin(&plugin, driver_id, method, params, &env);
+        match timeout_duration {
+            Some(duration) => timeout(duration, invoke).await.map_err(|_| {
+                format!("Plugin '{}' timed out after {} seconds", plugin.manifest.id, duration.as_secs())
+            })?,
+            None => invoke.await,
+        }
     }
 
     pub async fn start_driver_session(&self, driver_id: &str) -> Result<Arc<PluginDriverSession>, String> {
+        self.start_driver_session_with_env(driver_id, PluginRuntimeEnv::default()).await
+    }
+
+    pub async fn start_driver_session_with_env(
+        &self,
+        driver_id: &str,
+        env: PluginRuntimeEnv,
+    ) -> Result<Arc<PluginDriverSession>, String> {
         let plugin =
             self.find_driver(driver_id)?.ok_or_else(|| format!("Plugin driver '{driver_id}' is not installed"))?;
         ensure_plugin_protocol_compatible(&plugin.manifest)?;
-        PluginDriverSession::start(plugin, driver_id.to_string()).await.map(Arc::new)
+        PluginDriverSession::start(plugin, driver_id.to_string(), env).await.map(Arc::new)
     }
 }
 
@@ -169,8 +230,8 @@ struct PluginProcess {
 }
 
 impl PluginDriverSession {
-    async fn start(plugin: InstalledPlugin, driver_id: String) -> Result<Self, String> {
-        let mut child = spawn_plugin_child(&plugin)?;
+    async fn start(plugin: InstalledPlugin, driver_id: String, env: PluginRuntimeEnv) -> Result<Self, String> {
+        let mut child = spawn_plugin_child(&plugin, &env)?;
         let stdin = child.stdin.take().ok_or("Plugin stdin unavailable")?;
         let stdout = child.stdout.take().ok_or("Plugin stdout unavailable")?;
         if let Some(stderr) = child.stderr.take() {
@@ -202,23 +263,32 @@ impl PluginDriverSession {
     where
         T: DeserializeOwned,
     {
+        self.invoke_with_timeout(method, params, Some(PLUGIN_REQUEST_TIMEOUT)).await
+    }
+
+    pub async fn invoke_with_timeout<T>(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        timeout_duration: Option<Duration>,
+    ) -> Result<T, String>
+    where
+        T: DeserializeOwned,
+    {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        let result = timeout(PLUGIN_REQUEST_TIMEOUT, async {
+        let invoke = async {
             let mut process = self.process.lock().await;
             self.invoke_locked(&mut process, request_id, method, params).await
-        })
-        .await;
-
-        match result {
-            Ok(result) => result,
-            Err(_) => {
-                self.kill().await;
-                Err(format!(
-                    "Plugin '{}' timed out after {} seconds",
-                    self.plugin.manifest.id,
-                    PLUGIN_REQUEST_TIMEOUT.as_secs()
-                ))
-            }
+        };
+        match timeout_duration {
+            Some(duration) => match timeout(duration, invoke).await {
+                Ok(result) => result,
+                Err(_) => {
+                    self.kill().await;
+                    Err(format!("Plugin '{}' timed out after {} seconds", self.plugin.manifest.id, duration.as_secs()))
+                }
+            },
+            None => invoke.await,
         }
     }
 
@@ -275,11 +345,12 @@ async fn invoke_plugin<T>(
     driver_id: &str,
     method: &str,
     params: serde_json::Value,
+    env: &PluginRuntimeEnv,
 ) -> Result<T, String>
 where
     T: DeserializeOwned,
 {
-    let mut child = spawn_plugin_child(plugin)?;
+    let mut child = spawn_plugin_child(plugin, env)?;
 
     let request =
         PluginRequest { jsonrpc: "2.0", id: 1, driver: driver_id.to_string(), method: method.to_string(), params };
@@ -337,7 +408,7 @@ fn encode_plugin_request_line(request: &PluginRequest) -> Result<Vec<u8>, String
     Ok(bytes)
 }
 
-fn spawn_plugin_child(plugin: &InstalledPlugin) -> Result<Child, String> {
+fn spawn_plugin_child(plugin: &InstalledPlugin, env: &PluginRuntimeEnv) -> Result<Child, String> {
     let executable = plugin
         .manifest
         .executable
@@ -353,6 +424,7 @@ fn spawn_plugin_child(plugin: &InstalledPlugin) -> Result<Child, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    env.apply_to(&mut command);
 
     #[cfg(windows)]
     {

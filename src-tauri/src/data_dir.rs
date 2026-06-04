@@ -18,6 +18,10 @@ pub fn resolve_data_dir(default_app_data_dir: PathBuf) -> PathBuf {
     default_app_data_dir
 }
 
+pub fn uses_custom_data_dir() -> bool {
+    std::env::var_os("DBX_DATA_DIR").filter(|value| !value.is_empty()).is_some() || is_portable_mode()
+}
+
 #[cfg(target_os = "windows")]
 pub fn is_portable_mode() -> bool {
     current_exe_dir().is_some_and(|dir| portable_marker_exists(&dir))
@@ -61,10 +65,19 @@ fn is_portable_mode_from_inputs(exe_dir: Option<PathBuf>, portable_marker_exists
 }
 
 #[cfg(test)]
+fn uses_custom_data_dir_from_inputs(
+    env_data_dir: Option<PathBuf>,
+    exe_dir: Option<PathBuf>,
+    portable_marker_exists: bool,
+) -> bool {
+    env_data_dir.is_some() || is_portable_mode_from_inputs(exe_dir, portable_marker_exists)
+}
+
+#[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::{is_portable_mode_from_inputs, resolve_data_dir_from_inputs};
+    use super::{is_portable_mode_from_inputs, resolve_data_dir_from_inputs, uses_custom_data_dir_from_inputs};
 
     #[test]
     fn uses_portable_data_dir_when_marker_exists() {
@@ -83,5 +96,12 @@ mod tests {
         assert!(is_portable_mode_from_inputs(Some(exe_dir), true));
         assert!(!is_portable_mode_from_inputs(Some(PathBuf::from(r"D:\Apps\DBX")), false));
         assert!(!is_portable_mode_from_inputs(None, true));
+    }
+
+    #[test]
+    fn custom_data_dir_is_used_for_env_override_or_portable_mode() {
+        assert!(uses_custom_data_dir_from_inputs(Some(PathBuf::from(r"D:\DBXData")), None, false));
+        assert!(uses_custom_data_dir_from_inputs(None, Some(PathBuf::from(r"D:\Apps\DBX")), true));
+        assert!(!uses_custom_data_dir_from_inputs(None, Some(PathBuf::from(r"D:\Apps\DBX")), false));
     }
 }

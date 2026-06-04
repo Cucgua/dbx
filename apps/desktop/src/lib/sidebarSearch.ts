@@ -1,9 +1,20 @@
-export type SidebarSearchMatchKind = "exact" | "prefix" | "word-prefix" | "substring" | "abbreviation" | "fuzzy";
+import { parseSlashDelimitedRegexQuery } from "@/lib/searchPattern";
+
+export type SidebarSearchMatchKind =
+  | "exact"
+  | "prefix"
+  | "word-prefix"
+  | "substring"
+  | "abbreviation"
+  | "fuzzy"
+  | "regex";
 
 export interface SidebarSearchMatch {
   kind: SidebarSearchMatchKind;
   score: number;
 }
+
+export type SidebarLabelMatcher = (label: string) => SidebarSearchMatch | null;
 
 function isWordBoundary(text: string, index: number): boolean {
   if (index === 0) return true;
@@ -39,8 +50,10 @@ function matchesSubsequence(text: string, query: string): boolean {
   return j === query.length;
 }
 
-export function matchSidebarLabel(label: string, query: string): SidebarSearchMatch | null {
+function matchSidebarLabelWithRegex(label: string, query: string, regex: RegExp | null): SidebarSearchMatch | null {
   if (!query) return null;
+
+  if (regex) return regex.test(label) ? { kind: "regex", score: 95 } : null;
 
   if (label === query) return { kind: "exact", score: 100 };
   if (label.startsWith(query)) return { kind: "prefix", score: 90 };
@@ -50,4 +63,13 @@ export function matchSidebarLabel(label: string, query: string): SidebarSearchMa
   if (matchesSubsequence(label, query)) return { kind: "fuzzy", score: 40 };
 
   return null;
+}
+
+export function createSidebarLabelMatcher(query: string): SidebarLabelMatcher {
+  const regex = parseSlashDelimitedRegexQuery(query);
+  return (label) => matchSidebarLabelWithRegex(label, query, regex);
+}
+
+export function matchSidebarLabel(label: string, query: string): SidebarSearchMatch | null {
+  return matchSidebarLabelWithRegex(label, query, parseSlashDelimitedRegexQuery(query));
 }

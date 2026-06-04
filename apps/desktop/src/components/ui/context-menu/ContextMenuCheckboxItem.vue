@@ -3,7 +3,7 @@ import type { ContextMenuCheckboxItemEmits, ContextMenuCheckboxItemProps } from 
 
 import type { HTMLAttributes } from "vue";
 import { reactiveOmit } from "@vueuse/core";
-import { CheckIcon } from "lucide-vue-next";
+import { CheckIcon } from "@lucide/vue";
 import { ContextMenuCheckboxItem, ContextMenuItemIndicator, useForwardPropsEmits } from "reka-ui";
 import { shouldSuppressRepeatedActivation, suppressEvent, type ActionActivationGuard } from "@/lib/actionActivation";
 import { cn } from "@/lib/utils";

@@ -17,12 +17,14 @@ import {
   Eraser,
   Eye,
   FileCode,
-  FileUp,
+  Upload,
   Loader2,
   Network,
   Pencil,
   PencilLine,
   PencilRuler,
+  Play,
+  Package,
   RefreshCw,
   Scissors,
   Search,
@@ -32,13 +34,14 @@ import {
   TerminalSquare,
   Trash2,
   X,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import CustomContextMenu, { type ContextMenuItem } from "@/components/ui/CustomContextMenu.vue";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
+import ProcedureExecutionDialog from "@/components/objects/ProcedureExecutionDialog.vue";
 import * as api from "@/lib/api";
 import type { ConnectionConfig, ObjectInfo, ObjectSourceKind } from "@/types/database";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
@@ -66,10 +69,12 @@ import {
 import { buildRenameObjectSql, supportsObjectRename } from "@/lib/objectRenameSql";
 import { buildViewDdl } from "@/lib/viewDdl";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
+import { generateDatabaseExportId } from "@/lib/databaseExport";
 import { copyToClipboard } from "@/lib/clipboard";
 import { formatSqlInsert } from "@/lib/exportFormats";
 import { fetchTableDataForExport } from "@/lib/tableDataExport";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useExportTracker, type ExportTask } from "@/composables/useExportTracker";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useQueryStore } from "@/stores/queryStore";
 import QueryEditor from "@/components/editor/QueryEditor.vue";
@@ -87,7 +92,7 @@ import {
   type ObjectBrowserSortKey,
 } from "@/lib/objectBrowserRows";
 
-type ObjectFilter = "all" | "tables" | "views" | "procedures" | "functions";
+type ObjectFilter = "all" | "tables" | "views" | "procedures" | "functions" | "packages";
 
 const props = defineProps<{
   connection: ConnectionConfig;
@@ -143,23 +148,36 @@ const emptyPreviewSql = ref("");
 const showDuplicateDialog = ref(false);
 const duplicateTarget = ref<ObjectBrowserRow | null>(null);
 const duplicateTableName = ref("");
+const showProcedureExecutionConfirm = ref(false);
+const procedureExecutionTarget = ref<ObjectBrowserRow | null>(null);
 const selectedTableIds = ref<Set<string>>(new Set());
 const expandedPartitionParentIds = ref<Set<string>>(new Set());
 const showBatchDropConfirm = ref(false);
 const batchDropPreviewSql = ref("");
 let loadId = 0;
 
+// Export via background tracker
+const { addTask: addExportTask } = useExportTracker();
+
 const needsSchema = computed(() => isSchemaAware(props.connection.db_type));
 const tableCount = computed(() => rows.value.filter((row) => row.type === "TABLE").length);
 const viewCount = computed(() => rows.value.filter((row) => row.type === "VIEW").length);
 const procedureCount = computed(() => rows.value.filter((row) => row.type === "PROCEDURE").length);
 const functionCount = computed(() => rows.value.filter((row) => row.type === "FUNCTION").length);
+const packageCount = computed(
+  () => rows.value.filter((row) => row.type === "PACKAGE" || row.type === "PACKAGE_BODY").length,
+);
 const canOpenStructureEditor = computed(() => supportsTableStructureEditing(props.connection.db_type));
 const canOpenDiagram = computed(() => !!props.database && supportsSchemaDiagram(props.connection.db_type));
 const canOpenTableImport = computed(() => !!props.database && supportsTableImport(props.connection.db_type));
 const supportsTruncateTable = computed(() => supportsTableTruncate(props.connection.db_type));
 const sourceDialect = computed<"mysql" | "postgres" | "sqlserver">(() => {
-  if (props.connection.db_type === "postgres" || props.connection.db_type === "gaussdb") return "postgres";
+  if (
+    props.connection.db_type === "postgres" ||
+    props.connection.db_type === "gaussdb" ||
+    props.connection.db_type === "opengauss"
+  )
+    return "postgres";
   if (props.connection.db_type === "sqlserver") return "sqlserver";
   return "mysql";
 });
@@ -170,6 +188,9 @@ const sourceFormatDialect = computed<SqlFormatDialect>(() => {
     case "sqlite":
     case "sqlserver":
       return props.connection.db_type;
+    case "gaussdb":
+    case "opengauss":
+      return "postgres";
     default:
       return "generic";
   }
@@ -182,6 +203,7 @@ const objectFilters = computed<ObjectFilter[]>(() =>
       ["views", viewCount.value],
       ["procedures", procedureCount.value],
       ["functions", functionCount.value],
+      ["packages", packageCount.value],
     ] as Array<[ObjectFilter, number]>
   )
     .filter(([filter, count]) => filter === "all" || count > 0)
@@ -226,6 +248,7 @@ function iconFor(row: ObjectBrowserRow) {
   if (row.type === "VIEW") return Eye;
   if (row.type === "PROCEDURE") return ScrollText;
   if (row.type === "FUNCTION") return Braces;
+  if (row.type === "PACKAGE" || row.type === "PACKAGE_BODY") return Package;
   return Table2;
 }
 
@@ -233,6 +256,8 @@ function typeLabel(type: ObjectBrowserRow["type"]) {
   if (type === "VIEW") return t("objects.view");
   if (type === "PROCEDURE") return t("objects.procedure");
   if (type === "FUNCTION") return t("objects.function");
+  if (type === "PACKAGE") return t("objects.package");
+  if (type === "PACKAGE_BODY") return t("objects.packageBody");
   return t("objects.table");
 }
 
@@ -255,6 +280,7 @@ function rowMatchesObjectFilter(row: ObjectBrowserRow) {
   if (objectFilter.value === "views") return row.type === "VIEW";
   if (objectFilter.value === "procedures") return row.type === "PROCEDURE";
   if (objectFilter.value === "functions") return row.type === "FUNCTION";
+  if (objectFilter.value === "packages") return row.type === "PACKAGE" || row.type === "PACKAGE_BODY";
   return true;
 }
 
@@ -294,6 +320,7 @@ function iconClass(type: ObjectBrowserRow["type"]) {
   if (type === "VIEW") return "text-purple-500";
   if (type === "PROCEDURE") return "text-blue-500";
   if (type === "FUNCTION") return "text-amber-500";
+  if (type === "PACKAGE" || type === "PACKAGE_BODY") return "text-cyan-500";
   return "text-green-500";
 }
 
@@ -310,7 +337,13 @@ function togglePartitionParent(row: ObjectBrowserRow) {
 }
 
 function canOpenSource(row: ObjectBrowserRow) {
-  return row.type === "VIEW" || row.type === "PROCEDURE" || row.type === "FUNCTION";
+  return (
+    row.type === "VIEW" ||
+    row.type === "PROCEDURE" ||
+    row.type === "FUNCTION" ||
+    row.type === "PACKAGE" ||
+    row.type === "PACKAGE_BODY"
+  );
 }
 
 function canRename(row: ObjectBrowserRow) {
@@ -404,6 +437,29 @@ async function openNewQuery(row: ObjectBrowserRow) {
       limit: 100,
     }),
   );
+}
+
+function openProcedureExecution(row: ObjectBrowserRow) {
+  if (row.type !== "PROCEDURE") return;
+  procedureExecutionTarget.value = row;
+  showProcedureExecutionConfirm.value = true;
+}
+
+function openProcedureExecutionSql(sql: string) {
+  const row = procedureExecutionTarget.value;
+  if (!row || !sql) return;
+  const schema = row.schema || selectedSchema.value;
+  const tabId = queryStore.createTab(props.connection.id, props.database, `Execute - ${row.name}`, "query", schema);
+  queryStore.updateSql(tabId, sql);
+}
+
+async function executeProcedureSql(sql: string) {
+  const row = procedureExecutionTarget.value;
+  if (!row || !sql) return;
+  const schema = row.schema || selectedSchema.value;
+  const tabId = queryStore.createTab(props.connection.id, props.database, `Execute - ${row.name}`, "query", schema);
+  queryStore.updateSql(tabId, sql);
+  await queryStore.executeTabSql(tabId, sql);
 }
 
 function requestDrop(row: ObjectBrowserRow) {
@@ -720,7 +776,7 @@ async function exportStructure(row: ObjectBrowserRow) {
   }
 }
 
-async function exportData(row: ObjectBrowserRow, format: "csv" | "json" | "sql") {
+async function exportDataLegacy(row: ObjectBrowserRow, format: "json" | "sql") {
   try {
     const schema = row.schema || selectedSchema.value;
     const queryColumns =
@@ -736,22 +792,6 @@ async function exportData(row: ObjectBrowserRow, format: "csv" | "json" | "sql")
       columns: queryColumns,
       executePage: (sql) => api.executeQuery(props.connection.id, props.database, sql),
     });
-
-    if (format === "csv") {
-      let outputPath = `${row.name}.csv`;
-      if (isTauriRuntime()) {
-        const { save } = await import("@tauri-apps/plugin-dialog");
-        const path = await save({
-          defaultPath: outputPath,
-          filters: [{ name: "CSV", extensions: ["csv"] }],
-        });
-        if (!path) return;
-        outputPath = path as string;
-      }
-      await api.exportQueryResultCsv(outputPath, result.columns, result.rows);
-      toast(t("grid.exported"));
-      return;
-    }
 
     if (format === "json") {
       let outputPath = `${row.name}.json`;
@@ -783,36 +823,81 @@ async function exportData(row: ObjectBrowserRow, format: "csv" | "json" | "sql")
   }
 }
 
+async function exportData(row: ObjectBrowserRow, format: "csv" | "json" | "sql") {
+  if (format === "csv") {
+    await exportTableData(row, "csv");
+    return;
+  }
+  await exportDataLegacy(row, format);
+}
+
 async function exportDataXlsx(row: ObjectBrowserRow) {
+  await exportTableData(row, "xlsx");
+}
+
+async function exportTableData(row: ObjectBrowserRow, format: "csv" | "xlsx") {
+  const schema = row.schema || selectedSchema.value;
+
+  // Save dialog first
+  let filePath = "";
+  const defaultName = `${row.name}.${format}`;
+
+  if (isTauriRuntime()) {
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const filter = format === "csv" ? { name: "CSV", extensions: ["csv"] } : { name: "Excel", extensions: ["xlsx"] };
+      const path = await save({
+        defaultPath: defaultName,
+        filters: [filter],
+      });
+      if (!path) return;
+      filePath = path as string;
+    } catch (e: any) {
+      toast(e?.message || String(e), 5000);
+      return;
+    }
+  } else {
+    const webExportId = generateDatabaseExportId();
+    filePath = `__web_export_${webExportId}.${format}`;
+  }
+
+  let task: ExportTask | null = null;
   try {
-    const schema = row.schema || selectedSchema.value;
     const queryColumns =
       props.connection.db_type === "neo4j"
         ? (await api.getColumns(props.connection.id, props.database, schema || props.database, row.name)).map(
             (column) => column.name,
           )
         : undefined;
-    const result = await fetchTableDataForExport({
-      databaseType: props.connection.db_type,
+
+    task = addExportTask(row.name, format, filePath);
+    const currentTask = task;
+    const request: api.TableExportRequest = {
+      exportId: currentTask.exportId,
+      connectionId: props.connection.id,
+      database: props.database,
       schema,
       tableName: row.name,
+      filePath,
+      format,
       columns: queryColumns,
-      executePage: (sql) => api.executeQuery(props.connection.id, props.database, sql),
-    });
+      batchSize: settingsStore.editorSettings.exportBatchSize,
+    };
 
-    let outputPath = `${row.name}.xlsx`;
-    if (isTauriRuntime()) {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const path = await save({
-        defaultPath: outputPath,
-        filters: [{ name: "Excel", extensions: ["xlsx"] }],
-      });
-      if (!path) return;
-      outputPath = path as string;
+    const terminalProgress = await api.startTableExport(request, (progress) => {
+      currentTask.rowsExported = progress.rowsExported;
+      currentTask.totalRows = progress.totalRows;
+      currentTask.status = progress.status;
+      currentTask.errorMessage = progress.errorMessage || null;
+    });
+    if (terminalProgress.status === "Done") {
+      toast(t("grid.exported"));
     }
-    await api.exportQueryResultXlsx(outputPath, row.name, result.columns, result.rows);
-    toast(t("grid.exported"));
   } catch (e: any) {
+    if (task) {
+      task.status = "Error";
+      task.errorMessage = e?.message || String(e);
+    }
     toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
   }
 }
@@ -1036,6 +1121,7 @@ function filterCount(filter: ObjectFilter) {
   if (filter === "views") return viewCount.value;
   if (filter === "procedures") return procedureCount.value;
   if (filter === "functions") return functionCount.value;
+  if (filter === "packages") return packageCount.value;
   return rows.value.length;
 }
 
@@ -1049,7 +1135,9 @@ function filterLabel(filter: ObjectFilter) {
           ? "objects.procedures"
           : filter === "functions"
             ? "objects.functions"
-            : "objects.all";
+            : filter === "packages"
+              ? "objects.packages"
+              : "objects.all";
   return `${t(key)} ${filterCount(filter)}`;
 }
 
@@ -1090,7 +1178,7 @@ watch(
 function exportDataSubmenu(item: ObjectBrowserRow): ContextMenuItem {
   return {
     label: t("contextMenu.exportData"),
-    icon: Download,
+    icon: Upload,
     children: [
       { label: "CSV", action: () => exportData(item, "csv") },
       { label: "JSON", action: () => exportData(item, "json") },
@@ -1112,12 +1200,12 @@ function getTableMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
     { label: t("contextMenu.newQuery"), action: () => openNewQuery(item), icon: TerminalSquare },
     ...(canOpenDiagram.value ? [{ label: t("diagram.open"), action: () => openDiagram(item), icon: Network }] : []),
     ...(canOpenTableImport.value
-      ? [{ label: t("contextMenu.importData"), action: () => openTableImport(item), icon: FileUp }]
+      ? [{ label: t("contextMenu.importData"), action: () => openTableImport(item), icon: Download }]
       : []),
     { label: t("dataCompare.title"), action: () => openDataCompare(item), icon: ArrowRightLeft },
     { label: "", separator: true },
     exportDataSubmenu(item),
-    { label: t("contextMenu.exportDatabase"), action: () => openDatabaseExport(item), icon: Download },
+    { label: t("contextMenu.exportDatabase"), action: () => openDatabaseExport(item), icon: Upload },
     { label: t("contextMenu.exportStructure"), action: () => exportStructure(item), icon: FileCode },
     { label: "", separator: true },
     { label: t("contextMenu.duplicateStructure"), action: () => requestDuplicateStructure(item), icon: CopyPlus },
@@ -1152,6 +1240,7 @@ function getTableMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
 function getViewMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
   return [
     { label: t("contextMenu.viewData"), action: () => openViewData(item), icon: Table2 },
+    { label: t("contextMenu.editView"), action: () => openSource(item), icon: PencilLine },
     { label: t("contextMenu.viewSource"), action: () => openSource(item), icon: Code2 },
     { label: t("contextMenu.viewDdl"), action: () => openViewDdl(item), icon: ScrollText },
     ...(canRename(item)
@@ -1161,7 +1250,7 @@ function getViewMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
     ...(canOpenDiagram.value ? [{ label: t("diagram.open"), action: () => openDiagram(item), icon: Network }] : []),
     { label: "", separator: true },
     exportDataSubmenu(item),
-    { label: t("contextMenu.exportDatabase"), action: () => openDatabaseExport(item), icon: Download },
+    { label: t("contextMenu.exportDatabase"), action: () => openDatabaseExport(item), icon: Upload },
     { label: t("contextMenu.exportStructure"), action: () => exportStructure(item), icon: FileCode },
     { label: "", separator: true },
     {
@@ -1177,6 +1266,9 @@ function getViewMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
 
 function getProcFuncMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
   return [
+    ...(item.type === "PROCEDURE"
+      ? [{ label: t("contextMenu.executeProcedure"), action: () => openProcedureExecution(item), icon: Play }]
+      : []),
     { label: t("contextMenu.viewSource"), action: () => openSource(item), icon: Code2 },
     ...(canRename(item)
       ? [{ label: t("contextMenu.renameObject"), action: () => requestRename(item), icon: Pencil }]
@@ -1193,9 +1285,18 @@ function getProcFuncMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
   ];
 }
 
+function getPackageMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
+  return [
+    { label: t("contextMenu.viewSource"), action: () => openSource(item), icon: Code2 },
+    { label: "", separator: true },
+    { label: t("contextMenu.copyName"), action: () => copyName(item), icon: Copy },
+  ];
+}
+
 function getObjectBrowserMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
   if (item.type === "TABLE") return getTableMenuItems(item);
   if (item.type === "VIEW") return getViewMenuItems(item);
+  if (item.type === "PACKAGE" || item.type === "PACKAGE_BODY") return getPackageMenuItems(item);
   return getProcFuncMenuItems(item);
 }
 </script>
@@ -1556,6 +1657,18 @@ function getObjectBrowserMenuItems(item: ObjectBrowserRow): ContextMenuItem[] {
     :sql="emptyPreviewSql"
     :confirm-label="t('contextMenu.emptyTable')"
     @confirm="confirmEmptyTable"
+  />
+
+  <ProcedureExecutionDialog
+    v-if="procedureExecutionTarget"
+    v-model:open="showProcedureExecutionConfirm"
+    :connection-id="props.connection.id"
+    :database="props.database"
+    :database-type="props.connection.db_type"
+    :schema="procedureExecutionTarget.schema || selectedSchema"
+    :routine-name="procedureExecutionTarget.name"
+    @open-sql="openProcedureExecutionSql"
+    @execute="executeProcedureSql"
   />
 
   <Dialog v-model:open="showDuplicateDialog">

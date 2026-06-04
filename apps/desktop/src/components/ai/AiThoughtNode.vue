@@ -12,7 +12,7 @@ import {
   Square,
   Wand2,
   Wrench,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import type { AiThoughtNodeState, AiWorkflowNodeKind, AiWorkflowNodeStatus } from "@/lib/aiWorkflowEvents";
 
 const props = withDefaults(

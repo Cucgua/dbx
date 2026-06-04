@@ -41,6 +41,8 @@ const SCHEME_PROFILES: Record<string, ConnectionProfile> = {
   dm: { type: "dameng", profile: "dm", label: "DM (Dameng)", defaultPort: 5236 },
   dameng: { type: "dameng", profile: "dm", label: "DM (Dameng)", defaultPort: 5236 },
   gaussdb: { type: "gaussdb", profile: "gaussdb", label: "GaussDB", defaultPort: 5432 },
+  gbase: { type: "gbase", profile: "gbase", label: "GBase", defaultPort: 5258 },
+  "gbasedbt-sqli": { type: "gbase", profile: "gbase8s", label: "GBase 8s", defaultPort: 9088 },
   yashandb: { type: "yashandb", profile: "yashandb", label: "YashanDB", defaultPort: 1688 },
   opengauss: { type: "gaussdb", profile: "opengauss", label: "openGauss", defaultPort: 5432 },
   tdengine: { type: "tdengine", profile: "tdengine", label: "TDengine", defaultPort: 6041 },
@@ -60,6 +62,34 @@ function decodeUrlPart(value: string): string {
   } catch {
     return value;
   }
+}
+
+function decodePercentEscapes(value: string): string {
+  return value.replace(/%([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+}
+
+function encodeMongoUserInfoPart(value: string): string {
+  return encodeURIComponent(decodePercentEscapes(value));
+}
+
+export function normalizeMongoConnectionString(value: string): string {
+  const input = value.trim();
+  if (!input) return input;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    return input;
+  }
+
+  const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+  if (scheme !== "mongodb" && scheme !== "mongodb+srv") return input;
+  if (!parsed.username && !parsed.password) return input;
+
+  const username = encodeMongoUserInfoPart(parsed.username);
+  const password = parsed.password ? `:${encodeMongoUserInfoPart(parsed.password)}` : "";
+  return `${parsed.protocol}//${username}${password}@${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 function databaseFromPath(pathname: string): string | undefined {
@@ -256,6 +286,31 @@ function parseJdbcUCanAccessUrl(source: string): ParsedConnectionUrl | null {
   };
 }
 
+function parseJdbcGbase8sUrl(source: string): ParsedConnectionUrl | null {
+  const match =
+    /^jdbc:gbasedbt-sqli:\/\/(?:(?<userinfo>[^@/?#]*)@)?(?<host>\[[^\]]+\]|[^:/?#]+)(?::(?<port>\d+))?\/(?<database>[^:?#]*)(?::(?<params>[^?#]*))?/i.exec(
+      source,
+    );
+  if (!match?.groups) return null;
+
+  const rawUserInfo = match.groups.userinfo || "";
+  const [rawUser = "", ...passwordParts] = rawUserInfo.split(":");
+  const host = match.groups.host.replace(/^\[/, "").replace(/\]$/, "");
+
+  return {
+    dbType: "gbase",
+    driverProfile: "gbase8s",
+    driverLabel: "GBase 8s",
+    host,
+    port: match.groups.port ? Number(match.groups.port) : 9088,
+    username: decodeUrlPart(rawUser),
+    password: decodeUrlPart(passwordParts.join(":")),
+    database: decodeUrlPart(match.groups.database || ""),
+    urlParams: match.groups.params || "",
+    ssl: false,
+  };
+}
+
 export function parseConnectionUrl(value: string, preferredProfile?: string): ParsedConnectionUrl {
   const input = value.trim();
   if (!input) {
@@ -263,6 +318,8 @@ export function parseConnectionUrl(value: string, preferredProfile?: string): Pa
   }
   const jdbcUCanAccess = parseJdbcUCanAccessUrl(input);
   if (jdbcUCanAccess) return jdbcUCanAccess;
+  const jdbcGbase8s = parseJdbcGbase8sUrl(input);
+  if (jdbcGbase8s) return jdbcGbase8s;
   const jdbcOracle = parseJdbcOracleUrl(input);
   if (jdbcOracle) return jdbcOracle;
   const jdbcSqlServer = parseJdbcSqlServerUrl(input);
@@ -304,7 +361,7 @@ export function parseConnectionUrl(value: string, preferredProfile?: string): Pa
       database: databaseFromPath(parsed.pathname),
       urlParams: parsedUrlParams,
       ssl: scheme === "mongodb+srv",
-      connectionString: source,
+      connectionString: normalizeMongoConnectionString(source),
       useMongoUrl: true,
     };
   }
