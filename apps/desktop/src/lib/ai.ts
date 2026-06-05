@@ -41,6 +41,7 @@ export interface AiSchemaTable {
   schema?: string;
   name: string;
   tableType: string;
+  comment?: string | null;
   columns: ColumnInfo[];
   indexes?: IndexInfo[];
   foreignKeys?: ForeignKeyInfo[];
