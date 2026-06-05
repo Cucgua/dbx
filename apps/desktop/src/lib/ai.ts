@@ -4120,6 +4120,11 @@ function formatSchema(context: AiContext): string {
     .map((table) => {
       const name = table.schema ? `${table.schema}.${table.name}` : table.name;
       const lines: string[] = [`${name} (${table.tableType})`];
+      const tableComment = table.comment?.trim();
+
+      if (tableComment) {
+        lines.push(`  Comment: ${tableComment}`);
+      }
 
       for (const column of table.columns) {
         const flags = [
@@ -4130,7 +4135,10 @@ function formatSchema(context: AiContext): string {
         ]
           .filter(Boolean)
           .join(", ");
-        lines.push(`  - ${column.name}: ${column.data_type}${flags ? ` (${flags})` : ""}`);
+        const columnComment = column.comment?.trim();
+        lines.push(
+          `  - ${column.name}: ${column.data_type}${flags ? ` (${flags})` : ""}${columnComment ? ` -- ${columnComment}` : ""}`,
+        );
       }
 
       if (table.indexes?.length) {
