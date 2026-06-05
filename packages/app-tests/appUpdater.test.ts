@@ -11,7 +11,7 @@ function updateInfo(overrides: Partial<UpdateInfo> = {}): UpdateInfo {
     update_available: true,
     portable_mode: false,
     release_name: "DBX v0.5.26",
-    release_url: "https://github.com/t8y2/dbx/releases/tag/v0.5.26",
+    release_url: "https://github.com/Cucgua/dbx/releases/tag/v0.5.26",
     release_notes: "",
     ...overrides,
   };

@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn download_candidates_exclude_third_party_github_proxy() {
         let urls = download_candidate_urls(
-            "https://github.com/t8y2/dbx/releases/latest/download/latest.json",
+            "https://github.com/Cucgua/dbx/releases/latest/download/latest.json",
             "releases/latest/latest.json",
         );
 
@@ -101,7 +101,7 @@ mod tests {
             urls,
             vec![
                 "https://dl.dbxio.com/releases/latest/latest.json",
-                "https://github.com/t8y2/dbx/releases/latest/download/latest.json",
+                "https://github.com/Cucgua/dbx/releases/latest/download/latest.json",
             ]
         );
     }

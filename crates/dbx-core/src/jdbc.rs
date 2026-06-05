@@ -4,8 +4,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 const JDBC_PLUGIN_DOWNLOAD_URL: &str =
-    "https://github.com/t8y2/dbx/releases/latest/download/dbx-jdbc-plugin-latest.zip";
-const JDBC_PLUGIN_R2_PATH: &str = "releases/latest/dbx-jdbc-plugin-latest.zip";
+    "https://github.com/Cucgua/dbx/releases/latest/download/dbx-jdbc-plugin-latest.zip";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct JdbcDriverInfo {
@@ -189,10 +188,13 @@ async fn download_jdbc_plugin_zip() -> Result<Vec<u8>, String> {
         .build()
         .map_err(|err| err.to_string())?;
 
-    let resp =
-        crate::race_download(&client, JDBC_PLUGIN_DOWNLOAD_URL, JDBC_PLUGIN_R2_PATH, "dbx-jdbc-plugin-installer")
-            .await
-            .map_err(|err| format!("Failed to download JDBC plugin: {err}"))?;
+    let resp = client
+        .get(JDBC_PLUGIN_DOWNLOAD_URL)
+        .header(reqwest::header::USER_AGENT, "dbx-jdbc-plugin-installer")
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|err| format!("Failed to download JDBC plugin: {err}"))?;
 
     let bytes = resp.bytes().await.map_err(|err| err.to_string())?;
     Ok(bytes.to_vec())
