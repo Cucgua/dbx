@@ -75,10 +75,13 @@ jobs:
         run: cargo fmt --check
 
       - name: Cargo clippy
-        run: cargo clippy --workspace --locked --all-targets
+        # The Windows release workflow builds the Schema RAG sidecar. Ubuntu CI
+        # excludes it because Kuzu's bundled simsimd currently requires AVX512
+        # FP16 C support that is unavailable on the runner compiler.
+        run: cargo clippy --workspace --locked --all-targets --exclude dbx-schema-rag-sidecar
 
       - name: Cargo test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --exclude dbx-schema-rag-sidecar
 
   jdbc:
     runs-on: ubuntu-22.04
