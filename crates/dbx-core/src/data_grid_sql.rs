@@ -388,7 +388,8 @@ pub fn build_data_grid_count_sql(options: DataGridCountSqlOptions) -> String {
 }
 
 pub fn build_hive_table_properties_sql(options: HiveTablePropertiesSqlOptions) -> String {
-    let table = qualified_table_name(Some(DatabaseType::Hive), options.schema.as_deref(), &options.table_name);
+    let schema = options.schema.as_deref().filter(|schema| !schema.trim().eq_ignore_ascii_case("default"));
+    let table = qualified_table_name(Some(DatabaseType::Hive), schema, &options.table_name);
     let property = options.property_name.replace('\'', "''");
     format!("SHOW TBLPROPERTIES {table} ('{property}')")
 }
@@ -1379,6 +1380,14 @@ mod tests {
                 property_name: "transactional".to_string(),
             }),
             "SHOW TBLPROPERTIES `events` ('transactional')"
+        );
+        assert_eq!(
+            build_hive_table_properties_sql(HiveTablePropertiesSqlOptions {
+                schema: Some("warehouse".to_string()),
+                table_name: "events".to_string(),
+                property_name: "transactional".to_string(),
+            }),
+            "SHOW TBLPROPERTIES `warehouse`.`events` ('transactional')"
         );
     }
 
