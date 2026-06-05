@@ -65,6 +65,17 @@ test("agent mode auto-executes read SQL when the user asks to query", () => {
   assert.equal(plan.handoffSql, "SELECT count(*) FROM users");
 });
 
+test("rag mode records generated SQL but never hands it off for auto execution", () => {
+  const plan = buildAiAgentPlan(planInput({ mode: "rag" }));
+
+  assert.deepEqual(plan.steps, [
+    { kind: "generate_sql", status: "done", sql: "SELECT count(*) FROM users" },
+    { kind: "execute_sql", status: "skipped", reason: "rag_mode" },
+  ]);
+  assert.equal(plan.executableSql, undefined);
+  assert.equal(plan.handoffSql, undefined);
+});
+
 test("agent mode auto-executes table inventory metadata SQL for natural Chinese questions", () => {
   const sql = "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'public' ORDER BY tablename;";
   const plan = buildAiAgentPlan(

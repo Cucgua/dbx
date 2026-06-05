@@ -5,6 +5,7 @@ import {
   DEFAULT_EDITOR_SETTINGS,
   normalizeAiConfig,
   normalizeEditorSettings,
+  normalizeSchemaResearchModelConfig,
 } from "../../apps/desktop/src/stores/settingsStore.ts";
 
 test("defaults Redis scan page size to 1000 keys", () => {
@@ -218,6 +219,13 @@ test("normalizes legacy AI config and fills provider defaults", () => {
   assert.equal(legacy.apiStyle, "completions");
   assert.equal(legacy.provider, "openai");
   assert.equal(legacy.apiKey, "key");
+  assert.equal(legacy.schemaResearch?.enabled, true);
+  assert.equal(legacy.schemaResearch?.useMainModel, true);
+  assert.equal(legacy.schemaResearch?.provider, "openai");
+  assert.equal(legacy.schemaResearch?.endpoint, "https://api.openai.com/v1/chat/completions");
+  assert.equal(legacy.schemaResearch?.model, "gpt-4o");
+  assert.equal(legacy.schemaResearch?.maxToolRounds, 4);
+  assert.equal(legacy.schemaResearch?.maxOutputTokens, 1800);
 
   const ollama = normalizeAiConfig({ provider: "ollama" } as any);
   assert.equal(ollama.endpoint, "http://localhost:11434/v1");
@@ -235,6 +243,74 @@ test("infers legacy AI provider from saved endpoint and model", () => {
   assert.equal(deepseek.provider, "deepseek");
   assert.equal(deepseek.endpoint, "https://api.deepseek.com/anthropic/v1/messages");
   assert.equal(deepseek.model, "deepseek-v4-pro");
+});
+
+test("normalizes independent schema research model config", () => {
+  const config = normalizeSchemaResearchModelConfig(
+    {
+      enabled: true,
+      useMainModel: false,
+      provider: "openai-compatible",
+      endpoint: "https://cheap.example.com/v1",
+      apiKey: "cheap-key",
+      model: "cheap-schema-model",
+      apiStyle: "completions",
+      proxyEnabled: true,
+      proxyUrl: "socks5://127.0.0.1:7890",
+      maxToolRounds: 99,
+      maxOutputTokens: 100000,
+    },
+    {
+      provider: "openai",
+      apiKey: "main-key",
+      endpoint: "https://api.openai.com/v1/chat/completions",
+      model: "gpt-4o",
+      apiStyle: "completions",
+      proxyEnabled: false,
+      proxyUrl: "",
+    },
+  );
+
+  assert.equal(config.useMainModel, false);
+  assert.equal(config.provider, "openai-compatible");
+  assert.equal(config.endpoint, "https://cheap.example.com/v1");
+  assert.equal(config.apiKey, "cheap-key");
+  assert.equal(config.model, "cheap-schema-model");
+  assert.equal(config.proxyEnabled, true);
+  assert.equal(config.maxToolRounds, 8);
+  assert.equal(config.maxOutputTokens, 8000);
+});
+
+test("schema research config inherits main model when useMainModel is enabled", () => {
+  const config = normalizeSchemaResearchModelConfig(
+    {
+      useMainModel: true,
+      provider: "openai-compatible",
+      endpoint: "https://ignored.example.com/v1",
+      apiKey: "ignored-key",
+      model: "ignored-model",
+      maxToolRounds: 0,
+      maxOutputTokens: 10,
+    } as any,
+    {
+      provider: "qwen",
+      apiKey: "main-key",
+      endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-plus",
+      apiStyle: "completions",
+      proxyEnabled: true,
+      proxyUrl: "http://127.0.0.1:7890",
+    },
+  );
+
+  assert.equal(config.useMainModel, true);
+  assert.equal(config.provider, "qwen");
+  assert.equal(config.endpoint, "https://dashscope.aliyuncs.com/compatible-mode/v1");
+  assert.equal(config.apiKey, "main-key");
+  assert.equal(config.model, "qwen-plus");
+  assert.equal(config.proxyEnabled, true);
+  assert.equal(config.maxToolRounds, 1);
+  assert.equal(config.maxOutputTokens, 512);
 });
 
 test("normalizeEditorSettings falls back to the default UI scale", () => {

@@ -154,8 +154,13 @@ pub async fn ai_stream(
         .await;
 
         if let Err(_e) = result {
-            let error_chunk =
-                AiStreamChunk { session_id: sid.clone(), delta: String::new(), reasoning_delta: None, done: true };
+            let error_chunk = AiStreamChunk {
+                session_id: sid.clone(),
+                delta: String::new(),
+                reasoning_delta: None,
+                tool_call_delta: None,
+                done: true,
+            };
             let _ = tx.send(serde_json::to_string(&error_chunk).unwrap_or_default());
         }
 

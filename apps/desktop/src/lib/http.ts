@@ -841,6 +841,14 @@ export async function aiRawChat(_request: AiRawChatRequest): Promise<AiRawChatRe
   throw new Error("AI tool calls are only available in the desktop app.");
 }
 
+export async function aiRawChatStream(
+  _sessionId: string,
+  _request: AiRawChatRequest,
+  _onChunk: (chunk: AiStreamChunk) => void,
+): Promise<AiRawChatResponse> {
+  throw new Error("AI streaming tool calls are only available in the desktop app.");
+}
+
 export async function aiStream(
   sessionId: string,
   request: AiCompletionRequest,

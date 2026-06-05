@@ -14,6 +14,16 @@ export interface AiMessageCodeSegment {
 
 export type AiMessageRenderSegment = AiMessageTextSegment | AiMessageCodeSegment;
 
+export interface AiChatPresentationMessage {
+  role: "user" | "assistant";
+  content?: string;
+  reasoning?: string;
+  isThinking?: boolean;
+  toolTraces?: readonly unknown[];
+  timeline?: readonly unknown[];
+  thoughtNodes?: readonly unknown[];
+}
+
 interface MessageSegment {
   type: "text" | "code";
   content: string;
@@ -128,6 +138,23 @@ export function normalizeAiCodeLanguage(lang?: string): string {
 
 export function isSqlAiCodeLanguage(lang: string): boolean {
   return SQL_LANGUAGE_LABELS.has(lang);
+}
+
+export function shouldRenderAssistantMessage(message: AiChatPresentationMessage): boolean {
+  if (message.role !== "assistant") return false;
+  return (
+    !!message.content ||
+    !!message.thoughtNodes?.length ||
+    !!message.timeline?.length ||
+    !!message.reasoning ||
+    !!message.toolTraces?.length
+  );
+}
+
+export function shouldShowLegacyAssistantProgress(message: AiChatPresentationMessage): boolean {
+  return (
+    !message.thoughtNodes?.length && (!!message.timeline?.length || !!message.reasoning || !!message.toolTraces?.length)
+  );
 }
 
 function escapeHtml(value: string): string {

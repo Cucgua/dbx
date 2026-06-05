@@ -24,8 +24,15 @@ export type AiAgentStep =
         | "no_execution_intent"
         | "unsupported_action"
         | "blocked_by_policy"
-        | "requires_confirmation";
+        | "requires_confirmation"
+        | "rag_mode"
+        | "schema_rag_context";
     };
+
+interface AiAgentToolTraceLike {
+  name: string;
+  children?: AiAgentToolTraceLike[];
+}
 
 export interface AiAgentPlanInput {
   mode: AiAssistantMode;
@@ -33,6 +40,7 @@ export interface AiAgentPlanInput {
   instruction: string;
   assistantContent: string;
   connection?: ConnectionConfig;
+  usedSchemaRag?: boolean;
 }
 
 export interface AiAgentPlan {
@@ -55,7 +63,7 @@ export function buildAiAgentPlan(input: AiAgentPlanInput): AiAgentPlan {
   const steps: AiAgentStep[] = [{ kind: "generate_sql", status: "done", sql }];
 
   if (input.mode !== "agent") {
-    steps.push({ kind: "execute_sql", status: "skipped", reason: "ask_mode" });
+    steps.push({ kind: "execute_sql", status: "skipped", reason: input.mode === "rag" ? "rag_mode" : "ask_mode" });
     return { steps };
   }
 
@@ -66,6 +74,11 @@ export function buildAiAgentPlan(input: AiAgentPlanInput): AiAgentPlan {
 
   if (!shouldAttemptAiAutoExecute(input.instruction, input.action)) {
     steps.push({ kind: "execute_sql", status: "skipped", reason: "no_execution_intent" });
+    return { steps };
+  }
+
+  if (input.usedSchemaRag) {
+    steps.push({ kind: "execute_sql", status: "skipped", reason: "schema_rag_context" });
     return { steps };
   }
 
@@ -85,6 +98,13 @@ export function buildAiAgentPlan(input: AiAgentPlanInput): AiAgentPlan {
   return { steps, handoffSql: sql };
 }
 
+export function hasSchemaRagToolTrace(traces?: readonly AiAgentToolTraceLike[]): boolean {
+  return (traces || []).some((trace) => {
+    if (isSchemaRagToolName(trace.name)) return true;
+    return hasSchemaRagToolTrace(trace.children);
+  });
+}
+
 function extractFirstExecutableSqlCodeBlock(content: string): string | undefined {
   const blocks = content.matchAll(/```(?:sql|mysql|postgresql|sqlite|tsql|clickhouse)?\s*\n([\s\S]*?)```/gi);
   for (const block of blocks) {
@@ -92,4 +112,13 @@ function extractFirstExecutableSqlCodeBlock(content: string): string | undefined
     if (sql && stripAiSqlComments(sql).trim()) return sql;
   }
   return undefined;
+}
+
+function isSchemaRagToolName(name: string): boolean {
+  return [
+    "dbx_schema_research_task",
+    "dbx_search_schema",
+    "dbx_search_table_columns",
+    "dbx_expand_schema_graph",
+  ].includes(name);
 }

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AiConfig } from "../../apps/desktop/src/stores/settingsStore";
+import { prioritizeAiCandidateSchemasForTest } from "../../apps/desktop/src/lib/ai.ts";
 import {
   buildSchemaRagAiTools,
   getSchemaRagSubtaskAllowedToolNames,
   isSchemaRagAiToolName,
+  schemaRagScopeForContext,
   supportsSchemaRagAiToolLoop,
 } from "../../apps/desktop/src/lib/schemaRagAiTools";
 
@@ -48,4 +50,59 @@ test("schema rag AI tool loop requires desktop-compatible OpenAI chat completion
   assert.equal(supportsSchemaRagAiToolLoop(completionsConfig({ apiStyle: "responses" }), context), false);
   assert.equal(supportsSchemaRagAiToolLoop(completionsConfig(), { ...context, databaseType: "mongodb" }), false);
   assert.equal(supportsSchemaRagAiToolLoop(completionsConfig(), { ...context, schema: undefined }), false);
+});
+
+test("schema rag scope uses active schema as database for Oracle-style schema tree nodes", () => {
+  assert.deepEqual(
+    schemaRagScopeForContext({
+      connectionId: "oracle-1",
+      databaseType: "oracle",
+      database: "ORCL",
+      schema: "MCHS",
+    }),
+    {
+      connectionId: "oracle-1",
+      database: "MCHS",
+      schema: "MCHS",
+    },
+  );
+});
+
+test("schema rag scope keeps catalog database for regular schema-aware databases", () => {
+  assert.deepEqual(
+    schemaRagScopeForContext({
+      connectionId: "pg-1",
+      databaseType: "postgres",
+      database: "app",
+      schema: "public",
+    }),
+    {
+      connectionId: "pg-1",
+      database: "app",
+      schema: "public",
+    },
+  );
+});
+
+test("schema rag scope uses schema override as database for Oracle column searches", () => {
+  assert.deepEqual(
+    schemaRagScopeForContext(
+      {
+        connectionId: "oracle-1",
+        databaseType: "oracle",
+        database: "ORCL",
+        schema: "MCHS",
+      },
+      "MCHS_DICT",
+    ),
+    {
+      connectionId: "oracle-1",
+      database: "MCHS_DICT",
+      schema: "MCHS_DICT",
+    },
+  );
+});
+
+test("AI candidate schema priority keeps the active tab schema before alphabetical fallback", () => {
+  assert.deepEqual(prioritizeAiCandidateSchemasForTest(["AAA", "MCHS", "ZZZ"], "MCHS"), ["MCHS", "AAA", "ZZZ"]);
 });

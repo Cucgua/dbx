@@ -1,6 +1,7 @@
 import type { AiConfig } from "@/stores/settingsStore";
 import type { ColumnInfo, DatabaseType, ForeignKeyInfo, IndexInfo } from "@/types/database";
 import * as api from "@/lib/api";
+import { defaultDatabaseTargetsSchema } from "@/lib/defaultDatabase";
 import type { SchemaRagGraphSeed } from "@/lib/schemaRagApi";
 
 export const SCHEMA_RAG_AI_TOOL_NAMES = new Set([
@@ -24,6 +25,12 @@ export interface SchemaRagAiToolBudget {
   graphExpansions: number;
   searchedQueries: Set<string>;
   loadedTables: Set<string>;
+}
+
+export interface SchemaRagAiToolScope {
+  connectionId: string;
+  database: string;
+  schema: string;
 }
 
 const MAX_SCHEMA_SEARCHES = 8;
@@ -386,11 +393,19 @@ async function executeExpandGraph(
   };
 }
 
-function activeScope(context: SchemaRagAiToolContext, schemaOverride?: string) {
+export function schemaRagScopeForContext(
+  context: SchemaRagAiToolContext,
+  schemaOverride?: string,
+): SchemaRagAiToolScope | null {
   if (!context.connectionId) return null;
   const schema = schemaOverride || context.schema || "";
   if (!schema) return null;
-  return { connectionId: context.connectionId, database: context.database, schema };
+  const database = defaultDatabaseTargetsSchema({ db_type: context.databaseType }) ? schema : context.database;
+  return { connectionId: context.connectionId, database, schema };
+}
+
+function activeScope(context: SchemaRagAiToolContext, schemaOverride?: string): SchemaRagAiToolScope | null {
+  return schemaRagScopeForContext(context, schemaOverride);
 }
 
 function parseToolArguments(rawArguments: string): Record<string, unknown> {

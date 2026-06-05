@@ -22,6 +22,7 @@ import type {
   SavedSqlLibrary,
 } from "@/types/database";
 import type { AiConfig } from "@/stores/settingsStore";
+import type { AiWorkflowEvent } from "@/lib/aiWorkflowEvents";
 import type { QueryEditability } from "@/lib/sqlAnalysis";
 import type {
   DataGridColumnValueFilterConditionOptions,
@@ -273,10 +274,33 @@ export interface AiRawToolCall {
   arguments: string;
 }
 
+export interface AiRawToolCallDelta {
+  index: number;
+  id?: string;
+  name?: string;
+  argumentsDelta?: string;
+}
+
 export interface AiRawChatResponse {
   content: string;
   toolCalls: AiRawToolCall[];
   rawMessage: unknown;
+}
+
+export interface AiToolTrace {
+  id: string;
+  name: string;
+  arguments: string;
+  status: "running" | "success" | "error";
+  summary?: string;
+  children?: AiToolTrace[];
+}
+
+export interface AiTimelineItem {
+  id: string;
+  kind: "reasoning" | "tool";
+  reasoning?: string;
+  toolTrace?: AiToolTrace;
 }
 
 export interface AiRawChatRequest {
@@ -308,6 +332,7 @@ export interface AiStreamChunk {
   session_id: string;
   delta: string;
   reasoning_delta?: string;
+  tool_call_delta?: AiRawToolCallDelta;
   done: boolean;
 }
 
@@ -324,6 +349,25 @@ export async function aiStream(
   });
   try {
     await invoke("ai_stream", { sessionId, request });
+  } catch (e) {
+    unlisten();
+    throw e;
+  }
+}
+
+export async function aiRawChatStream(
+  sessionId: string,
+  request: AiRawChatRequest,
+  onChunk: (chunk: AiStreamChunk) => void,
+): Promise<AiRawChatResponse> {
+  const unlisten: UnlistenFn = await listen<AiStreamChunk>("ai-stream-chunk", (event) => {
+    if (event.payload.session_id === sessionId) {
+      onChunk(event.payload);
+      if (event.payload.done) unlisten();
+    }
+  });
+  try {
+    return await invoke("ai_raw_chat_stream", { sessionId, request });
   } catch (e) {
     unlisten();
     throw e;
@@ -422,7 +466,11 @@ export async function readExternalSqlFile(path: string): Promise<string> {
 export interface AiChatMessage {
   role: string;
   content: string;
+  mode?: string;
   reasoning?: string;
+  toolTraces?: AiToolTrace[];
+  timeline?: AiTimelineItem[];
+  workflowEvents?: AiWorkflowEvent[];
 }
 
 export interface AiConversation {

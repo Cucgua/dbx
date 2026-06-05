@@ -34,6 +34,21 @@ export interface AiConfig {
   proxyEnabled?: boolean;
   proxyUrl?: string;
   enableThinking?: boolean;
+  schemaResearch?: SchemaResearchModelConfig;
+}
+
+export interface SchemaResearchModelConfig {
+  enabled: boolean;
+  useMainModel: boolean;
+  provider: AiProvider;
+  apiKey: string;
+  endpoint: string;
+  model: string;
+  apiStyle: AiApiStyle;
+  proxyEnabled: boolean;
+  proxyUrl: string;
+  maxToolRounds: number;
+  maxOutputTokens: number;
 }
 
 export interface DesktopSettings {
@@ -146,7 +161,7 @@ const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = Object.from
 export function normalizeAiConfig(config: Partial<AiConfig> | null | undefined): AiConfig {
   const provider =
     config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : inferAiProviderFromConfig(config);
-  return {
+  const baseConfig = {
     ...defaultConfigs[provider],
     apiKey: config?.apiKey ?? "",
     ...config,
@@ -156,6 +171,42 @@ export function normalizeAiConfig(config: Partial<AiConfig> | null | undefined):
     proxyUrl: config?.proxyUrl ?? "",
     enableThinking: config?.enableThinking ?? true,
   };
+  return {
+    ...baseConfig,
+    schemaResearch: normalizeSchemaResearchModelConfig(config?.schemaResearch, baseConfig),
+  };
+}
+
+export function normalizeSchemaResearchModelConfig(
+  config: Partial<SchemaResearchModelConfig> | null | undefined,
+  mainConfig: Pick<AiConfig, "provider" | "apiKey" | "endpoint" | "model" | "apiStyle" | "proxyEnabled" | "proxyUrl">,
+): SchemaResearchModelConfig {
+  const useMainModel = config?.useMainModel ?? true;
+  const source = useMainModel ? mainConfig : config;
+  const provider =
+    useMainModel || !config?.provider || !(config.provider in AI_PROVIDER_PRESETS)
+      ? mainConfig.provider
+      : config.provider;
+  const defaults = defaultConfigs[provider];
+  return {
+    enabled: config?.enabled ?? true,
+    useMainModel,
+    provider,
+    apiKey: source?.apiKey ?? "",
+    endpoint: source?.endpoint ?? defaults.endpoint,
+    model: source?.model ?? defaults.model,
+    apiStyle: source?.apiStyle ?? defaults.apiStyle,
+    proxyEnabled: !!source?.proxyEnabled,
+    proxyUrl: source?.proxyUrl ?? "",
+    maxToolRounds: normalizeSchemaResearchPositiveInt(config?.maxToolRounds, 1, 8, 4),
+    maxOutputTokens: normalizeSchemaResearchPositiveInt(config?.maxOutputTokens, 512, 8000, 1800),
+  };
+}
+
+function normalizeSchemaResearchPositiveInt(value: unknown, min: number, max: number, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
 }
 
 function inferAiProviderFromConfig(config: Partial<AiConfig> | null | undefined): AiProvider {

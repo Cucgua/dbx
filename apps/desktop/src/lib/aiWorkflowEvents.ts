@@ -125,7 +125,7 @@ function eventToThoughtNode(event: AiWorkflowEvent, existing?: AiThoughtNodeStat
       title: event.title ?? base.title,
       description: event.description ?? base.description,
       status: event.status ?? base.status,
-      defaultExpanded: event.status ? shouldExpandThoughtNode(event.status) : base.defaultExpanded,
+      defaultExpanded: event.status ? shouldExpandUpdatedThoughtNode(event.status, base) : base.defaultExpanded,
       updatedAt: event.ts,
     };
   }
@@ -202,6 +202,17 @@ function createDefaultThoughtNode(event: AiWorkflowEvent): AiThoughtNodeState {
 
 function shouldExpandThoughtNode(status: AiWorkflowNodeStatus): boolean {
   return status === "loading" || status === "waiting" || status === "error";
+}
+
+function shouldExpandUpdatedThoughtNode(status: AiWorkflowNodeStatus, existing: AiThoughtNodeState): boolean {
+  if (
+    status === "success" &&
+    (existing.kind === "model" || existing.kind === "agent") &&
+    (existing.content.trim() || existing.children.length)
+  ) {
+    return existing.defaultExpanded;
+  }
+  return shouldExpandThoughtNode(status);
 }
 
 function upsertThoughtNode(nodes: AiThoughtNodeState[], node: AiThoughtNodeState): AiThoughtNodeState[] {

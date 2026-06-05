@@ -37,6 +37,36 @@ test("builds nested thought nodes from workflow events", () => {
   assert.equal(nodes[0].children[0].id, "research");
 });
 
+test("represents the main assistant and SQL assistant subagent as separate nested nodes", () => {
+  let nodes: AiThoughtNodeState[] = [];
+  nodes = applyAiWorkflowEvent(
+    nodes,
+    createAiWorkflowEvent({
+      type: "node.start",
+      nodeId: "main",
+      kind: "agent",
+      title: "主助手",
+      status: "loading",
+    }),
+  );
+  nodes = applyAiWorkflowEvent(
+    nodes,
+    createAiWorkflowEvent({
+      type: "node.start",
+      nodeId: "sql-assistant",
+      parentId: "main",
+      kind: "agent",
+      title: "SQL助手分析中",
+      status: "loading",
+    }),
+  );
+
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0].title, "主助手");
+  assert.equal(nodes[0].children.length, 1);
+  assert.equal(nodes[0].children[0].title, "SQL助手分析中");
+});
+
 test("appends streaming deltas to the target node", () => {
   let nodes: AiThoughtNodeState[] = [];
   nodes = applyAiWorkflowEvent(
@@ -48,14 +78,8 @@ test("appends streaming deltas to the target node", () => {
       title: "主模型分析",
     }),
   );
-  nodes = applyAiWorkflowEvent(
-    nodes,
-    createAiWorkflowEvent({ type: "node.delta", nodeId: "main", delta: "正在找表" }),
-  );
-  nodes = applyAiWorkflowEvent(
-    nodes,
-    createAiWorkflowEvent({ type: "node.delta", nodeId: "main", delta: "和字段" }),
-  );
+  nodes = applyAiWorkflowEvent(nodes, createAiWorkflowEvent({ type: "node.delta", nodeId: "main", delta: "正在找表" }));
+  nodes = applyAiWorkflowEvent(nodes, createAiWorkflowEvent({ type: "node.delta", nodeId: "main", delta: "和字段" }));
 
   assert.equal(nodes[0].content, "正在找表和字段");
 });
@@ -111,6 +135,41 @@ test("keeps active or failed nodes expanded by default", () => {
       description: "工具调用失败",
     }),
   );
+  assert.equal(nodes[0].defaultExpanded, true);
+});
+
+test("keeps completed assistant nodes with thinking content expanded", () => {
+  let nodes: AiThoughtNodeState[] = [];
+  nodes = applyAiWorkflowEvent(
+    nodes,
+    createAiWorkflowEvent({
+      type: "node.start",
+      nodeId: "main",
+      kind: "agent",
+      title: "主助手",
+      status: "loading",
+    }),
+  );
+  nodes = applyAiWorkflowEvent(
+    nodes,
+    createAiWorkflowEvent({
+      type: "node.delta",
+      nodeId: "main",
+      delta: "正在调度 SQL 助手分析 schema。",
+    }),
+  );
+  nodes = applyAiWorkflowEvent(
+    nodes,
+    createAiWorkflowEvent({
+      type: "node.update",
+      nodeId: "main",
+      status: "success",
+      description: "回答生成完成",
+    }),
+  );
+
+  assert.equal(nodes[0].status, "success");
+  assert.equal(nodes[0].content, "正在调度 SQL 助手分析 schema。");
   assert.equal(nodes[0].defaultExpanded, true);
 });
 
