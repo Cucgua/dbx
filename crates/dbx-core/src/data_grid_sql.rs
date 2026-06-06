@@ -1380,7 +1380,7 @@ mod tests {
                 table_name: "events".to_string(),
                 property_name: "transactional".to_string(),
             }),
-            "SHOW TBLPROPERTIES `default`.`events` ('transactional')"
+            "SHOW TBLPROPERTIES `events` ('transactional')"
         );
         assert_eq!(
             build_hive_table_properties_sql(HiveTablePropertiesSqlOptions {
