@@ -7,13 +7,17 @@ import {
   buildApiDocExtractionBatchesForTest,
   buildApiDocExtractionUserPromptForTest,
   buildAiSchemaTools,
+  buildSchemaResearchResumeUserPromptForTest,
   buildSchemaResearchEvidenceGateInstruction,
   buildToolSystemPrompt,
+  formatSchemaResearchSessionsForMainPromptForTest,
   parseApiDocExtractionJsonForTest,
+  pruneSchemaResearchSessionsForConversation,
   schemaRagScopeForContextForTest,
   schemaResearchSubtaskAllowedToolNamesForTest,
   schemaDocRawChatOptionsForTest,
   supportsAiSchemaToolLoop,
+  validateSchemaResearchSessionResumeForTest,
 } from "../../apps/desktop/src/lib/ai";
 import type { ApiDocExtractionRequest } from "../../apps/desktop/src/lib/schemaDocIngestion";
 
@@ -104,9 +108,26 @@ test("main AI schema tools expose only schema research and user confirmation too
   ]);
   const researchTool = tools.find((tool: any) => tool?.function?.name === "dbx_schema_research_task") as any;
   assert.equal(researchTool?.function?.parameters?.properties?.task?.type, "string");
+  assert.equal(researchTool?.function?.parameters?.properties?.sessionId?.type, "string");
+  assert.deepEqual(researchTool?.function?.parameters?.properties?.resumeMode?.enum, [
+    "continue",
+    "revise",
+    "narrow",
+    "compare",
+  ]);
+  assert.equal(researchTool?.function?.parameters?.properties?.resumeInstruction?.properties?.objective?.type, "string");
+  assert.equal(researchTool?.function?.parameters?.properties?.resumeInstruction?.properties?.keep?.type, "array");
+  assert.equal(researchTool?.function?.parameters?.properties?.resumeInstruction?.properties?.change?.type, "array");
+  assert.equal(researchTool?.function?.parameters?.properties?.resumeInstruction?.properties?.discard?.type, "array");
+  assert.equal(researchTool?.function?.parameters?.properties?.resumeInstruction?.properties?.verify?.type, "array");
+  assert.equal(
+    researchTool?.function?.parameters?.properties?.resumeInstruction?.properties?.outputFocus?.type,
+    "string",
+  );
   assert.equal(researchTool?.function?.parameters?.properties?.requiredEvidence?.type, "array");
   assert.equal(researchTool?.function?.parameters?.properties?.constraints?.properties?.maxTables?.type, "integer");
   assert.match(researchTool?.function?.description || "", /Schema Research|子任务/);
+  assert.match(researchTool?.function?.description || "", /sessionId.*resumeInstruction|resumeInstruction.*sessionId/i);
   const tableChoiceTool = tools.find((tool: any) => tool?.function?.name === "dbx_request_table_choice") as any;
   assert.equal(tableChoiceTool?.function?.parameters?.properties?.allowManual?.type, "boolean");
   assert.match(tableChoiceTool?.function?.description || "", /manually enter|手动输入/);
@@ -199,6 +220,9 @@ test("main schema prompt allows schema queries only through schema research task
 
   assert.match(prompt, /dbx_schema_research_task/);
   assert.match(prompt, /唯一的 Schema 查询入口|only schema-query entrypoint/);
+  assert.match(prompt, /sessionId/);
+  assert.match(prompt, /resumeInstruction/);
+  assert.match(prompt, /调整目标|adjustment objective/);
   assert.doesNotMatch(prompt, /优先调用 dbx_search_schema/);
   assert.doesNotMatch(prompt, /调用 dbx_get_column_details/);
   assert.doesNotMatch(prompt, /调用 dbx_get_related_tables/);
@@ -221,6 +245,163 @@ test("schema research user-choice gate requires a user confirmation tool", () =>
   assert.match(instruction || "", /dbx_request_table_choice/);
   assert.match(instruction || "", /dbx_request_column_choice/);
   assert.match(instruction || "", /dbx_request_relation/);
+});
+
+test("schema research session resume requires a concrete adjustment objective", () => {
+  assert.deepEqual(validateSchemaResearchSessionResumeForTest({ task: "查订单表" }), { ok: true });
+
+  assert.deepEqual(validateSchemaResearchSessionResumeForTest({ sessionId: "sr-1", task: "继续" }), {
+    ok: false,
+    code: "session_resume_instruction_required",
+    message: "resumeInstruction.objective is required when sessionId is provided",
+  });
+
+  assert.deepEqual(
+    validateSchemaResearchSessionResumeForTest({
+      sessionId: "sr-1",
+      task: "继续",
+      resumeMode: "revise",
+      resumeInstruction: { objective: "继续" },
+    }),
+    {
+      ok: false,
+      code: "session_resume_instruction_too_vague",
+      message: "resumeInstruction.objective must describe the concrete adjustment goal",
+    },
+  );
+
+  assert.deepEqual(
+    validateSchemaResearchSessionResumeForTest({
+      sessionId: "sr-1",
+      task: "修改上一次答案",
+      resumeMode: "again",
+      resumeInstruction: { objective: "重新验证客户表与订单表的关联字段" },
+    }),
+    {
+      ok: false,
+      code: "session_resume_mode_invalid",
+      message: "resumeMode must be one of: continue, revise, narrow, compare",
+    },
+  );
+
+  assert.deepEqual(
+    validateSchemaResearchSessionResumeForTest({
+      sessionId: "sr-1",
+      task: "把上次结果里的客户表改成 CRM 客户主表",
+      resumeMode: "revise",
+      resumeInstruction: {
+        objective: "把上次候选中的客户订单关系改为 CRM 客户主表，并重新验证 join 字段",
+        keep: ["保留订单表字段证据"],
+        change: ["客户表换成 CRM 主表"],
+        verify: ["验证客户表与订单表的外键关系"],
+        outputFocus: "只返回变化后的表和关系证据",
+      },
+    }),
+    { ok: true },
+  );
+});
+
+test("schema research resume prompt carries previous evidence and explicit direction", () => {
+  const prompt = buildSchemaResearchResumeUserPromptForTest(
+    context(),
+    {
+      task: "修改上一次答案",
+      sessionId: "sr-1",
+      resumeMode: "revise",
+      resumeInstruction: {
+        objective: "改用 CRM_CUSTOMER 作为客户主表",
+        keep: ["保留 ORDER_HEADER 证据"],
+        change: ["客户表从 CUSTOMER_ARCHIVE 改为 CRM_CUSTOMER"],
+        discard: ["不要继续使用 CUSTOMER_ARCHIVE"],
+        verify: ["验证 CRM_CUSTOMER.ID = ORDER_HEADER.CUSTOMER_ID"],
+        outputFocus: "返回修订后的候选表和 join 证据",
+      },
+    },
+    {
+      id: "sr-1",
+      createdAt: "2026-06-06T08:00:00.000Z",
+      updatedAt: "2026-06-06T08:05:00.000Z",
+      scope: {
+        connectionId: "conn-1",
+        databaseType: "postgres",
+        database: "app",
+        schema: "public",
+      },
+      messageCount: 4,
+      summary: "上次找到 ORDER_HEADER 和 CUSTOMER_ARCHIVE。",
+      evidenceSummary:
+        "Schema Research 状态：partial\n摘要：上次找到 ORDER_HEADER 和 CUSTOMER_ARCHIVE。\n证据表：\n- public.ORDER_HEADER, confidence=high: verified order table",
+    },
+  );
+
+  assert.match(prompt, /resume/);
+  assert.match(prompt, /sr-1/);
+  assert.match(prompt, /上次找到 ORDER_HEADER 和 CUSTOMER_ARCHIVE/);
+  assert.match(prompt, /改用 CRM_CUSTOMER/);
+  assert.match(prompt, /保留 ORDER_HEADER/);
+  assert.match(prompt, /不要继续使用 CUSTOMER_ARCHIVE/);
+  assert.match(prompt, /CRM_CUSTOMER\.ID = ORDER_HEADER\.CUSTOMER_ID/);
+  assert.match(prompt, /do not repeat previous searches/i);
+});
+
+test("schema research sessions expire after idle ttl and keep latest eight", () => {
+  const now = Date.parse("2026-06-06T09:00:00.000Z");
+  const freshSessions = Array.from({ length: 9 }, (_, index) => ({
+    id: `fresh-${index}`,
+    createdAt: new Date(now - index * 60_000).toISOString(),
+    updatedAt: new Date(now - index * 60_000).toISOString(),
+    scope: {
+      connectionId: "conn-1",
+      databaseType: "postgres" as const,
+      database: "app",
+      schema: "public",
+    },
+    messageCount: 1,
+    summary: `summary ${index}`,
+    evidenceSummary: `evidence ${index}`,
+  }));
+  const expiredSession = {
+    ...freshSessions[0],
+    id: "expired",
+    updatedAt: new Date(now - 31 * 60_000).toISOString(),
+  };
+
+  const pruned = pruneSchemaResearchSessionsForConversation([...freshSessions, expiredSession], now);
+
+  assert.equal(pruned.length, 8);
+  assert.deepEqual(
+    pruned.map((session) => session.id),
+    ["fresh-0", "fresh-1", "fresh-2", "fresh-3", "fresh-4", "fresh-5", "fresh-6", "fresh-7"],
+  );
+});
+
+test("main prompt session context exposes resumable session ids without full evidence payload", () => {
+  const prompt = formatSchemaResearchSessionsForMainPromptForTest(
+    [
+      {
+        id: "sr-active",
+        createdAt: "2026-06-06T08:00:00.000Z",
+        updatedAt: "2026-06-06T08:05:00.000Z",
+        scope: {
+          connectionId: "conn-1",
+          databaseType: "postgres",
+          database: "app",
+          schema: "public",
+        },
+        messageCount: 4,
+        summary: "找到订单表和客户表候选。",
+        evidenceSummary: "VERY_LONG_EVIDENCE_SHOULD_NOT_BE_IN_MAIN_PROMPT",
+      },
+    ],
+    true,
+    Date.parse("2026-06-06T08:06:00.000Z"),
+  );
+
+  assert.match(prompt, /sessionId=sr-active/);
+  assert.match(prompt, /修改或延续/);
+  assert.match(prompt, /resumeInstruction\.objective/);
+  assert.match(prompt, /找到订单表和客户表候选/);
+  assert.doesNotMatch(prompt, /VERY_LONG_EVIDENCE/);
 });
 
 test("api doc extraction parser accepts fenced JSON responses", () => {

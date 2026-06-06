@@ -258,8 +258,10 @@ fn default_port(db_type: DatabaseType) -> u16 {
     match db_type {
         DatabaseType::Mysql | DatabaseType::Goldendb => 3306,
         DatabaseType::Postgres | DatabaseType::Gaussdb | DatabaseType::OpenGauss | DatabaseType::Vastbase => 5432,
+        DatabaseType::Kwdb => 26257,
         DatabaseType::Redshift => 5439,
         DatabaseType::Sqlite | DatabaseType::DuckDb | DatabaseType::Access | DatabaseType::Jdbc => 0,
+        DatabaseType::Rqlite => 4001,
         DatabaseType::Redis => 6379,
         DatabaseType::ClickHouse => 8123,
         DatabaseType::SqlServer => 1433,
@@ -304,6 +306,7 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         | DatabaseType::Sundb
         | DatabaseType::Tdengine => "root",
         DatabaseType::Postgres | DatabaseType::Vastbase => "postgres",
+        DatabaseType::Kwdb => "root",
         DatabaseType::Redshift => "awsuser",
         DatabaseType::Gaussdb | DatabaseType::OpenGauss => "gaussdb",
         DatabaseType::SqlServer => "sa",
@@ -333,6 +336,7 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         DatabaseType::Iris => "_SYSTEM",
         DatabaseType::Teradata => "",
         DatabaseType::Sqlite
+        | DatabaseType::Rqlite
         | DatabaseType::Redis
         | DatabaseType::DuckDb
         | DatabaseType::Access

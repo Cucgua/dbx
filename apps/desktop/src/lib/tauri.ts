@@ -502,11 +502,17 @@ export interface AiChatMessage {
   workflowEvents?: AiWorkflowEvent[];
 }
 
+export interface AiConversationMetadata {
+  schemaResearchSessions?: unknown[];
+  [key: string]: unknown;
+}
+
 export interface AiConversation {
   id: string;
   title: string;
   connectionName: string;
   database: string;
+  metadata?: AiConversationMetadata;
   messages: AiChatMessage[];
   createdAt: string;
   updatedAt: string;

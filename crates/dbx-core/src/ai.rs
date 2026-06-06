@@ -238,6 +238,8 @@ pub struct AiConversation {
     pub title: String,
     pub connection_name: String,
     pub database: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
     pub messages: Vec<AiChatMessage>,
     pub created_at: String,
     pub updated_at: String,

@@ -83,6 +83,7 @@ const SCHEMA_STATEMENTS: &[&str] = &[
         connection_name TEXT NOT NULL DEFAULT '',
         database TEXT NOT NULL DEFAULT '',
         messages_json TEXT NOT NULL DEFAULT '[]',
+        metadata_json TEXT,
         created_at TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL DEFAULT ''
     )",
@@ -134,6 +135,7 @@ impl Storage {
                 conn.execute(statement, []).map_err(|e| e.to_string())?;
             }
             ensure_history_columns_sync(conn)?;
+            ensure_ai_conversation_columns_sync(conn)?;
             Ok(())
         })
     }
@@ -171,6 +173,20 @@ fn ensure_history_columns_sync(conn: &Connection) -> Result<(), String> {
             continue;
         }
         conn.execute(&format!("ALTER TABLE history ADD COLUMN {name} {definition}"), []).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn ensure_ai_conversation_columns_sync(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('ai_conversations')").map_err(|e| e.to_string())?;
+    let existing = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    if !existing.contains("metadata_json") {
+        conn.execute("ALTER TABLE ai_conversations ADD COLUMN metadata_json TEXT", []).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -465,17 +481,19 @@ impl Storage {
     pub async fn save_ai_conversation(&self, conv: &AiConversation) -> Result<(), String> {
         let conv = conv.clone();
         let messages_json = serde_json::to_string(&conv.messages).map_err(|e| e.to_string())?;
+        let metadata_json = conv.metadata.as_ref().map(serde_json::to_string).transpose().map_err(|e| e.to_string())?;
         self.with_conn(move |conn| {
             conn.execute(
                 "INSERT OR REPLACE INTO ai_conversations \
-                 (id, title, connection_name, database, messages_json, created_at, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (id, title, connection_name, database, messages_json, metadata_json, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     conv.id,
                     conv.title,
                     conv.connection_name,
                     conv.database,
                     messages_json,
+                    metadata_json,
                     conv.created_at,
                     conv.updated_at
                 ],
@@ -497,7 +515,7 @@ impl Storage {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, title, connection_name, database, messages_json, created_at, updated_at \
+                    "SELECT id, title, connection_name, database, messages_json, metadata_json, created_at, updated_at \
                      FROM ai_conversations ORDER BY updated_at DESC",
                 )
                 .map_err(|e| e.to_string())?;
@@ -506,14 +524,21 @@ impl Storage {
                     let messages_json: String = row.get(4)?;
                     let messages: Vec<AiChatMessage> =
                         serde_json::from_str(&messages_json).map_err(map_from_sql_err)?;
+                    let metadata_json: Option<String> = row.get(5)?;
+                    let metadata = metadata_json
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .map(|value| serde_json::from_str(value).map_err(map_from_sql_err))
+                        .transpose()?;
                     Ok(AiConversation {
                         id: row.get(0)?,
                         title: row.get(1)?,
                         connection_name: row.get(2)?,
                         database: row.get(3)?,
+                        metadata,
                         messages,
-                        created_at: row.get(5)?,
-                        updated_at: row.get(6)?,
+                        created_at: row.get(6)?,
+                        updated_at: row.get(7)?,
                     })
                 })
                 .map_err(|e| e.to_string())?;
@@ -1065,17 +1090,19 @@ impl Storage {
         for conv in &conversations {
             let conv = conv.clone();
             let messages_json = serde_json::to_string(&conv.messages).map_err(|e| e.to_string())?;
+            let metadata_json = conv.metadata.as_ref().map(serde_json::to_string).transpose().map_err(|e| e.to_string())?;
             self.with_conn(move |conn| {
                 conn.execute(
                     "INSERT OR IGNORE INTO ai_conversations \
-                     (id, title, connection_name, database, messages_json, created_at, updated_at) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (id, title, connection_name, database, messages_json, metadata_json, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     params![
                         conv.id,
                         conv.title,
                         conv.connection_name,
                         conv.database,
                         messages_json,
+                        metadata_json,
                         conv.created_at,
                         conv.updated_at
                     ],

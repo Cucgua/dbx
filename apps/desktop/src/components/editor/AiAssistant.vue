@@ -48,6 +48,7 @@ import { useQueryStore } from "@/stores/queryStore";
 import { useToast } from "@/composables/useToast";
 import {
   buildAiContext,
+  pruneSchemaResearchSessionsForConversation,
   runAiStream,
   type AiAction,
   type AiAssistantMode,
@@ -55,6 +56,7 @@ import {
   type AiColumnChoiceResult,
   type AiRelationRequest,
   type AiRelationToolResult,
+  type SchemaResearchSessionSnapshot,
   type AiTableChoiceRequest,
   type AiTableChoiceResult,
 } from "@/lib/ai";
@@ -135,6 +137,7 @@ const assistantMode = ref<AiAssistantMode>("ask");
 const includeWorkspaceContext = ref(true);
 const currentSessionId = ref("");
 const conversationId = ref("");
+const schemaResearchSessions = ref<SchemaResearchSessionSnapshot[]>([]);
 const conversations = ref<AiConversation[]>([]);
 const showConversationList = ref(false);
 const promptTextareaRef = ref<HTMLTextAreaElement | null>(null);
@@ -216,6 +219,15 @@ const chatTitle = computed(() => {
   const first = messages.value.find((m) => m.role === "user");
   return first ? first.content.slice(0, 30) : t("ai.newChat");
 });
+
+const includeWorkspaceContextTitle = computed(() => {
+  const state = includeWorkspaceContext.value ? t("ai.includeWorkspaceContextOn") : t("ai.includeWorkspaceContextOff");
+  return `${t("ai.includeWorkspaceContext")}: ${state}. ${t("ai.includeWorkspaceContextHint")}`;
+});
+
+function toggleIncludeWorkspaceContext() {
+  includeWorkspaceContext.value = !includeWorkspaceContext.value;
+}
 
 const promptMentionChips = computed(() => selectedMentions.value);
 
@@ -967,6 +979,7 @@ async function send() {
   const requestedMode = assistantMode.value;
   generationCancelled = false;
   isGenerating.value = true;
+  if (!conversationId.value) conversationId.value = uuid();
   messages.value.push({ role: "assistant", content: "", mode: requestedMode });
   const assistantIdx = messages.value.length - 1;
   const sessionId = uuid();
@@ -993,6 +1006,8 @@ async function send() {
         mode: requestedMode,
         instruction: displayText,
         context,
+        schemaResearchSessions: schemaResearchSessions.value,
+        onSchemaResearchSessionUpdate: updateSchemaResearchSession,
       },
       history,
       (delta) => {
@@ -1087,6 +1102,13 @@ async function copyCode(code: string, key: string) {
 function clearMessages() {
   messages.value = [];
   conversationId.value = "";
+  schemaResearchSessions.value = [];
+}
+
+function updateSchemaResearchSession(session: SchemaResearchSessionSnapshot) {
+  const next = schemaResearchSessions.value.filter((item) => item.id !== session.id);
+  next.unshift(session);
+  schemaResearchSessions.value = pruneSchemaResearchSessionsForConversation(next);
 }
 
 async function persistConversation() {
@@ -1098,6 +1120,9 @@ async function persistConversation() {
     title: first ? first.content.slice(0, 50) : "Untitled",
     connectionName: props.connection.name,
     database: props.tab?.database || "",
+    metadata: {
+      schemaResearchSessions: schemaResearchSessions.value,
+    },
     messages: messages.value.map((m) => ({
       role: m.role,
       content: m.content,
@@ -1119,6 +1144,7 @@ async function setConversationListOpen(open: boolean) {
 
 function selectConversation(conv: AiConversation) {
   conversationId.value = conv.id;
+  schemaResearchSessions.value = normalizeStoredSchemaResearchSessions(conv.metadata?.schemaResearchSessions);
   messages.value = conv.messages.map((m) => ({
     role: m.role as "user" | "assistant",
     content: m.content,
@@ -1131,6 +1157,25 @@ function selectConversation(conv: AiConversation) {
   }));
   showConversationList.value = false;
   scrollToBottom();
+}
+
+function normalizeStoredSchemaResearchSessions(value: unknown): SchemaResearchSessionSnapshot[] {
+  if (!Array.isArray(value)) return [];
+  return pruneSchemaResearchSessionsForConversation(
+    value.filter((item): item is SchemaResearchSessionSnapshot => {
+      if (!item || typeof item !== "object") return false;
+      const session = item as Record<string, unknown>;
+      const scope = session.scope as Record<string, unknown> | undefined;
+      return (
+        typeof session.id === "string" &&
+        typeof session.createdAt === "string" &&
+        typeof session.updatedAt === "string" &&
+        !!scope &&
+        typeof scope.databaseType === "string" &&
+        typeof scope.database === "string"
+      );
+    }),
+  );
 }
 
 function buildLegacyTimeline(reasoning?: string, toolTraces?: AiToolTrace[]): AiTimelineItem[] | undefined {
@@ -1225,13 +1270,24 @@ const messageRenderer = computed(() => {
       <span class="flex flex-1 self-stretch items-center truncate text-xs font-medium" data-tauri-drag-region>
         {{ chatTitle }}
       </span>
-      <label
-        class="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground"
-        :title="t('ai.includeWorkspaceContextHint')"
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-6 w-[3.25rem] shrink-0 gap-1 px-1.5 text-[10px] font-semibold"
+        :class="
+          includeWorkspaceContext
+            ? 'border border-primary/30 bg-primary/15 text-primary hover:bg-primary/20'
+            : 'border border-border/70 bg-muted/20 text-muted-foreground hover:bg-muted/35'
+        "
+        :title="includeWorkspaceContextTitle"
+        :aria-label="includeWorkspaceContextTitle"
+        :aria-pressed="includeWorkspaceContext"
+        @click="toggleIncludeWorkspaceContext"
       >
-        <input v-model="includeWorkspaceContext" type="checkbox" class="h-3.5 w-3.5 shrink-0 accent-primary" />
-        <span>{{ t("ai.includeWorkspaceContext") }}</span>
-      </label>
+        <Terminal v-if="includeWorkspaceContext" class="h-3.5 w-3.5" />
+        <CircleSlash v-else class="h-3.5 w-3.5" />
+        <span class="leading-none">{{ includeWorkspaceContext ? "ON" : "OFF" }}</span>
+      </Button>
       <Button variant="ghost" size="icon" class="h-6 w-6" @click="startNewChat" :title="t('ai.newChat')">
         <MessageSquarePlus class="h-3.5 w-3.5" />
       </Button>
