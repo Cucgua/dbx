@@ -1171,7 +1171,8 @@ impl Storage {
         for conv in &conversations {
             let conv = conv.clone();
             let messages_json = serde_json::to_string(&conv.messages).map_err(|e| e.to_string())?;
-            let metadata_json = conv.metadata.as_ref().map(serde_json::to_string).transpose().map_err(|e| e.to_string())?;
+            let metadata_json =
+                conv.metadata.as_ref().map(serde_json::to_string).transpose().map_err(|e| e.to_string())?;
             self.with_conn(move |conn| {
                 conn.execute(
                     "INSERT OR IGNORE INTO ai_conversations \
