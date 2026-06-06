@@ -2156,7 +2156,9 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
                 verify: {
                   type: "array",
                   items: { type: "string" },
-                  description: isZh ? "必须重新验证的表、字段或关系。" : "Tables, columns, or relations that must be re-verified.",
+                  description: isZh
+                    ? "必须重新验证的表、字段或关系。"
+                    : "Tables, columns, or relations that must be re-verified.",
                 },
                 outputFocus: {
                   type: "string",
@@ -2722,7 +2724,9 @@ async function executeSchemaResearchTaskTool(
   parentBudget: AiSchemaToolBudget,
   args: Record<string, any>,
   hooks?: AiSchemaToolWorkflowHooks,
-): Promise<SchemaResearchTaskResult & { promptSummary: string; internalToolTraces?: AiToolTrace[]; sessionId?: string }> {
+): Promise<
+  SchemaResearchTaskResult & { promptSummary: string; internalToolTraces?: AiToolTrace[]; sessionId?: string }
+> {
   const researchSettings = resolveSchemaResearchSettings(input.config);
   if (!researchSettings.enabled) {
     const result = normalizeSchemaResearchTaskResult({
@@ -3120,8 +3124,11 @@ function normalizeStringList(value: unknown): string[] {
   return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
-function normalizeSchemaResearchResumeInstruction(args: Record<string, any>): SchemaResearchResumeInstruction | undefined {
-  const value = args.resumeInstruction && typeof args.resumeInstruction === "object" ? args.resumeInstruction : undefined;
+function normalizeSchemaResearchResumeInstruction(
+  args: Record<string, any>,
+): SchemaResearchResumeInstruction | undefined {
+  const value =
+    args.resumeInstruction && typeof args.resumeInstruction === "object" ? args.resumeInstruction : undefined;
   if (!value) return undefined;
   const data = value as Record<string, unknown>;
   const instruction: SchemaResearchResumeInstruction = {
