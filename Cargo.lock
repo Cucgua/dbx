@@ -1946,6 +1946,7 @@ version = "0.5.32"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "calamine",
  "chrono",
  "csv",

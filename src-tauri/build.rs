@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    // Keep the Schema RAG sidecar available in Tauri bundles before frontend assets are embedded.
     prepare_schema_rag_sidecar();
     tauri_build::build()
 }
