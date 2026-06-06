@@ -51,7 +51,7 @@ const diagnostics: DbxDiagnostics = {
   loadedConnectionCount: 2,
   bridgePortFile: "/tmp/dbx/mcp-bridge-port",
   bridgePortFileExists: false,
-  directQueryTypes: ["postgres", "mysql", "sqlite"],
+  directQueryTypes: ["postgres", "mysql", "sqlite", "rqlite"],
   bridgeRequiredTypes: ["oracle", "mongodb"],
 };
 
@@ -85,6 +85,54 @@ test("runs read query as json", async () => {
     rows: [{ total: 1 }],
     row_count: 1,
   });
+});
+
+test("closes backend resources created by the CLI", async () => {
+  let closed = false;
+  const result = await runCli(["query", "local", "select count(*) as total from users", "--json"], {
+    backendFactory: async () =>
+      fakeBackend({
+        close: async () => {
+          closed = true;
+        },
+      }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(closed, true);
+});
+
+test("closes backend resources created by the CLI after failures", async () => {
+  let closed = false;
+  const result = await runCli(["query", "local", "select count(*) as total from users", "--json"], {
+    backendFactory: async () =>
+      fakeBackend({
+        executeQuery: async () => {
+          throw new Error("boom");
+        },
+        close: async () => {
+          closed = true;
+        },
+      }),
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(JSON.parse(result.stderr).error.message, "boom");
+  assert.equal(closed, true);
+});
+
+test("does not close caller-provided backend resources", async () => {
+  let closed = false;
+  const result = await runCli(["query", "local", "select count(*) as total from users", "--json"], {
+    backend: fakeBackend({
+      close: async () => {
+        closed = true;
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(closed, false);
 });
 
 test("runs query as csv", async () => {
@@ -154,6 +202,7 @@ test("prints capabilities as json", async () => {
   const payload = JSON.parse(result.stdout) as { directQueryTypes: string[]; bridgeRequiredTypes: string[] };
   assert.ok(payload.directQueryTypes.includes("postgres"));
   assert.ok(payload.directQueryTypes.includes("sqlite"));
+  assert.ok(payload.directQueryTypes.includes("rqlite"));
   assert.ok(payload.bridgeRequiredTypes.includes("oracle"));
 });
 

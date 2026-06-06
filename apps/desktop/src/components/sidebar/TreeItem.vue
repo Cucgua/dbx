@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, onBeforeUnmount } from "vue";
+import { ref, computed, nextTick, watch, onBeforeUnmount, inject } from "vue";
 import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 import { useI18n } from "vue-i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
@@ -129,8 +129,10 @@ import { hasTreeNodeDatabaseContext } from "@/lib/treeNodeContext";
 import { sidebarDisplayTableName } from "@/lib/sidebarTableNameDisplay";
 import {
   selectedTreeNodesInVisibleOrder as orderSelectedTreeNodes,
+  treeSelectionRangeIdsByIndex,
   treeSelectionRangeIds,
 } from "@/lib/sidebarTreeSelection";
+import { sidebarTreeContextKey } from "@/lib/sidebarTreeContext";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import ProcedureExecutionDialog from "@/components/objects/ProcedureExecutionDialog.vue";
 import { useExportTracker, type ExportTask } from "@/composables/useExportTracker";
@@ -178,7 +180,6 @@ const props = defineProps<{
   dragDisabled?: boolean;
   pendingRename?: boolean;
   highlighted?: boolean;
-  visibleNodes?: TreeNode[];
 }>();
 
 const emit = defineEmits<{
@@ -190,6 +191,7 @@ const emit = defineEmits<{
 const usesFullWidthLabel = computed(() =>
   usesFullWidthTreeLabel(props.node.type, settingsStore.editorSettings.sidebarAllowHorizontalScroll),
 );
+const sidebarTreeContext = inject(sidebarTreeContextKey, null);
 const rowWidthClass = computed(() => (usesFullWidthLabel.value ? "w-max min-w-full" : "w-full min-w-0"));
 const labelWidthClass = computed(() =>
   usesFullWidthLabel.value ? "shrink-0 whitespace-nowrap" : "min-w-0 flex-1 truncate",
@@ -463,7 +465,7 @@ function runRowClickAction() {
 }
 
 function visibleTreeNodes(): TreeNode[] {
-  if (props.visibleNodes) return props.visibleNodes;
+  if (sidebarTreeContext) return sidebarTreeContext.getVisibleNodes();
   return flattenTree(connectionStore.treeNodes).map((item) => item.node);
 }
 
@@ -489,10 +491,20 @@ function toggleTreeNodeSelection(node: TreeNode) {
 function selectTreeNodeRange(node: TreeNode) {
   const visible = visibleTreeNodes();
   const anchorId = connectionStore.treeSelectionAnchorId || connectionStore.selectedTreeNodeId || node.id;
+  const currentIndex = sidebarTreeContext ? sidebarTreeContext.getVisibleNodeIndex(node.id) : -1;
+  const anchorIndex = sidebarTreeContext ? sidebarTreeContext.getVisibleNodeIndex(anchorId) : -1;
+
+  if (sidebarTreeContext && currentIndex >= 0 && anchorIndex >= 0) {
+    connectionStore.selectedTreeNodeIds = treeSelectionRangeIdsByIndex(visible, currentIndex, anchorIndex, node.id);
+    connectionStore.selectedTreeNodeId = node.id;
+    return;
+  }
+
   if (!visible.some((item) => item.id === anchorId) || !visible.some((item) => item.id === node.id)) {
     selectSingleTreeNode(node);
     return;
   }
+
   const rangeIds = treeSelectionRangeIds(visible, node.id, anchorId, connectionStore.selectedTreeNodeId);
   connectionStore.selectedTreeNodeIds = rangeIds;
   connectionStore.selectedTreeNodeId = node.id;
@@ -760,6 +772,12 @@ async function openData() {
     return queryStore.createTab(node.connectionId, node.database, node.label, "data", tableSchema);
   })();
   console.info("[DBX][openData:tab-created]", { traceId, tabId, elapsed: elapsed() });
+  queryStore.setTableMeta(tabId, {
+    schema: tableSchema,
+    tableName: node.label,
+    columns: [],
+    primaryKeys: [],
+  });
   queryStore.setExecuting(tabId, true);
 
   try {
@@ -2360,9 +2378,11 @@ async function exportDataLegacy(format: "csv" | "json" | "sql") {
 
   try {
     await connectionStore.ensureConnected(connectionId);
+    const tableColumns =
+      format === "sql" ? await api.getColumns(connectionId, database, node.schema || database, node.label) : undefined;
     const queryColumns =
       config.db_type === "neo4j"
-        ? (await api.getColumns(connectionId, database, node.schema || database, node.label)).map(
+        ? (tableColumns ?? (await api.getColumns(connectionId, database, node.schema || database, node.label))).map(
             (column) => column.name,
           )
         : undefined;
@@ -2412,6 +2432,7 @@ async function exportDataLegacy(format: "csv" | "json" | "sql") {
       schema: node.schema,
       tableName: node.label,
       columns: result.columns,
+      columnTypes: tableColumns ? columnTypesForResultColumns(result.columns, tableColumns) : undefined,
       rows: result.rows,
     });
     await saveFileContent(content, `${node.label}.sql`, "SQL", "sql");
@@ -2419,6 +2440,11 @@ async function exportDataLegacy(format: "csv" | "json" | "sql") {
   } catch (e: any) {
     toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
   }
+}
+
+function columnTypesForResultColumns(columns: string[], tableColumns: ColumnInfo[]): Array<string | undefined> {
+  const typesByName = new Map(tableColumns.map((column) => [column.name.toLocaleLowerCase(), column.data_type]));
+  return columns.map((column) => typesByName.get(column.toLocaleLowerCase()));
 }
 
 async function exportData(format: "csv" | "json" | "sql") {
@@ -4176,27 +4202,29 @@ function treeItemMenuItems(): ContextMenuItem[] {
 
 /* Unfocused: subtle gray */
 .tree-item-active {
-  background-color: var(--tree-connection-active-bg, oklch(0.94 0 0)) !important;
+  background-color: var(--tree-connection-active-bg, rgb(235 235 235)) !important;
 }
 :root.dark .tree-item-active {
-  background-color: var(--tree-connection-active-bg, oklch(0.26 0 0)) !important;
+  background-color: var(--tree-connection-active-bg, rgb(36 36 36)) !important;
 }
 
 /* Focused: soft blue */
 .tree-item-active:focus {
-  background-color: var(--tree-connection-active-focus-bg, oklch(0.91 0.03 250)) !important;
+  background-color: var(--tree-connection-active-focus-bg, rgb(211 227 245)) !important;
 }
 :root.dark .tree-item-active:focus {
-  background-color: var(--tree-connection-active-focus-bg, oklch(0.35 0.06 250)) !important;
+  background-color: var(--tree-connection-active-focus-bg, rgb(33 60 89)) !important;
 }
 
 /* Locate highlight: instant amber, then fade on removal */
 .tree-item-highlight {
+  background-color: rgb(253 225 167) !important;
   background-color: oklch(0.92 0.08 85) !important;
   transition: background-color 0.8s ease-out 0.6s;
 }
 
 :root.dark .tree-item-highlight {
+  background-color: rgb(110 67 0) !important;
   background-color: oklch(0.42 0.12 80) !important;
   transition: background-color 0.8s ease-out 0.6s;
 }

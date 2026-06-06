@@ -4,12 +4,15 @@ import { useI18n } from "vue-i18n";
 import { AlertTriangle } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 
 const { t } = useI18n();
 const { highlight } = useSqlHighlighter();
 
 const open = defineModel<boolean>("open", { default: false });
+const suppressFuturePrompts = defineModel<boolean>("suppressFuturePrompts", { default: false });
 
 const props = withDefaults(
   defineProps<{
@@ -18,6 +21,8 @@ const props = withDefaults(
     message?: string;
     details?: string;
     confirmLabel?: string;
+    showSuppressToggle?: boolean;
+    suppressToggleLabel?: string;
   }>(),
   {
     sql: "",
@@ -25,6 +30,8 @@ const props = withDefaults(
     message: "",
     details: "",
     confirmLabel: "",
+    showSuppressToggle: false,
+    suppressToggleLabel: "",
   },
 );
 
@@ -58,6 +65,15 @@ function onConfirm() {
           class="text-xs bg-muted p-3 rounded overflow-auto max-h-40 min-w-0 font-mono whitespace-pre"
           v-html="highlightedCode"
         />
+        <div
+          v-if="showSuppressToggle"
+          class="mt-3 flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2"
+        >
+          <Label for="danger-confirm-suppress" class="text-sm leading-5">{{
+            suppressToggleLabel || t("dangerDialog.suppressFuturePrompts")
+          }}</Label>
+          <Switch id="danger-confirm-suppress" v-model="suppressFuturePrompts" />
+        </div>
       </div>
 
       <DialogFooter>

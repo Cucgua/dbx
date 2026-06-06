@@ -248,6 +248,7 @@ export interface EditorSettings {
   theme: EditorTheme;
   executeMode: "all" | "current";
   wordWrap: boolean;
+  confirmDangerousSqlExecution: boolean;
   compactTabTitle: boolean;
   appLayout: "separated" | "classic";
   pageSize: number;
@@ -307,6 +308,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   theme: "app",
   executeMode: "all",
   wordWrap: false,
+  confirmDangerousSqlExecution: true,
   compactTabTitle: false,
   appLayout: "classic",
   pageSize: 100,
@@ -436,6 +438,8 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
     theme: settings.theme && EDITOR_THEME_VALUES.has(settings.theme) ? settings.theme : DEFAULT_EDITOR_SETTINGS.theme,
     executeMode: settings.executeMode ?? DEFAULT_EDITOR_SETTINGS.executeMode,
     wordWrap: settings.wordWrap ?? DEFAULT_EDITOR_SETTINGS.wordWrap,
+    confirmDangerousSqlExecution:
+      settings.confirmDangerousSqlExecution ?? DEFAULT_EDITOR_SETTINGS.confirmDangerousSqlExecution,
     compactTabTitle: settings.compactTabTitle ?? DEFAULT_EDITOR_SETTINGS.compactTabTitle,
     appLayout: settings.appLayout ?? DEFAULT_EDITOR_SETTINGS.appLayout,
     pageSize: normalizeResultPageSize(settings.pageSize),
@@ -592,6 +596,8 @@ export const useSettingsStore = defineStore("settings", () => {
     if (partial.theme !== undefined) editorSettings.value.theme = partial.theme;
     if (partial.executeMode !== undefined) editorSettings.value.executeMode = partial.executeMode;
     if (partial.wordWrap !== undefined) editorSettings.value.wordWrap = partial.wordWrap;
+    if (partial.confirmDangerousSqlExecution !== undefined)
+      editorSettings.value.confirmDangerousSqlExecution = partial.confirmDangerousSqlExecution;
     if (partial.compactTabTitle !== undefined) editorSettings.value.compactTabTitle = partial.compactTabTitle;
     if (partial.appLayout !== undefined) editorSettings.value.appLayout = partial.appLayout;
     if (partial.pageSize !== undefined) editorSettings.value.pageSize = normalizeResultPageSize(partial.pageSize);

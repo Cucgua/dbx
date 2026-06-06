@@ -38,6 +38,12 @@ test("normalizes editor theme settings", () => {
   assert.equal(normalizeEditorSettings({ theme: "invalid" as any }).theme, DEFAULT_EDITOR_SETTINGS.theme);
 });
 
+test("defaults dangerous SQL confirmation to enabled", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.confirmDangerousSqlExecution, true);
+  assert.equal(normalizeEditorSettings({}).confirmDangerousSqlExecution, true);
+  assert.equal(normalizeEditorSettings({ confirmDangerousSqlExecution: false }).confirmDangerousSqlExecution, false);
+});
+
 test("defaults shortcut settings", () => {
   const settings = normalizeEditorSettings({});
 

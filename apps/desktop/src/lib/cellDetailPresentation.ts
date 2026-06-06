@@ -65,6 +65,14 @@ export function isJsonColumnType(columnType: string | undefined): boolean {
   return base === "json" || base === "jsonb";
 }
 
+export function isGeometryColumnType(columnType: string | undefined): boolean {
+  const base = (columnType ?? "")
+    .trim()
+    .toLowerCase()
+    .split(/[(:\s]/)[0];
+  return base === "geometry" || base === "geography";
+}
+
 export function canFormatCellDetailJson(value: unknown, columnType?: string): boolean {
   if (value === null || value === undefined) return false;
   const text = cellDetailRawEditorText(value);

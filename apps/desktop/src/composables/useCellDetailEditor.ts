@@ -16,6 +16,7 @@ import { bracketMatching } from "@codemirror/language";
 import {
   EDITOR_FONT_FAMILY_CSS_VAR,
   EDITOR_FONT_SIZE_CSS_VAR,
+  cellDetailActiveLineColor,
   loadEditorTheme,
   editorFontTheme,
 } from "@/lib/editorThemes";
@@ -196,7 +197,7 @@ export function useCellDetailEditor(options: UseCellDetailEditorOptions): UseCel
         highlightActiveLine(),
         EditorView.theme({
           ".cm-activeLine": {
-            backgroundColor: "color-mix(in oklch, var(--foreground) 4%, transparent)",
+            backgroundColor: cellDetailActiveLineColor(),
           },
         }),
         EditorState.allowMultipleSelections.of(true),

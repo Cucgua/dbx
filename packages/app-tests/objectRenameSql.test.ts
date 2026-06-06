@@ -10,6 +10,8 @@ test("recognizes object rename support for UI affordances", () => {
   assert.equal(supportsObjectRename("sqlserver", "PROCEDURE"), true);
   assert.equal(supportsObjectRename("sqlite", "TABLE"), true);
   assert.equal(supportsObjectRename("sqlite", "VIEW"), false);
+  assert.equal(supportsObjectRename("rqlite", "TABLE"), true);
+  assert.equal(supportsObjectRename("rqlite", "VIEW"), false);
   assert.equal(supportsObjectRename("oracle", "FUNCTION"), false);
   assert.equal(supportsObjectRename("dameng", "PROCEDURE"), false);
   assert.equal(supportsObjectRename("mysql", "PROCEDURE"), false);

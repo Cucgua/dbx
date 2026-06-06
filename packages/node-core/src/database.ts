@@ -42,8 +42,19 @@ interface PoolEntry {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface RqliteResult {
+  columns?: string[];
+  values?: unknown[][];
+  rows_affected?: number;
+  error?: string;
+}
+
+interface RqliteResponse {
+  results?: RqliteResult[];
+}
+
 const pools = new Map<string, PoolEntry>();
-const proxyTunnels = new Map<string, { server: Server; port: number }>();
+const proxyTunnels = new Map<string, { server: Server; port: number; sockets: Set<Socket> }>();
 
 function poolKey(config: ConnectionConfig): string {
   return `${config.id}:${config.database || ""}`;
@@ -51,6 +62,7 @@ function poolKey(config: ConnectionConfig): string {
 
 function evictPool(key: string, entry: PoolEntry) {
   pools.delete(key);
+  clearTimeout(entry.timer);
   if (entry.type === "pg") {
     (entry.pool as import("pg").Pool).end().catch(() => {});
   } else {
@@ -61,6 +73,33 @@ function evictPool(key: string, entry: PoolEntry) {
 function resetIdleTimer(key: string, entry: PoolEntry) {
   clearTimeout(entry.timer);
   entry.timer = setTimeout(() => evictPool(key, entry), IDLE_TIMEOUT_MS);
+}
+
+export async function closeDatabaseResources(): Promise<void> {
+  const poolEntries = [...pools.entries()];
+  pools.clear();
+  await Promise.all(
+    poolEntries.map(async ([, entry]) => {
+      clearTimeout(entry.timer);
+      if (entry.type === "pg") {
+        await (entry.pool as import("pg").Pool).end().catch(() => {});
+      } else {
+        await (entry.pool as import("mysql2/promise").Pool).end().catch(() => {});
+      }
+    }),
+  );
+
+  const tunnels = [...proxyTunnels.values()];
+  proxyTunnels.clear();
+  await Promise.all(
+    tunnels.map(
+      ({ server, sockets }) =>
+        new Promise<void>((resolve) => {
+          for (const socket of sockets) socket.destroy();
+          server.close(() => resolve());
+        }),
+    ),
+  );
 }
 
 async function getPgPool(config: ConnectionConfig): Promise<import("pg").Pool> {
@@ -113,9 +152,14 @@ async function connectionEndpoint(config: ConnectionConfig): Promise<{ host: str
   const existing = proxyTunnels.get(config.id);
   if (existing) return { host: "127.0.0.1", port: existing.port };
 
+  const sockets = new Set<Socket>();
   const server = createServer((inbound) => {
+    sockets.add(inbound);
+    inbound.once("close", () => sockets.delete(inbound));
     connectViaProxy(config)
       .then((outbound) => {
+        sockets.add(outbound);
+        outbound.once("close", () => sockets.delete(outbound));
         inbound.pipe(outbound);
         outbound.pipe(inbound);
       })
@@ -129,7 +173,7 @@ async function connectionEndpoint(config: ConnectionConfig): Promise<{ host: str
       else reject(new Error("Failed to bind proxy tunnel"));
     });
   });
-  proxyTunnels.set(config.id, { server, port });
+  proxyTunnels.set(config.id, { server, port, sockets });
   return { host: "127.0.0.1", port };
 }
 
@@ -365,6 +409,7 @@ async function mysqlQuery(config: ConnectionConfig, sql: string, params?: unknow
 
 async function query(config: ConnectionConfig, sql: string, params?: unknown[], options?: QueryOptions): Promise<QueryResult> {
   if (config.db_type === "sqlite") return sqliteQuery(config, sql, options);
+  if (config.db_type === "rqlite") return rqliteQuery(config, sql, options);
   if (isMysqlType(config.db_type)) return mysqlQuery(config, sql, params, options);
   return pgQuery(config, sql, params, options);
 }
@@ -396,6 +441,47 @@ function sqliteQuery(config: ConnectionConfig, sql: string, options?: QueryOptio
   } finally {
     db.close();
   }
+}
+
+async function rqliteQuery(config: ConnectionConfig, sql: string, options?: QueryOptions): Promise<QueryResult> {
+  const isReader = /^\s*(?:--[^\n]*\n|\s|\/\*[\s\S]*?\*\/)*(select|pragma|explain|with)\b/i.test(sql);
+  const endpoint = isReader ? "/db/query" : "/db/execute";
+  const result = await rqliteRequest(config, endpoint, sql);
+  if (isReader) {
+    const columns = result.columns ?? [];
+    const rows = (result.values ?? []).slice(0, resolveMaxRows(options)).map((row) => {
+      const record: Record<string, unknown> = {};
+      columns.forEach((column, index) => {
+        record[column] = row[index];
+      });
+      return record;
+    });
+    return { columns, rows, row_count: rows.length };
+  }
+  return { columns: [], rows: [], row_count: result.rows_affected ?? 0 };
+}
+
+async function rqliteRequest(config: ConnectionConfig, endpoint: "/db/query" | "/db/execute", sql: string): Promise<RqliteResult> {
+  const { host, port } = await connectionEndpoint(config);
+  const scheme = config.ssl ? "https" : "http";
+  const params = (config.url_params || "").trim().replace(/^\?/, "");
+  const url = `${scheme}://${host}:${port}${endpoint}${params ? `?${params}` : ""}`;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (config.username) {
+    headers.authorization = `Basic ${Buffer.from(`${config.username}:${config.password || ""}`).toString("base64")}`;
+  }
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify([sql]),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`rqlite error (${response.status}): ${text}`);
+  const payload = JSON.parse(text) as RqliteResponse;
+  const result = payload.results?.[0];
+  if (!result) throw new Error("rqlite returned no result");
+  if (result.error) throw new Error(`rqlite error: ${result.error}`);
+  return result;
 }
 
 export async function executeQuery(config: ConnectionConfig, sql: string, options?: QueryOptions): Promise<QueryResult> {
@@ -451,7 +537,7 @@ export async function listTables(config: ConnectionConfig, schema?: string): Pro
     });
     return collections.map((name) => ({ name, type: "COLLECTION" }));
   }
-  if (config.db_type === "sqlite") {
+  if (config.db_type === "sqlite" || config.db_type === "rqlite") {
     const result = await query(
       config,
       `SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name`,
@@ -484,7 +570,7 @@ export async function describeTable(config: ConnectionConfig, table: string, sch
     const result = await mongoFindDocuments(config, table, 0, 20, "{}");
     return inferMongoColumns(result.documents);
   }
-  if (config.db_type === "sqlite") {
+  if (config.db_type === "sqlite" || config.db_type === "rqlite") {
     const result = await query(config, `PRAGMA table_info(${quoteSqliteIdentifier(table)})`);
     return result.rows.map((r) => ({
       name: String(r.name || ""),

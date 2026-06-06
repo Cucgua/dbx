@@ -193,6 +193,7 @@ const {
   dangerSql,
   pendingDangerSql,
   showDangerDialog,
+  suppressDangerConfirm,
   tryExecute,
   doExecute,
   cancelActiveExecution,
@@ -1192,9 +1193,11 @@ onUnmounted(() => {
           :app-version="appVersion"
           :show-danger-dialog="showDangerDialog"
           :danger-sql="dangerSql"
+          :suppress-danger-confirm="suppressDangerConfirm"
           @update:show-connection-dialog="setConnectionDialogOpen"
           @update:show-settings-dialog="showSettingsDialog = $event"
           @update:show-danger-dialog="showDangerDialog = $event"
+          @update:suppress-danger-confirm="suppressDangerConfirm = $event"
           @danger-confirm="onDangerConfirm"
           @connect-started="(name: string) => toast(t('connection.connecting', { name }), 30000)"
           @connect-succeeded="(name: string) => toast(t('connection.connectSuccess', { name }), 2000)"

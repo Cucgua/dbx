@@ -1243,6 +1243,7 @@ fn uses_keyless_row_predicate(database_type: Option<DatabaseType>) -> bool {
                 | DatabaseType::Redshift
                 | DatabaseType::Dameng
                 | DatabaseType::Gaussdb
+                | DatabaseType::Kwdb
                 | DatabaseType::Kingbase
                 | DatabaseType::Highgo
                 | DatabaseType::Vastbase
@@ -1379,7 +1380,7 @@ mod tests {
                 table_name: "events".to_string(),
                 property_name: "transactional".to_string(),
             }),
-            "SHOW TBLPROPERTIES `events` ('transactional')"
+            "SHOW TBLPROPERTIES `default`.`events` ('transactional')"
         );
         assert_eq!(
             build_hive_table_properties_sql(HiveTablePropertiesSqlOptions {

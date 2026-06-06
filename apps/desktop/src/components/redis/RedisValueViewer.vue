@@ -2,7 +2,20 @@
 import { computed, ref, onBeforeUnmount, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { DynamicScroller, DynamicScrollerItem, RecycleScroller } from "vue-virtual-scroller";
-import { Braces, Copy, Eye, FileText, Trash2, Save, RefreshCw, Plus, Loader2, Pencil, WrapText } from "@lucide/vue";
+import {
+  Braces,
+  Copy,
+  Eye,
+  FileText,
+  Terminal,
+  Trash2,
+  Save,
+  RefreshCw,
+  Plus,
+  Loader2,
+  Pencil,
+  WrapText,
+} from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -298,6 +311,94 @@ async function copyText(text: string) {
   }
 }
 
+function escapeRedisArg(val: string): string {
+  return `"${val.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function generateInsertStatements(): string | null {
+  if (!data.value) return null;
+  if (data.value.value_is_binary) return null;
+
+  const key = data.value.key_display;
+  const type = data.value.key_type;
+  const commands: string[] = [];
+
+  const isCollection = ["list", "set", "zset", "hash"].includes(type);
+  if (isCollection) {
+    const total = data.value.total;
+    const loaded = collectionItems.value.length;
+    if (total != null && total > loaded) {
+      commands.push(`-- Note: Only ${loaded} of ${total} items included`);
+    }
+  }
+
+  switch (type) {
+    case "string":
+      commands.push(`SET ${escapeRedisArg(key)} ${escapeRedisArg(String(data.value.value))}`);
+      break;
+    case "list": {
+      const items = collectionItems.value.map((v) => escapeRedisArg(String(v))).join(" ");
+      commands.push(`RPUSH ${escapeRedisArg(key)} ${items}`);
+      break;
+    }
+    case "set": {
+      const members = collectionItems.value.map((v) => escapeRedisArg(String(v))).join(" ");
+      commands.push(`SADD ${escapeRedisArg(key)} ${members}`);
+      break;
+    }
+    case "zset": {
+      const pairs = collectionItems.value.map((v) => `${v.score} ${escapeRedisArg(String(v.member))}`).join(" ");
+      commands.push(`ZADD ${escapeRedisArg(key)} ${pairs}`);
+      break;
+    }
+    case "hash": {
+      const pairs = collectionItems.value
+        .map((v) => `${escapeRedisArg(String(v.field))} ${escapeRedisArg(String(v.value))}`)
+        .join(" ");
+      commands.push(`HSET ${escapeRedisArg(key)} ${pairs}`);
+      break;
+    }
+    case "stream": {
+      const entries = Array.isArray(data.value.value) ? data.value.value : [];
+      for (const entry of entries) {
+        const fields = Object.entries((entry as any).fields ?? {})
+          .map(([f, v]) => `${escapeRedisArg(f)} ${escapeRedisArg(String(v))}`)
+          .join(" ");
+        commands.push(`XADD ${escapeRedisArg(key)} * ${fields}`);
+      }
+      break;
+    }
+    default:
+      if (type === "ReJSON-RL" || type === "JSON") {
+        const json = JSON.stringify(data.value.value);
+        commands.push(`JSON.SET ${escapeRedisArg(key)} $ '${json}'`);
+      }
+      break;
+  }
+
+  if (data.value.ttl > 0) {
+    commands.push(`EXPIRE ${escapeRedisArg(key)} ${data.value.ttl}`);
+  }
+
+  return commands.join("\n");
+}
+
+async function copyInsertStatement() {
+  if (!data.value) return;
+  if (data.value.value_is_binary) {
+    toast(t("redis.copyInsertStatementBinary"), 3000);
+    return;
+  }
+  const stmt = generateInsertStatements();
+  if (!stmt) return;
+  try {
+    await copyToClipboard(stmt);
+    toast(t("redis.copyInsertStatement"), 2000);
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
 function copyMember(value: unknown) {
   void copyText(formatRedisMemberDetail(value).text);
 }
@@ -493,7 +594,10 @@ function startEditTtl() {
 async function saveTtl() {
   const val = ttlInput.value.trim();
   const ttl = val === "" || val === "-1" ? -1 : parseInt(val, 10);
-  if (isNaN(ttl)) return;
+  if (isNaN(ttl)) {
+    toast(t("redis.ttlInvalid"), 3000);
+    return;
+  }
   await api.redisSetTtl(props.connectionId, props.db, props.keyRaw, ttl);
   editingTtl.value = false;
   await load();
@@ -505,7 +609,10 @@ function cancelEditTtl() {
 
 // Hash
 async function hashSet() {
-  if (!newField.value) return;
+  if (!newField.value.trim()) {
+    toast(t("redis.fieldRequired"), 3000);
+    return;
+  }
   await api.redisHashSet(props.connectionId, props.db, props.keyRaw, newField.value, newValue.value);
   newField.value = "";
   newValue.value = "";
@@ -522,7 +629,10 @@ function requestHashDel(field: string) {
 
 // List
 async function listPush() {
-  if (!newValue.value) return;
+  if (!newValue.value.trim()) {
+    toast(t("redis.valueRequired"), 3000);
+    return;
+  }
   await api.redisListPush(props.connectionId, props.db, props.keyRaw, newValue.value);
   newValue.value = "";
   await load();
@@ -538,7 +648,10 @@ function requestListRemove(index: number) {
 
 // Set
 async function setAdd() {
-  if (!newValue.value) return;
+  if (!newValue.value.trim()) {
+    toast(t("redis.memberRequired"), 3000);
+    return;
+  }
   await api.redisSetAdd(props.connectionId, props.db, props.keyRaw, newValue.value);
   newValue.value = "";
   await load();
@@ -554,7 +667,10 @@ function requestSetRemove(member: string) {
 
 // ZSet
 async function zsetAdd() {
-  if (!newValue.value) return;
+  if (!newValue.value.trim()) {
+    toast(t("redis.memberRequired"), 3000);
+    return;
+  }
   const score = parseFloat(newScore.value || "0");
   await api.redisZadd(props.connectionId, props.db, props.keyRaw, newValue.value, score);
   newValue.value = "";
@@ -622,6 +738,14 @@ onBeforeUnmount(() => {
           /></Button>
           <Button variant="ghost" size="icon" class="h-7 w-7 shrink-0" @click="copyValue"
             ><Copy class="h-3.5 w-3.5"
+          /></Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-7 w-7 shrink-0"
+            :title="t('redis.copyInsertStatement')"
+            @click="copyInsertStatement"
+            ><Terminal class="h-3.5 w-3.5"
           /></Button>
           <Button variant="ghost" size="icon" class="h-7 w-7 shrink-0 text-destructive" @click="requestDeleteKey"
             ><Trash2 class="h-3.5 w-3.5"

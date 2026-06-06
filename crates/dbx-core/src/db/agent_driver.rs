@@ -640,6 +640,14 @@ impl AgentDriverClient {
         // Reap the child to avoid zombie processes
         let _ = self.child.wait();
     }
+
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    pub fn stderr_tail_snapshot(&self) -> String {
+        self.stderr_tail.lock().map(|tail| tail.snapshot()).unwrap_or_default()
+    }
 }
 
 pub fn agent_handshake_params(app_version: &str) -> Value {

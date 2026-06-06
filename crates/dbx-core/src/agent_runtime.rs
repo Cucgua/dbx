@@ -21,6 +21,13 @@ pub async fn stop_daemon_by_key(manager: &AgentManager, agent_key: &str) {
     manager.daemons.lock().await.remove(agent_key);
 }
 
+pub async fn restart_daemon_by_key(manager: &AgentManager, agent_key: &str) -> Result<(), String> {
+    manager.daemons.lock().await.remove(agent_key);
+    let client = spawn_client_for_key(manager, agent_key).await?;
+    manager.daemons.lock().await.insert(agent_key.to_string(), client);
+    Ok(())
+}
+
 pub async fn spawn_connection_client(
     manager: &AgentManager,
     db_type: &DatabaseType,

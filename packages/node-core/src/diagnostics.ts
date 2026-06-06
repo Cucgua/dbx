@@ -9,7 +9,9 @@ export const DIRECT_QUERY_TYPES = [
   "doris",
   "starrocks",
   "sqlite",
+  "rqlite",
   "gaussdb",
+  "kwdb",
   "opengauss",
 ] as const;
 

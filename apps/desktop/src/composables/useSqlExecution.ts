@@ -3,6 +3,7 @@ import { useI18n } from "vue-i18n";
 import { useQueryStore } from "@/stores/queryStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useToast } from "@/composables/useToast";
 import { classifySqlActivityKind } from "@/lib/historyActivityKind";
 import { sqlMetadataRefreshTarget } from "@/lib/sqlMetadataRefresh";
@@ -42,11 +43,13 @@ export function useSqlExecution(deps: {
   const queryStore = useQueryStore();
   const historyStore = useHistoryStore();
   const connectionStore = useConnectionStore();
+  const settingsStore = useSettingsStore();
   const { toast } = useToast();
 
   const dangerSql = ref("");
   const pendingDangerSql = ref("");
   const showDangerDialog = ref(false);
+  const suppressDangerConfirm = ref(false);
 
   async function resolvedExecutableSql(): Promise<string> {
     return deps.resolveExecutableSql ? await deps.resolveExecutableSql() : deps.executableSql.value;
@@ -56,9 +59,10 @@ export function useSqlExecution(deps: {
     const tab = deps.activeTab.value;
     const sql = sqlOverride ?? (await resolvedExecutableSql());
     if (!tab || !sql.trim()) return;
-    if (isDangerousSql(sql)) {
+    if (isDangerousSql(sql) && settingsStore.editorSettings.confirmDangerousSqlExecution) {
       dangerSql.value = sql;
       pendingDangerSql.value = sql;
+      suppressDangerConfirm.value = false;
       showDangerDialog.value = true;
     } else {
       doExecute(sql);
@@ -131,6 +135,10 @@ export function useSqlExecution(deps: {
 
   async function onDangerConfirm() {
     const sql = pendingDangerSql.value || (await resolvedExecutableSql());
+    if (suppressDangerConfirm.value) {
+      settingsStore.updateEditorSettings({ confirmDangerousSqlExecution: false });
+    }
+    suppressDangerConfirm.value = false;
     pendingDangerSql.value = "";
     await doExecute(sql);
   }
@@ -139,6 +147,7 @@ export function useSqlExecution(deps: {
     dangerSql,
     pendingDangerSql,
     showDangerDialog,
+    suppressDangerConfirm,
     tryExecute,
     doExecute,
     cancelActiveExecution,

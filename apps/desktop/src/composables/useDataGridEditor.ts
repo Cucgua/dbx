@@ -61,6 +61,7 @@ export interface UseDataGridEditorOptions {
   sql: ComputedRef<string | undefined>;
   searchText: Ref<string>;
   whereFilterInput: Ref<string>;
+  currentWhereInput: ComputedRef<string | undefined>;
   orderByInput: Ref<string>;
   rowStatusFilter: Ref<RowStatusFilter>;
   initialEditColumn?: ComputedRef<number>;
@@ -107,7 +108,6 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
     customSave,
     sql,
     searchText,
-    whereFilterInput,
     orderByInput,
     rowStatusFilter,
     initialEditColumn,
@@ -633,7 +633,7 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
       "reload",
       sql.value,
       searchText.value,
-      whereFilterInput.value.trim() || undefined,
+      options.currentWhereInput.value,
       orderByInput.value.trim() || undefined,
       pageSize.value,
       (currentPage.value - 1) * pageSize.value,

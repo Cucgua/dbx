@@ -2,6 +2,7 @@ export type DatabaseType =
   | "mysql"
   | "postgres"
   | "sqlite"
+  | "rqlite"
   | "redis"
   | "duckdb"
   | "clickhouse"
@@ -18,6 +19,7 @@ export type DatabaseType =
   | "highgo"
   | "vastbase"
   | "goldendb"
+  | "kwdb"
   | "yashandb"
   | "databricks"
   | "saphana"
@@ -358,6 +360,7 @@ export interface QueryTab {
   resultPageOffset?: number;
   resultCountSql?: string;
   resultTotalRowCount?: number;
+  resultTotalRowCountLoading?: boolean;
   resultSessionId?: string;
   resultAccessedAt?: number;
   pinned?: boolean;

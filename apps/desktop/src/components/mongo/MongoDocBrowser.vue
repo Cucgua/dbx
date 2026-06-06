@@ -1,13 +1,35 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
-import { RefreshCw, Trash2, Plus, Save, ChevronLeft, ChevronRight, Table2, Braces, X } from "@lucide/vue";
+import {
+  RefreshCw,
+  RefreshCcw,
+  Loader2,
+  Trash2,
+  Plus,
+  Save,
+  ChevronLeft,
+  ChevronRight,
+  Table2,
+  Braces,
+  X,
+  Columns3,
+  Check,
+  Search,
+  Wrench,
+  Filter,
+} from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import DataGrid from "@/components/grid/DataGrid.vue";
 import * as api from "@/lib/api";
+import { clampSearchSplitWidth } from "@/lib/dataGridSearchSplit";
+import { normalizeResultPageSize } from "@/lib/paginationPageSize";
 import { useSettingsStore } from "@/stores/settingsStore";
 import JsonEditNode from "./JsonEditNode.vue";
 import type { EditNode } from "@/types/editor";
@@ -28,10 +50,11 @@ type JsonRecord = Record<string, unknown>;
 type ViewMode = "document" | "table";
 
 const documents = ref<JsonRecord[]>([]);
+const lastGridColumns = ref<string[]>([]);
 const total = ref(0);
 const loading = ref(false);
 const page = ref(0);
-const pageSize = 50;
+const pageSize = ref(normalizeResultPageSize(settingsStore.editorSettings.pageSize));
 const selectedIdx = ref<number | null>(null);
 const editJson = ref("");
 const isEditing = ref(false);
@@ -45,8 +68,59 @@ const viewMode = computed<ViewMode>({
 });
 const filterInput = ref("");
 const sortInput = ref("");
+const dataGridRef = ref<InstanceType<typeof DataGrid>>();
+const columnVisibilitySearch = ref("");
+const columnVisibilityOptions = computed(
+  () => dataGridRef.value?.filteredColumnVisibilityOptions(columnVisibilitySearch.value) ?? [],
+);
+const tableSearchSplitContainerRef = ref<HTMLDivElement>();
+const tableFindPaneWidth = ref<number | null>(null);
+const isResizingTableSearchSplit = ref(false);
+let tableSearchSplitStartX = 0;
+let tableSearchSplitStartWidth = 0;
+
+const tableFindPaneStyle = computed(() => {
+  if (tableFindPaneWidth.value == null) return {};
+  return { flex: `0 0 ${tableFindPaneWidth.value}px` };
+});
 
 type PendingDelete = { kind: "document"; index: number } | { kind: "field"; index: number; name: string };
+type LocalFilterSummary = {
+  columnIndex: number;
+  columnName: string;
+  values: string[];
+  hiddenValueCount: number;
+};
+type MongoFilterMode =
+  | "equals"
+  | "not-equals"
+  | "like"
+  | "not-like"
+  | "greater-than"
+  | "less-than"
+  | "is-null"
+  | "is-not-null";
+type MongoFilterRule = {
+  id: string;
+  fieldName: string;
+  mode: MongoFilterMode;
+  rawValue: string;
+  conjunction: "AND" | "OR";
+};
+
+const mongoFilterModeOptions: Array<{ value: MongoFilterMode; labelKey: string }> = [
+  { value: "equals", labelKey: "grid.filterBuilderEquals" },
+  { value: "not-equals", labelKey: "grid.filterBuilderNotEquals" },
+  { value: "like", labelKey: "grid.filterBuilderContains" },
+  { value: "not-like", labelKey: "grid.filterBuilderNotContains" },
+  { value: "greater-than", labelKey: "grid.filterBuilderGreaterThan" },
+  { value: "less-than", labelKey: "grid.filterBuilderLessThan" },
+  { value: "is-null", labelKey: "grid.filterBuilderIsNull" },
+  { value: "is-not-null", labelKey: "grid.filterBuilderIsNotNull" },
+];
+const mongoFilterBuilderOpen = ref(false);
+const mongoFilterRules = ref<MongoFilterRule[]>([]);
+const appliedMongoFilter = ref<Record<string, unknown> | null>(null);
 
 const pendingDelete = ref<PendingDelete | null>(null);
 
@@ -74,7 +148,15 @@ const deleteDetails = computed(() => {
 
 const gridResult = computed<QueryResult>(() => {
   const docs = documents.value;
-  if (!docs.length) return { columns: [], rows: [], affected_rows: 0, execution_time_ms: 0, truncated: false };
+  if (!docs.length) {
+    return {
+      columns: lastGridColumns.value,
+      rows: [],
+      affected_rows: 0,
+      execution_time_ms: 0,
+      truncated: false,
+    };
+  }
 
   const keySet = new Set<string>();
   keySet.add("_id");
@@ -97,6 +179,147 @@ const gridResult = computed<QueryResult>(() => {
 
   return { columns, rows, affected_rows: 0, execution_time_ms: 0, truncated: false };
 });
+const mongoFilterFieldOptions = computed(() => gridResult.value.columns);
+const mongoStructuredFilterCount = computed(() => (appliedMongoFilter.value ? 1 : 0));
+
+function defaultMongoFilterRule(): MongoFilterRule {
+  return {
+    id: uuid(),
+    fieldName: mongoFilterFieldOptions.value[0] ?? "",
+    mode: "equals",
+    rawValue: "",
+    conjunction: "AND",
+  };
+}
+
+function ensureMongoFilterRule() {
+  if (mongoFilterRules.value.length === 0 && mongoFilterFieldOptions.value.length > 0) {
+    mongoFilterRules.value = [defaultMongoFilterRule()];
+  }
+}
+
+function addMongoFilterRule() {
+  ensureMongoFilterRule();
+  mongoFilterRules.value = [...mongoFilterRules.value, defaultMongoFilterRule()];
+}
+
+function removeMongoFilterRule(ruleId: string) {
+  mongoFilterRules.value = mongoFilterRules.value.filter((rule) => rule.id !== ruleId);
+  if (mongoFilterRules.value.length === 0) appliedMongoFilter.value = null;
+}
+
+function updateMongoFilterRule(ruleId: string, patch: Partial<MongoFilterRule>) {
+  mongoFilterRules.value = mongoFilterRules.value.map((rule) => {
+    if (rule.id !== ruleId) return rule;
+    const next = { ...rule, ...patch };
+    if (!mongoFilterModeNeedsValue(next.mode)) next.rawValue = "";
+    return next;
+  });
+}
+
+function resetMongoFilterBuilder() {
+  appliedMongoFilter.value = null;
+  mongoFilterRules.value = mongoFilterFieldOptions.value.length > 0 ? [defaultMongoFilterRule()] : [];
+}
+
+function mongoFilterModeNeedsValue(mode: MongoFilterMode): boolean {
+  return mode !== "is-null" && mode !== "is-not-null";
+}
+
+function parseMongoFilterValue(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function mongoConditionForRule(rule: MongoFilterRule): Record<string, unknown> | null {
+  if (!rule.fieldName) return null;
+  if (mongoFilterModeNeedsValue(rule.mode) && !rule.rawValue.trim()) return null;
+  const value = mongoFilterModeNeedsValue(rule.mode) ? parseMongoFilterValue(rule.rawValue) : null;
+  switch (rule.mode) {
+    case "equals":
+      return { [rule.fieldName]: value };
+    case "not-equals":
+      return { [rule.fieldName]: { $ne: value } };
+    case "like":
+      return { [rule.fieldName]: { $regex: String(value), $options: "i" } };
+    case "not-like":
+      return { [rule.fieldName]: { $not: { $regex: String(value), $options: "i" } } };
+    case "greater-than":
+      return { [rule.fieldName]: { $gt: value } };
+    case "less-than":
+      return { [rule.fieldName]: { $lt: value } };
+    case "is-null":
+      return { [rule.fieldName]: null };
+    case "is-not-null":
+      return { [rule.fieldName]: { $ne: null } };
+  }
+}
+
+function combineMongoConditions(
+  conditions: Record<string, unknown>[],
+  rules: MongoFilterRule[],
+): Record<string, unknown> | null {
+  if (conditions.length === 0) return null;
+  let result = conditions[0];
+  for (let i = 1; i < conditions.length; i++) {
+    const operator = rules[i]?.conjunction === "OR" ? "$or" : "$and";
+    result = { [operator]: [result, conditions[i]] };
+  }
+  return result;
+}
+
+function parseMongoFilterInput(): Record<string, unknown> {
+  const trimmed = filterInput.value.trim();
+  if (!trimmed) return {};
+  const parsed = JSON.parse(trimmed);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+}
+
+function currentMongoFilter(): string | undefined {
+  const manual = parseMongoFilterInput();
+  const structured = appliedMongoFilter.value;
+  const filter = structured ? (Object.keys(manual).length ? { $and: [manual, structured] } : structured) : manual;
+  return Object.keys(filter).length ? JSON.stringify(filter) : undefined;
+}
+
+const mongoQueryPreview = computed(() => {
+  let filter = "{}";
+  try {
+    filter = currentMongoFilter() ?? "{}";
+  } catch {
+    filter = filterInput.value.trim() || "{}";
+  }
+  const sort = sortInput.value.trim();
+  const parts = [`db.${props.collection}.find(${filter})`];
+  if (sort) parts.push(`.sort(${sort})`);
+  parts.push(`.skip(${page.value * pageSize.value}).limit(${pageSize.value})`);
+  return parts.join("");
+});
+
+async function applyMongoStructuredFilters() {
+  const items = mongoFilterRules.value
+    .map((rule) => ({ rule, condition: mongoConditionForRule(rule) }))
+    .filter((item): item is { rule: MongoFilterRule; condition: Record<string, unknown> } => !!item.condition);
+  const structured = combineMongoConditions(
+    items.map((item) => item.condition),
+    items.map((item) => item.rule),
+  );
+  appliedMongoFilter.value = structured;
+  mongoFilterBuilderOpen.value = false;
+  applyFilter();
+}
+
+function clearMongoFilters(clearLocalFilter?: (columnIndex?: number) => void) {
+  appliedMongoFilter.value = null;
+  resetMongoFilterBuilder();
+  clearLocalFilter?.();
+  applyFilter();
+}
 
 async function gridSave(changes: {
   dirtyRows: Map<number, Map<number, string | number | boolean | null>>;
@@ -153,18 +376,29 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const filter = filterInput.value.trim() || undefined;
+    const filter = currentMongoFilter();
     const sort = sortInput.value.trim() || undefined;
     const result = await api.mongoFindDocuments(
       props.connectionId,
       props.database,
       props.collection,
-      page.value * pageSize,
-      pageSize,
+      page.value * pageSize.value,
+      pageSize.value,
       filter,
       sort,
     );
-    documents.value = result.documents.map(asRecord);
+    const nextDocuments = result.documents.map(asRecord);
+    documents.value = nextDocuments;
+    if (nextDocuments.length > 0) {
+      const keySet = new Set<string>();
+      keySet.add("_id");
+      for (const doc of nextDocuments) {
+        for (const key of Object.keys(doc)) {
+          if (key !== "_id") keySet.add(key);
+        }
+      }
+      lastGridColumns.value = [...keySet];
+    }
     total.value = result.total;
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -175,6 +409,13 @@ async function load() {
 
 function applyFilter() {
   page.value = 0;
+  load();
+}
+
+function paginate(offset: number, limit: number) {
+  const normalizedLimit = normalizeResultPageSize(limit, pageSize.value);
+  pageSize.value = normalizedLimit;
+  page.value = Math.floor(Math.max(0, offset) / normalizedLimit);
   load();
 }
 
@@ -408,7 +649,7 @@ function prevPage() {
 }
 
 function nextPage() {
-  if ((page.value + 1) * pageSize >= total.value) return;
+  if ((page.value + 1) * pageSize.value >= total.value) return;
   page.value++;
   load();
 }
@@ -438,6 +679,51 @@ function highlightedJson(json: string): string {
 }
 
 onMounted(load);
+onBeforeUnmount(() => {
+  endTableSearchSplitResize();
+});
+
+function tableSearchSplitContainerWidth(): number {
+  return tableSearchSplitContainerRef.value?.getBoundingClientRect().width ?? 0;
+}
+
+function startTableSearchSplitResize(event: MouseEvent) {
+  const containerWidth = tableSearchSplitContainerWidth();
+  if (containerWidth <= 0) return;
+  event.preventDefault();
+  isResizingTableSearchSplit.value = true;
+  tableSearchSplitStartX = event.clientX;
+  tableSearchSplitStartWidth = clampSearchSplitWidth({
+    containerWidth,
+    desiredWidth: tableFindPaneWidth.value ?? undefined,
+  });
+  tableFindPaneWidth.value = tableSearchSplitStartWidth;
+  document.body.classList.add("select-none", "cursor-col-resize");
+  window.addEventListener("mousemove", moveTableSearchSplitResize);
+  window.addEventListener("mouseup", endTableSearchSplitResize);
+}
+
+function moveTableSearchSplitResize(event: MouseEvent) {
+  if (!isResizingTableSearchSplit.value) return;
+  const containerWidth = tableSearchSplitContainerWidth();
+  if (containerWidth <= 0) return;
+  tableFindPaneWidth.value = clampSearchSplitWidth({
+    containerWidth,
+    desiredWidth: tableSearchSplitStartWidth + event.clientX - tableSearchSplitStartX,
+  });
+}
+
+function endTableSearchSplitResize() {
+  isResizingTableSearchSplit.value = false;
+  document.body.classList.remove("select-none", "cursor-col-resize");
+  window.removeEventListener("mousemove", moveTableSearchSplitResize);
+  window.removeEventListener("mouseup", endTableSearchSplitResize);
+}
+
+function resetTableSearchSplitWidth() {
+  const containerWidth = tableSearchSplitContainerWidth();
+  tableFindPaneWidth.value = containerWidth > 0 ? clampSearchSplitWidth({ containerWidth }) : null;
+}
 </script>
 
 <template>
@@ -472,11 +758,11 @@ onMounted(load);
       <Button v-if="viewMode === 'document'" variant="ghost" size="icon" class="h-5 w-5" @click="startNew"
         ><Plus class="h-3 w-3"
       /></Button>
-      <Button variant="ghost" size="icon" class="h-5 w-5" @click="load"
+      <Button v-if="viewMode === 'document'" variant="ghost" size="icon" class="h-5 w-5" @click="load"
         ><RefreshCw class="h-3 w-3" :class="{ 'animate-spin': loading }"
       /></Button>
 
-      <div class="flex items-center gap-1 ml-1">
+      <div v-if="viewMode === 'document'" class="flex items-center gap-1 ml-1">
         <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="page <= 0" @click="prevPage">
           <ChevronLeft class="h-3 w-3" />
         </Button>
@@ -491,63 +777,426 @@ onMounted(load);
           <ChevronRight class="h-3 w-3" />
         </Button>
       </div>
+
+      <div class="flex-1" />
+
+      <Popover v-if="viewMode === 'table' && gridResult.columns.length">
+        <PopoverTrigger as-child>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-5 shrink-0 gap-1 px-1.5 text-xs text-foreground hover:bg-accent"
+            :class="{ 'bg-accent text-foreground': (dataGridRef?.hiddenColumnCount ?? 0) > 0 }"
+            :title="t('grid.columnVisibility')"
+            :aria-label="t('grid.columnVisibility')"
+          >
+            <Columns3 class="h-3.5 w-3.5" />
+            {{ t("grid.columnVisibility") }}
+            <span v-if="(dataGridRef?.hiddenColumnCount ?? 0) > 0" class="tabular-nums">
+              {{ dataGridRef?.visibleColumnCount }}/{{ dataGridRef?.displayableColumnCount }}
+            </span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          class="w-64 max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-xl border bg-popover p-0 text-popover-foreground shadow-xl"
+          @click.stop
+          @keydown.stop
+        >
+          <div class="border-b bg-muted/40 px-2 py-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-semibold">{{ t("grid.columnVisibility") }}</div>
+              <div class="text-[10px] text-muted-foreground tabular-nums">
+                {{ dataGridRef?.visibleColumnCount ?? 0 }}/{{ dataGridRef?.displayableColumnCount ?? 0 }}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5 border-b px-2 py-1.5">
+            <Search class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <input
+              v-model="columnVisibilitySearch"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              class="h-6 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+              :placeholder="t('grid.searchColumns')"
+            />
+          </div>
+          <div class="max-h-72 overflow-auto py-0.5">
+            <button
+              v-for="option in columnVisibilityOptions"
+              :key="`${option.index}:${option.column}`"
+              type="button"
+              class="grid w-full grid-cols-[1.5rem_minmax(0,1fr)] items-center px-2 py-1 text-left text-xs hover:bg-accent"
+              @click="dataGridRef?.toggleColumnVisibility(option.index)"
+            >
+              <span
+                class="flex h-4 w-4 items-center justify-center rounded border"
+                :class="
+                  dataGridRef?.isColumnVisible(option.index)
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-background text-transparent'
+                "
+              >
+                <Check class="h-3 w-3 stroke-[3]" />
+              </span>
+              <span class="truncate font-mono text-xs" :title="option.column">{{ option.column }}</span>
+            </button>
+            <div
+              v-if="columnVisibilityOptions.length === 0"
+              class="px-2 py-6 text-center text-xs text-muted-foreground"
+            >
+              {{ t("grid.noSearchResults") }}
+            </div>
+          </div>
+          <div class="flex items-center justify-between gap-2 border-t bg-muted/30 px-2 py-1.5">
+            <span class="text-[11px] text-muted-foreground">{{ t("grid.columnVisibilityHint") }}</span>
+            <div class="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-7 px-2 text-xs"
+                :disabled="(dataGridRef?.displayableColumnCount ?? 0) <= 1"
+                @click="dataGridRef?.invertColumnVisibility()"
+              >
+                {{ t("grid.invertColumnVisibility") }}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-7 px-2 text-xs"
+                :disabled="(dataGridRef?.hiddenColumnCount ?? 0) === 0"
+                @click="dataGridRef?.showAllColumns()"
+              >
+                {{ t("grid.showAllColumns") }}
+              </Button>
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <Popover v-if="viewMode === 'table' && gridResult.columns.length">
+        <PopoverTrigger as-child>
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-7 shrink-0 text-foreground hover:bg-accent"
+            :class="{ 'bg-accent text-foreground': dataGridRef?.nullColumnsHidden }"
+            :title="t('grid.viewOptions')"
+            :aria-label="t('grid.viewOptions')"
+          >
+            <Wrench class="h-4 w-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          class="w-max min-w-44 max-w-[calc(100vw-2rem)] gap-0 overflow-hidden rounded-xl border bg-popover p-0 text-popover-foreground shadow-xl"
+          @click.stop
+          @keydown.stop
+        >
+          <div class="border-b bg-muted/40 px-3 py-2">
+            <div class="text-xs font-semibold">{{ t("grid.viewOptions") }}</div>
+          </div>
+          <label
+            class="flex cursor-pointer items-center gap-2 px-3 py-2 text-xs hover:bg-accent"
+            :class="{ 'cursor-not-allowed opacity-60': !dataGridRef?.canToggleAllNullColumns }"
+          >
+            <input
+              type="checkbox"
+              class="h-3.5 w-3.5 shrink-0 accent-primary"
+              :checked="!!dataGridRef?.nullColumnsHidden"
+              :disabled="!dataGridRef?.canToggleAllNullColumns"
+              @change="dataGridRef?.toggleAllNullColumns()"
+            />
+            <span class="min-w-0 flex items-center gap-1 font-medium">
+              {{ t("grid.hideNullColumns") }}
+              <span v-if="(dataGridRef?.allNullColumnCount ?? 0) > 0" class="text-muted-foreground tabular-nums">
+                ({{ dataGridRef?.allNullColumnCount }})
+              </span>
+            </span>
+          </label>
+        </PopoverContent>
+      </Popover>
     </div>
 
     <!-- Table view -->
     <DataGrid
       v-if="viewMode === 'table'"
+      ref="dataGridRef"
       class="flex-1 min-h-0"
       :result="gridResult"
       context="results"
       editable
       :custom-save="gridSave"
+      :loading="loading"
+      :sql="mongoQueryPreview"
+      :page-offset="page * pageSize"
+      :page-limit="pageSize"
+      :total-row-count="total"
       @sort="onSort"
       @reload="load"
+      @paginate="(offset: number, limit: number) => paginate(offset, limit)"
     >
-      <template #search-bar>
-        <div class="flex-1 flex items-center gap-1 px-2 py-0.5 border-l min-w-0">
-          <span class="text-blue-600 dark:text-blue-400 text-xs font-medium select-none shrink-0">find</span>
-          <input
-            v-model="filterInput"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60 font-mono"
-            placeholder="{}"
-            @keydown.enter="applyFilter"
-          />
+      <template
+        #search-bar="{
+          localFilterCount,
+          hasLocalColumnFilters,
+          localFilterSummaries,
+          clearLocalFilter,
+        }: {
+          localFilterCount: number;
+          hasLocalColumnFilters: boolean;
+          localFilterSummaries: LocalFilterSummary[];
+          clearLocalFilter: (columnIndex?: number) => void;
+        }"
+      >
+        <div ref="tableSearchSplitContainerRef" class="flex flex-1 min-w-0">
+          <div class="flex flex-1 items-center gap-1 px-2 py-0.5 min-w-0" :style="tableFindPaneStyle">
+            <Popover v-model:open="mongoFilterBuilderOpen">
+              <PopoverTrigger as-child>
+                <button
+                  type="button"
+                  class="relative flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] font-medium transition-colors"
+                  :class="
+                    hasLocalColumnFilters || appliedMongoFilter
+                      ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/15'
+                      : 'border-border/70 text-muted-foreground hover:bg-accent hover:text-foreground'
+                  "
+                  @click="ensureMongoFilterRule"
+                >
+                  <Filter class="h-3 w-3" />
+                  <span
+                    v-if="localFilterCount + mongoStructuredFilterCount"
+                    class="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[9px] leading-none text-primary-foreground"
+                  >
+                    {{ localFilterCount + mongoStructuredFilterCount }}
+                  </span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" class="w-[360px] max-w-[calc(100vw-24px)] gap-3 p-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="text-xs font-medium text-foreground">{{ t("grid.filter") }}</div>
+                  <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="addMongoFilterRule">
+                    <Plus class="mr-1 h-3.5 w-3.5" />
+                    {{ t("grid.filterBuilderAddRule") }}
+                  </Button>
+                </div>
+                <div
+                  v-if="hasLocalColumnFilters"
+                  class="space-y-2 rounded-md border border-primary/20 bg-primary/5 px-2.5 py-2"
+                >
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="flex min-w-0 items-center gap-2 text-xs font-medium text-primary">
+                      <Filter class="h-3.5 w-3.5 shrink-0" />
+                      <span class="truncate">{{ t("grid.localFiltersActive", { count: localFilterCount }) }}</span>
+                    </div>
+                    <Button variant="ghost" size="sm" class="h-7 shrink-0 px-2 text-xs" @click="clearLocalFilter()">
+                      <X class="mr-1 h-3.5 w-3.5" />
+                      {{ t("grid.clearLocalFiltersShort") }}
+                    </Button>
+                  </div>
+                  <div class="space-y-1">
+                    <div
+                      v-for="summary in localFilterSummaries"
+                      :key="summary.columnIndex"
+                      class="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)_auto] items-center gap-2 rounded border border-primary/10 bg-background/70 px-2 py-1 text-xs"
+                    >
+                      <span class="truncate font-medium text-foreground" :title="summary.columnName">
+                        {{ summary.columnName }}
+                      </span>
+                      <span class="min-w-0 truncate font-mono text-muted-foreground">
+                        <template v-for="(value, valueIndex) in summary.values" :key="valueIndex">
+                          <span v-if="valueIndex > 0">, </span>
+                          <span>{{ value }}</span>
+                        </template>
+                        <span v-if="summary.hiddenValueCount">
+                          {{ t("grid.localFilterMoreValues", { count: summary.hiddenValueCount }) }}
+                        </span>
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-6 w-6 text-muted-foreground hover:text-destructive"
+                        :title="t('grid.clearFilter')"
+                        @click="clearLocalFilter(summary.columnIndex)"
+                      >
+                        <X class="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="mongoFilterRules.length" class="space-y-2">
+                  <template v-for="(rule, index) in mongoFilterRules" :key="rule.id">
+                    <div v-if="index > 0" class="flex justify-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        class="h-6 px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                        @click="
+                          updateMongoFilterRule(rule.id, {
+                            conjunction: rule.conjunction === 'AND' ? 'OR' : 'AND',
+                          })
+                        "
+                      >
+                        {{ rule.conjunction }}
+                      </Button>
+                    </div>
+                    <div
+                      class="grid grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)_minmax(0,1fr)_auto] items-center gap-1.5"
+                    >
+                      <Select
+                        :model-value="rule.fieldName"
+                        @update:model-value="
+                          (value: any) => updateMongoFilterRule(rule.id, { fieldName: String(value) })
+                        "
+                      >
+                        <SelectTrigger
+                          class="h-8 w-full min-w-0 overflow-hidden text-xs [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:truncate"
+                        >
+                          <SelectValue :placeholder="t('grid.filterBuilderColumn')" />
+                        </SelectTrigger>
+                        <SelectContent position="popper">
+                          <SelectItem v-for="fieldName in mongoFilterFieldOptions" :key="fieldName" :value="fieldName">
+                            {{ fieldName }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <Select
+                        :model-value="rule.mode"
+                        @update:model-value="
+                          (value: any) => updateMongoFilterRule(rule.id, { mode: value as MongoFilterMode })
+                        "
+                      >
+                        <SelectTrigger
+                          class="h-8 w-full min-w-0 overflow-hidden text-xs [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:truncate"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent position="popper">
+                          <SelectItem
+                            v-for="option in mongoFilterModeOptions"
+                            :key="option.value"
+                            :value="option.value"
+                          >
+                            {{ t(option.labelKey) }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <Input
+                        v-if="mongoFilterModeNeedsValue(rule.mode)"
+                        :model-value="rule.rawValue"
+                        class="h-8 min-w-0 text-xs"
+                        :placeholder="t('grid.filterBuilderValue')"
+                        @update:model-value="
+                          (value) => updateMongoFilterRule(rule.id, { rawValue: String(value ?? '') })
+                        "
+                        @keydown.enter.prevent="applyMongoStructuredFilters"
+                      />
+                      <div
+                        v-else
+                        class="flex h-8 min-w-0 items-center overflow-hidden rounded-md border border-dashed px-2 text-xs text-muted-foreground"
+                      >
+                        <span class="truncate">{{ t("grid.filterBuilderNoValue") }}</span>
+                      </div>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                        :disabled="mongoFilterRules.length === 1"
+                        @click="removeMongoFilterRule(rule.id)"
+                      >
+                        <Trash2 class="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </template>
+                </div>
+                <div v-else class="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+                  {{ t("grid.filterBuilderEmpty") }}
+                </div>
+
+                <div class="flex items-center justify-between gap-2 pt-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-8 px-2 text-xs"
+                    @click="clearMongoFilters(clearLocalFilter)"
+                  >
+                    {{ t("grid.clearFilter") }}
+                  </Button>
+                  <div class="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" class="h-8 px-2 text-xs" @click="resetMongoFilterBuilder">
+                      {{ t("grid.resetFilterBuilder") }}
+                    </Button>
+                    <Button size="sm" class="h-8 px-3 text-xs" @click="applyMongoStructuredFilters">
+                      {{ t("grid.applyFilter") }}
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <span class="text-blue-600 dark:text-blue-400 text-xs font-medium select-none shrink-0">find</span>
+            <input
+              v-model="filterInput"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60 font-mono"
+              placeholder="{}"
+              @keydown.enter="applyFilter"
+            />
+            <button
+              v-if="filterInput.trim()"
+              class="text-muted-foreground hover:text-foreground shrink-0"
+              @click="
+                filterInput = '';
+                applyFilter();
+              "
+            >
+              <X class="w-3 h-3" />
+            </button>
+          </div>
           <button
-            v-if="filterInput.trim()"
-            class="text-muted-foreground hover:text-foreground shrink-0"
-            @click="
-              filterInput = '';
-              applyFilter();
-            "
+            type="button"
+            class="group relative flex w-2 shrink-0 cursor-col-resize items-center justify-center border-l border-r border-border/80 bg-muted/15 hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+            aria-label="Resize find and sort"
+            @mousedown="startTableSearchSplitResize"
+            @dblclick.stop="resetTableSearchSplitWidth"
           >
-            <X class="w-3 h-3" />
+            <span class="h-5 w-px bg-border group-hover:bg-primary/60" />
           </button>
+          <div class="flex flex-1 items-center gap-1 px-2 py-0.5 min-w-0">
+            <span class="text-orange-600 dark:text-orange-400 text-xs font-medium select-none shrink-0">sort</span>
+            <input
+              v-model="sortInput"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60 font-mono"
+              placeholder="{}"
+              @keydown.enter="applyFilter"
+            />
+            <button
+              v-if="sortInput.trim()"
+              class="text-muted-foreground hover:text-foreground shrink-0"
+              @click="
+                sortInput = '';
+                applyFilter();
+              "
+            >
+              <X class="w-3 h-3" />
+            </button>
+          </div>
         </div>
-        <div class="flex items-center gap-1 px-2 py-0.5 border-l border-r min-w-0" style="flex: 0.6">
-          <span class="text-orange-600 dark:text-orange-400 text-xs font-medium select-none shrink-0">sort</span>
-          <input
-            v-model="sortInput"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            class="flex-1 h-5 min-w-0 text-xs bg-transparent outline-none placeholder:text-muted-foreground/60 font-mono"
-            placeholder="{}"
-            @keydown.enter="applyFilter"
-          />
-          <button
-            v-if="sortInput.trim()"
-            class="text-muted-foreground hover:text-foreground shrink-0"
-            @click="
-              sortInput = '';
-              applyFilter();
-            "
-          >
-            <X class="w-3 h-3" />
-          </button>
+        <div class="flex shrink-0 items-center gap-1 border-l px-1">
+          <Button variant="ghost" size="sm" class="h-5 shrink-0 gap-1 px-1.5 text-xs" :disabled="loading" @click="load">
+            <Loader2 v-if="loading" class="h-3 w-3 animate-spin" />
+            <RefreshCcw v-else class="h-3 w-3" />
+            {{ t("grid.refresh") }}
+          </Button>
         </div>
       </template>
     </DataGrid>

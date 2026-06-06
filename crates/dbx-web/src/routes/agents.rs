@@ -11,6 +11,7 @@ use dbx_core::agent_service::{
     invalidate_registry_cache, reinstall_agent_jre, uninstall_agent_driver, uninstall_agent_jre,
     upgrade_all_agent_drivers, AgentProgressEvent,
 };
+use dbx_core::driver_runtime::DriverRuntimeSummary;
 use futures::Stream;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
@@ -50,6 +51,34 @@ pub async fn list_installed_agents(State(state): State<Arc<WebState>>) -> Result
 
 pub async fn get_driver_store_usage(State(state): State<Arc<WebState>>) -> Result<Json<DriverStoreUsage>, AppError> {
     Ok(Json(state.app.agent_manager.collect_driver_store_usage(state.app.plugins.root_dir())))
+}
+
+pub async fn get_driver_runtime_summary(
+    State(state): State<Arc<WebState>>,
+) -> Result<Json<DriverRuntimeSummary>, AppError> {
+    Ok(Json(dbx_core::driver_runtime::collect_driver_runtime_summary(&state.app).await))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriverRuntimeRequest {
+    pub runtime_id: String,
+}
+
+pub async fn stop_driver_runtime(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<DriverRuntimeRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    dbx_core::driver_runtime::stop_driver_runtime(&state.app, &req.runtime_id).await.map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn restart_driver_runtime(
+    State(state): State<Arc<WebState>>,
+    Json(req): Json<DriverRuntimeRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    dbx_core::driver_runtime::restart_driver_runtime(&state.app, &req.runtime_id).await.map_err(AppError)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn install_agent(

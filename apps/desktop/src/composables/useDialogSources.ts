@@ -200,7 +200,8 @@ export function useDialogSources() {
       showConfigPassphraseDialog.value = false;
       toast(t("configExport.exportSuccess"), 2000);
     } catch (e: any) {
-      configPassphraseError.value = e?.message || String(e);
+      configPassphraseError.value =
+        e?.message === "crypto_unavailable" ? t("configExport.cryptoUnavailable") : e?.message || String(e);
     }
   }
 
@@ -246,7 +247,11 @@ export function useDialogSources() {
       }
     } catch (e: any) {
       configPassphraseError.value =
-        e?.message === "wrong_passphrase" ? t("configExport.wrongPassphrase") : e?.message || String(e);
+        e?.message === "wrong_passphrase"
+          ? t("configExport.wrongPassphrase")
+          : e?.message === "crypto_unavailable"
+            ? t("configExport.cryptoUnavailable")
+            : e?.message || String(e);
     }
   }
 

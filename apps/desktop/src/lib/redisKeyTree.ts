@@ -58,48 +58,24 @@ export function buildRedisKeyTree(keys: RedisKeyInfo[], db: number): RedisKeyTre
   const groupMap = new Map<string, RedisKeyTreeGroupNode>();
 
   for (const key of keys) {
-    const pathSegments = key.key_display.split(":");
-    if (pathSegments.length === 1) {
-      root.push({
-        kind: "leaf",
-        id: buildLeafId(db, key.key_raw),
-        label: pathSegments[0],
-        fullKeyDisplay: key.key_display,
-        keyRaw: key.key_raw,
-        db,
-        keyType: key.key_type,
-        ttl: key.ttl,
-        size: key.size,
-        valuePreview: key.value_preview,
-        pathSegments,
-      });
-      continue;
-    }
+    insertKeyIntoTree(root, groupMap, key, db);
+  }
 
-    let currentLevel = root;
-    const groupSegments: string[] = [];
-    for (const segment of pathSegments.slice(0, -1)) {
-      groupSegments.push(segment);
-      const groupId = buildGroupId(db, groupSegments);
-      let group = groupMap.get(groupId);
-      if (!group) {
-        group = {
-          kind: "group",
-          id: groupId,
-          label: segment,
-          pathSegments: [...groupSegments],
-          children: [],
-        };
-        groupMap.set(groupId, group);
-        currentLevel.push(group);
-      }
-      currentLevel = group.children;
-    }
+  return sortRedisTreeNodes(root);
+}
 
-    currentLevel.push({
+function insertKeyIntoTree(
+  root: RedisKeyTreeNode[],
+  groupMap: Map<string, RedisKeyTreeGroupNode>,
+  key: RedisKeyInfo,
+  db: number,
+): void {
+  const pathSegments = key.key_display.split(":");
+  if (pathSegments.length === 1) {
+    root.push({
       kind: "leaf",
       id: buildLeafId(db, key.key_raw),
-      label: pathSegments[pathSegments.length - 1],
+      label: pathSegments[0],
       fullKeyDisplay: key.key_display,
       keyRaw: key.key_raw,
       db,
@@ -109,9 +85,86 @@ export function buildRedisKeyTree(keys: RedisKeyInfo[], db: number): RedisKeyTre
       valuePreview: key.value_preview,
       pathSegments,
     });
+    return;
   }
 
-  return sortRedisTreeNodes(root);
+  let currentLevel = root;
+  const groupSegments: string[] = [];
+  for (const segment of pathSegments.slice(0, -1)) {
+    groupSegments.push(segment);
+    const groupId = buildGroupId(db, groupSegments);
+    let group = groupMap.get(groupId);
+    if (!group) {
+      group = {
+        kind: "group",
+        id: groupId,
+        label: segment,
+        pathSegments: [...groupSegments],
+        children: [],
+      };
+      groupMap.set(groupId, group);
+      currentLevel.push(group);
+    }
+    currentLevel = group.children;
+  }
+
+  currentLevel.push({
+    kind: "leaf",
+    id: buildLeafId(db, key.key_raw),
+    label: pathSegments[pathSegments.length - 1],
+    fullKeyDisplay: key.key_display,
+    keyRaw: key.key_raw,
+    db,
+    keyType: key.key_type,
+    ttl: key.ttl,
+    size: key.size,
+    valuePreview: key.value_preview,
+    pathSegments,
+  });
+}
+
+function rebuildGroupMap(tree: RedisKeyTreeNode[]): Map<string, RedisKeyTreeGroupNode> {
+  const groupMap = new Map<string, RedisKeyTreeGroupNode>();
+
+  const walk = (nodes: RedisKeyTreeNode[]) => {
+    for (const node of nodes) {
+      if (node.kind === "group") {
+        groupMap.set(node.id, node);
+        walk(node.children);
+      }
+    }
+  };
+
+  walk(tree);
+  return groupMap;
+}
+
+export function mergeKeysIntoRedisKeyTree(
+  existingTree: RedisKeyTreeNode[],
+  newKeys: RedisKeyInfo[],
+  db: number,
+): RedisKeyTreeNode[] {
+  if (existingTree.length === 0) return buildRedisKeyTree(newKeys, db);
+
+  const groupMap = rebuildGroupMap(existingTree);
+  const existingKeyIds = new Set<string>();
+  const collectKeys = (nodes: RedisKeyTreeNode[]) => {
+    for (const node of nodes) {
+      if (node.kind === "leaf") {
+        existingKeyIds.add(node.keyRaw);
+      } else {
+        collectKeys(node.children);
+      }
+    }
+  };
+  collectKeys(existingTree);
+
+  for (const key of newKeys) {
+    if (existingKeyIds.has(key.key_raw)) continue;
+    insertKeyIntoTree(existingTree, groupMap, key, db);
+  }
+
+  return sortRedisTreeNodes(existingTree);
 }
 
 export function collectExpandedGroupIds(nodes: RedisKeyTreeNode[]): Set<string> {

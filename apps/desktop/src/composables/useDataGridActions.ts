@@ -88,6 +88,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
         resultBaseSql: tab.resultBaseSql ?? tab.sql,
         resultSortedSql: tab.resultSortedSql,
         preserveResultDuringExecution: true,
+        preserveTotalRowCountDuringExecution: true,
       });
       return;
     }
@@ -118,6 +119,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
         resultSortedSql: tab.resultSortedSql,
         pagination: { offset, limit, sessionId },
         preserveResultDuringExecution: true,
+        preserveTotalRowCountDuringExecution: true,
       });
       return;
     }
@@ -161,6 +163,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
         resultBaseSql: baseSql,
         resultSortedSql: undefined,
         preserveResultDuringExecution: true,
+        preserveTotalRowCountDuringExecution: true,
       });
       return;
     }
@@ -183,6 +186,7 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
       resultBaseSql: baseSql,
       resultSortedSql: built.sql,
       preserveResultDuringExecution: true,
+      preserveTotalRowCountDuringExecution: true,
     });
   }
 

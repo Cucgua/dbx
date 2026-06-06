@@ -689,7 +689,7 @@ export const useQueryStore = defineStore("query", () => {
     const dbType = conn?.db_type || "";
     let schema = analysis.schema || tab.schema;
     if (!schema) {
-      if (dbType === "postgres") schema = "public";
+      if (dbType === "postgres" || dbType === "kwdb") schema = "public";
       else schema = "";
     }
     const metadataSchema =
@@ -797,6 +797,83 @@ export const useQueryStore = defineStore("query", () => {
     })();
   }
 
+  function setQueryTotalRowCountIfCurrent(
+    tabId: string,
+    executionId: string,
+    result: QueryResult,
+    totalRowCount: number | undefined,
+  ) {
+    const current = tabs.value.find((t) => t.id === tabId);
+    if (current?.mode !== "query") return;
+    if (current.executionId !== executionId && current.result !== result) return;
+    current.resultTotalRowCount = totalRowCount;
+    current.resultTotalRowCountLoading = false;
+  }
+
+  function countQueryTotalRowsInBackground(options: {
+    tabId: string;
+    connectionId: string;
+    database: string;
+    schema?: string;
+    countSql?: string;
+    result: QueryResult;
+    pageLimit?: number;
+    pageOffset?: number;
+    executionId: string;
+    traceId: string;
+    elapsed: () => string;
+    timeoutSecs: number;
+  }) {
+    const resultRowCount = options.result.rows.length;
+    if (!options.countSql || resultRowCount <= 0) {
+      setQueryTotalRowCountIfCurrent(options.tabId, options.executionId, options.result, undefined);
+      return;
+    }
+    const countSql = options.countSql;
+
+    if (typeof options.pageLimit === "number" && resultRowCount < options.pageLimit) {
+      setQueryTotalRowCountIfCurrent(
+        options.tabId,
+        options.executionId,
+        options.result,
+        (options.pageOffset ?? 0) + resultRowCount,
+      );
+      return;
+    }
+
+    void (async () => {
+      try {
+        console.info("[DBX][executeTabSql:count:start]", { traceId: options.traceId, elapsed: options.elapsed() });
+        const countResult = await api.executeQuery(
+          options.connectionId,
+          options.database,
+          countSql,
+          options.schema,
+          undefined,
+          { timeoutSecs: options.timeoutSecs },
+        );
+        const total = Number(countResult.rows?.[0]?.[0] ?? 0);
+        if (!Number.isFinite(total) || total < 0) {
+          setQueryTotalRowCountIfCurrent(options.tabId, options.executionId, options.result, undefined);
+          return;
+        }
+        setQueryTotalRowCountIfCurrent(options.tabId, options.executionId, options.result, total);
+        console.info("[DBX][executeTabSql:count:done]", {
+          traceId: options.traceId,
+          total,
+          elapsed: options.elapsed(),
+        });
+      } catch (error) {
+        setQueryTotalRowCountIfCurrent(options.tabId, options.executionId, options.result, undefined);
+        console.warn("[DBX][executeTabSql:count:error]", {
+          traceId: options.traceId,
+          elapsed: options.elapsed(),
+          error,
+        });
+      }
+    })();
+  }
+
   async function executeTabSql(
     id: string,
     sql: string,
@@ -806,6 +883,7 @@ export const useQueryStore = defineStore("query", () => {
       pagination?: { limit: number; offset: number; sessionId?: string };
       mongoSafety?: MongoAggregateSafetyOptions;
       preserveResultDuringExecution?: boolean;
+      preserveTotalRowCountDuringExecution?: boolean;
     },
   ) {
     const tab = tabs.value.find((t) => t.id === id);
@@ -819,7 +897,10 @@ export const useQueryStore = defineStore("query", () => {
     tab.isCancelling = false;
     tab.executionId = executionId;
     tab.lastExecutedSql = sql;
-    tab.resultTotalRowCount = undefined;
+    if (!options?.preserveTotalRowCountDuringExecution) {
+      tab.resultTotalRowCount = undefined;
+    }
+    tab.resultTotalRowCountLoading = false;
     const previousResultSessionClose = closeResultSession(tab, options?.pagination?.sessionId);
     if (!options?.preserveResultDuringExecution || !tab.result) {
       clearResultPayload(tab);
@@ -1095,7 +1176,27 @@ export const useQueryStore = defineStore("query", () => {
         current.resultPageOffset = pageOffset;
         current.resultCountSql = countSql;
         current.resultSessionId = current.result?.session_id ?? undefined;
+        if (!options?.preserveTotalRowCountDuringExecution) {
+          current.resultTotalRowCount = undefined;
+        }
+        current.resultTotalRowCountLoading = current.mode === "query" && !!current.result && !!countSql;
         touchResult(current);
+        if (current.mode === "query" && current.result) {
+          countQueryTotalRowsInBackground({
+            tabId: id,
+            connectionId: current.connectionId,
+            database: current.database,
+            schema: current.schema,
+            countSql,
+            result: current.result,
+            pageLimit,
+            pageOffset,
+            executionId,
+            traceId,
+            elapsed,
+            timeoutSecs: queryTimeoutSecs,
+          });
+        }
         console.info("[DBX][executeTabSql:result:assigned]", {
           traceId,
           activeResultIndex: current.activeResultIndex,
@@ -1104,35 +1205,6 @@ export const useQueryStore = defineStore("query", () => {
           backendMs: current.result?.execution_time_ms,
           elapsed: elapsed(),
         });
-        if (countSql && current.result?.rows.length) {
-          // When the result set is smaller than the page size we already have
-          // all rows — compute the total directly instead of running COUNT(*).
-          const resultRowCount = current.result.rows.length;
-          if (pageLimit !== undefined && resultRowCount < pageLimit) {
-            current.resultTotalRowCount = (pageOffset ?? 0) + resultRowCount;
-          } else {
-            const capturedExecutionId = executionId;
-            const capturedTabId = id;
-            const capturedCountSql = countSql;
-            const capturedConnectionId = tab.connectionId;
-            const capturedDatabase = tab.database;
-            const capturedSchema = tab.schema;
-            api
-              .executeQuery(capturedConnectionId, capturedDatabase ?? "", capturedCountSql, capturedSchema)
-              .then((countResult) => {
-                const tabAfterCount = tabs.value.find((t) => t.id === capturedTabId);
-                if (tabAfterCount?.executionId === capturedExecutionId) {
-                  const total = Number(countResult.rows?.[0]?.[0] ?? 0);
-                  if (total > 0) {
-                    tabAfterCount.resultTotalRowCount = total;
-                  }
-                }
-              })
-              .catch(() => {
-                // COUNT query failed — silently ignore
-              });
-          }
-        }
         if (current.mode === "query" && current.result)
           analyzeQueryMetadataInBackground(id, queryBaseSql, current.result, traceId, elapsed);
       } else {
@@ -1160,6 +1232,8 @@ export const useQueryStore = defineStore("query", () => {
         current.resultPageOffset = pageOffset;
         current.resultCountSql = countSql;
         current.resultSessionId = undefined;
+        current.resultTotalRowCount = undefined;
+        current.resultTotalRowCountLoading = false;
         touchResult(current);
       }
     } finally {

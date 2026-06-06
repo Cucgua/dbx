@@ -44,17 +44,19 @@ import java.util.logging.Logger;
 public final class DbxJdbcPlugin {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final int MAX_ROWS = 10_000;
-    private static final JdbcDriverQuirks DEFAULT_QUIRKS = new JdbcDriverQuirks(false, false, false, false);
-    private static final JdbcDriverQuirks USE_CATALOG_QUIRKS = new JdbcDriverQuirks(false, false, false, true);
-    private static final JdbcDriverQuirks YASHAN_QUIRKS = new JdbcDriverQuirks(true, true, false, false);
-    private static final JdbcDriverQuirks IRIS_QUIRKS = new JdbcDriverQuirks(true, false, true, false);
-    private static final JdbcDriverQuirks ORACLE_QUIRKS = new JdbcDriverQuirks(false, true, false, false);
+    private static final JdbcDriverQuirks DEFAULT_QUIRKS = new JdbcDriverQuirks(false, false, false, false, false);
+    private static final JdbcDriverQuirks USE_CATALOG_QUIRKS = new JdbcDriverQuirks(false, false, false, true, false);
+    private static final JdbcDriverQuirks KINGBASE_QUIRKS = new JdbcDriverQuirks(false, false, false, false, true);
+    private static final JdbcDriverQuirks YASHAN_QUIRKS = new JdbcDriverQuirks(true, true, false, false, false);
+    private static final JdbcDriverQuirks IRIS_QUIRKS = new JdbcDriverQuirks(true, false, true, false, false);
+    private static final JdbcDriverQuirks ORACLE_QUIRKS = new JdbcDriverQuirks(false, true, false, false, false);
     private static final List<JdbcDriverQuirkRule> DRIVER_QUIRK_RULES = List.of(
         new JdbcDriverQuirkRule("jdbc:mysql:", USE_CATALOG_QUIRKS),
         new JdbcDriverQuirkRule("jdbc:mariadb:", USE_CATALOG_QUIRKS),
         new JdbcDriverQuirkRule("jdbc:starrocks:", USE_CATALOG_QUIRKS),
         new JdbcDriverQuirkRule("jdbc:doris:", USE_CATALOG_QUIRKS),
         new JdbcDriverQuirkRule("jdbc:hive2:", USE_CATALOG_QUIRKS),
+        new JdbcDriverQuirkRule("jdbc:kingbase", KINGBASE_QUIRKS),
         new JdbcDriverQuirkRule("jdbc:yasdb:", YASHAN_QUIRKS),
         new JdbcDriverQuirkRule("jdbc:iris:", IRIS_QUIRKS),
         new JdbcDriverQuirkRule("jdbc:oracle:", ORACLE_QUIRKS),
@@ -68,7 +70,8 @@ public final class DbxJdbcPlugin {
         boolean skipExecutionContext,
         boolean useOracleMetadata,
         boolean caseInsensitiveSchemaMetadata,
-        boolean useCatalogFallbackSql
+        boolean useCatalogFallbackSql,
+        boolean ignoreCatalogForSchemaMetadata
     ) {
     }
 
@@ -438,12 +441,13 @@ public final class DbxJdbcPlugin {
         ArrayNode result = MAPPER.createArrayNode();
         Connection conn = openConnection(connection);
         JdbcDriverQuirks quirks = driverQuirks(connection);
+        String catalog = metadataCatalog(database, quirks);
         if (quirks.useOracleMetadata()) {
             return oracleListSchemas(conn);
         }
         DatabaseMetaData meta = conn.getMetaData();
         if (quirks.caseInsensitiveSchemaMetadata()) {
-            try (ResultSet rs = meta.getSchemas(emptyToNull(database), null)) {
+            try (ResultSet rs = meta.getSchemas(catalog, null)) {
                 appendSchemas(result, rs, true);
             } catch (SQLException ignored) {
                 try (ResultSet rs = meta.getSchemas()) {
@@ -455,14 +459,14 @@ public final class DbxJdbcPlugin {
             } catch (SQLException ignored) {
             }
         } else {
-            try (ResultSet rs = meta.getSchemas(emptyToNull(database), null)) {
+            try (ResultSet rs = meta.getSchemas(catalog, null)) {
                 appendSchemas(result, rs, false);
             } catch (SQLFeatureNotSupportedException ignored) {
                 try (ResultSet rs = meta.getSchemas()) {
                     appendSchemas(result, rs, false);
                 }
             }
-            if (result.isEmpty() && database != null) {
+            if (result.isEmpty() && catalog != null) {
                 try (ResultSet rs = meta.getSchemas(null, null)) {
                     appendSchemas(result, rs, false);
                 } catch (SQLFeatureNotSupportedException ignored) {
@@ -490,7 +494,7 @@ public final class DbxJdbcPlugin {
         }
         String[] types = new String[] {"TABLE", "VIEW", "MATERIALIZED VIEW", "SYSTEM TABLE", "SYSTEM VIEW"};
         DatabaseMetaData meta = conn.getMetaData();
-        String catalog = quirks.caseInsensitiveSchemaMetadata() ? null : emptyToNull(database);
+        String catalog = metadataCatalog(database, quirks);
         String schemaPattern = resolveSchemaPattern(meta, database, schema, quirks);
         appendTables(result, meta, catalog, schemaPattern, types);
         if (result.isEmpty() && catalog != null) {
@@ -507,7 +511,7 @@ public final class DbxJdbcPlugin {
         }
         DatabaseMetaData meta = conn.getMetaData();
         JdbcDriverQuirks quirks = driverQuirks(connection);
-        String catalog = quirks.caseInsensitiveSchemaMetadata() ? null : emptyToNull(database);
+        String catalog = metadataCatalog(database, quirks);
         String schemaPattern = resolveSchemaPattern(meta, database, schema, quirks);
 
         String[] tableTypes = new String[] {"TABLE", "VIEW", "MATERIALIZED VIEW", "SYSTEM TABLE", "SYSTEM VIEW"};
@@ -560,7 +564,7 @@ public final class DbxJdbcPlugin {
         }
         DatabaseMetaData meta = conn.getMetaData();
         JdbcDriverQuirks quirks = driverQuirks(connection);
-        String catalog = quirks.caseInsensitiveSchemaMetadata() ? null : emptyToNull(database);
+        String catalog = metadataCatalog(database, quirks);
         String schemaPattern = resolveSchemaPattern(meta, database, schema, quirks);
         Set<String> primaryKeys = safePrimaryKeys(meta, catalog, schemaPattern, table);
         appendColumns(result, meta, catalog, schemaPattern, table, primaryKeys);
@@ -610,6 +614,13 @@ public final class DbxJdbcPlugin {
         return caseInsensitive ? schema.toLowerCase(Locale.ROOT) : schema;
     }
 
+    private static String metadataCatalog(String database, JdbcDriverQuirks quirks) {
+        if (quirks.caseInsensitiveSchemaMetadata() || quirks.ignoreCatalogForSchemaMetadata()) {
+            return null;
+        }
+        return emptyToNull(database);
+    }
+
     private static String resolveSchemaPattern(
         DatabaseMetaData meta,
         String database,
@@ -622,7 +633,7 @@ public final class DbxJdbcPlugin {
         }
         String resolved = null;
         try {
-            resolved = findSchemaPattern(meta, emptyToNull(database), schemaPattern);
+            resolved = findSchemaPattern(meta, metadataCatalog(database, quirks), schemaPattern);
         } catch (SQLException ignored) {
         }
         if (resolved != null) {

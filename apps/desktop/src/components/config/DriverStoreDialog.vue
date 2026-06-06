@@ -1,7 +1,21 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { FolderOpen, Trash2, Download, RotateCcw, Loader2, RefreshCw, Check, Clock3, FileUp } from "@lucide/vue";
+import {
+  Activity,
+  Cpu,
+  FolderOpen,
+  MemoryStick,
+  Square,
+  Trash2,
+  Download,
+  RotateCcw,
+  Loader2,
+  RefreshCw,
+  Check,
+  Clock3,
+  FileUp,
+} from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +28,21 @@ import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { countAvailableDriverUpdates } from "@/lib/agentDriverUpdateBadge";
 import type { JdbcDriverInfo, JdbcPluginStatus } from "@/types/database";
 import * as api from "@/lib/api";
-import type { AgentDriverInfo, DriverStoreUsage, JavaRuntimeConfig } from "@/lib/api";
+import type {
+  AgentDriverInfo,
+  DriverRuntimeInfo,
+  DriverRuntimeSummary,
+  DriverStoreUsage,
+  JavaRuntimeConfig,
+} from "@/lib/api";
+import {
+  formatRuntimeBytes,
+  formatRuntimeCpu,
+  formatRuntimeUptime,
+  runtimeHealthClass,
+  runtimeStatusClass,
+  runtimeStatusDotClass,
+} from "@/lib/driverRuntimePresentation";
 import {
   addDriverInstallQueue,
   driverInstallProgressPercent,
@@ -32,6 +60,8 @@ const emit = defineEmits<{
   "update-count-change": [count: number];
 }>();
 
+const driverStoreTab = ref("agent");
+
 // ──────────── Agent drivers ────────────
 
 const drivers = ref<AgentDriverInfo[]>([]);
@@ -48,6 +78,12 @@ const javaRuntimeConfig = ref<JavaRuntimeConfig>({ mode: "managed", custom_java_
 const customJavaPath = ref("");
 const savingJavaRuntime = ref(false);
 const driverStoreUsage = ref<DriverStoreUsage | null>(null);
+const runtimeSummary = ref<DriverRuntimeSummary | null>(null);
+const runtimeLoading = ref(false);
+const runtimeError = ref("");
+const runtimeBusy = ref<string | null>(null);
+let runtimeTimer: ReturnType<typeof setInterval> | null = null;
+const DRIVER_RUNTIME_POLL_MS = 5000;
 
 let unlisten: (() => void) | null = null;
 
@@ -427,6 +463,109 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+const runtimeOverview = computed(() => {
+  const summary = runtimeSummary.value;
+  return [
+    {
+      key: "running",
+      label: t("driverStore.runtimeRunning"),
+      value: String(summary?.running_count ?? 0),
+    },
+    {
+      key: "memory",
+      label: t("driverStore.runtimeMemory"),
+      value: formatRuntimeBytes(summary?.total_memory_bytes),
+    },
+    {
+      key: "health",
+      label: t("driverStore.runtimeHealth"),
+      value: t(`driverStore.runtimeHealth_${summary?.health ?? "healthy"}`),
+      class: runtimeHealthClass(summary?.health ?? "healthy"),
+    },
+  ];
+});
+
+function runtimeKindLabel(runtime: DriverRuntimeInfo) {
+  return runtime.kind === "plugin" ? t("driverStore.runtimeKindPlugin") : t("driverStore.runtimeKindAgent");
+}
+
+function runtimeSourceLabel(runtime: DriverRuntimeInfo) {
+  return runtime.source === "connection"
+    ? t("driverStore.runtimeSourceConnection")
+    : t("driverStore.runtimeSourceDaemon");
+}
+
+function runtimeStatusLabel(status: DriverRuntimeInfo["status"]) {
+  return t(`driverStore.runtimeStatus_${status}`);
+}
+
+function runtimeControlUnavailableReasonLabel(reason: string | null) {
+  if (reason === "connection-owned") return t("driverStore.runtimeControlConnectionOwned");
+  return reason || "-";
+}
+
+async function loadDriverRuntimeSummary(showLoading = false) {
+  if (showLoading) runtimeLoading.value = true;
+  try {
+    runtimeSummary.value = await api.getDriverRuntimeSummary();
+    runtimeError.value = "";
+  } catch (e: any) {
+    runtimeError.value = String(e?.message || e);
+  } finally {
+    runtimeLoading.value = false;
+  }
+}
+
+function startDriverRuntimePolling() {
+  if (runtimeTimer) return;
+  void loadDriverRuntimeSummary(true);
+  runtimeTimer = setInterval(() => {
+    if (driverStoreTab.value !== "runtime") {
+      stopDriverRuntimePolling();
+      return;
+    }
+    void loadDriverRuntimeSummary(false);
+  }, DRIVER_RUNTIME_POLL_MS);
+}
+
+function stopDriverRuntimePolling() {
+  if (runtimeTimer) {
+    clearInterval(runtimeTimer);
+    runtimeTimer = null;
+  }
+}
+
+async function refreshDriverRuntime() {
+  if (driverStoreTab.value !== "runtime") return;
+  await loadDriverRuntimeSummary(true);
+}
+
+async function stopRuntime(runtime: DriverRuntimeInfo) {
+  runtimeBusy.value = runtime.id;
+  try {
+    await api.stopDriverRuntime(runtime.id);
+    await loadDriverRuntimeSummary(false);
+    toast(t("driverStore.runtimeStopSuccess", { label: runtime.label }));
+  } catch (e: any) {
+    toast(t("driverStore.runtimeStopFailed", { label: runtime.label, error: e }));
+  } finally {
+    runtimeBusy.value = null;
+  }
+}
+
+async function restartRuntime(runtime: DriverRuntimeInfo) {
+  runtimeBusy.value = runtime.id;
+  try {
+    await api.restartDriverRuntime(runtime.id);
+    await loadDriverRuntimeSummary(false);
+    toast(t("driverStore.runtimeRestartSuccess", { label: runtime.label }));
+  } catch (e: any) {
+    toast(t("driverStore.runtimeRestartFailed", { label: runtime.label, error: e }));
+  } finally {
+    runtimeBusy.value = null;
+  }
+}
+
 function jreUsageLabel(key: string) {
   const bytes = jreUsageByKey.value.get(String(key)) || 0;
   return bytes > 0 ? formatBytes(bytes) : "";
@@ -605,6 +744,15 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unlisten?.();
+  stopDriverRuntimePolling();
+});
+
+watch(driverStoreTab, (tab) => {
+  if (tab === "runtime") {
+    startDriverRuntimePolling();
+  } else {
+    stopDriverRuntimePolling();
+  }
 });
 </script>
 
@@ -612,7 +760,7 @@ onUnmounted(() => {
   <div class="h-full flex flex-col">
     <div class="flex-1 min-h-0 overflow-y-auto">
       <div class="max-w-4xl mx-auto px-6 py-6">
-        <Tabs default-value="agent">
+        <Tabs v-model="driverStoreTab" default-value="agent">
           <div class="mb-5 rounded-xl border bg-muted/20 p-4">
             <div class="flex items-center justify-between gap-3">
               <div class="text-sm font-medium">{{ t("driverStore.usageTitle") }}</div>
@@ -646,8 +794,11 @@ onUnmounted(() => {
                 {{ t("driverStore.jdbcDrivers") }}
                 <span v-if="jdbcTabUpdateCount > 0" class="inline-block h-2 w-2 rounded-full bg-red-500" />
               </TabsTrigger>
+              <TabsTrigger value="runtime" class="gap-1.5 relative">
+                {{ t("driverStore.runtimeDrivers") }}
+              </TabsTrigger>
             </TabsList>
-            <div class="flex items-center gap-2">
+            <div v-if="driverStoreTab !== 'runtime'" class="flex items-center gap-2">
               <Button
                 variant="ghost"
                 size="sm"
@@ -1052,6 +1203,156 @@ onUnmounted(() => {
                   >
                     <Trash2 class="h-4 w-4" />
                   </Button>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          <!-- Runtime Tab -->
+          <TabsContent value="runtime" class="mt-5">
+            <div class="overflow-hidden rounded-md border bg-background">
+              <div class="flex flex-col gap-3 border-b px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                <div class="flex min-w-0 items-center gap-2.5">
+                  <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
+                    <Activity class="h-4 w-4 text-muted-foreground" />
+                  </span>
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium">{{ t("driverStore.runtimeTitle") }}</div>
+                    <div class="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span v-for="item in runtimeOverview" :key="item.key" class="inline-flex items-center gap-1.5">
+                        <span>{{ item.label }}</span>
+                        <span class="font-medium text-foreground" :class="item.class">{{ item.value }}</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-8 w-8 shrink-0 rounded-full text-muted-foreground"
+                  :title="t('driverStore.refresh')"
+                  :disabled="runtimeLoading"
+                  @click="refreshDriverRuntime"
+                >
+                  <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': runtimeLoading }" />
+                </Button>
+              </div>
+
+              <div v-if="runtimeSummary?.last_error" class="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2.5">
+                <div class="text-xs font-medium text-amber-700 dark:text-amber-300">
+                  {{ t("driverStore.runtimeLastError") }}
+                </div>
+                <pre class="mt-1 max-h-20 overflow-auto whitespace-pre-wrap text-[11px] text-muted-foreground">{{
+                  runtimeSummary.last_error
+                }}</pre>
+              </div>
+
+              <div v-if="runtimeLoading && !runtimeSummary" class="p-6 text-center text-sm text-muted-foreground">
+                {{ t("common.loading") }}
+              </div>
+              <div v-else-if="runtimeError" class="p-6 text-sm text-destructive">
+                {{ runtimeError }}
+              </div>
+              <div v-else-if="!runtimeSummary?.runtimes.length" class="p-6 text-center text-sm text-muted-foreground">
+                {{ t("driverStore.runtimeEmpty") }}
+              </div>
+              <div v-else>
+                <div
+                  class="hidden grid-cols-[minmax(0,1.6fr)_72px_56px_76px_58px_76px_72px] gap-2 border-b bg-muted/30 px-4 py-2 text-[11px] font-medium text-muted-foreground lg:grid"
+                >
+                  <div>{{ t("driverStore.runtimeDrivers") }}</div>
+                  <div>{{ t("driverStore.runtimeHealth") }}</div>
+                  <div>{{ t("driverStore.runtimePid") }}</div>
+                  <div>{{ t("driverStore.runtimeMemory") }}</div>
+                  <div>CPU</div>
+                  <div>{{ t("driverStore.runtimeUptime") }}</div>
+                  <div class="text-right">{{ t("driverStore.runtimeActions") }}</div>
+                </div>
+                <div class="divide-y">
+                  <div
+                    v-for="runtime in runtimeSummary.runtimes"
+                    :key="runtime.id"
+                    class="grid gap-2 px-4 py-3 transition hover:bg-muted/25 lg:grid-cols-[minmax(0,1.6fr)_72px_56px_76px_58px_76px_72px] lg:items-center"
+                  >
+                    <div class="min-w-0">
+                      <div class="flex min-w-0 items-center gap-2">
+                        <span class="h-2 w-2 shrink-0 rounded-full" :class="runtimeStatusDotClass(runtime.status)" />
+                        <span class="truncate text-sm font-medium">{{ runtime.label }}</span>
+                        <span
+                          v-if="runtime.version"
+                          class="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                        >
+                          v{{ runtime.version }}
+                        </span>
+                      </div>
+                      <div class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <span>{{ runtimeKindLabel(runtime) }}</span>
+                        <span class="text-muted-foreground/50">/</span>
+                        <span>{{ runtimeSourceLabel(runtime) }}</span>
+                      </div>
+                    </div>
+
+                    <div class="flex items-center gap-2 lg:block">
+                      <span class="lg:hidden text-[11px] text-muted-foreground">{{
+                        t("driverStore.runtimeHealth")
+                      }}</span>
+                      <span class="rounded-full px-2 py-0.5 text-[11px]" :class="runtimeStatusClass(runtime.status)">
+                        {{ runtimeStatusLabel(runtime.status) }}
+                      </span>
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                      <span class="lg:hidden">{{ t("driverStore.runtimePid") }}: </span>{{ runtime.pid ?? "-" }}
+                    </div>
+                    <div class="flex items-center gap-1 text-xs text-muted-foreground">
+                      <MemoryStick class="h-3.5 w-3.5 lg:hidden" />
+                      {{ formatRuntimeBytes(runtime.memory_bytes) }}
+                    </div>
+                    <div class="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Cpu class="h-3.5 w-3.5 lg:hidden" />
+                      {{ formatRuntimeCpu(runtime.cpu_percent) }}
+                    </div>
+                    <div class="text-xs text-muted-foreground">
+                      <span class="lg:hidden">{{ t("driverStore.runtimeUptime") }}: </span>
+                      {{ formatRuntimeUptime(runtime.uptime_seconds) }}
+                    </div>
+                    <div class="flex min-w-0 items-center gap-1.5 lg:justify-end">
+                      <Button
+                        v-if="runtime.can_stop"
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 rounded-full text-muted-foreground hover:text-destructive"
+                        :title="t('driverStore.runtimeStop')"
+                        :disabled="runtimeBusy === runtime.id"
+                        @click="stopRuntime(runtime)"
+                      >
+                        <Square class="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        v-if="runtime.can_restart"
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 rounded-full text-muted-foreground"
+                        :title="t('driverStore.runtimeRestart')"
+                        :disabled="runtimeBusy === runtime.id"
+                        @click="restartRuntime(runtime)"
+                      >
+                        <RotateCcw class="h-3.5 w-3.5" :class="{ 'animate-spin': runtimeBusy === runtime.id }" />
+                      </Button>
+                      <span
+                        v-if="!runtime.can_stop && !runtime.can_restart"
+                        class="min-w-0 truncate text-[11px] text-muted-foreground lg:text-right"
+                        :title="runtimeControlUnavailableReasonLabel(runtime.control_unavailable_reason)"
+                      >
+                        {{ runtimeControlUnavailableReasonLabel(runtime.control_unavailable_reason) }}
+                      </span>
+                    </div>
+
+                    <div v-if="runtime.last_error" class="rounded-md bg-muted/60 p-2 lg:col-span-7">
+                      <pre class="max-h-16 overflow-auto whitespace-pre-wrap text-[11px] text-muted-foreground">{{
+                        runtime.last_error
+                      }}</pre>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

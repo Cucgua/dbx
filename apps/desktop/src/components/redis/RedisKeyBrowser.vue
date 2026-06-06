@@ -36,6 +36,7 @@ import {
   collectExpandedGroupIds,
   collectRedisGroupKeyRaws,
   flattenVisibleRedisKeyTree,
+  mergeKeysIntoRedisKeyTree,
   type RedisKeyTreeNode,
 } from "@/lib/redisKeyTree";
 import { classifyRedisCommandSafety } from "@/lib/redisCommandSafety";
@@ -43,9 +44,11 @@ import { isRedisClearScreenCommand, nextRedisCommandDb, redisKeyTextToRaw } from
 import { formatRedisCommandResult, formatRedisStringValue } from "@/lib/redisValuePresentation";
 import { isCancelSearchShortcut } from "@/lib/keyboardShortcuts";
 import { useEditorFontFamilyStyle } from "@/composables/useEditorFontFamilyStyle";
+import { useToast } from "@/composables/useToast";
 import { redisKeySearchPattern } from "@/lib/redisKeyPattern";
 
 const { t } = useI18n();
+const { toast } = useToast();
 const connectionStore = useConnectionStore();
 const settingsStore = useSettingsStore();
 const editorFontFamilyStyle = useEditorFontFamilyStyle();
@@ -70,6 +73,7 @@ const flatKeys = ref<RedisKeyInfo[]>([]);
 const treeKeys = ref<RedisKeyTreeNode[]>([]);
 const loading = ref(false);
 const loadingMore = ref(false);
+const isFetchingAll = ref(false);
 const rootRef = ref<HTMLElement>();
 const commandTerminalRef = ref<HTMLElement>();
 const searchPattern = ref("");
@@ -118,6 +122,14 @@ const searchPlaceholder = computed(() =>
 const loadingEmptyText = computed(() =>
   searchMode.value === "value" && valueQuery.value ? t("redis.searchingValues") : t("redis.loadingKeys"),
 );
+const lastTotalKeys = ref(0);
+const fetchAllProgressText = computed(() => {
+  if (!isFetchingAll.value) return "";
+  if (lastTotalKeys.value > 0) {
+    return t("redis.fetchAllProgress", { loaded: flatKeys.value.length, total: lastTotalKeys.value });
+  }
+  return t("redis.fetchAllProgressUnknown", { loaded: flatKeys.value.length });
+});
 const selectedKey = computed(() => flatKeys.value.find((key) => key.key_raw === selectedKeyRaw.value) ?? null);
 const dangerDetails = computed(() => {
   if (!pendingDanger.value) return "";
@@ -174,6 +186,22 @@ function rebuildTree(expandAll = false) {
   }
 }
 
+function mergeTree(newKeys: RedisKeyInfo[]) {
+  if (newKeys.length === 0) return;
+  treeKeys.value = mergeKeysIntoRedisKeyTree(treeKeys.value, newKeys, props.db);
+
+  const availableExpanded = collectExpandedGroupIds(treeKeys.value);
+  const nextExpanded = new Set<string>();
+  for (const id of expandedGroupIds.value) {
+    if (availableExpanded.has(id)) nextExpanded.add(id);
+  }
+  expandedGroupIds.value = nextExpanded;
+
+  if (selectedKeyRaw.value && !flatKeys.value.some((key) => key.key_raw === selectedKeyRaw.value)) {
+    selectedKeyRaw.value = null;
+  }
+}
+
 async function fetchScanPage(): Promise<RedisScanResult> {
   const pageSize = settingsStore.editorSettings.redisScanPageSize;
   return searchMode.value === "value"
@@ -183,10 +211,18 @@ async function fetchScanPage(): Promise<RedisScanResult> {
 
 function appendScanResult(result: RedisScanResult) {
   const existingKeys = new Set(flatKeys.value.map((key) => key.key_raw));
-  flatKeys.value = [...flatKeys.value, ...result.keys.filter((key) => !existingKeys.has(key.key_raw))];
+  const newKeys = result.keys.filter((key) => !existingKeys.has(key.key_raw));
+  flatKeys.value = [...flatKeys.value, ...newKeys];
   scanCursor.value = result.cursor;
   hasMore.value = result.cursor !== 0;
-  rebuildTree(isSearchMode.value);
+  lastTotalKeys.value = result.total_keys;
+
+  if (treeKeys.value.length === 0) {
+    rebuildTree(isSearchMode.value);
+  } else {
+    mergeTree(newKeys);
+  }
+
   connectionStore.updateRedisDbKeyStats(props.connectionId, props.db, {
     loaded: isSearchMode.value ? undefined : flatKeys.value.length,
     total: result.total_keys,
@@ -229,6 +265,7 @@ async function fillInitialKeyBatch(requestId: number) {
 async function loadKeys() {
   if (!redisBrowserIsActive) return;
   const requestId = ++searchRequestId;
+  isFetchingAll.value = false;
   loading.value = true;
   flatKeys.value = [];
   treeKeys.value = [];
@@ -265,6 +302,26 @@ async function loadMore() {
   } finally {
     loadingMore.value = false;
   }
+}
+
+async function fetchAll() {
+  if (!hasMore.value || isFetchingAll.value) return;
+  const requestId = searchRequestId;
+  isFetchingAll.value = true;
+  try {
+    while (requestId === searchRequestId && isFetchingAll.value && hasMore.value) {
+      const applied = await scanNextPage(requestId);
+      if (!applied) break;
+    }
+  } finally {
+    if (requestId === searchRequestId) {
+      isFetchingAll.value = false;
+    }
+  }
+}
+
+function stopFetchAll() {
+  isFetchingAll.value = false;
 }
 
 function toggleGroup(groupId: string) {
@@ -438,15 +495,18 @@ async function createRedisKey() {
   const keyName = createKeyName.value.trim();
   if (!keyName) {
     createKeyError.value = t("redis.createKeyNameRequired");
+    toast(t("redis.createKeyNameRequired"), 3000);
     return;
   }
   if (createKeyType.value === "hash" && !createKeyField.value.trim()) {
     createKeyError.value = t("redis.createFieldRequired");
+    toast(t("redis.createFieldRequired"), 3000);
     return;
   }
   const score = Number.parseFloat(createKeyScore.value || "0");
   if (createKeyType.value === "zset" && Number.isNaN(score)) {
     createKeyError.value = t("redis.createScoreInvalid");
+    toast(t("redis.createScoreInvalid"), 3000);
     return;
   }
 
@@ -612,6 +672,7 @@ function unregisterRedisDbFlushedListener() {
 function pauseRedisBrowserBackgroundWork() {
   redisBrowserIsActive = false;
   searchRequestId++;
+  isFetchingAll.value = false;
   loading.value = false;
   loadingMore.value = false;
   if (searchTimer) clearTimeout(searchTimer);
@@ -813,16 +874,33 @@ defineExpose({ focusSearch });
               </div>
             </template>
           </RecycleScroller>
-          <div v-if="hasMore" class="shrink-0 border-t px-2 py-1.5 flex items-center justify-center">
+          <div v-if="hasMore && !isFetchingAll" class="shrink-0 border-t px-2 py-1.5 flex items-center gap-1.5">
             <Button
               variant="outline"
               size="sm"
-              class="h-7 text-xs w-full"
+              class="h-7 text-xs flex-1"
               :disabled="loadingMore || loading"
               @click="loadMore"
             >
               <Loader2 v-if="loadingMore" class="w-3 h-3 mr-1.5 animate-spin" />
               {{ t("redis.loadMoreKeys") }}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 text-xs flex-1"
+              :disabled="loading || !hasMore"
+              @click="fetchAll"
+            >
+              {{ t("redis.fetchAllKeys") }}
+            </Button>
+          </div>
+          <div v-if="isFetchingAll" class="shrink-0 border-t px-2 py-1.5 space-y-1">
+            <div class="text-xs text-muted-foreground text-center">
+              {{ fetchAllProgressText }}
+            </div>
+            <Button variant="destructive" size="sm" class="h-7 text-xs w-full" @click="stopFetchAll">
+              {{ t("redis.stopFetchAll") }}
             </Button>
           </div>
         </div>
@@ -831,7 +909,7 @@ defineExpose({ focusSearch });
       <!-- Workspace (right) -->
       <Pane :size="64" :min-size="36">
         <div class="h-full min-w-0 bg-background flex flex-col overflow-hidden">
-          <Tabs v-model="activeSidePanel" class="h-full min-h-0 gap-0">
+          <Tabs v-model="activeSidePanel" :unmount-on-hide="false" class="h-full min-h-0 gap-0">
             <div class="h-9 shrink-0 border-b bg-background px-3 flex items-center">
               <TabsList class="h-7 gap-1 p-0.5">
                 <TabsTrigger value="detail" class="h-6 flex-none gap-1.5 rounded-md px-2 text-xs">

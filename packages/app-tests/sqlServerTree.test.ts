@@ -11,7 +11,7 @@ function obj(name: string, objectType = "TABLE"): ObjectInfo {
 }
 
 test("SQL Server database tree groups dbo objects and keeps non-default schemas", () => {
-  const nodes = buildSqlServerDatabaseTreeNodes("conn", "app", ["dbo", "sales"], [
+  const nodes = buildSqlServerDatabaseTreeNodes("conn", "app", ["dbo", "zeta", "sales"], [
     obj("customers"),
     obj("customer_view", "VIEW"),
     obj("get_total", "FUNCTION"),
@@ -23,6 +23,7 @@ test("SQL Server database tree groups dbo objects and keeps non-default schemas"
     { id: "conn:app:__views", label: "tree.views", type: "group-views" },
     { id: "conn:app:__functions", label: "tree.functions", type: "group-functions" },
     { id: "conn:app:sales", label: "sales", type: "schema" },
+    { id: "conn:app:zeta", label: "zeta", type: "schema" },
   ]);
 
   const tableGroup = nodes.find((n) => n.type === "group-tables");
@@ -39,11 +40,14 @@ test("SQL Server database tree groups dbo objects and keeps non-default schemas"
 });
 
 test("SQL Server database tree shows only schemas when dbo has no objects", () => {
-  const nodes = buildSqlServerDatabaseTreeNodes("conn", "app", ["dbo", "archive"], []);
+  const nodes = buildSqlServerDatabaseTreeNodes("conn", "app", ["dbo", "archive", "beta"], []);
 
   assert.deepEqual(
     nodes.map((node) => ({ id: node.id, label: node.label, type: node.type })),
-    [{ id: "conn:app:archive", label: "archive", type: "schema" }],
+    [
+      { id: "conn:app:archive", label: "archive", type: "schema" },
+      { id: "conn:app:beta", label: "beta", type: "schema" },
+    ],
   );
 });
 

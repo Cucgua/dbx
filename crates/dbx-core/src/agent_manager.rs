@@ -458,6 +458,10 @@ impl AgentManager {
         crate::agent_runtime::stop_daemon_by_key(self, agent_key).await;
     }
 
+    pub async fn restart_daemon_by_key(&self, agent_key: &str) -> Result<(), String> {
+        crate::agent_runtime::restart_daemon_by_key(self, agent_key).await
+    }
+
     pub async fn active_daemon_keys(&self) -> Vec<String> {
         self.daemons.lock().await.keys().cloned().collect()
     }

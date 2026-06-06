@@ -13,11 +13,27 @@ export interface PlainConfigPayload {
 }
 
 const PBKDF2_ITERATIONS = 100_000;
+export const CONFIG_CRYPTO_UNAVAILABLE = "crypto_unavailable";
+
+function getCrypto(): Crypto {
+  const runtimeCrypto = globalThis.crypto;
+  if (!runtimeCrypto?.getRandomValues || !runtimeCrypto.subtle) {
+    throw new Error(CONFIG_CRYPTO_UNAVAILABLE);
+  }
+  return runtimeCrypto;
+}
+
+function getSubtleCrypto(): SubtleCrypto {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw new Error(CONFIG_CRYPTO_UNAVAILABLE);
+  return subtle;
+}
 
 async function deriveKey(passphrase: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   const encoder = new TextEncoder();
-  const baseKey = await crypto.subtle.importKey("raw", encoder.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey(
+  const subtle = getSubtleCrypto();
+  const baseKey = await subtle.importKey("raw", encoder.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+  return subtle.deriveKey(
     { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     baseKey,
     { name: "AES-GCM", length: 256 },
@@ -45,11 +61,12 @@ function fromBase64(base64: string): Uint8Array<ArrayBuffer> {
 }
 
 export async function encryptConfig(json: string, passphrase: string): Promise<EncryptedPayload> {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const runtimeCrypto = getCrypto();
+  const salt = runtimeCrypto.getRandomValues(new Uint8Array(16));
+  const iv = runtimeCrypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(passphrase, salt);
   const encoded = new TextEncoder().encode(json);
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  const ciphertext = await runtimeCrypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
   return {
     format: "dbx-encrypted",
     version: 1,
@@ -63,9 +80,21 @@ export async function decryptConfig(payload: EncryptedPayload, passphrase: strin
   const salt = fromBase64(payload.salt);
   const iv = fromBase64(payload.iv);
   const ciphertext = fromBase64(payload.data);
-  const key = await deriveKey(passphrase, salt);
+  let key: CryptoKey;
   try {
-    const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+    key = await deriveKey(passphrase, salt);
+  } catch (error) {
+    if (error instanceof Error && error.message === CONFIG_CRYPTO_UNAVAILABLE) {
+      const { isTauriRuntime } = await import("@/lib/tauriRuntime");
+      if (!isTauriRuntime(globalThis)) {
+        const { decryptConfig: decryptConfigOnBackend } = await import("@/lib/api");
+        return decryptConfigOnBackend(payload, passphrase);
+      }
+    }
+    throw error;
+  }
+  try {
+    const plaintext = await getSubtleCrypto().decrypt({ name: "AES-GCM", iv }, key, ciphertext);
     return new TextDecoder().decode(plaintext);
   } catch {
     throw new Error("wrong_passphrase");

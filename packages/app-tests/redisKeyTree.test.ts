@@ -5,6 +5,7 @@ import {
   collectRedisGroupKeyRaws,
   collectExpandedGroupIds,
   flattenVisibleRedisKeyTree,
+  mergeKeysIntoRedisKeyTree,
   type RedisKeyTreeNode,
 } from "../../apps/desktop/src/lib/redisKeyTree.ts";
 import type { RedisKeyInfo } from "../../apps/desktop/src/lib/api.ts";
@@ -93,4 +94,85 @@ test("collectRedisGroupKeyRaws returns every leaf key under a group", () => {
   if (!userGroup || userGroup.kind !== "group") return;
 
   assert.deepEqual(collectRedisGroupKeyRaws(userGroup), ["k2", "k1", "k3"]);
+});
+
+test("mergeKeysIntoRedisKeyTree adds new leaf to existing group", () => {
+  const tree = buildRedisKeyTree([makeKey("user:profile:name", "k1")], 0);
+  const merged = mergeKeysIntoRedisKeyTree(tree, [makeKey("user:profile:email", "k2")], 0);
+
+  const userGroup = merged.find((node) => node.kind === "group" && node.label === "user");
+  assert.ok(userGroup);
+  if (!userGroup || userGroup.kind !== "group") return;
+
+  const profileGroup = userGroup.children.find((node) => node.kind === "group" && node.label === "profile");
+  assert.ok(profileGroup);
+  if (!profileGroup || profileGroup.kind !== "group") return;
+
+  assert.equal(profileGroup.children.length, 2);
+  const labels = profileGroup.children.map((node) => (node.kind === "leaf" ? node.label : ""));
+  assert.deepEqual(labels, ["email", "name"]);
+});
+
+test("mergeKeysIntoRedisKeyTree creates new group for new prefix", () => {
+  const tree = buildRedisKeyTree([makeKey("user:profile:name", "k1")], 0);
+  const merged = mergeKeysIntoRedisKeyTree(tree, [makeKey("session:1", "k2")], 0);
+
+  assert.equal(merged.length, 2);
+  const labels = merged.map((node) => node.label);
+  assert.deepEqual(labels, ["session", "user"]);
+});
+
+test("mergeKeysIntoRedisKeyTree handles root-level keys", () => {
+  const tree = buildRedisKeyTree([makeKey("user:profile:name", "k1")], 0);
+  const merged = mergeKeysIntoRedisKeyTree(tree, [makeKey("standalone", "k2")], 0);
+
+  assert.equal(merged.length, 2);
+  const rootLeaf = merged.find((node) => node.kind === "leaf");
+  assert.ok(rootLeaf);
+  if (!rootLeaf || rootLeaf.kind !== "leaf") return;
+  assert.equal(rootLeaf.label, "standalone");
+});
+
+test("mergeKeysIntoRedisKeyTree returns same result as full build", () => {
+  const batch1 = [makeKey("a:b:c", "k1"), makeKey("a:d", "k2")];
+  const batch2 = [makeKey("a:b:e", "k3"), makeKey("x", "k4")];
+
+  const tree = buildRedisKeyTree(batch1, 0);
+  const merged = mergeKeysIntoRedisKeyTree(tree, batch2, 0);
+  const full = buildRedisKeyTree([...batch1, ...batch2], 0);
+
+  const toStr = (nodes: RedisKeyTreeNode[]): string =>
+    JSON.stringify(
+      nodes.map((node) => {
+        if (node.kind === "leaf") return { l: node.label, id: node.id };
+        return { g: node.label, id: node.id, c: toStr(node.children) };
+      }),
+    );
+
+  assert.equal(toStr(merged), toStr(full));
+});
+
+test("mergeKeysIntoRedisKeyTree skips duplicate keys", () => {
+  const tree = buildRedisKeyTree([makeKey("user:profile:name", "k1")], 0);
+  const merged = mergeKeysIntoRedisKeyTree(tree, [makeKey("user:profile:name", "k1")], 0);
+
+  const userGroup = merged[0];
+  assert.ok(userGroup && userGroup.kind === "group");
+  if (!userGroup || userGroup.kind !== "group") return;
+
+  const profileGroup = userGroup.children[0];
+  assert.ok(profileGroup && profileGroup.kind === "group");
+  if (!profileGroup || profileGroup.kind !== "group") return;
+
+  assert.equal(profileGroup.children.length, 1);
+});
+
+test("mergeKeysIntoRedisKeyTree into empty tree falls back to full build", () => {
+  const merged = mergeKeysIntoRedisKeyTree([], [makeKey("a:b:c", "k1"), makeKey("x", "k2")], 0);
+  const full = buildRedisKeyTree([makeKey("a:b:c", "k1"), makeKey("x", "k2")], 0);
+
+  const toStr = (nodes: RedisKeyTreeNode[]): string =>
+    JSON.stringify(nodes.map((node) => node.label));
+
+  assert.equal(toStr(merged), toStr(full));
 });

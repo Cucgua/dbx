@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, type Component } from "vue";
+import { ref, computed, nextTick, watch, provide, type Component } from "vue";
 import { useI18n } from "vue-i18n";
 import { Search, X, ListFilter, Crosshair, Server, Database, FolderTree, Table2, Eye, RotateCcw } from "@lucide/vue";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -26,6 +26,7 @@ import {
   shouldVirtualizeFlatTree,
   type FlatTreeNode,
 } from "@/composables/useFlatTree";
+import { sidebarTreeContextKey } from "@/lib/sidebarTreeContext";
 import TreeItem from "./TreeItem.vue";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
@@ -148,6 +149,11 @@ const filteredNodes = computed(() => {
 
 const flatNodes = computed<FlatTreeNode[]>(() => flattenTree(filteredNodes.value));
 const visibleNodes = computed<TreeNode[]>(() => flatNodes.value.map((item) => item.node));
+const visibleNodeIndexById = computed(() => {
+  const next = new Map<string, number>();
+  visibleNodes.value.forEach((node, index) => next.set(node.id, index));
+  return next;
+});
 const useVirtualTree = computed(() => shouldVirtualizeFlatTree(flatNodes.value.length));
 const activeTab = computed(() => queryStore.tabs.find((tab) => tab.id === queryStore.activeTabId));
 const sidebarTreeOverflowClass = computed(() =>
@@ -155,6 +161,11 @@ const sidebarTreeOverflowClass = computed(() =>
     ? "overflow-x-auto sidebar-tree-horizontal-scroll"
     : "overflow-x-hidden",
 );
+
+provide(sidebarTreeContextKey, {
+  getVisibleNodes: () => visibleNodes.value,
+  getVisibleNodeIndex: (id: string) => visibleNodeIndexById.value.get(id) ?? -1,
+});
 
 const pendingRenameGroupId = ref<string | null>(null);
 const highlightedNodeId = ref<string | null>(null);
@@ -495,7 +506,6 @@ defineExpose({ focusSearch, createNewGroup });
           :drag-disabled="isFiltering"
           :pending-rename="pendingRenameGroupId === item.node.id"
           :highlighted="highlightedNodeId === item.node.id"
-          :visible-nodes="visibleNodes"
           @node-toggled="onNodeToggled"
           @search-toggle="onSearchToggle"
           @rename-started="pendingRenameGroupId = null"
@@ -516,7 +526,6 @@ defineExpose({ focusSearch, createNewGroup });
         :drag-disabled="isFiltering"
         :pending-rename="pendingRenameGroupId === item.node.id"
         :highlighted="highlightedNodeId === item.id"
-        :visible-nodes="visibleNodes"
         @node-toggled="onNodeToggled"
         @search-toggle="onSearchToggle"
         @rename-started="pendingRenameGroupId = null"

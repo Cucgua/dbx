@@ -112,6 +112,9 @@ async fn main() {
         .route("/agents/installed-local", get(routes::agents::list_installed_agents_local))
         .route("/agents/installed", get(routes::agents::list_installed_agents))
         .route("/agents/storage-usage", get(routes::agents::get_driver_store_usage))
+        .route("/agents/runtime", get(routes::agents::get_driver_runtime_summary))
+        .route("/agents/runtime/stop", post(routes::agents::stop_driver_runtime))
+        .route("/agents/runtime/restart", post(routes::agents::restart_driver_runtime))
         .route("/agents/install", post(routes::agents::install_agent))
         .route("/agents/upgrade-all", post(routes::agents::upgrade_all_agents))
         .route("/agents/uninstall", post(routes::agents::uninstall_agent))
@@ -299,6 +302,7 @@ async fn main() {
             "/app-settings/pinned-tree-node-ids",
             get(routes::app_settings::load_pinned_tree_node_ids).post(routes::app_settings::save_pinned_tree_node_ids),
         )
+        .route("/app-settings/config/decrypt", post(routes::app_settings::decrypt_config))
         .layer(middleware::from_fn_with_state(web_state.clone(), auth::auth_middleware))
         .with_state(web_state.clone());
 

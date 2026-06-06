@@ -156,8 +156,10 @@ const activeSqlFormatDialect = computed<SqlFormatDialect>(() => {
     case "mysql":
       return "mysql";
     case "postgres":
+    case "kwdb":
       return "postgres";
     case "sqlite":
+    case "rqlite":
       return "sqlite";
     case "sqlserver":
       return "sqlserver";
@@ -167,7 +169,8 @@ const activeSqlFormatDialect = computed<SqlFormatDialect>(() => {
 });
 
 const editorDialect = computed<"mysql" | "postgres" | "sqlserver">(() => {
-  if (activeEffectiveDatabaseType.value === "postgres") return "postgres";
+  if (activeEffectiveDatabaseType.value === "postgres" || activeEffectiveDatabaseType.value === "kwdb")
+    return "postgres";
   if (activeEffectiveDatabaseType.value === "sqlserver") return "sqlserver";
   return "mysql";
 });
@@ -563,6 +566,7 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
                 :page-limit="activeTab.resultPageLimit"
                 :count-sql="activeTab.resultCountSql"
                 :total-row-count="activeTab.resultTotalRowCount"
+                :total-row-count-loading="activeTab.resultTotalRowCountLoading"
                 :on-execute-sql="async (sql: string) => emit('executeSql', sql)"
                 :full-export-result="() => queryStore.fetchTabResultForExport(activeTab.id)"
                 @update:order-by-input="(v: string) => (activeTab.orderByInput = v)"

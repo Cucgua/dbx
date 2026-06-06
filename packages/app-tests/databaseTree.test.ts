@@ -3,15 +3,22 @@ import test from "node:test";
 import {
   buildDatabaseTreeNodes,
   buildDuckDbConnectionTreeNodes,
+  sortSidebarNames,
   shouldIncludeDefaultDatabaseNode,
 } from "../../apps/desktop/src/lib/databaseTree.ts";
 
-test("设置默认库后侧边栏数据库树仍保留全部数据库", () => {
-  const nodes = buildDatabaseTreeNodes("conn-1", [{ name: "campaign_data" }, { name: "cms" }, { name: "mk_campaign" }]);
+test("数据库节点按自然名称排序", () => {
+  const nodes = buildDatabaseTreeNodes("conn-1", [
+    { name: "db10" },
+    { name: "db2" },
+    { name: "campaign_data" },
+    { name: "cms" },
+    { name: "mk_campaign" },
+  ]);
 
   assert.deepEqual(
     nodes.map((node) => node.database),
-    ["campaign_data", "cms", "mk_campaign"],
+    ["campaign_data", "cms", "db2", "db10", "mk_campaign"],
   );
   assert.equal(nodes.find((node) => node.database === "mk_campaign")?.id, "conn-1:mk_campaign");
 });
@@ -49,8 +56,8 @@ test("MySQL-compatible catalogless services can opt into the default database no
 test("DuckDB shows primary catalog schemas directly under the connection", () => {
   const nodes = buildDuckDbConnectionTreeNodes(
     "conn-1",
-    [{ name: "main" }, { name: "attached_reports" }],
-    ["main", "mysql", "prod_sales"],
+    [{ name: "main" }, { name: "attached_reports" }, { name: "analytics_20" }, { name: "analytics_3" }],
+    ["prod_sales", "main", "mysql"],
   );
 
   assert.deepEqual(
@@ -59,8 +66,14 @@ test("DuckDB shows primary catalog schemas directly under the connection", () =>
       ["schema", "main", "main", "main"],
       ["schema", "mysql", "main", "mysql"],
       ["schema", "prod_sales", "main", "prod_sales"],
+      ["database", "analytics_3", "analytics_3", undefined],
+      ["database", "analytics_20", "analytics_20", undefined],
       ["database", "attached_reports", "attached_reports", undefined],
     ],
   );
   assert.equal(nodes.find((node) => node.label === "mysql")?.id, "conn-1:main:mysql");
+});
+
+test("sidebar name sorting uses numeric-aware ordering", () => {
+  assert.deepEqual(sortSidebarNames(["db10", "db2", "db1"]), ["db1", "db2", "db10"]);
 });

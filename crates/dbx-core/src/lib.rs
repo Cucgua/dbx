@@ -15,6 +15,7 @@ pub mod database_export;
 pub mod database_search_sql;
 pub mod db;
 pub mod db_admin_sql;
+pub mod driver_runtime;
 pub mod external;
 pub mod history;
 pub mod jdbc;

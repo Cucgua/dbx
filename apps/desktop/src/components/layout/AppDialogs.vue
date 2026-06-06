@@ -28,12 +28,14 @@ const props = defineProps<{
   appVersion?: string;
   showDangerDialog: boolean;
   dangerSql: string;
+  suppressDangerConfirm: boolean;
 }>();
 
 const emit = defineEmits<{
   "update:showConnectionDialog": [value: boolean];
   "update:showSettingsDialog": [value: boolean];
   "update:showDangerDialog": [value: boolean];
+  "update:suppressDangerConfirm": [value: boolean];
   dangerConfirm: [];
   connectStarted: [name: string];
   connectSucceeded: [name: string];
@@ -115,7 +117,10 @@ watch(
     v-if="showDangerDialog"
     :open="showDangerDialog"
     :sql="dangerSql"
+    :show-suppress-toggle="true"
+    :suppress-future-prompts="suppressDangerConfirm"
     @update:open="emit('update:showDangerDialog', $event)"
+    @update:suppress-future-prompts="emit('update:suppressDangerConfirm', $event)"
     @confirm="emit('dangerConfirm')"
   />
   <DataTransferDialog

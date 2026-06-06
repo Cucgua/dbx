@@ -31,6 +31,16 @@
       "skipTcpProbe": true
     },
     {
+      "dbType": "rqlite",
+      "label": "RQLite",
+      "runtimeMode": "native",
+      "mcpMode": "direct",
+      "singleConnectionPool": true,
+      "metadataConnectionScoped": false,
+      "skipTcpProbe": false,
+      "defaultPort": 4001
+    },
+    {
       "dbType": "redis",
       "label": "Redis",
       "runtimeMode": "native",
@@ -199,6 +209,16 @@
       "metadataConnectionScoped": false,
       "skipTcpProbe": false,
       "defaultPort": 8000
+    },
+    {
+      "dbType": "kwdb",
+      "label": "KWDB",
+      "runtimeMode": "native",
+      "mcpMode": "direct",
+      "singleConnectionPool": false,
+      "metadataConnectionScoped": false,
+      "skipTcpProbe": false,
+      "defaultPort": 26257
     },
     {
       "dbType": "yashandb",

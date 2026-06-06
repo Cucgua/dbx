@@ -338,6 +338,11 @@ impl PluginDriverSession {
         let mut process = self.process.lock().await;
         let _ = process.child.kill().await;
     }
+
+    pub async fn pid(&self) -> Option<u32> {
+        let process = self.process.lock().await;
+        process.child.id()
+    }
 }
 
 async fn invoke_plugin<T>(

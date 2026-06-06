@@ -92,6 +92,7 @@ export function connectionUrlPlaceholder(dbType: DatabaseType): string {
 
     case "postgres":
     case "gaussdb":
+    case "kwdb":
     case "yashandb":
     case "redshift":
       return "postgresql://user:password@host:port/database";
@@ -101,6 +102,9 @@ export function connectionUrlPlaceholder(dbType: DatabaseType): string {
 
     case "sqlite":
       return "sqlite:///absolute/path/to/database.db";
+
+    case "rqlite":
+      return "http://user:password@host:4001";
 
     case "duckdb":
       return "duckdb:///absolute/path/to/database.duckdb";

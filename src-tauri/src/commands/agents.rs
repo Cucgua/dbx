@@ -9,6 +9,7 @@ use dbx_core::agent_service::{
     upgrade_all_agent_drivers, AgentProgressEvent, UpgradeAllAgentDriversResult,
 };
 use dbx_core::connection::AppState;
+use dbx_core::driver_runtime::DriverRuntimeSummary;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentUpdateBlocker {
@@ -30,6 +31,21 @@ pub async fn list_installed_agents(state: State<'_, Arc<AppState>>) -> Result<Ve
 #[tauri::command]
 pub async fn get_driver_store_usage(state: State<'_, Arc<AppState>>) -> Result<DriverStoreUsage, String> {
     Ok(state.agent_manager.collect_driver_store_usage(state.plugins.root_dir()))
+}
+
+#[tauri::command]
+pub async fn get_driver_runtime_summary(state: State<'_, Arc<AppState>>) -> Result<DriverRuntimeSummary, String> {
+    Ok(dbx_core::driver_runtime::collect_driver_runtime_summary(state.inner().as_ref()).await)
+}
+
+#[tauri::command]
+pub async fn stop_driver_runtime(state: State<'_, Arc<AppState>>, runtime_id: String) -> Result<(), String> {
+    dbx_core::driver_runtime::stop_driver_runtime(state.inner().as_ref(), &runtime_id).await
+}
+
+#[tauri::command]
+pub async fn restart_driver_runtime(state: State<'_, Arc<AppState>>, runtime_id: String) -> Result<(), String> {
+    dbx_core::driver_runtime::restart_driver_runtime(state.inner().as_ref(), &runtime_id).await
 }
 
 #[tauri::command]

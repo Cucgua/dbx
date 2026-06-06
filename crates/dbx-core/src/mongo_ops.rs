@@ -3,12 +3,21 @@ use crate::db::agent_driver::mongo_document_id_params;
 use crate::db::elasticsearch_driver;
 use crate::db::mongo_driver::{self, MongoDocumentResult};
 
+fn sort_names(mut names: Vec<String>) -> Vec<String> {
+    names.sort_by(|left, right| {
+        let left_lower = left.to_lowercase();
+        let right_lower = right.to_lowercase();
+        left_lower.cmp(&right_lower).then_with(|| left.cmp(right))
+    });
+    names
+}
+
 pub async fn mongo_list_databases_core(state: &AppState, connection_id: &str) -> Result<Vec<String>, String> {
     let fallback_database = configured_mongo_database(state, connection_id).await;
     let connections = state.connections.read().await;
     match connections.get(connection_id).ok_or("Not found")? {
         PoolKind::MongoDb(client) => match mongo_driver::list_databases(client).await {
-            Ok(databases) => Ok(databases),
+            Ok(databases) => Ok(sort_names(databases)),
             Err(error) if mongo_list_databases_unauthorized(&error) => {
                 fallback_mongo_database(&error, fallback_database)
             }
@@ -18,7 +27,9 @@ pub async fn mongo_list_databases_core(state: &AppState, connection_id: &str) ->
         PoolKind::Agent(client) => {
             let mut client = client.lock().await;
             match client.mongo_list_databases::<Vec<serde_json::Value>>().await {
-                Ok(result) => Ok(result.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect()),
+                Ok(result) => {
+                    Ok(sort_names(result.iter().filter_map(|v| v.get("name")?.as_str().map(String::from)).collect()))
+                }
                 Err(error) if mongo_list_databases_unauthorized(&error) => {
                     fallback_mongo_database(&error, fallback_database)
                 }
@@ -50,11 +61,11 @@ pub async fn mongo_list_collections_core(
 ) -> Result<Vec<String>, String> {
     let connections = state.connections.read().await;
     match connections.get(connection_id).ok_or("Not found")? {
-        PoolKind::MongoDb(client) => mongo_driver::list_collections(client, database).await,
-        PoolKind::Elasticsearch(client) => elasticsearch_driver::list_indices(client).await,
+        PoolKind::MongoDb(client) => mongo_driver::list_collections(client, database).await.map(sort_names),
+        PoolKind::Elasticsearch(client) => elasticsearch_driver::list_indices(client).await.map(sort_names),
         PoolKind::Agent(client) => {
             let mut client = client.lock().await;
-            client.mongo_list_collections(database).await
+            client.mongo_list_collections(database).await.map(sort_names)
         }
         _ => Err("Not a MongoDB/Elasticsearch connection".to_string()),
     }
@@ -257,7 +268,19 @@ pub async fn mongo_delete_documents_core(
 
 #[cfg(test)]
 mod tests {
-    use super::{fallback_mongo_database, mongo_list_databases_unauthorized};
+    use super::{fallback_mongo_database, mongo_list_databases_unauthorized, sort_names};
+
+    #[test]
+    fn sorts_names_case_insensitively() {
+        let sorted = sort_names(vec![
+            "movies".to_string(),
+            "Comments".to_string(),
+            "users".to_string(),
+            "embedded_movies".to_string(),
+        ]);
+
+        assert_eq!(sorted, vec!["Comments", "embedded_movies", "movies", "users"]);
+    }
 
     #[test]
     fn detects_mongo_list_databases_unauthorized_errors() {

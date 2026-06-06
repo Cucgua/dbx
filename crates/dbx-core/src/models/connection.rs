@@ -169,6 +169,7 @@ pub enum DatabaseType {
     Mysql,
     Postgres,
     Sqlite,
+    Rqlite,
     Redis,
     #[serde(rename = "duckdb")]
     DuckDb,
@@ -192,6 +193,7 @@ pub enum DatabaseType {
     Vastbase,
     Goldendb,
     Gaussdb,
+    Kwdb,
     Yashandb,
     Databricks,
     #[serde(rename = "saphana")]
@@ -301,7 +303,9 @@ impl ConnectionConfig {
             },
             DatabaseType::Redshift => Some("dev"),
             DatabaseType::ClickHouse => Some("default"),
+            DatabaseType::Rqlite => Some("main"),
             DatabaseType::Gaussdb | DatabaseType::OpenGauss => Some("postgres"),
+            DatabaseType::Kwdb => Some("defaultdb"),
             DatabaseType::Kingbase | DatabaseType::Vastbase => Some("postgres"),
             DatabaseType::Highgo => Some("highgo"),
             DatabaseType::Yashandb => Some("yasdb"),
@@ -386,6 +390,7 @@ impl ConnectionConfig {
                 format!("postgres://{host}:{port}{db_part}{suffix}")
             }
             DatabaseType::ClickHouse => clickhouse_http_url(self, raw_host, port),
+            DatabaseType::Rqlite => rqlite_http_url(self, raw_host, port),
             DatabaseType::SqlServer => {
                 format!("server=tcp:{host},{port};database={}", self.database.as_deref().unwrap_or("master"))
             }
@@ -421,6 +426,7 @@ impl ConnectionConfig {
             DatabaseType::Vastbase => format!("vastbase://{host}:{port}{db_part}"),
             DatabaseType::Goldendb => format!("goldendb://{host}:{port}{db_part}"),
             DatabaseType::Gaussdb => format!("gaussdb://{host}:{port}{db_part}"),
+            DatabaseType::Kwdb => format!("kwdb://{host}:{port}{db_part}"),
             DatabaseType::Yashandb => format!("yashandb://{host}:{port}{db_part}"),
             DatabaseType::Databricks => format!("databricks://{host}:{port}{db_part}"),
             DatabaseType::SapHana => format!("saphana://{host}:{port}{db_part}"),
@@ -489,6 +495,7 @@ impl ConnectionConfig {
                 format!("postgres://{}:{}@{host}:{port}{db_part}{suffix}", username, password)
             }
             DatabaseType::ClickHouse => clickhouse_http_url(self, raw_host, port),
+            DatabaseType::Rqlite => rqlite_http_url(self, raw_host, port),
             DatabaseType::SqlServer => format!(
                 "server=tcp:{host},{port};user={};password={};database={}",
                 self.username,
@@ -544,6 +551,9 @@ impl ConnectionConfig {
             }
             DatabaseType::Gaussdb => {
                 format!("gaussdb://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::Kwdb => {
+                format!("kwdb://{}:{}@{host}:{port}{db_part}", username, password)
             }
             DatabaseType::Yashandb => {
                 format!("yashandb://{}:{}@{host}:{port}{db_part}", username, password)
@@ -823,6 +833,31 @@ fn clickhouse_http_url(config: &ConnectionConfig, host: &str, port: u16) -> Stri
     }
     let scheme = if config.clickhouse_uses_tls() { "https" } else { "http" };
     format!("{scheme}://{}:{port}", bracket_ipv6(trimmed))
+}
+
+fn rqlite_http_url(config: &ConnectionConfig, host: &str, port: u16) -> String {
+    let trimmed = host.trim();
+    if let Some(rest) = trimmed.strip_prefix("https://") {
+        return format!("https://{}", trim_http_host_port(rest, port));
+    }
+    if let Some(rest) = trimmed.strip_prefix("http://") {
+        let scheme = if config.ssl { "https" } else { "http" };
+        return format!("{scheme}://{}", trim_http_host_port(rest, port));
+    }
+    let scheme = if config.ssl { "https" } else { "http" };
+    format!("{scheme}://{}:{port}", bracket_ipv6(trimmed))
+}
+
+fn trim_http_host_port(value: &str, default_port: u16) -> String {
+    let authority = value.trim_end_matches('/').split('/').next().unwrap_or(value).split('?').next().unwrap_or(value);
+    if authority.starts_with('[') && !authority.contains("]:") {
+        return format!("{authority}:{default_port}");
+    }
+    if authority.rsplit_once(':').is_some() {
+        authority.to_string()
+    } else {
+        format!("{authority}:{default_port}")
+    }
 }
 
 fn trim_clickhouse_host_port(value: &str, default_port: u16) -> String {
@@ -1587,6 +1622,14 @@ mod tests {
         config.db_type = DatabaseType::Gaussdb;
 
         assert_eq!(config.connection_url(), "gaussdb://gaussdb:secret@10.1.2.3:2883/postgres");
+    }
+
+    #[test]
+    fn kwdb_url_defaults_to_defaultdb_database() {
+        let mut config = mysql_config("root", "secret", None);
+        config.db_type = DatabaseType::Kwdb;
+
+        assert_eq!(config.connection_url(), "kwdb://root:secret@10.1.2.3:2883/defaultdb");
     }
 
     #[test]

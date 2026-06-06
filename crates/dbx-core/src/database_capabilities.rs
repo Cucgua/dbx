@@ -14,6 +14,7 @@ pub fn is_single_connection_pool(db_type: &DatabaseType) -> bool {
         db_type,
         DatabaseType::Sqlite
             | DatabaseType::DuckDb
+            | DatabaseType::Rqlite
             | DatabaseType::MongoDb
             | DatabaseType::Oracle
             | DatabaseType::Dameng

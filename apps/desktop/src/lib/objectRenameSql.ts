@@ -15,6 +15,7 @@ const postgresLikeRenameTypes = new Set<DatabaseType>([
   "postgres",
   "redshift",
   "gaussdb",
+  "kwdb",
   "kingbase",
   "highgo",
   "vastbase",
@@ -31,7 +32,7 @@ export function supportsObjectRename(
   if (objectType === "PROCEDURE" || objectType === "FUNCTION") {
     return false;
   }
-  if (databaseType === "sqlite") return objectType === "TABLE";
+  if (databaseType === "sqlite" || databaseType === "rqlite") return objectType === "TABLE";
   if (databaseType === "mysql" || databaseType === "goldendb") return objectType === "TABLE" || objectType === "VIEW";
   if (postgresLikeRenameTypes.has(databaseType)) return objectType === "TABLE" || objectType === "VIEW";
   if (oracleLikeRenameTypes.has(databaseType)) return objectType === "TABLE" || objectType === "VIEW";

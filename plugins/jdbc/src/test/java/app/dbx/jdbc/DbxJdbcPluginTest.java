@@ -230,6 +230,11 @@ final class DbxJdbcPluginTest {
               "connection_string": "jdbc:mysql://127.0.0.1:9030/demo"
             }
             """);
+        JsonNode kingbase = MAPPER.readTree("""
+            {
+              "connection_string": "jdbc:kingbase8://127.0.0.1:54321/demo"
+            }
+            """);
         JsonNode kyuubi = MAPPER.readTree("""
             {
               "jdbc_driver_class": "org.apache.kyuubi.jdbc.KyuubiHiveDriver"
@@ -246,6 +251,7 @@ final class DbxJdbcPluginTest {
         assertEquals(false, DbxJdbcPlugin.driverQuirks(h2).caseInsensitiveSchemaMetadata());
         assertEquals(false, DbxJdbcPlugin.driverQuirks(h2).useCatalogFallbackSql());
         assertEquals(true, DbxJdbcPlugin.driverQuirks(mysql).useCatalogFallbackSql());
+        assertEquals(true, DbxJdbcPlugin.driverQuirks(kingbase).ignoreCatalogForSchemaMetadata());
         assertEquals(true, DbxJdbcPlugin.driverQuirks(kyuubi).useCatalogFallbackSql());
     }
 
