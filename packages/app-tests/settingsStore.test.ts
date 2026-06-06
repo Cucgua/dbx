@@ -43,6 +43,12 @@ test("defaults dangerous SQL confirmation to enabled", () => {
   assert.equal(normalizeEditorSettings({ confirmDangerousSqlExecution: false }).confirmDangerousSqlExecution, false);
 });
 
+test("defaults update notifications to enabled", () => {
+  assert.equal(DEFAULT_EDITOR_SETTINGS.updateNotificationsEnabled, true);
+  assert.equal(normalizeEditorSettings({}).updateNotificationsEnabled, true);
+  assert.equal(normalizeEditorSettings({ updateNotificationsEnabled: false } as any).updateNotificationsEnabled, false);
+});
+
 test("defaults shortcut settings", () => {
   const settings = normalizeEditorSettings({});
 

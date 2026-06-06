@@ -18,6 +18,7 @@ import type {
   TransportLayerConfig,
 } from "@/types/database";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useSettingsStore } from "@/stores/settingsStore";
 import { useToast } from "@/composables/useToast";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import * as api from "@/lib/api";
@@ -77,6 +78,7 @@ type ConnectionForm = Omit<ConnectionConfig, "id">;
 
 const { t } = useI18n();
 const { toast } = useToast();
+const settingsStore = useSettingsStore();
 const open = defineModel<boolean>("open", { default: false });
 const isDesktop = isTauriRuntime();
 
@@ -1688,6 +1690,7 @@ async function loadJdbcDrivers() {
 async function loadAgentDrivers() {
   try {
     agentDrivers.value = await api.listInstalledAgentsLocal();
+    if (!settingsStore.editorSettings.updateNotificationsEnabled) return;
     api
       .listInstalledAgents()
       .then((drivers) => {

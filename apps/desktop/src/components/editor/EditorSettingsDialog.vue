@@ -127,6 +127,7 @@ const editDisconnectTabHandlingMode = ref<DisconnectTabHandlingMode>(
   settingsStore.editorSettings.disconnectTabHandlingMode,
 );
 const editReuseDataTab = ref(settingsStore.editorSettings.reuseDataTab);
+const editUpdateNotificationsEnabled = ref(settingsStore.editorSettings.updateNotificationsEnabled);
 const editSidebarHiddenTablePrefixes = ref(settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n"));
 const editSidebarHideTableComments = ref(settingsStore.editorSettings.sidebarHideTableComments);
 const editSidebarAllowHorizontalScroll = ref(settingsStore.editorSettings.sidebarAllowHorizontalScroll);
@@ -279,6 +280,7 @@ watch(
       editAutoSelectActiveSidebarNode.value = settingsStore.editorSettings.autoSelectActiveSidebarNode;
       editDisconnectTabHandlingMode.value = settingsStore.editorSettings.disconnectTabHandlingMode;
       editReuseDataTab.value = settingsStore.editorSettings.reuseDataTab;
+      editUpdateNotificationsEnabled.value = settingsStore.editorSettings.updateNotificationsEnabled;
       editSidebarHiddenTablePrefixes.value = settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n");
       editSidebarHideTableComments.value = settingsStore.editorSettings.sidebarHideTableComments;
       editSidebarAllowHorizontalScroll.value = settingsStore.editorSettings.sidebarAllowHorizontalScroll;
@@ -325,6 +327,7 @@ function hasChanges(): boolean {
     editAutoSelectActiveSidebarNode.value !== settingsStore.editorSettings.autoSelectActiveSidebarNode ||
     editDisconnectTabHandlingMode.value !== settingsStore.editorSettings.disconnectTabHandlingMode ||
     editReuseDataTab.value !== settingsStore.editorSettings.reuseDataTab ||
+    editUpdateNotificationsEnabled.value !== settingsStore.editorSettings.updateNotificationsEnabled ||
     editSidebarHideTableComments.value !== settingsStore.editorSettings.sidebarHideTableComments ||
     editSidebarAllowHorizontalScroll.value !== settingsStore.editorSettings.sidebarAllowHorizontalScroll ||
     editExportBatchSize.value !== settingsStore.editorSettings.exportBatchSize ||
@@ -358,6 +361,7 @@ async function persistSettings() {
     autoSelectActiveSidebarNode: editAutoSelectActiveSidebarNode.value,
     disconnectTabHandlingMode: editDisconnectTabHandlingMode.value,
     reuseDataTab: editReuseDataTab.value,
+    updateNotificationsEnabled: editUpdateNotificationsEnabled.value,
     sidebarHideTableComments: editSidebarHideTableComments.value,
     sidebarAllowHorizontalScroll: editSidebarAllowHorizontalScroll.value,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value),
@@ -404,6 +408,7 @@ function resetDefaults() {
   editAutoSelectActiveSidebarNode.value = DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode;
   editDisconnectTabHandlingMode.value = DEFAULT_EDITOR_SETTINGS.disconnectTabHandlingMode;
   editReuseDataTab.value = DEFAULT_EDITOR_SETTINGS.reuseDataTab;
+  editUpdateNotificationsEnabled.value = DEFAULT_EDITOR_SETTINGS.updateNotificationsEnabled;
   editSidebarHideTableComments.value = DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments;
   editSidebarAllowHorizontalScroll.value = DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll;
   editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
@@ -1489,6 +1494,16 @@ watch(
                   <p class="text-xs text-muted-foreground">{{ t("settings.showTrayIconDescription") }}</p>
                 </div>
                 <Switch id="show-tray-icon" v-model="editShowTrayIcon" />
+              </div>
+
+              <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                <div class="space-y-1">
+                  <Label for="update-notifications-enabled">{{ t("settings.updateNotificationsEnabled") }}</Label>
+                  <p class="text-xs text-muted-foreground">
+                    {{ t("settings.updateNotificationsEnabledDescription") }}
+                  </p>
+                </div>
+                <Switch id="update-notifications-enabled" v-model="editUpdateNotificationsEnabled" />
               </div>
 
               <Separator />

@@ -1629,6 +1629,9 @@ export default {
     showTrayIcon: "Show tray/menu bar icon",
     showTrayIconDescription:
       "When disabled, no icon is shown, but closing the window still hides DBX in the background as before.",
+    updateNotificationsEnabled: "Enable update reminders",
+    updateNotificationsEnabledDescription:
+      "When disabled, DBX will not automatically check app or driver updates or show update badges. Manual checks are still available.",
     dataGridDisplay: "Data grid display",
     showColumnCommentsInHeader: "Show column comments under names",
     showColumnCommentsInHeaderDescription: "Display table column comments directly below grid column names.",

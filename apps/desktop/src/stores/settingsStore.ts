@@ -258,6 +258,7 @@ export interface EditorSettings {
   autoSelectActiveSidebarNode: boolean;
   disconnectTabHandlingMode: DisconnectTabHandlingMode;
   reuseDataTab: boolean;
+  updateNotificationsEnabled: boolean;
   sidebarHiddenTablePrefixes: string[];
   sidebarHideTableComments: boolean;
   sidebarAllowHorizontalScroll: boolean;
@@ -322,6 +323,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   autoSelectActiveSidebarNode: false,
   disconnectTabHandlingMode: "close-tabs",
   reuseDataTab: false,
+  updateNotificationsEnabled: true,
   sidebarHiddenTablePrefixes: [],
   sidebarHideTableComments: false,
   sidebarAllowHorizontalScroll: false,
@@ -495,6 +497,8 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
       (settings as Partial<EditorSettings> & { closeQueryTabsOnDisconnect?: boolean }).closeQueryTabsOnDisconnect,
     ),
     reuseDataTab: settings.reuseDataTab ?? DEFAULT_EDITOR_SETTINGS.reuseDataTab,
+    updateNotificationsEnabled:
+      settings.updateNotificationsEnabled ?? DEFAULT_EDITOR_SETTINGS.updateNotificationsEnabled,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(settings.sidebarHiddenTablePrefixes),
     sidebarHideTableComments: settings.sidebarHideTableComments ?? DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments,
     sidebarAllowHorizontalScroll:
@@ -667,6 +671,8 @@ export const useSettingsStore = defineStore("settings", () => {
         partial.disconnectTabHandlingMode,
       );
     if (partial.reuseDataTab !== undefined) editorSettings.value.reuseDataTab = partial.reuseDataTab;
+    if (partial.updateNotificationsEnabled !== undefined)
+      editorSettings.value.updateNotificationsEnabled = partial.updateNotificationsEnabled;
     if (partial.sidebarHiddenTablePrefixes !== undefined)
       editorSettings.value.sidebarHiddenTablePrefixes = normalizeSidebarHiddenTablePrefixes(
         partial.sidebarHiddenTablePrefixes,

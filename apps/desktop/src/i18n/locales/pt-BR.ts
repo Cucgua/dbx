@@ -1651,6 +1651,9 @@ export default {
     showTrayIcon: "Mostrar ícone na bandeja/barra de menus",
     showTrayIconDescription:
       "Quando desativado, nenhum ícone é exibido, mas fechar a janela ainda oculta o DBX em segundo plano como antes.",
+    updateNotificationsEnabled: "Ativar lembretes de atualização",
+    updateNotificationsEnabledDescription:
+      "Quando desativado, o DBX não verificará automaticamente atualizações do app ou dos drivers nem mostrará indicadores. Verificações manuais continuam disponíveis.",
     dataGridDisplay: "Exibição da grade de dados",
     showColumnCommentsInHeader: "Mostrar comentários de coluna sob os nomes",
     showColumnCommentsInHeaderDescription:

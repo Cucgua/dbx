@@ -1660,6 +1660,9 @@ export default {
     showTrayIcon: "Mostra icona nella barra delle applicazioni/menu",
     showTrayIconDescription:
       "Se disattivato, non viene mostrata alcuna icona, ma la chiusura della finestra nasconderà comunque DBX in background.",
+    updateNotificationsEnabled: "Abilita promemoria aggiornamenti",
+    updateNotificationsEnabledDescription:
+      "Se disattivato, DBX non controllerà automaticamente gli aggiornamenti dell'app o dei driver e non mostrerà badge. I controlli manuali restano disponibili.",
     dataGridDisplay: "Visualizzazione griglia dati",
     showColumnCommentsInHeader: "Mostra i commenti delle colonne sotto i nomi",
     showColumnCommentsInHeaderDescription:

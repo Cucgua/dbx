@@ -56,6 +56,15 @@ const { t } = useI18n();
 const { toast } = useToast();
 const isWeb = !isTauriRuntime();
 
+const props = withDefaults(
+  defineProps<{
+    updateNotificationsEnabled?: boolean;
+  }>(),
+  {
+    updateNotificationsEnabled: true,
+  },
+);
+
 const emit = defineEmits<{
   "update-count-change": [count: number];
 }>();
@@ -117,7 +126,9 @@ const progressText = computed(() => {
 
 const progressNumber = computed(() => driverInstallProgressPercent(progress.value));
 
-const updatableCount = computed(() => drivers.value.filter((d) => d.update_available).length);
+const updatableCount = computed(() =>
+  props.updateNotificationsEnabled ? drivers.value.filter((d) => d.update_available).length : 0,
+);
 const usageSummary = computed(() => {
   const usage = driverStoreUsage.value;
   if (!usage) return [];
@@ -142,10 +153,18 @@ function updateAgentDrivers(nextDrivers: AgentDriverInfo[]) {
   emitDriverUpdateCount();
 }
 
-const agentTabUpdateCount = computed(() => drivers.value.filter((d) => d.update_available).length);
-const jdbcTabUpdateCount = computed(() => (jdbcPluginStatus.value?.update_available ? 1 : 0));
+const agentTabUpdateCount = computed(() =>
+  props.updateNotificationsEnabled ? drivers.value.filter((d) => d.update_available).length : 0,
+);
+const jdbcTabUpdateCount = computed(() =>
+  props.updateNotificationsEnabled && jdbcPluginStatus.value?.update_available ? 1 : 0,
+);
 
 function emitDriverUpdateCount() {
+  if (!props.updateNotificationsEnabled) {
+    emit("update-count-change", 0);
+    return;
+  }
   emit("update-count-change", countAvailableDriverUpdates(drivers.value, jdbcPluginStatus.value));
 }
 
@@ -722,9 +741,11 @@ onMounted(async () => {
   void loadJavaRuntimeConfig();
   void loadDriverStoreUsage();
 
-  api.listInstalledAgents().then((result) => {
-    updateAgentDrivers(result);
-  });
+  if (props.updateNotificationsEnabled) {
+    api.listInstalledAgents().then((result) => {
+      updateAgentDrivers(result);
+    });
+  }
 
   unlisten = await api.listenAgentInstallProgress((payload) => {
     if (payload.step === "done" || payload.step === "all-done") {
@@ -739,7 +760,7 @@ onMounted(async () => {
     }
   });
   void loadJdbcDrivers();
-  void loadJdbcPluginStatus();
+  if (props.updateNotificationsEnabled) void loadJdbcPluginStatus();
 });
 
 onUnmounted(() => {

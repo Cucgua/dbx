@@ -1599,6 +1599,9 @@ export default {
     iconThemeBlackDescription: "窗口、托盘和 Logo 都使用黑色 DBX 标识。",
     showTrayIcon: "显示系统托盘/菜单栏图标",
     showTrayIconDescription: "关闭后不显示图标，但关闭窗口仍会像之前一样隐藏到后台。",
+    updateNotificationsEnabled: "启用更新提醒",
+    updateNotificationsEnabledDescription:
+      "关闭后，DBX 不会自动检查应用和驱动更新，也不会显示更新红点；仍可手动检查更新。",
     dataGridDisplay: "数据表格显示",
     showColumnCommentsInHeader: "在字段名下方显示注释",
     showColumnCommentsInHeaderDescription: "把表字段注释直接显示在结果表头字段名下方。",

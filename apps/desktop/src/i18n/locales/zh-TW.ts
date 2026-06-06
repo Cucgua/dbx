@@ -1575,6 +1575,9 @@ export default {
     iconThemeBlackDescription: "視窗、系統匣和 Logo 都使用黑色 DBX 標誌。",
     showTrayIcon: "顯示系統匣/選單欄圖示",
     showTrayIconDescription: "關閉後不顯示圖示，但關閉視窗仍會像之前一樣隱藏到後台。",
+    updateNotificationsEnabled: "啟用更新提醒",
+    updateNotificationsEnabledDescription:
+      "關閉後，DBX 不會自動檢查應用程式和驅動程式更新，也不會顯示更新紅點；仍可手動檢查更新。",
     dataGridDisplay: "資料表格顯示",
     showColumnCommentsInHeader: "在欄位名稱下方顯示註解",
     showColumnCommentsInHeaderDescription: "直接在資料表格欄位名稱下方顯示資料表欄位註解。",

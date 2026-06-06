@@ -140,13 +140,18 @@ const activeConnection = computed(() => {
 });
 
 function updateAgentDriverUpdateCount(count: number) {
+  if (!settingsStore.editorSettings.updateNotificationsEnabled) {
+    agentDriverUpdateCount.value = 0;
+    return;
+  }
   agentDriverUpdateCount.value = count;
 }
 
 async function refreshAgentDriverUpdateCount() {
-  if (!isDesktop) return;
+  if (!isDesktop || !settingsStore.editorSettings.updateNotificationsEnabled) return;
   try {
     const drivers = await invoke<AgentDriverUpdateBadgeState[]>("list_installed_agents");
+    if (!settingsStore.editorSettings.updateNotificationsEnabled) return;
     updateAgentDriverUpdateCount(countAvailableAgentDriverUpdates(drivers));
   } catch {
     // Driver update availability is only a badge hint; keep the existing count if the registry cannot be reached.
@@ -222,6 +227,11 @@ useVisibilityChange();
 
 const appVersion = ref("");
 const isClassicLayout = computed(() => settingsStore.editorSettings.appLayout === "classic");
+const updateNotificationsEnabled = computed(() => settingsStore.editorSettings.updateNotificationsEnabled);
+const toolbarAgentDriverUpdateCount = computed(() =>
+  updateNotificationsEnabled.value ? agentDriverUpdateCount.value : 0,
+);
+const toolbarHasUpdateAvailable = computed(() => updateNotificationsEnabled.value && hasUpdateAvailable.value);
 const hasSqlFileConnections = computed(() =>
   connectionStore.connections.some((c) => supportsSqlFileExecution(c.db_type)),
 );
@@ -878,6 +888,27 @@ function openDriverStoreFromEvent() {
   showDriverStore.value = true;
 }
 
+function runUpdateNotificationChecks() {
+  if (!updateNotificationsEnabled.value) return;
+  checkUpdates({ silent: true });
+  void refreshAgentDriverUpdateCount();
+}
+
+watch(updateNotificationsEnabled, (enabled) => {
+  if (!enabled) {
+    agentDriverUpdateCount.value = 0;
+    if (updateCheckTimer) {
+      clearInterval(updateCheckTimer);
+      updateCheckTimer = undefined;
+    }
+    return;
+  }
+  runUpdateNotificationChecks();
+  if (!updateCheckTimer) {
+    updateCheckTimer = setInterval(runUpdateNotificationChecks, UPDATE_CHECK_INTERVAL_MS);
+  }
+});
+
 onMounted(async () => {
   console.log("[STARTUP] onMounted begin");
   const mountStart = performance.now();
@@ -915,14 +946,11 @@ onMounted(async () => {
   }
   initApp();
   setupFileDrop().catch(() => {});
-  void refreshAgentDriverUpdateCount();
   setTimeout(() => {
-    checkUpdates({ silent: true });
-    void refreshAgentDriverUpdateCount();
-    updateCheckTimer = setInterval(() => {
-      checkUpdates({ silent: true });
-      void refreshAgentDriverUpdateCount();
-    }, UPDATE_CHECK_INTERVAL_MS);
+    runUpdateNotificationChecks();
+    if (updateNotificationsEnabled.value && !updateCheckTimer) {
+      updateCheckTimer = setInterval(runUpdateNotificationChecks, UPDATE_CHECK_INTERVAL_MS);
+    }
   }, 10_000);
   api
     .getAppVersion()
@@ -966,8 +994,8 @@ onUnmounted(() => {
           :show-history="showHistory"
           :show-driver-store="showDriverStore"
           :checking-updates="checkingUpdates"
-          :has-update-available="hasUpdateAvailable"
-          :agent-driver-update-count="agentDriverUpdateCount"
+          :has-update-available="toolbarHasUpdateAvailable"
+          :agent-driver-update-count="toolbarAgentDriverUpdateCount"
           :has-connections="connectionStore.connections.length > 0"
           :has-sql-file-connections="hasSqlFileConnections"
           @new-connection="showConnectionDialog = true"
@@ -1029,13 +1057,14 @@ onUnmounted(() => {
             <div class="h-full flex flex-col min-w-0">
               <AppTabBar
                 :show-driver-store="showDriverStore"
-                :agent-driver-update-count="agentDriverUpdateCount"
+                :agent-driver-update-count="toolbarAgentDriverUpdateCount"
                 @toggle-driver-store="showDriverStore = true"
                 @close-driver-store="showDriverStore = false"
               />
               <DriverStorePage
                 v-if="showDriverStore"
                 class="flex-1 min-h-0"
+                :update-notifications-enabled="updateNotificationsEnabled"
                 @update-count-change="updateAgentDriverUpdateCount"
               />
               <div v-else-if="activeTab" class="flex flex-col flex-1 min-h-0">
