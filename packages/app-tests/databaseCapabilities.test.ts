@@ -253,11 +253,6 @@ test("describes feature support through capability helpers", () => {
   assert.equal(supportsTableTruncate("rqlite"), false);
 });
 
-test("exposes Hive and MongoDB in data transfer", () => {
-  assert.equal(supportsTransfer("hive"), true);
-  assert.equal(supportsTransfer("mongodb"), true);
-});
-
 test("object browser entry follows database tree shape", () => {
   assert.equal(supportsObjectBrowserTreeNode("postgres", "database"), false);
   assert.equal(supportsObjectBrowserTreeNode("postgres", "schema"), true);

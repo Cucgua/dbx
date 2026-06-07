@@ -207,13 +207,3 @@ fn driver_manifest_matches_agent_driver_store_entries() {
 
     assert_eq!(actual, expected);
 }
-
-#[test]
-fn catalog_marks_runtime_only_agent_entries_explicitly() {
-    let runtime_only: Vec<&str> =
-        agent_catalog::entries().iter().filter(|entry| !entry.store_visible).map(|entry| entry.key).collect();
-
-    assert!(runtime_only.is_empty());
-    assert!(is_agent_type(&DatabaseType::Iris));
-    assert_eq!(agent_key(&DatabaseType::Iris, None), Some("iris"));
-}

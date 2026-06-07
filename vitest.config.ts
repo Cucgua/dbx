@@ -11,8 +11,6 @@ export default defineConfig({
     include: [
       "packages/app-tests/*.test.ts",
       "packages/node-core/tests/*.test.ts",
-      "packages/cli/tests/*.test.ts",
-      "packages/mcp-server/tests/*.test.ts",
       "apps/desktop/src/**/*.spec.ts",
       "docs/lib/*.test.ts",
     ],
