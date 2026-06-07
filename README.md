@@ -274,7 +274,7 @@ The installer will be in `src-tauri/target/release/bundle/`.
 
 <details>
 <summary><strong>Is DBX free?</strong></summary>
-Yes. DBX is open source under AGPL-3.0. All features are free.
+Yes. DBX is open source under Apache-2.0. All features are free.
 </details>
 
 <details>
@@ -320,4 +320,4 @@ Open an issue on <a href="https://github.com/t8y2/dbx/issues">GitHub Issues</a>.
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)

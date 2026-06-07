@@ -274,7 +274,7 @@ pnpm tauri build
 
 <details>
 <summary><strong>DBX 是免费的吗？</strong></summary>
-是的。DBX 基于 AGPL-3.0 协议开源，所有功能均免费使用。
+是的。DBX 基于 Apache-2.0 协议开源，所有功能均免费使用。
 </details>
 
 <details>
@@ -320,4 +320,4 @@ MySQL、PostgreSQL、SQLite、Redis、MongoDB、DuckDB、ClickHouse、SQL Server
 
 ## 开源协议
 
-[AGPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)

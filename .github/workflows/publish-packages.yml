@@ -160,7 +160,7 @@ jobs:
               "version": "${VERSION}",
               "description": "Open-source database management tool",
               "homepage": "https://github.com/${REPO_OWNER}/${APP_NAME}",
-              "license": "MIT",
+              "license": "Apache-2.0",
               "architecture": {
                   "64bit": {
                       "url": "https://github.com/${REPO_OWNER}/${APP_NAME}/releases/download/v${VERSION}/${PRODUCT_NAME}_${VERSION}_x64-setup.exe",

@@ -2,6 +2,7 @@
   "name": "dbx",
   "version": "0.5.29",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --config apps/desktop/vite.config.ts",

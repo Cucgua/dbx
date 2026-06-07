@@ -133,7 +133,7 @@ PostgreSQL, MySQL, SQLite, Doris, StarRocks, and Redshift queries run directly f
 
 ## License
 
-MIT
+Apache-2.0
 
 ---
 

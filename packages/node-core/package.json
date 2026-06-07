@@ -27,7 +27,7 @@
     "build": "tsc",
     "prepublishOnly": "tsc"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "better-sqlite3": "^12.9.0",
     "keytar": "^7.9.0",
