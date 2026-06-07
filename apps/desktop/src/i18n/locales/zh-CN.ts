@@ -921,6 +921,7 @@ export default {
     toolRunning: "运行中",
     toolSucceeded: "已完成",
     toolFailed: "失败",
+    toolTraceCollapsedSummary: "已调用 {total} 个工具：成功 {success} 个，失败 {failed} 个，进行中 {running} 个",
     thoughtChain: "执行过程",
     thoughtNodeLoading: "运行中",
     thoughtNodeSuccess: "已完成",

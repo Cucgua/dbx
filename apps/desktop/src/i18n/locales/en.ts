@@ -942,6 +942,7 @@ export default {
     toolRunning: "Running",
     toolSucceeded: "Done",
     toolFailed: "Failed",
+    toolTraceCollapsedSummary: "{total} tool calls: {success} done, {failed} failed, {running} running",
     thoughtChain: "Execution",
     thoughtNodeLoading: "Running",
     thoughtNodeSuccess: "Done",

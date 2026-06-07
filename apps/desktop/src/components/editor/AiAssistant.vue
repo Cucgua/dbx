@@ -63,6 +63,7 @@ import {
 import { buildAiAgentPlan, hasSchemaRagToolTrace } from "@/lib/aiAgentPlan";
 import { buildAiAgentStepItems, type AiAgentStepItem, type AiAgentStepTone } from "@/lib/aiAgentStepPresentation";
 import { createAiShikiCodeHighlighter, type AiCodeHighlighter } from "@/lib/aiCodeHighlighter";
+import { buildAiToolTraceChildPresentation } from "@/lib/aiToolTracePresentation";
 import {
   createAiMessageRenderer,
   shouldRenderAssistantMessage,
@@ -140,6 +141,7 @@ const conversationId = ref("");
 const schemaResearchSessions = ref<SchemaResearchSessionSnapshot[]>([]);
 const conversations = ref<AiConversation[]>([]);
 const showConversationList = ref(false);
+const expandedToolTraceChildren = ref(new Set<string>());
 const promptTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const promptCompositionActive = ref(false);
 const shikiCodeHighlighter = ref<AiCodeHighlighter>();
@@ -469,6 +471,32 @@ function toolStatusLabelKey(status: AiToolTrace["status"]): string {
   if (status === "running") return "ai.toolRunning";
   if (status === "success") return "ai.toolSucceeded";
   return "ai.toolFailed";
+}
+
+function isToolTraceChildrenExpanded(traceId: string): boolean {
+  return expandedToolTraceChildren.value.has(traceId);
+}
+
+function toggleToolTraceChildren(traceId: string) {
+  const next = new Set(expandedToolTraceChildren.value);
+  if (next.has(traceId)) next.delete(traceId);
+  else next.add(traceId);
+  expandedToolTraceChildren.value = next;
+}
+
+function toolTraceChildPresentation(trace: AiToolTrace) {
+  return buildAiToolTraceChildPresentation(trace.children || [], isToolTraceChildrenExpanded(trace.id));
+}
+
+function toolTraceChildSummaryText(trace: AiToolTrace): string {
+  const summary = toolTraceChildPresentation(trace).summary;
+  if (!summary) return "";
+  return t("ai.toolTraceCollapsedSummary", {
+    total: summary.total,
+    success: summary.success,
+    failed: summary.error,
+    running: summary.running,
+  });
 }
 
 function tableChoiceKey(schema: string, table: string): string {
@@ -1420,13 +1448,30 @@ const messageRenderer = computed(() => {
                         {{ item.toolTrace.summary }}
                       </div>
                       <div v-if="item.toolTrace.children?.length" class="mt-2 space-y-1 border-l border-border/70 pl-2">
+                        <button
+                          v-if="toolTraceChildPresentation(item.toolTrace).summary"
+                          type="button"
+                          class="flex w-full items-center gap-1 py-0.5 text-left text-[10px] leading-4 text-muted-foreground/75 transition-colors hover:text-foreground/80"
+                          :aria-expanded="isToolTraceChildrenExpanded(item.toolTrace.id)"
+                          @click.stop="toggleToolTraceChildren(item.toolTrace.id)"
+                        >
+                          <ChevronRight
+                            class="h-3 w-3 shrink-0 opacity-70 transition-transform duration-200"
+                            :class="{ 'rotate-90': isToolTraceChildrenExpanded(item.toolTrace.id) }"
+                          />
+                          <span class="min-w-0 flex-1 truncate">{{ toolTraceChildSummaryText(item.toolTrace) }}</span>
+                        </button>
                         <div
-                          v-for="childTrace in item.toolTrace.children"
+                          v-for="childTrace in toolTraceChildPresentation(item.toolTrace).visibleChildren"
                           :key="childTrace.id"
                           class="rounded border border-border/45 bg-background/40 px-2 py-1"
                         >
                           <div class="flex min-w-0 items-center gap-1.5">
-                            <Check v-if="childTrace.status === 'success'" class="h-3 w-3 shrink-0 text-emerald-500" />
+                            <Loader2 v-if="childTrace.status === 'running'" class="h-3 w-3 shrink-0 animate-spin" />
+                            <Check
+                              v-else-if="childTrace.status === 'success'"
+                              class="h-3 w-3 shrink-0 text-emerald-500"
+                            />
                             <AlertTriangle v-else class="h-3 w-3 shrink-0 text-amber-500" />
                             <span class="shrink-0 text-[10px] text-foreground/70">{{ t("ai.toolCall") }}</span>
                             <span class="truncate font-mono text-[10px]">{{ childTrace.name }}</span>

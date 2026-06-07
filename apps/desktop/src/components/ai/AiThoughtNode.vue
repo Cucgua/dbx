@@ -13,6 +13,7 @@ import {
   Wand2,
   Wrench,
 } from "@lucide/vue";
+import { buildAiThoughtNodeChildPresentation } from "@/lib/aiThoughtNodePresentation";
 import type { AiThoughtNodeState, AiWorkflowNodeKind, AiWorkflowNodeStatus } from "@/lib/aiWorkflowEvents";
 
 const props = withDefaults(
@@ -29,6 +30,7 @@ const { t } = useI18n();
 const expanded = ref(props.node.defaultExpanded);
 const manuallyToggled = ref(false);
 const argumentsExpanded = ref(false);
+const toolChildrenExpanded = ref(false);
 
 const kindIcon = computed(() => iconForKind(props.node.kind));
 const statusLabel = computed(() => t(statusLabelKey(props.node.status)));
@@ -36,6 +38,9 @@ const statusTone = computed(() => statusClass(props.node.status));
 const nodeSummary = computed(() => props.node.summary || props.node.description || props.node.content.trim());
 const contentExpanded = ref(false);
 const compactContent = computed(() => compactThoughtContent(props.node.content, contentExpanded.value));
+const childPresentation = computed(() =>
+  buildAiThoughtNodeChildPresentation(props.node.children, toolChildrenExpanded.value),
+);
 const showArgumentsToggle = computed(() => (props.node.toolArguments || "").length > 240);
 const visibleToolArguments = computed(() => {
   const value = props.node.toolArguments || "";
@@ -103,6 +108,17 @@ function compactThoughtContent(content: string, showAll: boolean): { text: strin
   const recentLines = lines.slice(-maxLines).join("\n");
   const text = recentLines.length > maxChars ? recentLines.slice(-maxChars) : recentLines;
   return { text, truncated: true };
+}
+
+function toolChildrenSummaryText(): string {
+  const summary = childPresentation.value.toolSummary;
+  if (!summary) return "";
+  return t("ai.toolTraceCollapsedSummary", {
+    total: summary.total,
+    success: summary.success,
+    failed: summary.error,
+    running: summary.running,
+  });
 }
 </script>
 
@@ -175,7 +191,25 @@ function compactThoughtContent(content: string, showAll: boolean): { text: strin
         <span class="font-medium text-foreground/65">{{ t("ai.thoughtToolSummary") }}: </span>{{ node.summary }}
       </div>
       <div v-if="node.children.length" class="mt-2 space-y-1">
-        <AiThoughtNode v-for="child in node.children" :key="child.id" :node="child" :depth="depth + 1" />
+        <button
+          v-if="childPresentation.toolSummary"
+          type="button"
+          class="ml-4 flex w-[calc(100%-1rem)] items-center gap-1 py-0.5 text-left text-[10px] leading-4 text-muted-foreground/75 transition-colors hover:text-foreground/80"
+          :aria-expanded="toolChildrenExpanded"
+          @click.stop="toolChildrenExpanded = !toolChildrenExpanded"
+        >
+          <ChevronRight
+            class="h-3 w-3 shrink-0 opacity-70 transition-transform duration-200"
+            :class="{ 'rotate-90': toolChildrenExpanded }"
+          />
+          <span class="min-w-0 flex-1 truncate">{{ toolChildrenSummaryText() }}</span>
+        </button>
+        <AiThoughtNode
+          v-for="child in childPresentation.visibleChildren"
+          :key="child.id"
+          :node="child"
+          :depth="depth + 1"
+        />
       </div>
     </div>
   </div>

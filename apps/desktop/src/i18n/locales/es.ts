@@ -838,6 +838,8 @@ export default {
     toolRunning: "Ejecutando",
     toolSucceeded: "Listo",
     toolFailed: "Falló",
+    toolTraceCollapsedSummary:
+      "{total} llamadas de herramientas: {success} listas, {failed} fallidas, {running} en ejecución",
     thoughtChain: "Ejecución",
     thoughtNodeLoading: "Ejecutando",
     thoughtNodeSuccess: "Listo",
