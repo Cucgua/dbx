@@ -491,6 +491,9 @@ fn mysql_setup_queries(url: &str) -> Vec<String> {
     if let Some(database) = mysql_connection_database(url) {
         queries.push(format!("USE {}", quote_identifier(&database)));
     }
+    if let Some(time_zone) = mysql_connection_time_zone(url) {
+        queries.push(format!("SET time_zone = {}", quote_value(&time_zone)));
+    }
     queries.push(format!("SET NAMES {charset}"));
     queries
 }
@@ -573,6 +576,104 @@ fn mysql_connection_database(url: &str) -> Option<String> {
 
 fn is_safe_mysql_charset_name(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn mysql_connection_time_zone(url: &str) -> Option<String> {
+    let (_, query) = url.split_once('?')?;
+    let mut jdbc_time_zone: Option<String> = None;
+    let mut go_location: Option<String> = None;
+
+    for segment in query.split('&') {
+        let Some((raw_key, raw_value)) = segment.split_once('=') else {
+            continue;
+        };
+        let key = percent_decode_str(raw_key).decode_utf8_lossy();
+        let value = percent_decode_str(raw_value).decode_utf8_lossy().trim().to_string();
+        if value.is_empty() {
+            continue;
+        }
+
+        if key.eq_ignore_ascii_case("time_zone")
+            || key.eq_ignore_ascii_case("time-zone")
+            || key.eq_ignore_ascii_case("timezone")
+        {
+            if let Some(value) = normalize_mysql_time_zone_value(&value) {
+                return Some(value);
+            }
+        } else if key.eq_ignore_ascii_case("connectionTimeZone") || key.eq_ignore_ascii_case("serverTimezone") {
+            if jdbc_time_zone.is_none() {
+                jdbc_time_zone = normalize_mysql_time_zone_value(&value);
+            }
+        } else if key.eq_ignore_ascii_case("loc") && go_location.is_none() {
+            go_location = normalize_mysql_time_zone_value(&value);
+        }
+    }
+
+    jdbc_time_zone.or(go_location)
+}
+
+fn normalize_mysql_time_zone_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.eq_ignore_ascii_case("local") {
+        return Some(local_mysql_time_zone_offset());
+    }
+    if value.eq_ignore_ascii_case("utc") || value.eq_ignore_ascii_case("z") {
+        return Some("+00:00".to_string());
+    }
+    if value.eq_ignore_ascii_case("system") {
+        return Some("SYSTEM".to_string());
+    }
+    if let Some(offset) = normalize_mysql_time_zone_offset(value) {
+        return Some(offset);
+    }
+    if let Some(offset_part) = value
+        .strip_prefix("GMT")
+        .or_else(|| value.strip_prefix("gmt"))
+        .or_else(|| value.strip_prefix("UTC"))
+        .or_else(|| value.strip_prefix("utc"))
+    {
+        if let Some(offset) = normalize_mysql_time_zone_offset(offset_part) {
+            return Some(offset);
+        }
+    }
+    is_safe_mysql_time_zone_name(value).then(|| value.to_string())
+}
+
+fn normalize_mysql_time_zone_offset(value: &str) -> Option<String> {
+    let value = value.trim();
+    let (sign, rest) = match value.as_bytes().first().copied()? {
+        b'+' => ('+', &value[1..]),
+        b'-' => ('-', &value[1..]),
+        _ => return None,
+    };
+    let (hours, minutes) =
+        if let Some((hours, minutes)) = rest.split_once(':') { (hours, minutes) } else { (rest, "0") };
+    if hours.is_empty() || hours.len() > 2 || minutes.is_empty() || minutes.len() > 2 {
+        return None;
+    }
+    let hours = hours.parse::<u8>().ok()?;
+    let minutes = minutes.parse::<u8>().ok()?;
+    if hours > 14 || minutes > 59 || (hours == 14 && minutes != 0) {
+        return None;
+    }
+    Some(format!("{sign}{hours:02}:{minutes:02}"))
+}
+
+fn local_mysql_time_zone_offset() -> String {
+    let seconds = chrono::Local::now().offset().local_minus_utc();
+    let sign = if seconds < 0 { '-' } else { '+' };
+    let seconds = seconds.abs();
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    format!("{sign}{hours:02}:{minutes:02}")
+}
+
+fn is_safe_mysql_time_zone_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'_' | b'-' | b'+' | b':'))
 }
 
 async fn verify_pool_connection(pool: &MySqlPool, timeout: Duration) -> Result<(), String> {
@@ -697,6 +798,23 @@ fn is_jdbc_param(key: &str) -> bool {
     )
 }
 
+fn is_dbx_handled_mysql_url_param(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "charset"
+            | "time_zone"
+            | "time-zone"
+            | "timezone"
+            | "connect_timeout"
+            | "connecttimeout"
+            | "parsetime"
+            | "loc"
+            | "connectiontimezone"
+            | "servertimezone"
+            | "forceconnectiontimezonetosession"
+    )
+}
+
 fn mysql_async_url(url: &str) -> Cow<'_, str> {
     let Some((base, query)) = url.split_once('?') else {
         return Cow::Borrowed(url);
@@ -707,13 +825,7 @@ fn mysql_async_url(url: &str) -> Cow<'_, str> {
     let mut changed = false;
     for segment in query.split('&') {
         let segment = segment.trim();
-        if segment.is_empty()
-            || segment.starts_with("charset=")
-            || segment.starts_with("time_zone=")
-            || segment.starts_with("time-zone=")
-            || segment.to_ascii_lowercase().starts_with("connect_timeout=")
-            || segment.to_ascii_lowercase().starts_with("connecttimeout=")
-        {
+        if segment.is_empty() {
             changed = true;
             continue;
         }
@@ -722,6 +834,10 @@ fn mysql_async_url(url: &str) -> Cow<'_, str> {
             filtered.push(segment.to_string());
             continue;
         };
+        if is_dbx_handled_mysql_url_param(key) {
+            changed = true;
+            continue;
+        }
         if key.eq_ignore_ascii_case("ssl-mode") || key.eq_ignore_ascii_case("sslmode") {
             changed = true;
             match value.to_ascii_lowercase().replace('-', "_").as_str() {
@@ -2060,6 +2176,13 @@ mod tests {
     }
 
     #[test]
+    fn mysql_async_url_strips_go_and_timezone_compat_params() {
+        let url = "mysql://host:3306/db?charset=utf8mb4&parseTime=True&loc=Local&connectionTimeZone=Asia%2FShanghai&forceConnectionTimeZoneToSession=true&require_ssl=true";
+
+        assert_eq!(mysql_async_url(url).as_ref(), "mysql://host:3306/db?require_ssl=true");
+    }
+
+    #[test]
     fn ssl_fallback_does_not_disable_required_tls() {
         assert_eq!(ssl_fallback_url("mysql://host:3306/db?require_ssl=true&charset=utf8mb4"), None);
         assert_eq!(ssl_fallback_url("mysql://host:3306/db?ssl-mode=verify_ca&charset=utf8mb4"), None);
@@ -2078,6 +2201,50 @@ mod tests {
         );
         assert_eq!(
             mysql_setup_queries("mysql://host:3306/db?charset=utf8mb4;DROP TABLE users"),
+            vec!["USE `db`", "SET NAMES utf8mb4"]
+        );
+    }
+
+    #[test]
+    fn mysql_setup_queries_apply_explicit_time_zone() {
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?time_zone=%2B08%3A00&charset=utf8mb4"),
+            vec!["USE `db`", "SET time_zone = '+08:00'", "SET NAMES utf8mb4"]
+        );
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?time-zone=Asia%2FShanghai"),
+            vec!["USE `db`", "SET time_zone = 'Asia/Shanghai'", "SET NAMES utf8mb4"]
+        );
+    }
+
+    #[test]
+    fn mysql_setup_queries_apply_jdbc_time_zone_aliases() {
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?serverTimezone=GMT%2B8"),
+            vec!["USE `db`", "SET time_zone = '+08:00'", "SET NAMES utf8mb4"]
+        );
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?connectionTimeZone=UTC"),
+            vec!["USE `db`", "SET time_zone = '+00:00'", "SET NAMES utf8mb4"]
+        );
+    }
+
+    #[test]
+    fn mysql_setup_queries_apply_go_loc_when_no_explicit_time_zone_exists() {
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?loc=Asia%2FShanghai"),
+            vec!["USE `db`", "SET time_zone = 'Asia/Shanghai'", "SET NAMES utf8mb4"]
+        );
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?time_zone=%2B08%3A00&loc=UTC"),
+            vec!["USE `db`", "SET time_zone = '+08:00'", "SET NAMES utf8mb4"]
+        );
+    }
+
+    #[test]
+    fn mysql_setup_queries_ignore_unsafe_time_zone_values() {
+        assert_eq!(
+            mysql_setup_queries("mysql://host:3306/db?time_zone=%2B08%3A00%27%3BDROP%20TABLE%20users"),
             vec!["USE `db`", "SET NAMES utf8mb4"]
         );
     }
