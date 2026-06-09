@@ -1558,9 +1558,9 @@ pub fn load_config(path: &Path) -> Result<Option<AiConfig>, String> {
 mod tests {
     use super::{
         build_ai_http_client, gemini_text, openai_response_text, openai_stream_text, openai_stream_tool_call_deltas,
-        parse_model_list_response, resolve_endpoint, resolve_model_list_endpoint, responses_max_output_tokens, responses_text,
-        supports_openai_compatible_raw_chat_stream, validate_config, AiApiStyle, AiConfig, AiModelInfo, AiProvider,
-        OpenAiRawChatStreamAccumulator,
+        parse_model_list_response, resolve_endpoint, resolve_model_list_endpoint, responses_max_output_tokens,
+        responses_text, supports_openai_compatible_raw_chat_stream, validate_config, AiApiStyle, AiConfig, AiModelInfo,
+        AiProvider, OpenAiRawChatStreamAccumulator,
     };
 
     #[test]
