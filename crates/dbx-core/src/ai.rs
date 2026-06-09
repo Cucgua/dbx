@@ -1609,6 +1609,7 @@ mod tests {
             proxy_enabled: true,
             proxy_url: "127.0.0.1:7890".to_string(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
 
         build_ai_http_client(&config, 1).unwrap();
@@ -1625,6 +1626,7 @@ mod tests {
             proxy_enabled: true,
             proxy_url: "not a proxy url".to_string(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
 
         build_ai_http_client(&config, 1).unwrap();
