@@ -752,7 +752,7 @@ async function runRawChatForToolLoop(
     onDelta?: (delta: string) => void;
   },
 ): Promise<AiRawChatToolLoopResponse> {
-  if (!supportsDeepSeekRawChatStream(request.config)) {
+  if (!supportsOpenAiCompatibleRawChatStream(request.config)) {
     return api.aiRawChat(request);
   }
 
@@ -793,8 +793,8 @@ async function runRawChatForToolLoop(
     const message = error instanceof Error ? error.message : String(error || "");
     const description =
       currentLocale() === "zh-CN"
-        ? `DeepSeek 流式工具调用不可用，已退回非流式工具调用${message ? `：${message}` : ""}`
-        : `DeepSeek streaming tool calls are unavailable; falling back to non-streaming tool calls${
+        ? `OpenAI 兼容流式工具调用不可用，已退回非流式工具调用${message ? `：${message}` : ""}`
+        : `OpenAI-compatible streaming tool calls are unavailable; falling back to non-streaming tool calls${
             message ? `: ${message}` : ""
           }`;
     emitAiWorkflowEvent(hooks.onEvent, {
@@ -813,8 +813,12 @@ async function runRawChatForToolLoop(
   };
 }
 
-function supportsDeepSeekRawChatStream(config: AiConfig): boolean {
-  return config.provider === "deepseek" && config.apiStyle === "completions";
+function supportsOpenAiCompatibleRawChatStream(config: AiConfig): boolean {
+  return ["deepseek", "openai-compatible"].includes(config.provider) && config.apiStyle === "completions";
+}
+
+export function supportsOpenAiCompatibleRawChatStreamForTest(config: AiConfig): boolean {
+  return supportsOpenAiCompatibleRawChatStream(config);
 }
 
 const API_DOC_EXTRACTION_SECTIONS_PER_BATCH = 3;
@@ -2902,9 +2906,7 @@ async function runSchemaResearchSubtask(
       },
     );
     messages.push(normalizeRawAssistantMessage(response.rawMessage, response.content, response.toolCalls));
-    const reasoningContent = supportsDeepSeekRawChatStream(researchSettings.config)
-      ? ""
-      : rawMessageReasoningContent(response.rawMessage);
+    const reasoningContent = response.__reasoningStreamed ? "" : rawMessageReasoningContent(response.rawMessage);
     if (reasoningContent) {
       emitAiWorkflowEvent(hooks?.onEvent, {
         type: "node.delta",

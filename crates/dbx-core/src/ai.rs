@@ -924,8 +924,8 @@ pub async fn raw_chat_stream(
     cancelled: &Notify,
     on_chunk: impl Fn(AiStreamChunk),
 ) -> Result<AiRawChatResponse, String> {
-    if !matches!(request.config.provider, AiProvider::Deepseek) {
-        return Err("AI raw chat streaming is currently enabled only for DeepSeek provider".to_string());
+    if !supports_openai_compatible_raw_chat_stream(&request.config) {
+        return Err("AI raw chat streaming requires an OpenAI-compatible chat/completions provider".to_string());
     }
     if request.config.api_style != AiApiStyle::Completions {
         return Err("AI tool calls currently require chat/completions API style".to_string());
@@ -935,6 +935,11 @@ pub async fn raw_chat_stream(
     let stream_timeout = if request.config.enable_thinking { 600 } else { 120 };
     let client = build_ai_http_client(&request.config, stream_timeout)?;
     stream_openai_raw_chat(&client, session_id, request, cancelled, &on_chunk).await
+}
+
+fn supports_openai_compatible_raw_chat_stream(config: &AiConfig) -> bool {
+    matches!(config.provider, AiProvider::Deepseek | AiProvider::OpenaiCompatible)
+        && config.api_style == AiApiStyle::Completions
 }
 
 // ---------------------------------------------------------------------------
@@ -1490,8 +1495,9 @@ pub fn load_config(path: &Path) -> Result<Option<AiConfig>, String> {
 mod tests {
     use super::{
         build_ai_http_client, gemini_text, openai_stream_tool_call_deltas, parse_model_list_response, resolve_endpoint,
-        resolve_model_list_endpoint, responses_max_output_tokens, responses_text, validate_config, AiApiStyle,
-        AiConfig, AiModelInfo, AiProvider, OpenAiRawChatStreamAccumulator,
+        resolve_model_list_endpoint, responses_max_output_tokens, responses_text,
+        supports_openai_compatible_raw_chat_stream, validate_config, AiApiStyle, AiConfig, AiModelInfo, AiProvider,
+        OpenAiRawChatStreamAccumulator,
     };
 
     #[test]
@@ -1691,6 +1697,33 @@ mod tests {
         assert_eq!(response.tool_calls[0].arguments, "{\"query\":\"review\"}");
         assert_eq!(response.raw_message["reasoning_content"], "need schema");
         assert_eq!(response.raw_message["tool_calls"][0]["function"]["arguments"], "{\"query\":\"review\"}");
+    }
+
+    #[test]
+    fn raw_chat_stream_allows_openai_compatible_chat_completion_providers() {
+        let mut config = AiConfig {
+            provider: AiProvider::Deepseek,
+            api_key: "key".to_string(),
+            endpoint: "https://example.test/v1".to_string(),
+            model: "test-model".to_string(),
+            api_style: AiApiStyle::Completions,
+            proxy_enabled: false,
+            proxy_url: String::new(),
+            enable_thinking: true,
+            schema_research: Default::default(),
+        };
+
+        assert!(supports_openai_compatible_raw_chat_stream(&config));
+
+        config.provider = AiProvider::OpenaiCompatible;
+        assert!(supports_openai_compatible_raw_chat_stream(&config));
+
+        config.provider = AiProvider::Openai;
+        assert!(!supports_openai_compatible_raw_chat_stream(&config));
+
+        config.provider = AiProvider::OpenaiCompatible;
+        config.api_style = AiApiStyle::Responses;
+        assert!(!supports_openai_compatible_raw_chat_stream(&config));
     }
 
     #[test]

@@ -16,6 +16,7 @@ import {
   schemaRagScopeForContextForTest,
   schemaResearchSubtaskAllowedToolNamesForTest,
   schemaDocRawChatOptionsForTest,
+  supportsOpenAiCompatibleRawChatStreamForTest,
   supportsAiSchemaToolLoop,
   validateSchemaResearchSessionResumeForTest,
 } from "../../apps/desktop/src/lib/ai";
@@ -59,6 +60,21 @@ test("schema tool loop is disabled for providers without this tool-call path", (
   assert.equal(supportsAiSchemaToolLoop(completionsConfig({ provider: "claude" }), context()), false);
   assert.equal(supportsAiSchemaToolLoop(completionsConfig({ apiStyle: "responses" }), context()), false);
   assert.equal(supportsAiSchemaToolLoop(completionsConfig(), context({ databaseType: "mongodb" })), false);
+});
+
+test("OpenAI-compatible providers stream raw chat results for tool-loop visibility", () => {
+  assert.equal(supportsOpenAiCompatibleRawChatStreamForTest(completionsConfig({ provider: "deepseek" })), true);
+  assert.equal(
+    supportsOpenAiCompatibleRawChatStreamForTest(completionsConfig({ provider: "openai-compatible" })),
+    true,
+  );
+  assert.equal(supportsOpenAiCompatibleRawChatStreamForTest(completionsConfig({ provider: "openai" })), false);
+  assert.equal(
+    supportsOpenAiCompatibleRawChatStreamForTest(
+      completionsConfig({ provider: "openai-compatible", apiStyle: "responses" }),
+    ),
+    false,
+  );
 });
 
 test("schema RAG scope uses schema as database for Oracle-like schema-targeted connections", () => {
