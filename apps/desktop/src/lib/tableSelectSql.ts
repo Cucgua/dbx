@@ -17,8 +17,15 @@ export interface BuildTableSelectSqlOptions {
 }
 
 export function quoteTableIdentifier(databaseType: DatabaseType | undefined, name: string): string {
+  if (databaseType === "iotdb") return name;
   if (databaseType === "jdbc") return quoteJdbcIdentifier(name);
-  if (databaseType === "mysql" || databaseType === "hive" || databaseType === "tdengine" || databaseType === "access")
+  if (
+    databaseType === "mysql" ||
+    databaseType === "hive" ||
+    databaseType === "databend" ||
+    databaseType === "tdengine" ||
+    databaseType === "access"
+  )
     return `\`${name.replace(/`/g, "``")}\``;
   if (databaseType === "informix" && /^[A-Za-z_][A-Za-z0-9_$]*$/.test(name)) return name;
   if (databaseType === "neo4j") return quoteCypherIdentifier(name);
@@ -39,6 +46,13 @@ export function qualifiedTableName(
   options: Pick<BuildTableSelectSqlOptions, "databaseType" | "schema" | "tableName">,
 ): string {
   const { databaseType, schema, tableName } = options;
+  if (databaseType === "iotdb") {
+    const trimmedSchema = schema?.trim();
+    if (trimmedSchema && tableName !== trimmedSchema && !tableName.startsWith(`${trimmedSchema}.`)) {
+      return `${quoteTableIdentifier(databaseType, trimmedSchema)}.${quoteTableIdentifier(databaseType, tableName)}`;
+    }
+    return quoteTableIdentifier(databaseType, tableName);
+  }
   if (isSchemaAware(databaseType) && !usesDatabaseObjectTreeMode(databaseType) && schema) {
     return `${quoteTableIdentifier(databaseType, schema)}.${quoteTableIdentifier(databaseType, tableName)}`;
   }

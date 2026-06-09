@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { nextTransferTerminalState } from "../../apps/desktop/src/lib/transferProgressState.ts";
 
 test("does not mark transfer as failed when only a table progress event reports error", () => {

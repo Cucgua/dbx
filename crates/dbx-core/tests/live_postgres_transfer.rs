@@ -1,6 +1,6 @@
 use dbx_core::connection::{AppState, PoolKind};
 use dbx_core::db::postgres;
-use dbx_core::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
+use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
 use dbx_core::storage::Storage;
 use dbx_core::transfer::{
     get_db_type, transfer_postgres_schema_dependencies, transfer_postgres_schema_objects, transfer_table, TransferMode,
@@ -24,26 +24,13 @@ fn postgres_test_config(id: &str, database: &str) -> ConnectionConfig {
         visible_databases: None,
         attached_databases: Vec::new(),
         color: None,
-        ssh_enabled: false,
-        ssh_host: String::new(),
-        ssh_port: 22,
-        ssh_user: String::new(),
-        ssh_password: String::new(),
-        ssh_key_path: String::new(),
-        ssh_key_passphrase: String::new(),
-        ssh_expose_lan: false,
-        ssh_connect_timeout_secs: 5,
-        ssh_tunnels: Vec::new(),
+        transport_layers: Vec::new(),
         connect_timeout_secs: 5,
         query_timeout_secs: 30,
-        proxy_enabled: false,
-        proxy_type: ProxyType::Socks5,
-        proxy_host: String::new(),
-        proxy_port: 1080,
-        proxy_username: String::new(),
-        proxy_password: String::new(),
         ssl: false,
         ca_cert_path: String::new(),
+        client_cert_path: String::new(),
+        client_key_path: String::new(),
         sysdba: false,
         oracle_connection_type: None,
         connection_string: None,
@@ -54,6 +41,7 @@ fn postgres_test_config(id: &str, database: &str) -> ConnectionConfig {
         redis_sentinel_password: String::new(),
         redis_sentinel_tls: false,
         redis_cluster_nodes: String::new(),
+        etcd_endpoints: String::new(),
         external_config: None,
         jdbc_driver_class: None,
         jdbc_driver_paths: Vec::new(),
@@ -81,7 +69,7 @@ async fn live_postgres_transfer_preserves_data_and_schema_objects() {
     let source_schema = format!("dbx_src_{}", &suffix[..8]);
     let target_schema = format!("dbx_dst_{}", &suffix[..8]);
 
-    let cleanup_sql = vec![
+    let cleanup_sql = [
         format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", source_schema),
         format!("DROP SCHEMA IF EXISTS \"{}\" CASCADE", target_schema),
     ];

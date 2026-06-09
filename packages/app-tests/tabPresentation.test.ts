@@ -1,9 +1,14 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import { shouldShowTabOverflowControls, tabDisplayTitle } from "../../apps/desktop/src/lib/tabPresentation.ts";
+import {
+  executionSummaryItems,
+  shouldShowTabOverflowControls,
+  tabDisplayTitle,
+  tabularResultItems,
+} from "../../apps/desktop/src/lib/tabPresentation.ts";
 import { useConnectionStore } from "../../apps/desktop/src/stores/connectionStore.ts";
-import type { ConnectionConfig, QueryTab } from "../../apps/desktop/src/types/database.ts";
+import type { ConnectionConfig, QueryResult, QueryTab } from "../../apps/desktop/src/types/database.ts";
 
 function installMemoryStorage() {
   const values = new Map<string, string>();
@@ -48,6 +53,15 @@ function queryTab(overrides: Partial<QueryTab> = {}): QueryTab {
   };
 }
 
+function result(columns: string[]): QueryResult {
+  return {
+    columns,
+    rows: [],
+    affected_rows: 0,
+    execution_time_ms: 1,
+  };
+}
+
 test("tab overflow controls only show when there are hidden tabs to reach", () => {
   assert.equal(shouldShowTabOverflowControls(0, true, true, true), false);
   assert.equal(shouldShowTabOverflowControls(3, false, false, false), false);
@@ -68,4 +82,39 @@ test("query tab display title uses custom title when present", () => {
   } finally {
     restoreStorage();
   }
+});
+
+test("tabular result items hide statement results without returned columns", () => {
+  const results = [result([]), result(["id"]), result([]), result(["name"])];
+
+  assert.deepEqual(
+    tabularResultItems(results).map((item) => ({ index: item.index, n: item.n, columns: item.result.columns })),
+    [
+      { index: 1, n: 1, columns: ["id"] },
+      { index: 3, n: 2, columns: ["name"] },
+    ],
+  );
+  assert.deepEqual(tabularResultItems([result([])]), []);
+  assert.deepEqual(tabularResultItems(undefined), []);
+});
+
+test("execution summary items include table and non-table statement results", () => {
+  const items = executionSummaryItems({
+    results: [result([]), result(["id"]), { ...result(["Error"]), rows: [["boom"]] }],
+  });
+
+  assert.deepEqual(
+    items.map((item) => ({
+      index: item.index,
+      hasTabularResult: item.hasTabularResult,
+      returnedColumns: item.returnedColumns,
+      returnedRows: item.returnedRows,
+      isError: item.isError,
+    })),
+    [
+      { index: 0, hasTabularResult: false, returnedColumns: 0, returnedRows: 0, isError: false },
+      { index: 1, hasTabularResult: true, returnedColumns: 1, returnedRows: 0, isError: false },
+      { index: 2, hasTabularResult: true, returnedColumns: 1, returnedRows: 1, isError: true },
+    ],
+  );
 });

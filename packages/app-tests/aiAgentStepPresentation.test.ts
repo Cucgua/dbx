@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { buildAiAgentStepItems } from "../../apps/desktop/src/lib/aiAgentStepPresentation.ts";
 import type { AiAgentPlan } from "../../apps/desktop/src/lib/aiAgentPlan.ts";
 

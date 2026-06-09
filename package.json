@@ -2,6 +2,7 @@
   "name": "dbx",
   "private": true,
   "version": "0.5.33",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --config apps/desktop/vite.config.ts",
@@ -18,7 +19,7 @@
     "check": "node scripts/run-check.mjs",
     "lint": "oxlint --vue-plugin apps/desktop/src",
     "fmt": "oxfmt \"apps/desktop/src/**/*.{ts,vue}\"",
-    "test": "tsx --tsconfig apps/desktop/tsconfig.json --test packages/app-tests/*.test.ts",
+    "test": "vitest run",
     "preview": "vite preview --config apps/desktop/vite.config.ts",
     "tauri": "tauri",
     "prepare": "husky"
@@ -85,6 +86,7 @@
     "tsx": "^4.22.4",
     "typescript": "~6.0.3",
     "vite": "^8.0.16",
+    "vitest": "^4.1.8",
     "vue-tsc": "^3.3.3"
   },
   "lint-staged": {

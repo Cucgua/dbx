@@ -2,6 +2,7 @@ import type { ConnectionConfig, DatabaseType } from "@/types/database";
 import { isSchemaAware, usesDatabaseObjectTreeMode } from "@/lib/databaseFeatureSupport";
 
 const JDBC_DIALECT_MATCHERS: Array<{ type: DatabaseType; patterns: RegExp[] }> = [
+  { type: "databend", patterns: [/jdbc:databend:/i, /com\.databend\.jdbc\.DatabendDriver/i, /databend-jdbc/i] },
   { type: "starrocks", patterns: [/starrocks/i] },
   { type: "doris", patterns: [/doris/i] },
   { type: "hive", patterns: [/org\.apache\.hive\.jdbc\.HiveDriver/i, /hive-jdbc/i] },
@@ -45,6 +46,12 @@ export function connectionUsesDatabaseObjectTreeMode(
   return true;
 }
 
+export function connectionUsesSchemaExecutionContext(
+  connection?: Pick<ConnectionConfig, "db_type" | "connection_string" | "jdbc_driver_class" | "jdbc_driver_paths">,
+): boolean {
+  return connection?.db_type === "jdbc" && inferJdbcDialect(connection) === "databend";
+}
+
 export function connectionObjectTreeQuerySchema(
   connection:
     | Pick<ConnectionConfig, "db_type" | "connection_string" | "jdbc_driver_class" | "jdbc_driver_paths">
@@ -52,6 +59,7 @@ export function connectionObjectTreeQuerySchema(
   database: string,
   schema?: string,
 ): string {
+  if (connection?.db_type === "jdbc" && inferJdbcDialect(connection) === "databend") return schema || database;
   if (connectionUsesDatabaseObjectTreeMode(connection)) return "";
   return schema || database;
 }
@@ -63,6 +71,7 @@ export function connectionObjectTreeNodeSchema(
   database: string,
   schema?: string,
 ): string | undefined {
+  if (connection?.db_type === "jdbc" && inferJdbcDialect(connection) === "databend") return schema || database;
   if (connectionUsesDatabaseObjectTreeMode(connection)) return undefined;
   if (schema) return schema;
   const type = connection?.db_type === "jdbc" ? effectiveDatabaseTypeForConnection(connection) : connection?.db_type;

@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import {
   DBX_NEO4J_ELEMENT_ID_COLUMN,
   DBX_ROWID_COLUMN,

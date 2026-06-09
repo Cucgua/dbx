@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { matchesRowStatusFilter, rowStatusFilterAfterAddingRow, type RowStatus } from "../../apps/desktop/src/lib/gridRowStatus.ts";
 
 const statuses: RowStatus[] = ["clean", "edited", "new", "deleted"];

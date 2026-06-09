@@ -48,10 +48,11 @@ pub enum AgentCapability {
     PagedQuery,
     Transaction,
     Ddl,
+    Kv,
 }
 
 impl AgentCapability {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Connect,
         Self::TestConnection,
         Self::Metadata,
@@ -59,6 +60,7 @@ impl AgentCapability {
         Self::PagedQuery,
         Self::Transaction,
         Self::Ddl,
+        Self::Kv,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -70,6 +72,7 @@ impl AgentCapability {
             Self::PagedQuery => "paged_query",
             Self::Transaction => "transaction",
             Self::Ddl => "ddl",
+            Self::Kv => "kv",
         }
     }
 }
@@ -93,13 +96,14 @@ pub enum AgentMethod {
     ExecuteQueryPage,
     FetchQueryPage,
     CloseQuerySession,
+    GetExplainInfo,
     ExecuteTransaction,
     Disconnect,
     Shutdown,
 }
 
 impl AgentMethod {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Handshake,
         Self::Connect,
         Self::TestConnection,
@@ -117,6 +121,7 @@ impl AgentMethod {
         Self::ExecuteQueryPage,
         Self::FetchQueryPage,
         Self::CloseQuerySession,
+        Self::GetExplainInfo,
         Self::ExecuteTransaction,
         Self::Disconnect,
         Self::Shutdown,
@@ -141,6 +146,7 @@ impl AgentMethod {
             Self::ExecuteQueryPage => "execute_query_page",
             Self::FetchQueryPage => "fetch_query_page",
             Self::CloseQuerySession => "close_query_session",
+            Self::GetExplainInfo => "get_explain_info",
             Self::ExecuteTransaction => "execute_transaction",
             Self::Disconnect => "disconnect",
             Self::Shutdown => "shutdown",
@@ -176,6 +182,27 @@ impl MongoAgentMethod {
             Self::InsertDocument => "insert_document",
             Self::UpdateDocument => "update_document",
             Self::DeleteDocument => "delete_document",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentKvMethod {
+    ListPrefix,
+    Get,
+    Put,
+    Delete,
+}
+
+impl AgentKvMethod {
+    pub const ALL: [Self; 4] = [Self::ListPrefix, Self::Get, Self::Put, Self::Delete];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ListPrefix => "kv_list_prefix",
+            Self::Get => "kv_get",
+            Self::Put => "kv_put",
+            Self::Delete => "kv_delete",
         }
     }
 }
@@ -518,6 +545,10 @@ impl AgentDriverClient {
         self.call_method_with_timeout(AgentMethod::FetchQueryPage, params, timeout_duration).await
     }
 
+    pub async fn get_explain_info<T: DeserializeOwned + Send + 'static>(&mut self, params: Value) -> Result<T, String> {
+        self.call_method(AgentMethod::GetExplainInfo, params).await
+    }
+
     pub async fn close_query_session<T: DeserializeOwned + Send + 'static>(
         &mut self,
         session_id: &str,
@@ -537,6 +568,14 @@ impl AgentDriverClient {
     pub async fn call_mongo_method<T: DeserializeOwned + Send + 'static>(
         &mut self,
         method: MongoAgentMethod,
+        params: Value,
+    ) -> Result<T, String> {
+        self.call(method.as_str(), params).await
+    }
+
+    pub async fn call_kv_method<T: DeserializeOwned + Send + 'static>(
+        &mut self,
+        method: AgentKvMethod,
         params: Value,
     ) -> Result<T, String> {
         self.call(method.as_str(), params).await
@@ -664,6 +703,9 @@ pub fn is_unsupported_handshake_error(error: &str) -> bool {
 }
 
 pub fn agent_supports_capability(handshake: Option<&AgentHandshake>, capability: AgentCapability) -> bool {
+    if capability == AgentCapability::Kv {
+        return handshake.map(|value| value.supports(capability)).unwrap_or(false);
+    }
     handshake.map(|value| value.supports(capability)).unwrap_or(true)
 }
 
@@ -844,7 +886,7 @@ mod tests {
         agent_proxy_env_vars, agent_schema_params, agent_schema_table_params, agent_supports_capability,
         agent_transaction_params, format_agent_process_error, is_unsupported_handshake_error, mongo_collection_params,
         mongo_database_params, mongo_document_id_params, read_agent_line, AgentCapability, AgentDriverClient,
-        AgentHandshake, AgentMethod, MongoAgentMethod, StderrTail, AGENT_PROTOCOL_VERSION,
+        AgentHandshake, AgentKvMethod, AgentMethod, MongoAgentMethod, StderrTail, AGENT_PROTOCOL_VERSION,
     };
     use std::io::Cursor;
 
@@ -976,7 +1018,8 @@ mod tests {
         assert_eq!(AgentCapability::PagedQuery.as_str(), "paged_query");
         assert_eq!(AgentCapability::Transaction.as_str(), "transaction");
         assert_eq!(AgentCapability::Ddl.as_str(), "ddl");
-        assert_eq!(AgentCapability::ALL.len(), 7);
+        assert_eq!(AgentCapability::Kv.as_str(), "kv");
+        assert_eq!(AgentCapability::ALL.len(), 8);
     }
 
     #[test]
@@ -1014,6 +1057,15 @@ mod tests {
     }
 
     #[test]
+    fn defines_kv_agent_protocol_methods() {
+        assert_eq!(AgentKvMethod::ListPrefix.as_str(), "kv_list_prefix");
+        assert_eq!(AgentKvMethod::Get.as_str(), "kv_get");
+        assert_eq!(AgentKvMethod::Put.as_str(), "kv_put");
+        assert_eq!(AgentKvMethod::Delete.as_str(), "kv_delete");
+        assert_eq!(AgentKvMethod::ALL.len(), 4);
+    }
+
+    #[test]
     fn exposes_schema_and_query_protocol_wrappers() {
         let _list_databases = AgentDriverClient::list_databases::<serde_json::Value>;
         let _list_schemas = AgentDriverClient::list_schemas::<serde_json::Value>;
@@ -1040,6 +1092,11 @@ mod tests {
         let _mongo_insert_document = AgentDriverClient::mongo_insert_document::<serde_json::Value>;
         let _mongo_update_document = AgentDriverClient::mongo_update_document::<serde_json::Value>;
         let _mongo_delete_document = AgentDriverClient::mongo_delete_document::<serde_json::Value>;
+    }
+
+    #[test]
+    fn exposes_kv_protocol_wrapper() {
+        let _call_kv_method = AgentDriverClient::call_kv_method::<serde_json::Value>;
     }
 
     #[test]
@@ -1104,6 +1161,10 @@ mod tests {
             string_array(&contract["mongoLegacyMethods"]),
             MongoAgentMethod::ALL.iter().map(|method| method.as_str()).collect::<Vec<_>>()
         );
+        assert_eq!(
+            string_array(&contract["kvMethods"]),
+            AgentKvMethod::ALL.iter().map(|method| method.as_str()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1117,6 +1178,7 @@ mod tests {
         assert!(handshake.supports(AgentCapability::Connect));
         assert!(handshake.supports(AgentCapability::Metadata));
         assert!(!handshake.supports(AgentCapability::Query));
+        assert!(!handshake.supports(AgentCapability::Kv));
     }
 
     #[test]
@@ -1130,6 +1192,8 @@ mod tests {
         assert!(agent_supports_capability(None, AgentCapability::Query));
         assert!(agent_supports_capability(Some(&handshake), AgentCapability::Connect));
         assert!(!agent_supports_capability(Some(&handshake), AgentCapability::Query));
+        assert!(!agent_supports_capability(None, AgentCapability::Kv));
+        assert!(!agent_supports_capability(Some(&handshake), AgentCapability::Kv));
     }
 
     #[test]

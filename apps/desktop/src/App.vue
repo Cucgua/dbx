@@ -47,6 +47,7 @@ import {
   isModRShortcut,
   isNewQueryShortcut,
   isObjectSourceSaveShortcutTarget,
+  isOpenSettingsShortcut,
   isResetZoomShortcut,
   isRefreshDataShortcut,
   isSaveShortcut,
@@ -124,8 +125,8 @@ const contentAreaRef = ref<InstanceType<typeof ContentArea> | null>(null);
 
 const selectedSql = ref("");
 const cursorPos = ref(0);
-const formatSqlRequestId = ref(0);
-const activeOutputView = ref<"result" | "explain" | "chart">("result");
+const formatSqlRequest = ref<{ id: number; tabId: string } | null>(null);
+const activeOutputView = ref<"result" | "summary" | "explain" | "chart">("result");
 const newQueryContextSource = ref<"tab" | "sidebar">("tab");
 const showSaveSqlDialog = ref(false);
 const saveSqlName = ref("");
@@ -140,13 +141,18 @@ const activeConnection = computed(() => {
 });
 
 function updateAgentDriverUpdateCount(count: number) {
+  if (!settingsStore.editorSettings.updateNotificationsEnabled) {
+    agentDriverUpdateCount.value = 0;
+    return;
+  }
   agentDriverUpdateCount.value = count;
 }
 
 async function refreshAgentDriverUpdateCount() {
-  if (!isDesktop) return;
+  if (!isDesktop || !settingsStore.editorSettings.updateNotificationsEnabled) return;
   try {
     const drivers = await invoke<AgentDriverUpdateBadgeState[]>("list_installed_agents");
+    if (!settingsStore.editorSettings.updateNotificationsEnabled) return;
     updateAgentDriverUpdateCount(countAvailableAgentDriverUpdates(drivers));
   } catch {
     // Driver update availability is only a badge hint; keep the existing count if the registry cannot be reached.
@@ -199,6 +205,7 @@ const {
   cancelActiveExecution,
   tryExplain,
   onDangerConfirm,
+  explainMode,
 } = useSqlExecution({
   activeTab,
   activeConnection,
@@ -222,6 +229,11 @@ useVisibilityChange();
 
 const appVersion = ref("");
 const isClassicLayout = computed(() => settingsStore.editorSettings.appLayout === "classic");
+const updateNotificationsEnabled = computed(() => settingsStore.editorSettings.updateNotificationsEnabled);
+const toolbarAgentDriverUpdateCount = computed(() =>
+  updateNotificationsEnabled.value ? agentDriverUpdateCount.value : 0,
+);
+const toolbarHasUpdateAvailable = computed(() => updateNotificationsEnabled.value && hasUpdateAvailable.value);
 const hasSqlFileConnections = computed(() =>
   connectionStore.connections.some((c) => supportsSqlFileExecution(c.db_type)),
 );
@@ -241,6 +253,7 @@ async function applyUiScale(scale: number) {
   try {
     const { getCurrentWebview } = await import("@tauri-apps/api/webview");
     await getCurrentWebview().setZoom(scale);
+    window.dispatchEvent(new CustomEvent("dbx:ui-scale-applied", { detail: { scale } }));
   } catch (error) {
     console.warn("[DBX] Failed to apply UI scale", { scale, error });
   }
@@ -350,7 +363,10 @@ function analyzeHistoryWithAi(entry: HistoryEntry) {
 function formatActiveSql() {
   const tab = activeTab.value;
   if (!tab || tab.mode !== "query" || !tab.sql.trim()) return;
-  formatSqlRequestId.value++;
+  formatSqlRequest.value = {
+    id: (formatSqlRequest.value?.id ?? 0) + 1,
+    tabId: tab.id,
+  };
 }
 
 function defaultSavedSqlName(title: string) {
@@ -442,10 +458,9 @@ async function openSqlFile() {
   try {
     if (isTauriRuntime()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const { readTextFile } = await import("@tauri-apps/plugin-fs");
       const path = await open({ filters: [{ name: "SQL", extensions: ["sql"] }], multiple: false });
       if (path) {
-        const content = await readTextFile(path as string);
+        const content = await api.readExternalSqlFile(path as string);
         queryStore.updateSql(tab.id, content);
       }
     } else {
@@ -749,6 +764,12 @@ function handleKeydown(e: KeyboardEvent) {
 
   const shortcuts = settingsStore.editorSettings.shortcuts;
 
+  if (isOpenSettingsShortcut(e, shortcuts)) {
+    e.preventDefault();
+    e.stopPropagation();
+    showSettingsDialog.value = true;
+    return;
+  }
   if (isFocusSearchShortcut(e, shortcuts)) {
     const focused = contentAreaRef.value?.focusSearch() || appSidebarRef.value?.focusSearch();
     if (focused) {
@@ -878,6 +899,27 @@ function openDriverStoreFromEvent() {
   showDriverStore.value = true;
 }
 
+function runUpdateNotificationChecks() {
+  if (!updateNotificationsEnabled.value) return;
+  checkUpdates({ silent: true });
+  void refreshAgentDriverUpdateCount();
+}
+
+watch(updateNotificationsEnabled, (enabled) => {
+  if (!enabled) {
+    agentDriverUpdateCount.value = 0;
+    if (updateCheckTimer) {
+      clearInterval(updateCheckTimer);
+      updateCheckTimer = undefined;
+    }
+    return;
+  }
+  runUpdateNotificationChecks();
+  if (!updateCheckTimer) {
+    updateCheckTimer = setInterval(runUpdateNotificationChecks, UPDATE_CHECK_INTERVAL_MS);
+  }
+});
+
 onMounted(async () => {
   console.log("[STARTUP] onMounted begin");
   const mountStart = performance.now();
@@ -915,14 +957,11 @@ onMounted(async () => {
   }
   initApp();
   setupFileDrop().catch(() => {});
-  void refreshAgentDriverUpdateCount();
   setTimeout(() => {
-    checkUpdates({ silent: true });
-    void refreshAgentDriverUpdateCount();
-    updateCheckTimer = setInterval(() => {
-      checkUpdates({ silent: true });
-      void refreshAgentDriverUpdateCount();
-    }, UPDATE_CHECK_INTERVAL_MS);
+    runUpdateNotificationChecks();
+    if (updateNotificationsEnabled.value && !updateCheckTimer) {
+      updateCheckTimer = setInterval(runUpdateNotificationChecks, UPDATE_CHECK_INTERVAL_MS);
+    }
   }, 10_000);
   api
     .getAppVersion()
@@ -966,8 +1005,8 @@ onUnmounted(() => {
           :show-history="showHistory"
           :show-driver-store="showDriverStore"
           :checking-updates="checkingUpdates"
-          :has-update-available="hasUpdateAvailable"
-          :agent-driver-update-count="agentDriverUpdateCount"
+          :has-update-available="toolbarHasUpdateAvailable"
+          :agent-driver-update-count="toolbarAgentDriverUpdateCount"
           :has-connections="connectionStore.connections.length > 0"
           :has-sql-file-connections="hasSqlFileConnections"
           @new-connection="showConnectionDialog = true"
@@ -1029,13 +1068,14 @@ onUnmounted(() => {
             <div class="h-full flex flex-col min-w-0">
               <AppTabBar
                 :show-driver-store="showDriverStore"
-                :agent-driver-update-count="agentDriverUpdateCount"
+                :agent-driver-update-count="toolbarAgentDriverUpdateCount"
                 @toggle-driver-store="showDriverStore = true"
                 @close-driver-store="showDriverStore = false"
               />
               <DriverStorePage
                 v-if="showDriverStore"
                 class="flex-1 min-h-0"
+                :update-notifications-enabled="updateNotificationsEnabled"
                 @update-count-change="updateAgentDriverUpdateCount"
               />
               <div v-else-if="activeTab" class="flex flex-col flex-1 min-h-0">
@@ -1044,6 +1084,8 @@ onUnmounted(() => {
                   :active-tab="activeTab"
                   :active-connection="activeConnection"
                   :executable-sql="executableSql"
+                  :explain-mode="explainMode"
+                  @update:explain-mode="(m: 'explain' | 'autotrace') => (explainMode = m)"
                   @execute="tryExecute()"
                   @cancel="cancelActiveExecution()"
                   @explain="tryExplain()"
@@ -1064,7 +1106,7 @@ onUnmounted(() => {
                     :active-connection="activeConnection"
                     :executable-sql="executableSql"
                     :active-output-view="activeOutputView"
-                    :format-sql-request-id="formatSqlRequestId"
+                    :format-sql-request="formatSqlRequest"
                     :selected-sql="selectedSql"
                     :cursor-pos="cursorPos"
                     @update:active-output-view="activeOutputView = $event"
@@ -1072,11 +1114,7 @@ onUnmounted(() => {
                     @execute="tryExecute()"
                     @cancel="cancelActiveExecution()"
                     @explain="tryExplain()"
-                    @editor-update="
-                      (v: string) => {
-                        if (queryStore.activeTabId) queryStore.updateSql(queryStore.activeTabId, v);
-                      }
-                    "
+                    @editor-update="(tabId: string, v: string) => queryStore.updateSql(tabId, v)"
                     @editor-selection-change="(v: string) => (selectedSql = v)"
                     @editor-cursor-change="(p: number) => (cursorPos = p)"
                     @format-error="toast(t('toolbar.formatSqlFailed'))"

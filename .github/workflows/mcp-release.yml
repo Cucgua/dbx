@@ -130,7 +130,7 @@ jobs:
           if [ -n "${RELEASE_TOKEN}" ]; then
             git remote set-url origin "https://x-access-token:${RELEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           fi
-          git push origin HEAD:main
+          git push origin HEAD:refork/upstream-overlay
           git push origin "refs/tags/${TAG}:refs/tags/${TAG}"
 
   publish-node-core:

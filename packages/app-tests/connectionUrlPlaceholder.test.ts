@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { connectionUrlPlaceholder } from "../../apps/desktop/src/lib/connectionPresentation.ts";
 
@@ -23,6 +23,7 @@ const expected: Record<string, string> = {
   dameng: "dm://user:password@host:port",
   tdengine: "tdengine://user:password@host:6041/database",
   xugu: "xugu://user:password@host:5138/database",
+  iotdb: "iotdb://user:password@host:6667/root.test",
   bigquery: "bigquery://https://www.googleapis.com/bigquery/v2:443/project-id",
   jdbc: "jdbc:mysql://host:3306/database",
 };

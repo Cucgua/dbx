@@ -274,7 +274,7 @@ The installer will be in `src-tauri/target/release/bundle/`.
 
 <details>
 <summary><strong>Is DBX free?</strong></summary>
-Yes. DBX is open source under AGPL-3.0. All features are free.
+Yes. DBX is open source under Apache-2.0. All features are free.
 </details>
 
 <details>
@@ -284,7 +284,7 @@ No. DBX does not collect telemetry. The auto-update feature checks GitHub Releas
 
 <details>
 <summary><strong>Can I use DBX without an internet connection?</strong></summary>
-Yes. The desktop app works fully offline. AI features need network access to the model endpoint (or a local model via Ollama).
+Yes. The desktop app works fully offline. For air-gapped driver installs, download offline driver packages from the [Offline Drivers page](https://dbxio.com/en/drivers) on an internet-connected machine, transfer them to the offline machine, then import them in DBX from Settings > Driver Manager. AI features need network access to the model endpoint (or a local model via Ollama).
 </details>
 
 <details>
@@ -320,4 +320,4 @@ Open an issue on <a href="https://github.com/t8y2/dbx/issues">GitHub Issues</a>.
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)

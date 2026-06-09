@@ -33,6 +33,7 @@ const assetIcons: Record<string, string> = {
   kingbase: "kingbase",
   highgo: "highgo.png",
   goldendb: "goldendb.png",
+  databend: "databend",
   vastbase: "vastbase.png",
   yashandb: "yashandb.png",
   snowflake: "snowflake",
@@ -68,6 +69,8 @@ const assetIcons: Record<string, string> = {
   polardb: "polardb.webp",
   greatsql: "greatsql.webp",
   xugu: "xugu.png",
+  iotdb: "iotdb",
+  etcd: "etcd",
   iris: "iris.png",
 };
 

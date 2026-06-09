@@ -2,6 +2,7 @@ use crate::connection::{connection_url_for_endpoint, database_connection_config,
 use crate::db;
 use crate::models::connection::{ConnectionConfig, DatabaseType};
 use crate::query::{agent_execute_query_params, QueryExecutionOptions};
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -452,16 +453,20 @@ async fn list_tables_once(
             drop(connections);
             let mut client = client.lock().await;
             match client.list_tables::<Vec<db::TableInfo>>(database, schema).await {
-                Ok(tables) if !tables.is_empty() => return Ok(filter_table_infos(tables, filter, limit)),
+                Ok(tables) if !tables.is_empty() => {
+                    return Ok(filter_table_infos_for_config(tables, filter, limit, db_config.as_ref()))
+                }
                 Ok(tables) => {
                     if let Some(config) = fallback_config.as_ref() {
                         match native_postgres_metadata_pool(state, connection_id, database, config).await {
                             Ok(Some(pool)) => {
-                                return db::postgres::list_tables(&pool, schema)
-                                    .await
-                                    .map(|tables| filter_table_infos(tables, filter, limit));
+                                return db::postgres::list_tables(&pool, schema).await.map(|tables| {
+                                    filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())
+                                });
                             }
-                            Ok(None) => return Ok(filter_table_infos(tables, filter, limit)),
+                            Ok(None) => {
+                                return Ok(filter_table_infos_for_config(tables, filter, limit, db_config.as_ref()))
+                            }
                             Err(error) => {
                                 log::warn!(
                                     "[schema][agent:list_tables:fallback-failed] connection_id={} database={} schema={} error={}",
@@ -473,7 +478,7 @@ async fn list_tables_once(
                             }
                         }
                     }
-                    return Ok(filter_table_infos(tables, filter, limit));
+                    return Ok(filter_table_infos_for_config(tables, filter, limit, db_config.as_ref()));
                 }
                 Err(agent_error) => {
                     if let Some(config) = fallback_config.as_ref() {
@@ -482,7 +487,7 @@ async fn list_tables_once(
                         {
                             return db::postgres::list_tables(&pool, schema)
                                 .await
-                                .map(|tables| filter_table_infos(tables, filter, limit))
+                                .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref()))
                                 .map_err(|fallback_error| {
                                     format!(
                                         "{agent_error}\n\nNative PostgreSQL metadata fallback failed: {fallback_error}"
@@ -501,29 +506,31 @@ async fn list_tables_once(
 
     match pool {
         PoolKind::Mysql(p, _) if db_config.as_ref().is_some_and(is_doris_family_config) => {
-            db::mysql::list_tables_show(p, database).await.map(|tables| filter_table_infos(tables, filter, limit))
+            db::mysql::list_tables_show(p, database)
+                .await
+                .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref()))
         }
         PoolKind::Mysql(p, mode) => {
             dispatch_mysql!(p, mode, db::mysql::list_tables, db::ob_oracle::list_tables, schema)
-                .map(|tables| filter_table_infos(tables, filter, limit))
+                .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref()))
         }
-        PoolKind::Postgres(p) => {
-            db::postgres::list_tables(p, schema).await.map(|tables| filter_table_infos(tables, filter, limit))
-        }
-        PoolKind::Sqlite(p) => {
-            db::sqlite::list_tables(p, schema).await.map(|tables| filter_table_infos(tables, filter, limit))
-        }
-        PoolKind::Rqlite(client) => {
-            db::rqlite_driver::list_tables(client, schema).await.map(|tables| filter_table_infos(tables, filter, limit))
-        }
+        PoolKind::Postgres(p) => db::postgres::list_tables(p, schema)
+            .await
+            .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())),
+        PoolKind::Sqlite(p) => db::sqlite::list_tables(p, schema)
+            .await
+            .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())),
+        PoolKind::Rqlite(client) => db::rqlite_driver::list_tables(client, schema)
+            .await
+            .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())),
         PoolKind::MongoDb(client) => db::mongo_driver::list_collections(client, database)
             .await
             .map(|names| collection_names_to_tables(names, "COLLECTION"))
-            .map(|tables| filter_table_infos(tables, filter, limit)),
+            .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())),
         PoolKind::Elasticsearch(client) => db::elasticsearch_driver::list_indices(client)
             .await
             .map(|names| collection_names_to_tables(names, "INDEX"))
-            .map(|tables| filter_table_infos(tables, filter, limit)),
+            .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())),
         _ => Ok(vec![]),
     }
 }
@@ -551,13 +558,51 @@ fn filter_table_infos(tables: Vec<db::TableInfo>, filter: Option<&str>, limit: O
         .collect()
 }
 
+fn filter_table_infos_for_config(
+    tables: Vec<db::TableInfo>,
+    filter: Option<&str>,
+    limit: Option<usize>,
+    config: Option<&ConnectionConfig>,
+) -> Vec<db::TableInfo> {
+    filter_table_infos(filter_yashandb_recyclebin_tables(tables, config), filter, limit)
+}
+
+fn filter_yashandb_recyclebin_tables(
+    tables: Vec<db::TableInfo>,
+    config: Option<&ConnectionConfig>,
+) -> Vec<db::TableInfo> {
+    if !is_yashandb_config(config) {
+        return tables;
+    }
+    tables.into_iter().filter(|table| !is_recyclebin_object_name(&table.name)).collect()
+}
+
+fn filter_yashandb_recyclebin_objects(
+    objects: Vec<db::ObjectInfo>,
+    config: Option<&ConnectionConfig>,
+) -> Vec<db::ObjectInfo> {
+    if !is_yashandb_config(config) {
+        return objects;
+    }
+    objects.into_iter().filter(|object| !is_recyclebin_object_name(&object.name)).collect()
+}
+
+fn is_yashandb_config(config: Option<&ConnectionConfig>) -> bool {
+    config.is_some_and(|config| config.db_type == DatabaseType::Yashandb)
+}
+
+fn is_recyclebin_object_name(name: &str) -> bool {
+    name.to_ascii_uppercase().starts_with("BIN$")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         clickhouse_metadata_database, deduplicate_column_infos, duckdb_attach_database, duckdb_list_databases,
-        duckdb_query_tables_in_database, is_agent_postgres_metadata_fallback_config,
+        duckdb_query_tables_in_database, filter_objects_by_types, filter_yashandb_recyclebin_objects,
+        filter_yashandb_recyclebin_tables, is_agent_postgres_metadata_fallback_config,
     };
-    use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
+    use crate::models::connection::{ConnectionConfig, DatabaseType};
 
     fn test_column(name: &str, comment: Option<&str>, is_primary_key: bool) -> super::db::ColumnInfo {
         super::db::ColumnInfo {
@@ -590,26 +635,13 @@ mod tests {
             visible_databases: None,
             attached_databases: Vec::new(),
             color: None,
-            ssh_enabled: false,
-            ssh_host: String::new(),
-            ssh_port: 22,
-            ssh_user: String::new(),
-            ssh_password: String::new(),
-            ssh_key_path: String::new(),
-            ssh_key_passphrase: String::new(),
-            ssh_expose_lan: false,
-            ssh_connect_timeout_secs: 5,
-            ssh_tunnels: Vec::new(),
+            transport_layers: Vec::new(),
             connect_timeout_secs: 5,
             query_timeout_secs: 30,
-            proxy_enabled: false,
-            proxy_type: ProxyType::Socks5,
-            proxy_host: String::new(),
-            proxy_port: 1080,
-            proxy_username: String::new(),
-            proxy_password: String::new(),
             ssl: false,
             ca_cert_path: String::new(),
+            client_cert_path: String::new(),
+            client_key_path: String::new(),
             sysdba: false,
             oracle_connection_type: None,
             connection_string: None,
@@ -620,6 +652,7 @@ mod tests {
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
             redis_cluster_nodes: String::new(),
+            etcd_endpoints: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -697,6 +730,107 @@ mod tests {
         assert!(!is_agent_postgres_metadata_fallback_config(&test_connection_config(DatabaseType::Postgres)));
         assert!(!is_agent_postgres_metadata_fallback_config(&test_connection_config(DatabaseType::Mysql)));
     }
+
+    #[test]
+    fn filters_list_objects_by_normalized_object_types() {
+        let objects = vec![
+            super::db::ObjectInfo {
+                name: "orders".to_string(),
+                object_type: "BASE TABLE".to_string(),
+                schema: None,
+                comment: None,
+                created_at: None,
+                updated_at: None,
+                parent_schema: None,
+                parent_name: None,
+            },
+            super::db::ObjectInfo {
+                name: "active_orders".to_string(),
+                object_type: "MATERIALIZED VIEW".to_string(),
+                schema: None,
+                comment: None,
+                created_at: None,
+                updated_at: None,
+                parent_schema: None,
+                parent_name: None,
+            },
+            super::db::ObjectInfo {
+                name: "payroll".to_string(),
+                object_type: "PACKAGE BODY".to_string(),
+                schema: None,
+                comment: None,
+                created_at: None,
+                updated_at: None,
+                parent_schema: None,
+                parent_name: None,
+            },
+        ];
+
+        let filtered = filter_objects_by_types(objects, Some(&["VIEW".to_string(), "PACKAGE_BODY".to_string()]));
+
+        assert_eq!(
+            filtered.iter().map(|object| object.name.as_str()).collect::<Vec<_>>(),
+            ["active_orders", "payroll"]
+        );
+    }
+
+    #[test]
+    fn filters_yashandb_recyclebin_tables() {
+        let tables = vec![
+            super::db::TableInfo {
+                name: "USERS".to_string(),
+                table_type: "TABLE".to_string(),
+                comment: None,
+                parent_schema: None,
+                parent_name: None,
+            },
+            super::db::TableInfo {
+                name: "BIN$abc123==$0".to_string(),
+                table_type: "TABLE".to_string(),
+                comment: None,
+                parent_schema: None,
+                parent_name: None,
+            },
+        ];
+
+        let filtered =
+            filter_yashandb_recyclebin_tables(tables.clone(), Some(&test_connection_config(DatabaseType::Yashandb)));
+        let oracle = filter_yashandb_recyclebin_tables(tables, Some(&test_connection_config(DatabaseType::Oracle)));
+
+        assert_eq!(filtered.iter().map(|table| table.name.as_str()).collect::<Vec<_>>(), ["USERS"]);
+        assert_eq!(oracle.len(), 2);
+    }
+
+    #[test]
+    fn filters_yashandb_recyclebin_objects() {
+        let objects = vec![
+            super::db::ObjectInfo {
+                name: "ORDERS".to_string(),
+                object_type: "TABLE".to_string(),
+                schema: Some("HR".to_string()),
+                comment: None,
+                created_at: None,
+                updated_at: None,
+                parent_schema: None,
+                parent_name: None,
+            },
+            super::db::ObjectInfo {
+                name: "bin$deleted".to_string(),
+                object_type: "TABLE".to_string(),
+                schema: Some("HR".to_string()),
+                comment: None,
+                created_at: None,
+                updated_at: None,
+                parent_schema: None,
+                parent_name: None,
+            },
+        ];
+
+        let filtered =
+            filter_yashandb_recyclebin_objects(objects, Some(&test_connection_config(DatabaseType::Yashandb)));
+
+        assert_eq!(filtered.iter().map(|object| object.name.as_str()).collect::<Vec<_>>(), ["ORDERS"]);
+    }
 }
 
 pub async fn list_objects_core(
@@ -704,9 +838,10 @@ pub async fn list_objects_core(
     connection_id: &str,
     database: &str,
     schema: &str,
+    object_types: Option<Vec<String>>,
 ) -> Result<Vec<db::ObjectInfo>, String> {
     retry_metadata_connection(state, connection_id, Some(database), || {
-        list_objects_once(state, connection_id, database, schema)
+        list_objects_once(state, connection_id, database, schema, object_types.as_deref())
     })
     .await
 }
@@ -724,6 +859,20 @@ pub async fn list_completion_objects_core(
 }
 
 async fn list_objects_once(
+    state: &AppState,
+    connection_id: &str,
+    database: &str,
+    schema: &str,
+    object_types: Option<&[String]>,
+) -> Result<Vec<db::ObjectInfo>, String> {
+    let db_config = connection_config(state, connection_id).await;
+    list_objects_once_unfiltered(state, connection_id, database, schema)
+        .await
+        .map(|objects| filter_yashandb_recyclebin_objects(objects, db_config.as_ref()))
+        .map(|objects| filter_objects_by_types(objects, object_types))
+}
+
+async fn list_objects_once_unfiltered(
     state: &AppState,
     connection_id: &str,
     database: &str,
@@ -769,11 +918,11 @@ async fn list_objects_once(
         }
         try_sqlserver!(connections, &pool_key, list_objects, schema);
         if let Some(client) = extract_pool!(&connections, &pool_key, Agent) {
-            let is_oracle = db_config.as_ref().is_some_and(|config| config.db_type == DatabaseType::Oracle);
+            let oracle_object_options = db_config.as_ref().and_then(oracle_agent_object_options);
             let fallback_config = db_config.clone();
             drop(connections);
-            if is_oracle {
-                return oracle_agent_list_objects(client, database, schema).await;
+            if let Some(options) = oracle_object_options {
+                return oracle_agent_list_objects(client, database, schema, options).await;
             }
             let mut client = client.lock().await;
             match client.list_objects::<Vec<db::ObjectInfo>>(database, schema).await {
@@ -847,6 +996,35 @@ async fn list_objects_once(
     }
 }
 
+fn filter_objects_by_types(objects: Vec<db::ObjectInfo>, object_types: Option<&[String]>) -> Vec<db::ObjectInfo> {
+    let Some(object_types) = object_types else {
+        return objects;
+    };
+    if object_types.is_empty() {
+        return objects;
+    }
+    let wanted: HashSet<String> =
+        object_types.iter().map(|object_type| normalize_object_info_type(object_type)).collect();
+    objects.into_iter().filter(|object| wanted.contains(&normalize_object_info_type(&object.object_type))).collect()
+}
+
+fn normalize_object_info_type(object_type: &str) -> String {
+    let value = object_type.to_ascii_uppercase().replace(' ', "_");
+    if value.contains("PACKAGE_BODY") {
+        "PACKAGE_BODY".to_string()
+    } else if value.contains("PACKAGE") {
+        "PACKAGE".to_string()
+    } else if value.contains("VIEW") {
+        "VIEW".to_string()
+    } else if value.contains("PROC") {
+        "PROCEDURE".to_string()
+    } else if value.contains("FUNC") {
+        "FUNCTION".to_string()
+    } else {
+        "TABLE".to_string()
+    }
+}
+
 async fn list_completion_objects_once(
     state: &AppState,
     connection_id: &str,
@@ -870,11 +1048,11 @@ async fn list_completion_objects_once(
             .map(filter_completion_objects);
     }
     if let Some(client) = extract_pool!(&connections, &pool_key, Agent) {
-        let is_oracle = db_config.as_ref().is_some_and(|config| config.db_type == DatabaseType::Oracle);
+        let oracle_object_options = db_config.as_ref().and_then(oracle_agent_object_options);
         let fallback_config = db_config.clone();
         drop(connections);
-        let objects = if is_oracle {
-            oracle_agent_list_objects(client, database, schema).await?
+        let objects = if let Some(options) = oracle_object_options {
+            oracle_agent_list_objects(client, database, schema, options).await?
         } else {
             let mut client = client.lock().await;
             match client.list_objects::<Vec<db::ObjectInfo>>(database, schema).await {
@@ -920,6 +1098,7 @@ async fn list_completion_objects_once(
                 }
             }
         };
+        let objects = filter_yashandb_recyclebin_objects(objects, fallback_config.as_ref());
         return Ok(filter_completion_objects(objects));
     }
 
@@ -934,7 +1113,7 @@ async fn list_completion_objects_once(
         PoolKind::Postgres(p) => db::postgres::list_objects(p, schema).await.map(filter_completion_objects),
         PoolKind::SqlServer(_) => {
             drop(connections);
-            let objects = list_objects_once(state, connection_id, database, schema).await?;
+            let objects = list_objects_once(state, connection_id, database, schema, None).await?;
             Ok(filter_completion_objects(objects))
         }
         _ => Ok(Vec::new()),
@@ -1118,6 +1297,9 @@ pub async fn get_columns_core(
         PoolKind::Rqlite(client) => {
             db::rqlite_driver::get_columns(client, schema, table).await.map(deduplicate_column_infos)
         }
+        PoolKind::Elasticsearch(client) => {
+            db::elasticsearch_driver::get_columns(client, table).await.map(deduplicate_column_infos)
+        }
         _ => Ok(vec![]),
     }
 }
@@ -1160,7 +1342,7 @@ fn merge_optional_string(target: &mut Option<String>, candidate: Option<String>)
         }
         return;
     }
-    if target.as_ref().map_or(true, |value| value.trim().is_empty()) {
+    if target.as_ref().is_none_or(|value| value.trim().is_empty()) {
         *target = Some(candidate);
     }
 }
@@ -1190,6 +1372,7 @@ pub async fn list_indexes_core(
         PoolKind::Postgres(p) => db::postgres::list_indexes(p, schema, table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_indexes(p, schema, table).await,
         PoolKind::Rqlite(client) => db::rqlite_driver::list_indexes(client, schema, table).await,
+        PoolKind::MongoDb(client) => db::mongo_driver::list_indexes(client, database, table).await,
         _ => Ok(vec![]),
     }
 }
@@ -1351,6 +1534,7 @@ fn sqlite_object_type(kind: &db::ObjectSourceKind) -> &'static str {
         db::ObjectSourceKind::View => "view",
         db::ObjectSourceKind::Procedure
         | db::ObjectSourceKind::Function
+        | db::ObjectSourceKind::Sequence
         | db::ObjectSourceKind::Package
         | db::ObjectSourceKind::PackageBody => "routine",
     }
@@ -1361,7 +1545,7 @@ fn sqlserver_object_type_filter(kind: &db::ObjectSourceKind) -> &'static str {
         db::ObjectSourceKind::View => "'V'",
         db::ObjectSourceKind::Procedure => "'P'",
         db::ObjectSourceKind::Function => "'FN','IF','TF','FS','FT'",
-        db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => "''",
+        db::ObjectSourceKind::Sequence | db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => "''",
     }
 }
 
@@ -1403,6 +1587,30 @@ pub fn postgres_object_source_sql(schema: &str, name: &str, kind: &db::ObjectSou
                 prokind
             )
         }
+        db::ObjectSourceKind::Sequence => {
+            format!(
+                "SELECT concat_ws(E'\\n\\n', \
+                   '-- auto-generated definition' || E'\\n' || \
+                   'create sequence ' || quote_ident(c.relname) || E'\\n' || \
+                   '    as ' || pg_catalog.format_type(s.seqtypid, NULL) || ';', \
+                   'alter sequence ' || quote_ident(c.relname) || ' owner to ' || quote_ident(pg_get_userbyid(c.relowner)) || ';', \
+                   CASE WHEN owned.relname IS NOT NULL AND a.attname IS NOT NULL \
+                     THEN 'alter sequence ' || quote_ident(c.relname) || ' owned by ' || quote_ident(owned.relname) || '.' || quote_ident(a.attname) || ';' \
+                   END \
+                 ) \
+                 FROM pg_catalog.pg_class c \
+                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                 JOIN pg_catalog.pg_sequence s ON s.seqrelid = c.oid \
+                 LEFT JOIN pg_catalog.pg_depend d \
+                   ON d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'a' \
+                 LEFT JOIN pg_catalog.pg_class owned ON owned.oid = d.refobjid \
+                 LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid \
+                 WHERE n.nspname = {} AND c.relname = {} AND c.relkind = 'S' \
+                 ORDER BY c.oid LIMIT 1",
+                sql_string(schema),
+                sql_string(name)
+            )
+        }
         db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => "SELECT NULL WHERE FALSE".to_string(),
     }
 }
@@ -1412,6 +1620,7 @@ pub fn oracle_object_source_sql(schema: &str, name: &str, kind: &db::ObjectSourc
         db::ObjectSourceKind::View => "VIEW",
         db::ObjectSourceKind::Procedure => "PROCEDURE",
         db::ObjectSourceKind::Function => "FUNCTION",
+        db::ObjectSourceKind::Sequence => "SEQUENCE",
         db::ObjectSourceKind::Package => "PACKAGE",
         db::ObjectSourceKind::PackageBody => "PACKAGE_BODY",
     };
@@ -1440,7 +1649,9 @@ pub fn mysql_object_source_sql(name: &str, kind: &db::ObjectSourceKind) -> Strin
         db::ObjectSourceKind::View => format!("SHOW CREATE VIEW {}", mysql_ident(name)),
         db::ObjectSourceKind::Procedure => format!("SHOW CREATE PROCEDURE {}", mysql_ident(name)),
         db::ObjectSourceKind::Function => format!("SHOW CREATE FUNCTION {}", mysql_ident(name)),
-        db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => String::new(),
+        db::ObjectSourceKind::Sequence | db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => {
+            String::new()
+        }
     }
 }
 
@@ -1575,13 +1786,28 @@ fn oracle_owner_filter(schema: &str) -> String {
     }
 }
 
-pub fn oracle_list_objects_sql(schema: &str) -> String {
+#[derive(Debug, Clone, Copy)]
+struct OracleAgentObjectOptions {
+    hide_recyclebin_objects: bool,
+}
+
+fn oracle_agent_object_options(config: &ConnectionConfig) -> Option<OracleAgentObjectOptions> {
+    match config.db_type {
+        DatabaseType::Oracle => Some(OracleAgentObjectOptions { hide_recyclebin_objects: false }),
+        DatabaseType::Yashandb => Some(OracleAgentObjectOptions { hide_recyclebin_objects: true }),
+        _ => None,
+    }
+}
+
+pub fn oracle_list_objects_sql(schema: &str, hide_recyclebin_objects: bool) -> String {
+    let recyclebin_filter = if hide_recyclebin_objects { " AND object_name NOT LIKE 'BIN$%'" } else { "" };
     format!(
         "SELECT object_name, CASE object_type WHEN 'PACKAGE BODY' THEN 'PACKAGE_BODY' ELSE object_type END AS object_type, owner \
          FROM all_objects \
-         WHERE owner = {} AND object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY') \
+         WHERE owner = {} AND object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'PACKAGE BODY'){} \
          ORDER BY CASE object_type WHEN 'TABLE' THEN 0 WHEN 'VIEW' THEN 1 WHEN 'PROCEDURE' THEN 2 WHEN 'FUNCTION' THEN 3 WHEN 'PACKAGE' THEN 4 ELSE 5 END, object_name",
-        oracle_owner_filter(schema)
+        oracle_owner_filter(schema),
+        recyclebin_filter
     )
 }
 
@@ -1589,8 +1815,9 @@ async fn oracle_agent_list_objects(
     client: Arc<tokio::sync::Mutex<db::agent_driver::AgentDriverClient>>,
     database: &str,
     schema: &str,
+    options: OracleAgentObjectOptions,
 ) -> Result<Vec<db::ObjectInfo>, String> {
-    let sql = oracle_list_objects_sql(schema);
+    let sql = oracle_list_objects_sql(schema, options.hide_recyclebin_objects);
     let params = agent_execute_query_params(
         &sql,
         if database.is_empty() { None } else { Some(database) },
@@ -1685,6 +1912,25 @@ mod object_source_tests {
     }
 
     #[test]
+    fn builds_postgres_object_source_sql_for_sequences() {
+        let sql = postgres_object_source_sql("tenant's schema", "order id seq", &ObjectSourceKind::Sequence);
+
+        assert!(sql.contains("-- auto-generated definition"));
+        assert!(sql.contains("create sequence"));
+        assert!(sql.contains("alter sequence"));
+        assert!(sql.contains("owner to"));
+        assert!(sql.contains("owned by"));
+        assert!(sql.contains("pg_catalog.pg_sequence"));
+        assert!(sql.contains("n.nspname = 'tenant''s schema'"));
+        assert!(sql.contains("c.relname = 'order id seq'"));
+        assert!(sql.contains("c.relkind = 'S'"));
+        assert!(!sql.contains("MINVALUE"));
+        assert!(!sql.contains("START WITH"));
+        assert!(!sql.contains("CACHE"));
+        assert!(!sql.contains("NO CYCLE"));
+    }
+
+    #[test]
     fn builds_postgres_view_source_sql_without_regclass_cast() {
         let sql = postgres_object_source_sql("tenant's schema", "active users", &ObjectSourceKind::View);
 
@@ -1721,12 +1967,20 @@ mod object_source_tests {
 
     #[test]
     fn builds_oracle_list_objects_sql_with_packages() {
-        let sql = oracle_list_objects_sql("hr");
+        let sql = oracle_list_objects_sql("hr", false);
 
         assert!(sql.contains("'PACKAGE'"));
         assert!(sql.contains("'PACKAGE BODY'"));
         assert!(sql.contains("CASE object_type WHEN 'PACKAGE BODY' THEN 'PACKAGE_BODY'"));
         assert!(sql.contains("owner = 'HR'"));
+        assert!(!sql.contains("BIN$"));
+    }
+
+    #[test]
+    fn builds_yashandb_list_objects_sql_without_recyclebin_objects() {
+        let sql = oracle_list_objects_sql("hr", true);
+
+        assert!(sql.contains("object_name NOT LIKE 'BIN$%'"));
     }
 }
 

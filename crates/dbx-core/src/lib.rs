@@ -1,5 +1,6 @@
 pub mod agent_catalog;
 pub mod agent_connection;
+pub mod agent_kv;
 pub mod agent_manager;
 pub mod agent_runtime;
 pub mod agent_service;
@@ -22,6 +23,7 @@ pub mod jdbc;
 pub mod models;
 pub mod mongo_ops;
 pub mod object_source_sql;
+pub mod path_utils;
 pub mod plugins;
 pub mod query;
 pub mod query_cancel;

@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { parseConnectionDeepLink } from "../../apps/desktop/src/lib/connectionDeepLink.ts";
 
 test("parses dbx connection deep link query fields", () => {

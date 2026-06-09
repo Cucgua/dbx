@@ -12,6 +12,7 @@ const leafTypes: Set<TreeNodeType> = new Set([
   "object-browser",
   "redis-db",
   "mongo-collection",
+  "user-admin",
   "saved-sql-file",
 ]);
 

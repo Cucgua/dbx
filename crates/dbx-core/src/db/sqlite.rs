@@ -161,6 +161,7 @@ pub fn is_memory_database_path(path: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 
@@ -636,6 +637,7 @@ fn execute_query_blocking(pool: &SqliteHandle, sql: &str, max_rows: Option<usize
 
             Ok(QueryResult {
                 columns,
+                column_types: Vec::new(),
                 rows: result_rows,
                 affected_rows: 0,
                 execution_time_ms: start.elapsed().as_millis(),
@@ -647,6 +649,7 @@ fn execute_query_blocking(pool: &SqliteHandle, sql: &str, max_rows: Option<usize
             conn.execute_batch(sql).map_err(|e| e.to_string())?;
             Ok(QueryResult {
                 columns: vec![],
+                column_types: Vec::new(),
                 rows: vec![],
                 affected_rows: conn.changes(),
                 execution_time_ms: start.elapsed().as_millis(),

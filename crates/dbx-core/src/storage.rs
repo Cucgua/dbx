@@ -8,10 +8,11 @@ use uuid::Uuid;
 use crate::ai::{AiChatMessage, AiConfig, AiConversation};
 use crate::db::sqlite::{connect_path_create_if_missing, SqliteHandle};
 use crate::history::{HistoryEntry, MAX_HISTORY};
-use crate::models::connection::ConnectionConfig;
+use crate::models::connection::{ConnectionConfig, TransportLayerConfig};
 use crate::saved_sql::{SavedSqlFile, SavedSqlFolder, SavedSqlLibrary};
 
 const SSH_TUNNEL_SECRET_PREFIX: &str = "ssh_tunnels.";
+const TRANSPORT_LAYER_SECRET_PREFIX: &str = "transport_layers.";
 
 pub struct Storage {
     db: SqliteHandle,
@@ -31,11 +32,13 @@ pub struct TabRuntimeCacheEntry {
 pub struct DesktopSettings {
     pub show_tray_icon: bool,
     pub icon_theme: DesktopIconTheme,
+    #[serde(default)]
+    pub debug_logging_enabled: bool,
 }
 
 impl Default for DesktopSettings {
     fn default() -> Self {
-        Self { show_tray_icon: true, icon_theme: DesktopIconTheme::Default }
+        Self { show_tray_icon: true, icon_theme: DesktopIconTheme::Default, debug_logging_enabled: false }
     }
 }
 
@@ -225,10 +228,38 @@ fn ssh_tunnel_key_passphrase_key(index: usize, hop: &crate::models::connection::
     format!("{}{}.key_passphrase", SSH_TUNNEL_SECRET_PREFIX, ssh_tunnel_secret_segment(index, hop))
 }
 
-fn scrub_ssh_tunnel_secrets(config: &mut ConnectionConfig) {
-    for hop in &mut config.ssh_tunnels {
-        hop.password.clear();
-        hop.key_passphrase.clear();
+fn transport_layer_secret_segment(index: usize, layer: &TransportLayerConfig) -> String {
+    let id = layer.id().trim();
+    if id.is_empty() {
+        index.to_string()
+    } else {
+        id.to_string()
+    }
+}
+
+fn transport_layer_ssh_password_key(index: usize, layer: &TransportLayerConfig) -> String {
+    format!("{}{}.ssh_password", TRANSPORT_LAYER_SECRET_PREFIX, transport_layer_secret_segment(index, layer))
+}
+
+fn transport_layer_ssh_key_passphrase_key(index: usize, layer: &TransportLayerConfig) -> String {
+    format!("{}{}.ssh_key_passphrase", TRANSPORT_LAYER_SECRET_PREFIX, transport_layer_secret_segment(index, layer))
+}
+
+fn transport_layer_proxy_password_key(index: usize, layer: &TransportLayerConfig) -> String {
+    format!("{}{}.proxy_password", TRANSPORT_LAYER_SECRET_PREFIX, transport_layer_secret_segment(index, layer))
+}
+
+fn scrub_transport_layer_secrets(config: &mut ConnectionConfig) {
+    for layer in &mut config.transport_layers {
+        match layer {
+            TransportLayerConfig::Ssh(ssh) => {
+                ssh.password.clear();
+                ssh.key_passphrase.clear();
+            }
+            TransportLayerConfig::Proxy(proxy) => {
+                proxy.password.clear();
+            }
+        }
     }
 }
 
@@ -417,6 +448,10 @@ impl Storage {
             "icon_theme".to_string(),
             serde_json::to_value(desktop_settings.icon_theme).map_err(|e| e.to_string())?,
         );
+        settings.insert(
+            "debug_logging_enabled".to_string(),
+            serde_json::Value::Bool(desktop_settings.debug_logging_enabled),
+        );
         self.save_app_settings_json(&settings).await
     }
 
@@ -429,6 +464,10 @@ impl Storage {
                 .or_else(|| settings.get("run_in_background").and_then(|value| value.as_bool()))
                 .unwrap_or_else(|| DesktopSettings::default().show_tray_icon),
             icon_theme: DesktopIconTheme::from_settings_value(settings.get("icon_theme")),
+            debug_logging_enabled: settings
+                .get("debug_logging_enabled")
+                .and_then(|value| value.as_bool())
+                .unwrap_or_else(|| DesktopSettings::default().debug_logging_enabled),
         })
     }
 
@@ -591,10 +630,7 @@ impl Storage {
                 let config_id = config.id.clone();
                 let mut sanitized = config;
                 sanitized.password = String::new();
-                sanitized.ssh_password = String::new();
-                sanitized.ssh_key_passphrase = String::new();
-                scrub_ssh_tunnel_secrets(&mut sanitized);
-                sanitized.proxy_password = String::new();
+                scrub_transport_layer_secrets(&mut sanitized);
                 sanitized.redis_sentinel_password = String::new();
                 sanitized.connection_string = None;
                 let json = serde_json::to_string(&sanitized).map_err(|e| e.to_string())?;
@@ -628,10 +664,7 @@ impl Storage {
                 let config_id = config.id.clone();
                 let mut sanitized = config.clone();
                 sanitized.password = String::new();
-                sanitized.ssh_password = String::new();
-                sanitized.ssh_key_passphrase = String::new();
-                scrub_ssh_tunnel_secrets(&mut sanitized);
-                sanitized.proxy_password = String::new();
+                scrub_transport_layer_secrets(&mut sanitized);
                 sanitized.redis_sentinel_password = String::new();
                 sanitized.connection_string = None;
                 let json = serde_json::to_string(&sanitized).map_err(|e| e.to_string())?;
@@ -640,20 +673,38 @@ impl Storage {
                     .map_err(|e| e.to_string())?;
 
                 persist_secret_in_tx(&tx, &config.id, "password", &config.password)?;
-                persist_secret_in_tx(&tx, &config.id, "ssh_password", &config.ssh_password)?;
-                persist_secret_in_tx(&tx, &config.id, "ssh_key_passphrase", &config.ssh_key_passphrase)?;
-                delete_secret_prefix_in_tx(&tx, &config.id, SSH_TUNNEL_SECRET_PREFIX)?;
-                for (index, hop) in config.ssh_tunnels.iter().enumerate() {
-                    persist_secret_in_tx(&tx, &config.id, &ssh_tunnel_password_key(index, hop), &hop.password)?;
-                    persist_secret_in_tx(
-                        &tx,
-                        &config.id,
-                        &ssh_tunnel_key_passphrase_key(index, hop),
-                        &hop.key_passphrase,
-                    )?;
+                delete_secret_prefix_in_tx(&tx, &config.id, TRANSPORT_LAYER_SECRET_PREFIX)?;
+                for (index, layer) in config.transport_layers.iter().enumerate() {
+                    match layer {
+                        TransportLayerConfig::Ssh(ssh) => {
+                            persist_secret_in_tx(
+                                &tx,
+                                &config.id,
+                                &transport_layer_ssh_password_key(index, layer),
+                                &ssh.password,
+                            )?;
+                            persist_secret_in_tx(
+                                &tx,
+                                &config.id,
+                                &transport_layer_ssh_key_passphrase_key(index, layer),
+                                &ssh.key_passphrase,
+                            )?;
+                        }
+                        TransportLayerConfig::Proxy(proxy) => {
+                            persist_secret_in_tx(
+                                &tx,
+                                &config.id,
+                                &transport_layer_proxy_password_key(index, layer),
+                                &proxy.password,
+                            )?;
+                        }
+                    }
                 }
-                persist_secret_in_tx(&tx, &config.id, "proxy_password", &config.proxy_password)?;
                 persist_secret_in_tx(&tx, &config.id, "redis_sentinel_password", &config.redis_sentinel_password)?;
+                persist_secret_in_tx(&tx, &config.id, "ssh_password", "")?;
+                persist_secret_in_tx(&tx, &config.id, "ssh_key_passphrase", "")?;
+                persist_secret_in_tx(&tx, &config.id, "proxy_password", "")?;
+                delete_secret_prefix_in_tx(&tx, &config.id, SSH_TUNNEL_SECRET_PREFIX)?;
                 if let Some(cs) = &config.connection_string {
                     persist_secret_in_tx(&tx, &config.id, "connection_string", cs)?;
                 } else {
@@ -694,14 +745,51 @@ impl Storage {
         for (id, json) in rows {
             let mut config: ConnectionConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
             config.password = self.get_secret(&id, "password").await?.unwrap_or_default();
-            config.ssh_password = self.get_secret(&id, "ssh_password").await?.unwrap_or_default();
-            config.ssh_key_passphrase = self.get_secret(&id, "ssh_key_passphrase").await?.unwrap_or_default();
-            for (index, hop) in config.ssh_tunnels.iter_mut().enumerate() {
-                hop.password = self.get_secret(&id, &ssh_tunnel_password_key(index, hop)).await?.unwrap_or_default();
-                hop.key_passphrase =
-                    self.get_secret(&id, &ssh_tunnel_key_passphrase_key(index, hop)).await?.unwrap_or_default();
+            for index in 0..config.transport_layers.len() {
+                let layer_for_key = config.transport_layers[index].clone();
+                match &mut config.transport_layers[index] {
+                    TransportLayerConfig::Ssh(ssh) => {
+                        ssh.password = self
+                            .get_secret(&id, &transport_layer_ssh_password_key(index, &layer_for_key))
+                            .await?
+                            .or(match &layer_for_key {
+                                TransportLayerConfig::Ssh(layer) if layer.id == "legacy" => {
+                                    self.get_secret(&id, "ssh_password").await?
+                                }
+                                TransportLayerConfig::Ssh(layer) => {
+                                    self.get_secret(&id, &ssh_tunnel_password_key(index, layer)).await?
+                                }
+                                TransportLayerConfig::Proxy(_) => None,
+                            })
+                            .unwrap_or_default();
+                        ssh.key_passphrase = self
+                            .get_secret(&id, &transport_layer_ssh_key_passphrase_key(index, &layer_for_key))
+                            .await?
+                            .or(match &layer_for_key {
+                                TransportLayerConfig::Ssh(layer) if layer.id == "legacy" => {
+                                    self.get_secret(&id, "ssh_key_passphrase").await?
+                                }
+                                TransportLayerConfig::Ssh(layer) => {
+                                    self.get_secret(&id, &ssh_tunnel_key_passphrase_key(index, layer)).await?
+                                }
+                                TransportLayerConfig::Proxy(_) => None,
+                            })
+                            .unwrap_or_default();
+                    }
+                    TransportLayerConfig::Proxy(proxy) => {
+                        proxy.password = self
+                            .get_secret(&id, &transport_layer_proxy_password_key(index, &layer_for_key))
+                            .await?
+                            .or(match &layer_for_key {
+                                TransportLayerConfig::Proxy(layer) if layer.id == "legacy-proxy" => {
+                                    self.get_secret(&id, "proxy_password").await?
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                    }
+                }
             }
-            config.proxy_password = self.get_secret(&id, "proxy_password").await?.unwrap_or_default();
             config.redis_sentinel_password = self.get_secret(&id, "redis_sentinel_password").await?.unwrap_or_default();
             config.connection_string = self.get_secret(&id, "connection_string").await?;
             configs.push(config.canonicalized());
@@ -1284,14 +1372,18 @@ mod tests {
 
         storage.save_password_hash("hash-1").await.unwrap();
         storage
-            .save_desktop_settings(&DesktopSettings { show_tray_icon: false, icon_theme: DesktopIconTheme::Black })
+            .save_desktop_settings(&DesktopSettings {
+                show_tray_icon: false,
+                icon_theme: DesktopIconTheme::Black,
+                debug_logging_enabled: true,
+            })
             .await
             .unwrap();
 
         assert_eq!(storage.load_password_hash().await.unwrap(), Some("hash-1".to_string()));
         assert_eq!(
             storage.load_desktop_settings().await.unwrap(),
-            DesktopSettings { show_tray_icon: false, icon_theme: DesktopIconTheme::Black }
+            DesktopSettings { show_tray_icon: false, icon_theme: DesktopIconTheme::Black, debug_logging_enabled: true }
         );
     }
 
@@ -1315,6 +1407,7 @@ mod tests {
         assert_eq!(settings.get("run_in_background"), None);
         assert_eq!(settings.get("show_tray_icon").and_then(|value| value.as_bool()), Some(true));
         assert_eq!(settings.get("icon_theme").and_then(|value| value.as_str()), Some("black"));
+        assert_eq!(settings.get("debug_logging_enabled").and_then(|value| value.as_bool()), Some(false));
     }
 
     #[tokio::test]
@@ -1323,7 +1416,11 @@ mod tests {
         let storage = Storage::open(&path).await.unwrap();
 
         storage
-            .save_desktop_settings(&DesktopSettings { show_tray_icon: false, icon_theme: DesktopIconTheme::Black })
+            .save_desktop_settings(&DesktopSettings {
+                show_tray_icon: false,
+                icon_theme: DesktopIconTheme::Black,
+                ..DesktopSettings::default()
+            })
             .await
             .unwrap();
         storage.save_password_hash("hash-2").await.unwrap();
@@ -1331,7 +1428,11 @@ mod tests {
         assert_eq!(storage.load_password_hash().await.unwrap(), Some("hash-2".to_string()));
         assert_eq!(
             storage.load_desktop_settings().await.unwrap(),
-            DesktopSettings { show_tray_icon: false, icon_theme: DesktopIconTheme::Black }
+            DesktopSettings {
+                show_tray_icon: false,
+                icon_theme: DesktopIconTheme::Black,
+                ..DesktopSettings::default()
+            }
         );
     }
 

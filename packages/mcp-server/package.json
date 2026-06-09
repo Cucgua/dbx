@@ -1,6 +1,6 @@
 {
   "name": "@dbx-app/mcp-server",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "mcpName": "io.github.t8y2/dbx",
   "description": "MCP server for DBX — query databases from Claude Code, Cursor, and other AI agents",
   "type": "module",
@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "start": "tsx src/index.ts",
-    "test": "pnpm --filter @dbx-app/mcp-server build && tsx --test tests/*.test.ts",
+    "test": "pnpm --filter @dbx-app/mcp-server build && vitest run --config vitest.config.ts",
     "build": "pnpm --filter @dbx-app/node-core build && tsc",
     "prepublishOnly": "tsc"
   },
@@ -30,7 +30,7 @@
     "mysql",
     "ai-agent"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/t8y2/dbx",

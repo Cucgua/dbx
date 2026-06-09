@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { resolveHistoryActivityKind } from "../../apps/desktop/src/lib/historyActivityKind.ts";
 
 test("legacy INSERT history entries are treated as data changes", () => {

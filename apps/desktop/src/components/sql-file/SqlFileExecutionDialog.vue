@@ -58,7 +58,7 @@ const terminalError = ref("");
 const refreshedTarget = ref(false);
 
 const sqlConnections = computed(() =>
-  store.connections.filter((c) => !["redis", "mongodb", "elasticsearch"].includes(c.db_type)),
+  store.connections.filter((c) => !["redis", "mongodb", "elasticsearch", "etcd"].includes(c.db_type)),
 );
 
 const selectedConnection = computed(() => sqlConnections.value.find((c) => c.id === connectionId.value));

@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { dataGridSaveActionMode, dataGridSaveToolbarState } from "../../apps/desktop/src/lib/dataGridSaveUi.ts";
 
 test("uses concise save and commit labels for the primary grid save action", () => {

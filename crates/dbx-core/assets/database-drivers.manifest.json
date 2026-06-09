@@ -201,6 +201,17 @@
       "defaultPort": 3306
     },
     {
+      "dbType": "databend",
+      "label": "Databend",
+      "runtimeMode": "agent",
+      "mcpMode": "bridge",
+      "agentKey": "databend",
+      "singleConnectionPool": false,
+      "metadataConnectionScoped": false,
+      "skipTcpProbe": true,
+      "defaultPort": 8000
+    },
+    {
       "dbType": "gaussdb",
       "label": "GaussDB",
       "runtimeMode": "native",
@@ -483,6 +494,17 @@
       "metadataConnectionScoped": false,
       "skipTcpProbe": true,
       "defaultPort": 5138
+    },
+    {
+      "dbType": "iotdb",
+      "label": "Apache IoTDB",
+      "runtimeMode": "agent",
+      "mcpMode": "bridge",
+      "agentKey": "iotdb",
+      "singleConnectionPool": false,
+      "metadataConnectionScoped": false,
+      "skipTcpProbe": true,
+      "defaultPort": 6667
     },
     {
       "dbType": "iris",

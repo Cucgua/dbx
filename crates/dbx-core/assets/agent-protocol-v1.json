@@ -13,7 +13,8 @@
     "query",
     "paged_query",
     "transaction",
-    "ddl"
+    "ddl",
+    "kv"
   ],
   "commonMethods": [
     "handshake",
@@ -33,6 +34,7 @@
     "execute_query_page",
     "fetch_query_page",
     "close_query_session",
+    "get_explain_info",
     "execute_transaction",
     "disconnect",
     "shutdown"
@@ -44,5 +46,11 @@
     "insert_document",
     "update_document",
     "delete_document"
+  ],
+  "kvMethods": [
+    "kv_list_prefix",
+    "kv_get",
+    "kv_put",
+    "kv_delete"
   ]
 }

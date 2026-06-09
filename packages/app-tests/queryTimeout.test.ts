@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { DEFAULT_QUERY_TIMEOUT_SECS, queryTimeoutSecsForConnection } from "../../apps/desktop/src/lib/queryTimeout.ts";
 
 test("uses default query timeout when connection has no setting", () => {

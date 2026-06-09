@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { resolveExecutableSql } from "../../apps/desktop/src/lib/sqlExecutionTarget.ts";
 
 test("uses selected SQL when the editor has a non-empty selection", () => {

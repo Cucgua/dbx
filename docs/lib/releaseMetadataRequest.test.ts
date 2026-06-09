@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vitest';
 import { createUncachedUrl, releaseMetadataRequestInit } from './releaseMetadataRequest';
 
 test('createUncachedUrl appends cache buster without removing existing query params', () => {

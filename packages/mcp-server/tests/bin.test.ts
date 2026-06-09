@@ -4,7 +4,7 @@ import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import { test } from "vitest";
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
 const mcpBin = fileURLToPath(new URL("../dist/index.js", import.meta.url));

@@ -6,14 +6,14 @@ pub use dbx_core::agent_connection::{
     oracle_auth_fallback_profiles, should_retry_oracle_with_10g_driver,
 };
 pub use dbx_core::connection::{
-    connect_bare_metadata_pool, connect_mysql_metadata_pool, connection_url_for_endpoint, expand_tilde,
-    metadata_connection_config, probe_connection_endpoint, redacted_connection_url_for_endpoint, AppState, MysqlMode,
-    PoolKind,
+    connect_bare_metadata_pool, connect_mysql_metadata_pool, connection_url_for_endpoint, metadata_connection_config,
+    probe_connection_endpoint, redacted_connection_url_for_endpoint, AppState, MysqlMode, PoolKind,
 };
 use dbx_core::database_capabilities;
 use dbx_core::db;
 use dbx_core::db::agent_driver::AgentMethod;
 use dbx_core::models::connection::{rewrite_jdbc_url_host, ConnectionConfig, DatabaseType};
+pub use dbx_core::path_utils::expand_tilde;
 
 fn mongo_legacy_connect_params(config: &ConnectionConfig, host: &str, port: u16) -> serde_json::Value {
     serde_json::json!({
@@ -152,7 +152,7 @@ async fn connect_agent_pool(
 #[cfg(test)]
 mod tests {
     use super::mongo_legacy_connect_params;
-    use dbx_core::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
+    use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
 
     fn mongodb_config() -> ConnectionConfig {
         ConnectionConfig {
@@ -170,26 +170,13 @@ mod tests {
             visible_databases: None,
             attached_databases: Vec::new(),
             color: None,
-            ssh_enabled: false,
-            ssh_host: String::new(),
-            ssh_port: 22,
-            ssh_user: String::new(),
-            ssh_password: String::new(),
-            ssh_key_path: String::new(),
-            ssh_key_passphrase: String::new(),
-            ssh_expose_lan: false,
-            ssh_connect_timeout_secs: dbx_core::models::connection::default_ssh_connect_timeout_secs(),
-            ssh_tunnels: Vec::new(),
+            transport_layers: Vec::new(),
             connect_timeout_secs: dbx_core::models::connection::default_connect_timeout_secs(),
             query_timeout_secs: dbx_core::models::connection::default_query_timeout_secs(),
-            proxy_enabled: false,
-            proxy_type: ProxyType::Socks5,
-            proxy_host: String::new(),
-            proxy_port: 1080,
-            proxy_username: String::new(),
-            proxy_password: String::new(),
             ssl: false,
             ca_cert_path: String::new(),
+            client_cert_path: String::new(),
+            client_key_path: String::new(),
             sysdba: false,
             oracle_connection_type: None,
             connection_string: Some(
@@ -202,6 +189,7 @@ mod tests {
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
             redis_cluster_nodes: String::new(),
+            etcd_endpoints: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -252,8 +240,8 @@ pub async fn load_sidebar_layout(state: State<'_, Arc<AppState>>) -> Result<Opti
 #[tauri::command]
 pub async fn test_connection(state: State<'_, Arc<AppState>>, config: ConnectionConfig) -> Result<String, String> {
     let tunnel_id = format!("{}:test", config.id);
-    let connection_id =
-        if config.ssh_enabled && !config.ssh_host.is_empty() { tunnel_id.as_str() } else { config.id.as_str() };
+    let has_transport_layers = config.has_effective_transport_layers();
+    let connection_id = if has_transport_layers { tunnel_id.as_str() } else { config.id.as_str() };
     let (host, port) = state.connection_host_port(connection_id, &config).await?;
     let probe_result = probe_connection_endpoint(&config, &host, port).await;
     let url = connection_url_for_endpoint(&config, &host, port);
@@ -426,11 +414,8 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
         },
     };
 
-    if config.ssh_enabled && !config.ssh_host.is_empty() {
-        state.tunnels.stop_tunnel(&tunnel_id).await;
-    }
-    if config.proxy_enabled && !config.proxy_host.is_empty() {
-        state.proxy_tunnels.stop_tunnel(&tunnel_id).await;
+    if has_transport_layers {
+        state.reset_connection_transport_for_config(&tunnel_id, &config).await;
     }
 
     result
@@ -443,7 +428,7 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
     let db_config = metadata_connection_config(&config);
 
     state.remove_connection_pools(&id).await;
-    state.reset_connection_transport(&id).await;
+    state.reset_connection_transport_for_config(&id, &db_config).await;
 
     let (host, port) = state.connection_host_port(&id, &db_config).await?;
     probe_connection_endpoint(&db_config, &host, port).await?;
@@ -452,11 +437,12 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
 
     let pool = match db_config.db_type {
         DatabaseType::Mysql => {
-            let (pool, mode) = connect_mysql_metadata_pool(&config, &db_config, &host, port, connect_timeout).await?;
+            let (pool, mode) =
+                connect_mysql_metadata_pool(&config, &db_config, &host, port, connect_timeout, 3).await?;
             PoolKind::Mysql(pool, mode)
         }
         DatabaseType::Doris | DatabaseType::StarRocks => PoolKind::Mysql(
-            connect_bare_metadata_pool(&db_config, &host, port, connect_timeout).await?,
+            connect_bare_metadata_pool(&db_config, &host, port, connect_timeout, 3).await?,
             MysqlMode::Bare,
         ),
         DatabaseType::Postgres
@@ -589,6 +575,24 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
     state.configs.write().await.insert(id.clone(), config);
 
     Ok(id)
+}
+
+#[tauri::command]
+pub async fn connection_final_proxy_port(
+    state: State<'_, Arc<AppState>>,
+    config: ConnectionConfig,
+) -> Result<u16, String> {
+    let runtime_config = config.canonicalized();
+    if !runtime_config.has_effective_transport_layers() {
+        return Err("Connection has no configured transport layers".to_string());
+    }
+
+    let connection_id = runtime_config.id.clone();
+    let db_config = metadata_connection_config(&runtime_config);
+    state.configs.write().await.insert(connection_id.clone(), runtime_config);
+
+    let (_, port) = state.connection_host_port(&connection_id, &db_config).await?;
+    Ok(port)
 }
 
 #[tauri::command]

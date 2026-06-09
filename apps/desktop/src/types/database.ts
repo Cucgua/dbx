@@ -12,6 +12,7 @@ export type DatabaseType =
   | "elasticsearch"
   | "doris"
   | "starrocks"
+  | "databend"
   | "redshift"
   | "dameng"
   | "gaussdb"
@@ -44,6 +45,8 @@ export type DatabaseType =
   | "sundb"
   | "tdengine"
   | "xugu"
+  | "iotdb"
+  | "etcd"
   | "iris"
   | "jdbc";
 
@@ -69,26 +72,13 @@ export interface ConnectionConfig {
   visible_databases?: string[];
   attached_databases?: AttachedDatabaseConfig[];
   color?: string;
-  ssh_enabled?: boolean;
-  ssh_host?: string;
-  ssh_port?: number;
-  ssh_user?: string;
-  ssh_password?: string;
-  ssh_key_path?: string;
-  ssh_key_passphrase?: string;
-  ssh_expose_lan?: boolean;
-  ssh_connect_timeout_secs?: number;
-  ssh_tunnels?: SshTunnelConfig[];
+  transport_layers?: TransportLayerConfig[];
   connect_timeout_secs?: number;
   query_timeout_secs?: number;
-  proxy_enabled?: boolean;
-  proxy_type?: "socks5" | "http";
-  proxy_host?: string;
-  proxy_port?: number;
-  proxy_username?: string;
-  proxy_password?: string;
   ssl?: boolean;
   ca_cert_path?: string;
+  client_cert_path?: string;
+  client_key_path?: string;
   sysdba?: boolean;
   oracle_connection_type?: "service_name" | "sid";
   connection_string?: string;
@@ -101,8 +91,11 @@ export interface ConnectionConfig {
   redis_sentinel_password?: string;
   redis_sentinel_tls?: boolean;
   redis_cluster_nodes?: string;
+  etcd_endpoints?: string;
   one_time?: boolean;
 }
+
+export type TransportLayerConfig = ({ type: "ssh" } & SshTunnelConfig) | ({ type: "proxy" } & ProxyTunnelConfig);
 
 export interface SshTunnelConfig {
   id: string;
@@ -116,6 +109,17 @@ export interface SshTunnelConfig {
   key_passphrase?: string;
   connect_timeout_secs?: number;
   expose_lan?: boolean;
+}
+
+export interface ProxyTunnelConfig {
+  id: string;
+  name?: string;
+  enabled?: boolean;
+  proxy_type?: "socks5" | "http";
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
 }
 
 export interface AttachedDatabaseConfig {
@@ -174,7 +178,7 @@ export interface TableInfo {
   parent_name?: string | null;
 }
 
-export type DatabaseObjectType = "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION" | "PACKAGE" | "PACKAGE_BODY";
+export type DatabaseObjectType = "TABLE" | "VIEW" | "PROCEDURE" | "FUNCTION" | "SEQUENCE" | "PACKAGE" | "PACKAGE_BODY";
 
 export interface ObjectInfo {
   name: string;
@@ -187,7 +191,7 @@ export interface ObjectInfo {
   parent_name?: string | null;
 }
 
-export type ObjectSourceKind = "VIEW" | "PROCEDURE" | "FUNCTION" | "PACKAGE" | "PACKAGE_BODY";
+export type ObjectSourceKind = "VIEW" | "PROCEDURE" | "FUNCTION" | "SEQUENCE" | "PACKAGE" | "PACKAGE_BODY";
 
 export interface ObjectSource {
   name: string;
@@ -236,6 +240,12 @@ export interface TriggerInfo {
 
 export interface QueryResult {
   columns: string[];
+  /**
+   * Database type name for each column, parallel to `columns`. Optional and may
+   * be shorter/empty when a driver cannot supply types (schemaless stores,
+   * fallback query paths, older backends). Consumers must tolerate gaps.
+   */
+  column_types?: string[];
   rows: (string | number | boolean | null)[][];
   affected_rows: number;
   execution_time_ms: number;
@@ -278,6 +288,7 @@ export type TreeNodeType =
   | "view"
   | "procedure"
   | "function"
+  | "sequence"
   | "package"
   | "package-body"
   | "group-columns"
@@ -288,9 +299,11 @@ export type TreeNodeType =
   | "group-views"
   | "group-procedures"
   | "group-functions"
+  | "group-sequences"
   | "group-packages"
   | "group-partitions"
   | "object-browser"
+  | "user-admin"
   | "saved-sql-root"
   | "saved-sql-folder"
   | "saved-sql-file"
@@ -299,6 +312,7 @@ export type TreeNodeType =
   | "fkey"
   | "trigger"
   | "redis-db"
+  | "etcd-root"
   | "mongo-db"
   | "mongo-collection";
 
@@ -378,7 +392,7 @@ export interface QueryTab {
   executionId?: string;
   isExplaining?: boolean;
   explainExecutionId?: string;
-  mode: "data" | "query" | "redis" | "mongo" | "objects" | "structure";
+  mode: "data" | "query" | "redis" | "mongo" | "etcd" | "objects" | "structure" | "users";
   structureTableName?: string;
   objectBrowser?: {
     schema?: string;

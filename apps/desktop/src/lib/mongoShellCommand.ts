@@ -18,6 +18,10 @@ export interface MongoAggregateCommand {
   pipeline: string;
 }
 
+export interface MongoGetIndexesCommand {
+  collection: string;
+}
+
 export type MongoWriteCommand =
   | { kind: "insert"; collection: string; docsJson: string }
   | { kind: "update"; collection: string; filter: string; update: string; many: boolean }
@@ -109,6 +113,23 @@ export function parseMongoAggregateCommand(input: string): MongoAggregateCommand
   return {
     collection: target.collection,
     pipeline,
+  };
+}
+
+export function parseMongoGetIndexesCommand(input: string): MongoGetIndexesCommand | null {
+  const source = input.trim().replace(/;$/, "").trim();
+  const target = parseCollectionMethodTarget(source, "getIndexes");
+  if (!target) return null;
+
+  const openIndex = source.indexOf("(", target.methodCallIndex);
+  const closeIndex = findMatchingParen(source, openIndex);
+  if (closeIndex < 0 || source.slice(closeIndex + 1).trim()) return null;
+
+  const args = splitTopLevel(source.slice(openIndex + 1, closeIndex));
+  if (args.some((arg) => arg.trim())) return null;
+
+  return {
+    collection: target.collection,
   };
 }
 
@@ -234,6 +255,34 @@ export function mongoWriteToQueryResult(affectedRows: number, executionTimeMs: n
     columns: [],
     rows: [],
     affected_rows: affectedRows,
+    execution_time_ms: Math.max(0, Math.round(executionTimeMs)),
+  };
+}
+
+export function mongoIndexesToQueryResult(
+  indexes: {
+    name: string;
+    columns: string[];
+    is_unique: boolean;
+    is_primary: boolean;
+    filter?: string | null;
+    index_type?: string | null;
+    included_columns?: string[] | null;
+    comment?: string | null;
+  }[],
+  executionTimeMs: number,
+): QueryResult {
+  return {
+    columns: ["name", "columns", "unique", "primary", "type", "filter"],
+    rows: indexes.map((index) => [
+      index.name,
+      index.columns.join(", "),
+      index.is_unique,
+      index.is_primary,
+      index.index_type ?? null,
+      index.filter ?? null,
+    ]),
+    affected_rows: indexes.length,
     execution_time_ms: Math.max(0, Math.round(executionTimeMs)),
   };
 }

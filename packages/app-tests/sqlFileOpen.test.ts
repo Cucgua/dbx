@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { externalSqlFilePaths, isSqlFilePath, sqlFileTitleFromPath } from "../../apps/desktop/src/lib/sqlFileOpen.ts";
 
 test("detects SQL file paths case-insensitively", () => {

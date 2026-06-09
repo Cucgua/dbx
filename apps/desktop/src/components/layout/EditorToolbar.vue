@@ -23,9 +23,9 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
 import { useSchemaOptions } from "@/composables/useSchemaOptions";
 import { connectionIconType } from "@/lib/connectionPresentation";
-import { isDefaultDatabase } from "@/lib/defaultDatabase";
+import { formatDatabaseLabel, isDefaultDatabase } from "@/lib/defaultDatabase";
 import { connectionDisplayName } from "@/lib/tabPresentation";
-import { isSingleDatabase, usesTreeSchemaMode } from "@/lib/databaseCapabilities";
+import { isSingleDatabase } from "@/lib/databaseCapabilities";
 import { hexToRgba } from "@/lib/color";
 import type { QueryTab, ConnectionConfig } from "@/types/database";
 
@@ -33,12 +33,14 @@ const props = defineProps<{
   activeTab: QueryTab;
   activeConnection?: ConnectionConfig;
   executableSql: string;
+  explainMode?: string;
 }>();
 
 const emit = defineEmits<{
   execute: [];
   cancel: [];
   explain: [];
+  "update:explainMode": [mode: "explain" | "autotrace"];
   formatSql: [];
   saveSql: [];
   openSql: [];
@@ -101,10 +103,10 @@ const toolbarStyle = computed(() => {
 });
 
 function databaseDisplayName(database: string): string {
-  const connection = props.activeConnection;
-  if (connection?.db_type === "redis" && database !== "") return `db${database}`;
-  if (database === "" && usesTreeSchemaMode(connection?.db_type)) return t("editor.defaultDatabase");
-  return database || t("editor.noDatabase");
+  return formatDatabaseLabel(props.activeConnection, database, {
+    defaultDatabase: t("editor.defaultDatabase"),
+    noDatabase: t("editor.noDatabase"),
+  });
 }
 
 function connectionById(connectionId: string): ConnectionConfig | undefined {
@@ -165,6 +167,22 @@ function connectionById(connectionId: string): ConnectionConfig | undefined {
           activeTab.isExplaining ? t("toolbar.stopExplain") : t("toolbar.explainPlan")
         }}</TooltipContent>
       </Tooltip>
+      <!-- Autotrace toggle (only for DM) -->
+      <Button
+        v-if="activeConnection?.db_type === 'dameng'"
+        variant="ghost"
+        size="icon"
+        class="h-6 w-6"
+        :class="
+          props.explainMode === 'autotrace'
+            ? 'text-green-600 bg-green-100 dark:text-green-300 dark:bg-green-900/30'
+            : 'text-muted-foreground/50'
+        "
+        :disabled="activeTab.isExecuting"
+        @click="emit('update:explainMode', props.explainMode === 'autotrace' ? 'explain' : 'autotrace')"
+      >
+        <span class="font-bold" style="font-size: 9px">A</span>
+      </Button>
       <Tooltip>
         <TooltipTrigger as-child>
           <Button

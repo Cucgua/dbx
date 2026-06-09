@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { computed, ref } from "vue";
 import { useDataGridSelection } from "../../apps/desktop/src/composables/useDataGridSelection.ts";
 

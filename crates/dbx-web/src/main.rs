@@ -62,7 +62,7 @@ async fn main() {
     };
 
     // Password hash: env var takes priority, then database
-    let password_hash = if let Some(pw) = std::env::var("DBX_PASSWORD").ok() {
+    let password_hash = if let Ok(pw) = std::env::var("DBX_PASSWORD") {
         let salt = SaltString::generate(&mut OsRng);
         Some(Argon2::default().hash_password(pw.as_bytes(), &salt).expect("Failed to hash password").to_string())
     } else {
@@ -94,6 +94,7 @@ async fn main() {
         // Connection
         .route("/connection/test", post(routes::connection::test_connection))
         .route("/connection/connect", post(routes::connection::connect_db))
+        .route("/connection/final-proxy-port", post(routes::connection::connection_final_proxy_port))
         .route("/connection/disconnect", post(routes::connection::disconnect_db))
         .route("/connection/close-database", post(routes::connection::close_database_connection))
         .route("/connection/save", post(routes::connection::save_connections))
@@ -165,6 +166,8 @@ async fn main() {
         .route("/query/build-sorted-sql", post(routes::query::build_sorted_query_sql))
         .route("/query/build-explain-sql", post(routes::query::build_explain_sql))
         .route("/query/build-dropped-file-preview-sql", post(routes::query::build_dropped_file_preview_sql))
+        .route("/query/get-explain-info", post(routes::query::get_explain_info))
+        .route("/query/build-create-user-sql", post(routes::query::build_create_user_sql))
         .route("/query/build-table-select-sql", post(routes::query::build_table_select_sql))
         .route("/query/build-database-search-sql", post(routes::query::build_database_search_sql))
         .route("/query/build-search-result-where", post(routes::query::build_search_result_where))
@@ -242,6 +245,11 @@ async fn main() {
         .route("/redis/delete-keys", post(routes::redis::delete_keys))
         .route("/redis/flush-db", post(routes::redis::flush_db))
         .route("/redis/execute-command", post(routes::redis::execute_command))
+        // etcd
+        .route("/etcd/list-prefix", post(routes::etcd::list_prefix))
+        .route("/etcd/get", post(routes::etcd::get))
+        .route("/etcd/put", post(routes::etcd::put))
+        .route("/etcd/delete", post(routes::etcd::delete))
         // MongoDB
         .route("/mongo/list-databases", post(routes::mongo::list_databases))
         .route("/mongo/list-collections", post(routes::mongo::list_collections))

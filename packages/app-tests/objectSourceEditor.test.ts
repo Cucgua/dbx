@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { objectSourceSaveExecutionMode, supportsSourceBackedRoutineRename } from "../../apps/desktop/src/lib/objectSourceEditor.ts";
 
 test("object source saves use single statement execution mode", () => {

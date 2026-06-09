@@ -43,6 +43,7 @@ fn built_in_agent_list_includes_expected_driver_labels() {
     let agents = build_agent_list(&manager, None);
 
     assert!(agents.iter().any(|agent| agent.db_type == "tdengine" && agent.label == "TDengine"));
+    assert!(agents.iter().any(|agent| agent.db_type == "iotdb" && agent.label == "Apache IoTDB"));
     assert!(agents.iter().any(|agent| agent.db_type == "yashandb" && agent.label == "崖山 YashanDB"));
     assert!(agents.iter().any(|agent| agent.db_type == "access" && agent.label == "Microsoft Access"));
 }

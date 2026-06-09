@@ -37,7 +37,7 @@ export function useSqlExecution(deps: {
   activeConnection: ComputedRef<ConnectionConfig | undefined>;
   executableSql: ComputedRef<string>;
   resolveExecutableSql?: () => Promise<string>;
-  activeOutputView: Ref<"result" | "explain" | "chart">;
+  activeOutputView: Ref<"result" | "summary" | "explain" | "chart">;
 }) {
   const { t } = useI18n();
   const queryStore = useQueryStore();
@@ -50,6 +50,7 @@ export function useSqlExecution(deps: {
   const pendingDangerSql = ref("");
   const showDangerDialog = ref(false);
   const suppressDangerConfirm = ref(false);
+  const explainMode = ref<"explain" | "autotrace">("explain");
 
   async function resolvedExecutableSql(): Promise<string> {
     return deps.resolveExecutableSql ? await deps.resolveExecutableSql() : deps.executableSql.value;
@@ -77,6 +78,9 @@ export function useSqlExecution(deps: {
     const connName = connectionStore.getConfig(tab.connectionId)?.name || "";
     const start = Date.now();
     await queryStore.executeCurrentSql(sql);
+    if (tab.result && !tab.result.columns.length && !tab.results?.some((result) => result.columns.length > 0)) {
+      deps.activeOutputView.value = "summary";
+    }
     const elapsed = Date.now() - start;
     const success = !tab.result?.columns.includes("Error");
     historyStore.add({
@@ -123,7 +127,7 @@ export function useSqlExecution(deps: {
     }
 
     deps.activeOutputView.value = "explain";
-    const result = await queryStore.explainTabSql(tab.id, sql, deps.activeConnection.value?.db_type);
+    const result = await queryStore.explainTabSql(tab.id, sql, deps.activeConnection.value?.db_type, explainMode.value);
     if (!result.ok) {
       toast(explainReasonMessage(result.reason), 5000);
       return;
@@ -153,5 +157,6 @@ export function useSqlExecution(deps: {
     cancelActiveExecution,
     tryExplain,
     onDangerConfirm,
+    explainMode,
   };
 }

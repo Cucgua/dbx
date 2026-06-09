@@ -21,6 +21,7 @@ import type {
   SavedSqlFolder,
   SavedSqlLibrary,
 } from "@/types/database";
+import type { SidebarObjectKind } from "@/lib/databaseObjectCapabilities";
 import type { AiConfig } from "@/stores/settingsStore";
 import type { AiWorkflowEvent } from "@/lib/aiWorkflowEvents";
 import type { QueryEditability } from "@/lib/sqlAnalysis";
@@ -187,6 +188,7 @@ export interface DriverRuntimeSummary {
 export interface DesktopSettings {
   show_tray_icon: boolean;
   icon_theme: "default" | "black";
+  debug_logging_enabled: boolean;
 }
 
 export interface WebDavConfig {
@@ -538,6 +540,10 @@ export async function connectDb(config: ConnectionConfig): Promise<string> {
   return invoke("connect_db", { config });
 }
 
+export async function connectionFinalProxyPort(config: ConnectionConfig): Promise<number> {
+  return invoke("connection_final_proxy_port", { config });
+}
+
 export async function disconnectDb(connectionId: string): Promise<void> {
   return invoke("disconnect_db", { connectionId });
 }
@@ -632,8 +638,13 @@ export async function listTables(
   return invoke("list_tables", { connectionId, database, schema, filter, limit });
 }
 
-export async function listObjects(connectionId: string, database: string, schema: string): Promise<ObjectInfo[]> {
-  return invoke("list_objects", { connectionId, database, schema });
+export async function listObjects(
+  connectionId: string,
+  database: string,
+  schema: string,
+  objectTypes?: SidebarObjectKind[],
+): Promise<ObjectInfo[]> {
+  return invoke("list_objects", { connectionId, database, schema, objectTypes });
 }
 
 export async function listCompletionObjects(
@@ -780,6 +791,26 @@ export async function buildSortedQuerySql(options: SortedQuerySqlOptions): Promi
 
 export async function buildExplainSql(options: BuildExplainSqlOptions): Promise<ExplainSqlBuildResult> {
   return invoke("build_explain_sql", { options });
+}
+
+export async function buildCreateUserSql(username: string, password: string, tablespace: string): Promise<string> {
+  return invoke("build_create_user_sql", { username, password, tablespace });
+}
+
+export async function getExplainInfo(
+  connectionId: string,
+  database: string | undefined,
+  schema: string | undefined,
+  sql: string,
+  mode: string,
+): Promise<string | undefined> {
+  try {
+    const result = await invoke<string>("get_explain_info", { connectionId, database, schema, sql, mode });
+    return result;
+  } catch (e: any) {
+    console.error("[getExplainInfo] invoke failed:", e?.message || e);
+    return undefined;
+  }
 }
 
 export async function buildDroppedFilePreviewSql(options: DroppedFilePreviewSqlOptions): Promise<string | undefined> {
@@ -1409,6 +1440,74 @@ export async function redisLoadMore(
   count: number,
 ): Promise<RedisValue> {
   return invoke("redis_load_more", { connectionId, db, keyRaw, keyType, cursor, count });
+}
+
+// --- etcd ---
+export type KvValueEncoding = "utf8" | "base64";
+
+export interface KvValue {
+  encoding: KvValueEncoding;
+  data: string;
+}
+
+export interface KvKeyMetadata {
+  createRevision?: number | null;
+  modRevision?: number | null;
+  version?: number | null;
+  lease?: number | null;
+  valueSize?: number | null;
+}
+
+export interface KvKeySummary extends KvKeyMetadata {
+  key: string;
+}
+
+export interface KvListPrefixResponse {
+  keys: KvKeySummary[];
+  continuation?: string | null;
+  revision?: number | null;
+}
+
+export interface KvGetResponse {
+  found: boolean;
+  key?: string | null;
+  value?: KvValue | null;
+  metadata?: KvKeyMetadata | null;
+}
+
+export interface KvPutResponse {
+  revision?: number | null;
+}
+
+export interface KvDeleteResponse {
+  deleted: number;
+  revision?: number | null;
+}
+
+export async function etcdListPrefix(
+  connectionId: string,
+  prefix: string,
+  limit: number,
+  continuation?: string | null,
+): Promise<KvListPrefixResponse> {
+  return invoke("etcd_list_prefix", { connectionId, prefix, limit, continuation });
+}
+
+export async function etcdGet(connectionId: string, key: string): Promise<KvGetResponse> {
+  return invoke("etcd_get", { connectionId, key });
+}
+
+export async function etcdPut(
+  connectionId: string,
+  key: string,
+  value: KvValue,
+  lease?: number | null,
+): Promise<KvPutResponse> {
+  return invoke("etcd_put", { connectionId, key, value, lease });
+}
+
+export async function etcdDelete(connectionId: string, key: string): Promise<KvDeleteResponse> {
+  return invoke("etcd_delete", { connectionId, key });
 }
 
 // --- MongoDB ---

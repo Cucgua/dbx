@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import type { ColumnInfo } from "../../apps/desktop/src/types/database.ts";
 import { findMatchedSearchColumns, isNumericSearchColumn, isTextSearchColumn } from "../../apps/desktop/src/lib/databaseSearch.ts";

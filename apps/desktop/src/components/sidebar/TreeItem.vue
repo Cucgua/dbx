@@ -49,6 +49,7 @@ import {
   Package,
   Clipboard,
   Sparkles,
+  UsersRound,
 } from "@lucide/vue";
 import CustomContextMenu, { type ContextMenuItem } from "@/components/ui/CustomContextMenu.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -119,6 +120,7 @@ import { buildRoutineRenameObjectSourceStatements, supportsSourceBackedRoutineRe
 import { buildViewDdl } from "@/lib/viewDdl";
 import { getTableStructureCapabilities } from "@/lib/tableStructureCapabilities";
 import {
+  connectionObjectTreeNodeSchema,
   connectionObjectTreeQuerySchema,
   connectionUsesDatabaseObjectTreeMode,
   effectiveDatabaseTypeForConnection,
@@ -132,12 +134,15 @@ import {
   treeSelectionRangeIdsByIndex,
   treeSelectionRangeIds,
 } from "@/lib/sidebarTreeSelection";
+import { selectedConnectionDeleteTargets } from "@/lib/sidebarConnectionSelection";
+import { supportsDatabaseUserAdmin } from "@/lib/databaseUserAdmin";
 import { sidebarTreeContextKey } from "@/lib/sidebarTreeContext";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import ProcedureExecutionDialog from "@/components/objects/ProcedureExecutionDialog.vue";
 import { useExportTracker, type ExportTask } from "@/composables/useExportTracker";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { copyToClipboard } from "@/lib/clipboard";
+import { hasEnabledTransportLayers } from "@/lib/connectionTransport";
 import { formatShortcut } from "@/lib/shortcutRegistry";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import ConnectionErrorIndicator from "@/components/connection/ConnectionErrorIndicator.vue";
@@ -243,6 +248,8 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: Zap, colorClass: "text-orange-400" };
     case "object-browser":
       return { icon: TableProperties, colorClass: "text-primary" };
+    case "user-admin":
+      return { icon: UsersRound, colorClass: "text-primary" };
     case "saved-sql-root":
       return { icon: FolderOpen, colorClass: "text-blue-500" };
     case "saved-sql-folder":
@@ -257,6 +264,8 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: Zap, colorClass: "text-orange-300" };
     case "redis-db":
       return { icon: Database, colorClass: "text-red-400" };
+    case "etcd-root":
+      return { icon: Database, colorClass: "text-sky-500" };
     case "mongo-db":
       return { icon: Database, colorClass: "text-yellow-500" };
     case "mongo-collection":
@@ -265,6 +274,8 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: ScrollText, colorClass: "text-blue-500" };
     case "function":
       return { icon: Braces, colorClass: "text-amber-500" };
+    case "sequence":
+      return { icon: ListTree, colorClass: "text-emerald-500" };
     case "package":
       return { icon: Package, colorClass: "text-cyan-500" };
     case "package-body":
@@ -277,6 +288,8 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: ScrollText, colorClass: "text-blue-500" };
     case "group-functions":
       return { icon: Braces, colorClass: "text-amber-500" };
+    case "group-sequences":
+      return { icon: ListTree, colorClass: "text-emerald-500" };
     case "group-packages":
       return { icon: Package, colorClass: "text-cyan-500" };
     case "group-partitions":
@@ -295,6 +308,7 @@ const groupTypes: Set<TreeNodeType> = new Set([
   "group-views",
   "group-procedures",
   "group-functions",
+  "group-sequences",
   "group-packages",
   "group-partitions",
   "saved-sql-root",
@@ -317,6 +331,7 @@ function isGroupLabel(node: TreeNode): boolean {
 
 function displayLabel(node: TreeNode): string {
   if (node.type === "object-browser") return t(node.label, { count: node.objectCount ?? 0 });
+  if (node.type === "user-admin") return t(node.label);
   if (node.label === "tree.defaultDatabase") return t(node.label);
   return isGroupLabel(node) ? t(node.label) : node.label;
 }
@@ -351,14 +366,20 @@ async function toggle() {
     return;
   }
 
-  if (
+  if (node.type === "group-partitions") {
+    node.isExpanded = !node.isExpanded;
+    emit("node-toggled", node, wasExpanded);
+    return;
+  }
+
+  const databaseObjectGroup =
     node.type === "group-tables" ||
     node.type === "group-views" ||
     node.type === "group-procedures" ||
     node.type === "group-functions" ||
-    node.type === "group-packages" ||
-    node.type === "group-partitions"
-  ) {
+    node.type === "group-sequences" ||
+    node.type === "group-packages";
+  if (databaseObjectGroup && connectionStore.isTreeNodeChildrenLoaded(node.id)) {
     node.isExpanded = !node.isExpanded;
     emit("node-toggled", node, wasExpanded);
     return;
@@ -375,6 +396,8 @@ async function toggle() {
       const config = connectionStore.getConfig(node.connectionId);
       if (config?.db_type === "redis") {
         await connectionStore.loadRedisDatabases(node.connectionId);
+      } else if (config?.db_type === "etcd") {
+        await connectionStore.loadEtcdRoot(node.connectionId);
       } else if (config?.db_type === "mongodb" || config?.db_type === "elasticsearch") {
         await connectionStore.loadMongoDatabases(node.connectionId);
       } else {
@@ -383,6 +406,11 @@ async function toggle() {
     } else if (node.type === "redis-db" && node.connectionId && node.database) {
       const tabTitle = `${connectionStore.getConfig(node.connectionId)?.name || "Redis"}:db${node.database}`;
       queryStore.createTab(node.connectionId, node.database, tabTitle, "redis");
+    } else if (node.type === "etcd-root" && node.connectionId) {
+      const tabTitle = `${connectionStore.getConfig(node.connectionId)?.name || "etcd"}:keys`;
+      queryStore.createTab(node.connectionId, "", tabTitle, "etcd");
+    } else if (node.type === "user-admin" && node.connectionId) {
+      queryStore.openUserAdmin(node.connectionId);
     } else if (node.type === "mongo-db" && node.connectionId && node.database) {
       await connectionStore.loadMongoCollections(node.connectionId, node.database);
     } else if (node.type === "mongo-collection" && node.connectionId && node.database) {
@@ -429,6 +457,8 @@ async function toggle() {
       node.tableName
     ) {
       await connectionStore.loadTriggers(node.connectionId, node.database, node.tableName, node.schema, node.id);
+    } else if (databaseObjectGroup) {
+      await connectionStore.loadObjectGroupChildren(node);
     }
     emit("node-toggled", node, wasExpanded);
   } catch (e: any) {
@@ -453,6 +483,7 @@ function runRowClickAction() {
   } else if (
     node.type === "procedure" ||
     node.type === "function" ||
+    node.type === "sequence" ||
     node.type === "package" ||
     node.type === "package-body"
   ) {
@@ -517,6 +548,9 @@ function onClick(event: MouseEvent) {
     event.stopPropagation();
     return;
   }
+  // Row clicks must not bubble to the tree container, whose click handler
+  // clears the selection when the blank area is clicked (issue #681).
+  event.stopPropagation();
   if (event.shiftKey) {
     selectTreeNodeRange(props.node);
     rowRef.value?.focus({ preventScroll: true });
@@ -731,6 +765,18 @@ async function openObjectBrowser() {
   }
 }
 
+async function openUserAdmin() {
+  const node = props.node;
+  if (!node.connectionId) return;
+  try {
+    await connectionStore.ensureConnected(node.connectionId);
+    connectionStore.activeConnectionId = node.connectionId;
+    queryStore.openUserAdmin(node.connectionId);
+  } catch (e: any) {
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+  }
+}
+
 function openSavedSqlFile() {
   const id = props.node.savedSqlId;
   if (!id) return;
@@ -756,7 +802,7 @@ async function openData() {
     table: node.label,
     dbType: config?.db_type,
   });
-  const tableSchema = connectionUsesDatabaseObjectTreeMode(config) ? undefined : node.schema;
+  const tableSchema = connectionObjectTreeNodeSchema(config, node.database, node.schema);
   const tabId = (() => {
     if (settingsStore.editorSettings.reuseDataTab) {
       const existing = queryStore.tabs.find(
@@ -906,20 +952,41 @@ async function refresh() {
 
 const showDeleteConfirm = ref(false);
 
+function connectionDeleteTargets() {
+  return selectedConnectionDeleteTargets(props.node, selectedTreeNodesInVisibleOrder());
+}
+
+function connectionDeleteMenuLabel(): string {
+  const count = connectionDeleteTargets().length;
+  return count > 1 ? t("contextMenu.deleteSelectedConnections", { count }) : t("contextMenu.deleteConnection");
+}
+
+function connectionDeleteConfirmMessage(): string {
+  const targets = connectionDeleteTargets();
+  return targets.length > 1
+    ? t("contextMenu.confirmDeleteSelectedMessage", { count: targets.length })
+    : t("contextMenu.confirmDeleteMessage", { name: props.node.label });
+}
+
 function deleteConnection() {
+  if (!connectionDeleteTargets().length) return;
   showDeleteConfirm.value = true;
 }
 
 async function confirmDelete() {
-  const node = props.node;
-  if (node.connectionId) {
-    try {
-      await connectionStore.disconnect(node.connectionId);
-      await connectionStore.removeConnection(node.connectionId);
-      toast(t("connection.deleted"), 2000);
-    } catch (e: any) {
-      toast(t("connection.saveFailed", { message: e?.message || String(e) }), 5000);
+  const targets = connectionDeleteTargets();
+  if (!targets.length) return;
+  try {
+    for (const target of targets) {
+      await connectionStore.disconnect(target.connectionId);
     }
+    await connectionStore.removeConnections(targets.map((target) => target.connectionId));
+    toast(
+      targets.length > 1 ? t("connection.deletedSelected", { count: targets.length }) : t("connection.deleted"),
+      2000,
+    );
+  } catch (e: any) {
+    toast(t("connection.saveFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
@@ -930,6 +997,20 @@ async function copyName() {
     toast(t("connection.copied"), 2000);
   } catch (e: any) {
     toast(t("grid.copyFailed", { message: e?.message || String(e) }), 5000);
+  }
+}
+
+async function copyFinalProxyPort() {
+  const connectionId = props.node.connectionId;
+  const config = connectionId ? connectionStore.getConfig(connectionId) : undefined;
+  if (!config || !hasEnabledTransportLayers(config)) return;
+
+  try {
+    const port = await api.connectionFinalProxyPort(config);
+    await copyToClipboard(String(port));
+    toast(t("contextMenu.finalProxyPortCopied", { port }), 2000);
+  } catch (e: any) {
+    toast(t("grid.copyFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
   }
 }
 
@@ -1427,11 +1508,13 @@ function viewObjectSource() {
     .then(async (result) => {
       const tabId = queryStore.createTab(node.connectionId!, node.database!, `Source - ${node.label}`);
       queryStore.updateSql(tabId, result.source);
-      queryStore.setObjectSource(tabId, {
-        schema,
-        name: node.label,
-        objectType,
-      });
+      if (objectType !== "SEQUENCE") {
+        queryStore.setObjectSource(tabId, {
+          schema,
+          name: node.label,
+          objectType,
+        });
+      }
     })
     .catch((e: any) => {
       toast(e?.message || String(e), 5000);
@@ -2751,6 +2834,10 @@ const canConfigureVisibleDatabases = computed(() => {
   if (props.node.type !== "connection" || !props.node.connectionId) return false;
   return connectionStore.getConfig(props.node.connectionId)?.db_type !== "elasticsearch";
 });
+const canCopyFinalProxyPort = computed(() => {
+  if (props.node.type !== "connection" || !props.node.connectionId) return false;
+  return hasEnabledTransportLayers(connectionStore.getConfig(props.node.connectionId));
+});
 
 function connectionIconType(connectionId?: string) {
   const config = connectionId ? connectionStore.getConfig(connectionId) : undefined;
@@ -2811,15 +2898,18 @@ watch(
 );
 
 function finishRenameGroup() {
+  // Guard against double invocation: pressing Enter sets isRenamingGroup=false
+  // and unmounts the input, which then fires @blur -> finishRenameGroup again.
+  // The first call can rebuild the tree and recycle props.node onto a different
+  // group, so a second run would act on the wrong group and cascade across
+  // groups (issue #681).
+  if (!isRenamingGroup.value) return;
   isRenamingGroup.value = false;
   const trimmed = renameInput.value.trim();
-  if (!trimmed) {
-    connectionStore.deleteConnectionGroup(props.node.id);
-    return;
-  }
-  if (trimmed !== props.node.label) {
-    connectionStore.renameConnectionGroup(props.node.id, trimmed);
-  }
+  // An empty name cancels the rename and keeps the group as-is — never delete
+  // here. Deleting a group is done explicitly via the context menu (issue #681).
+  if (!trimmed || trimmed === props.node.label) return;
+  connectionStore.renameConnectionGroup(props.node.id, trimmed);
 }
 
 function deleteConnectionGroup() {
@@ -2945,7 +3035,13 @@ const {
   startDrag,
   updateTarget,
   clearTarget,
-} = useDragSort((draggedId, targetId, position) => connectionStore.reorderSidebarEntry(draggedId, targetId, position));
+} = useDragSort((draggedId, targetId, position) => {
+  // If the grabbed row is part of a multi-selection, move all selected rows
+  // together; otherwise just the grabbed one (issue #681).
+  const selected = connectionStore.selectedTreeNodeIds;
+  const draggedIds = selected.length > 1 && selected.includes(draggedId) ? [...selected] : [draggedId];
+  connectionStore.reorderSidebarEntries(draggedIds, targetId, position);
+});
 
 const isDraggable = computed(() => {
   if (props.dragDisabled) return false;
@@ -3121,6 +3217,12 @@ function treeItemMenuItems(): ContextMenuItem[] {
       items.push({ label: t("contextMenu.closeConnection"), action: disconnectConnection, icon: Unplug });
     }
     items.push({ label: t("contextMenu.newQuery"), action: newQuery, icon: TerminalSquare });
+    if (supportsDatabaseUserAdmin(currentDatabaseType())) {
+      items.push({ label: t("contextMenu.userAdmin"), action: openUserAdmin, icon: UsersRound });
+    }
+    if (canCopyFinalProxyPort.value) {
+      items.push({ label: t("contextMenu.copyFinalProxyPort"), action: copyFinalProxyPort, icon: Network });
+    }
     if (canOpenSqlFileExecution.value) {
       items.push({ label: t("sqlFile.title"), action: openSqlFileExecution, icon: FileCode });
     }
@@ -3166,7 +3268,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
     items.push({ label: t("contextMenu.duplicateConnection"), action: duplicateConnection, icon: CopyPlus });
     items.push({ label: "", separator: true });
     items.push({
-      label: t("contextMenu.deleteConnection"),
+      label: connectionDeleteMenuLabel(),
       action: deleteConnection,
       icon: Trash2,
       shortcut: shortcutDelete,
@@ -3292,6 +3394,16 @@ function treeItemMenuItems(): ContextMenuItem[] {
   }
 
   // 5. Redis DB / Mongo DB
+  if (node.type === "etcd-root") {
+    items.push({ label: t("contextMenu.openConnection"), action: toggle, icon: Database });
+    return items;
+  }
+
+  if (node.type === "user-admin") {
+    items.push({ label: t("contextMenu.openUserAdmin"), action: openUserAdmin, icon: UsersRound });
+    return items;
+  }
+
   if (node.type === "redis-db" || node.type === "mongo-db") {
     items.push({ label: t("contextMenu.newQuery"), action: newQuery, icon: TerminalSquare });
     if (!isNodeDefaultDatabase.value) {
@@ -3464,6 +3576,13 @@ function treeItemMenuItems(): ContextMenuItem[] {
     return items;
   }
 
+  if (node.type === "sequence") {
+    items.push({ label: t("contextMenu.viewSource"), action: viewObjectSource, icon: Code2 });
+    items.push({ label: "", separator: true });
+    items.push({ label: t("contextMenu.copyName"), action: copyName, icon: Copy, shortcut: shortcutCopyName.value });
+    return items;
+  }
+
   if (node.type === "package" || node.type === "package-body") {
     items.push({ label: t("contextMenu.viewSource"), action: viewObjectSource, icon: Code2 });
     items.push({ label: "", separator: true });
@@ -3626,6 +3745,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
               node.type === 'group-views' ||
               node.type === 'group-procedures' ||
               node.type === 'group-functions' ||
+              node.type === 'group-sequences' ||
               node.type === 'group-packages' ||
               node.type === 'group-partitions') &&
             node.objectCount != null
@@ -3796,7 +3916,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
         <DialogTitle>{{ t("contextMenu.confirmDeleteTitle") }}</DialogTitle>
       </DialogHeader>
       <p class="text-sm text-muted-foreground">
-        {{ t("contextMenu.confirmDeleteMessage", { name: node.label }) }}
+        {{ connectionDeleteConfirmMessage() }}
       </p>
       <DialogFooter>
         <Button variant="outline" @click="showDeleteConfirm = false">{{ t("dangerDialog.cancel") }}</Button>
@@ -3806,7 +3926,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
             showDeleteConfirm = false;
             confirmDelete();
           "
-          >{{ t("contextMenu.deleteConnection") }}</Button
+          >{{ connectionDeleteMenuLabel() }}</Button
         >
       </DialogFooter>
     </DialogContent>

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import { canDownloadAndInstallUpdate } from "../../apps/desktop/src/composables/useAppUpdater.ts";
 import type { UpdateInfo } from "../../apps/desktop/src/lib/api.ts";

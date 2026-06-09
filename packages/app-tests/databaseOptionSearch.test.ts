@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { filterDatabaseOptions } from "../../apps/desktop/src/lib/databaseOptionSearch.ts";
 
 test("returns all database options when the search query is empty", () => {

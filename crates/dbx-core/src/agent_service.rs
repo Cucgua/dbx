@@ -113,9 +113,14 @@ pub fn jre_needs_install(am: &AgentManager, registry: &AgentRegistry, jre_key: &
 
 pub fn local_agent_jar_candidates(db_type: &str) -> Vec<PathBuf> {
     let jar_name = format!("dbx-agent-{db_type}.jar");
-    let relative = PathBuf::from("..").join("dbx-agents").join(db_type).join("build").join("libs").join(&jar_name);
-    let nested = PathBuf::from("dbx-agents").join(db_type).join("build").join("libs").join(&jar_name);
-    vec![relative, nested]
+    let relative_driver =
+        PathBuf::from("..").join("dbx-agents").join("drivers").join(db_type).join("build").join("libs").join(&jar_name);
+    let nested_driver =
+        PathBuf::from("dbx-agents").join("drivers").join(db_type).join("build").join("libs").join(&jar_name);
+    let relative_legacy =
+        PathBuf::from("..").join("dbx-agents").join(db_type).join("build").join("libs").join(&jar_name);
+    let nested_legacy = PathBuf::from("dbx-agents").join(db_type).join("build").join("libs").join(&jar_name);
+    vec![relative_driver, nested_driver, relative_legacy, nested_legacy]
 }
 
 pub fn find_local_agent_jar(db_type: &str) -> Option<PathBuf> {
@@ -419,6 +424,7 @@ async fn install_agent_driver_from_registry(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn download_with_progress(
     am: &AgentManager,
     progress: &impl Fn(AgentProgressEvent),

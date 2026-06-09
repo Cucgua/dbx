@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 
 import {
   buildDataGridCellDetail,
@@ -9,6 +9,8 @@ import {
   buildDataGridRowDetail,
   dataGridRowDetailJson,
   dataGridRowDetailTsv,
+  filterDataGridDetailFields,
+  type DataGridCellDetail,
 } from "../../apps/desktop/src/lib/dataGridDetail.ts";
 import type { CellValue } from "../../apps/desktop/src/lib/cellValue.ts";
 
@@ -218,4 +220,58 @@ test("dataGridColumnDetailJson and dataGridColumnDetailTsv format copy payloads"
     '[\n  {\n    "row": 1,\n    "value": "Ada"\n  },\n  {\n    "row": 2,\n    "value": null\n  }\n]',
   );
   assert.equal(dataGridColumnDetailTsv(detail), "Ada\nNULL");
+});
+
+const detailFields: DataGridCellDetail[] = [
+  { rowNumber: 1, column: "id", rawValuePreview: "7", displayValuePreview: "7" } as DataGridCellDetail,
+  { rowNumber: 2, column: "Email", rawValuePreview: "ada@example.com", displayValuePreview: "ada@example.com" } as DataGridCellDetail,
+  { rowNumber: 3, column: "status", rawValuePreview: "ACTIVE", displayValuePreview: "Active" } as DataGridCellDetail,
+];
+
+test("filterDataGridDetailFields returns all fields for an empty keyword", () => {
+  const result = filterDataGridDetailFields(detailFields, "   ");
+
+  assert.deepEqual(result, detailFields);
+  assert.notEqual(result, detailFields);
+});
+
+test("filterDataGridDetailFields matches column names case-insensitively", () => {
+  const result = filterDataGridDetailFields(detailFields, "EMAIL");
+
+  assert.deepEqual(
+    result.map((field) => field.column),
+    ["Email"],
+  );
+});
+
+test("filterDataGridDetailFields matches raw value previews", () => {
+  const result = filterDataGridDetailFields(detailFields, "example.com");
+
+  assert.deepEqual(
+    result.map((field) => field.column),
+    ["Email"],
+  );
+});
+
+test("filterDataGridDetailFields matches row numbers", () => {
+  const result = filterDataGridDetailFields(detailFields, "3");
+
+  assert.deepEqual(
+    result.map((field) => field.rowNumber),
+    [3],
+  );
+});
+
+test("filterDataGridDetailFields returns an empty array when nothing matches", () => {
+  const result = filterDataGridDetailFields(detailFields, "nope");
+
+  assert.deepEqual(result, []);
+});
+
+test("filterDataGridDetailFields does not mutate the input array", () => {
+  const original = [...detailFields];
+  const result = filterDataGridDetailFields(detailFields, "id");
+
+  assert.deepEqual(detailFields, original);
+  assert.notEqual(result, detailFields);
 });

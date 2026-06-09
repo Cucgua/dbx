@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { showAgentDriverInstallHint } from "../../apps/desktop/src/lib/agentDriverInstallHint.ts";
 
 test("hides the agent driver install hint when the selected driver is installed", () => {

@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { isDangerousSql, stripSqlComments } from "../../apps/desktop/src/composables/useSqlExecution.ts";
 
 test("stripSqlComments removes block comments", () => {

@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import type { AiAction } from "../../apps/desktop/src/lib/ai.ts";
 import { AI_SKILL_DEFINITIONS, aiSkillForAction } from "../../apps/desktop/src/lib/aiSkills.ts";
 

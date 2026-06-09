@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { restoreOpenTabsState, serializeOpenTabs } from "../../apps/desktop/src/lib/openTabsPersistence.ts";
 import type { QueryTab } from "../../apps/desktop/src/types/database.ts";
 

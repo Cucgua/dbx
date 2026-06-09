@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ConnectionConfig } from "../src/connections.js";
 import type { ColumnInfo, TableInfo } from "../src/database.js";
 import { buildSchemaContext, formatSchemaContext } from "../src/schema-context.js";

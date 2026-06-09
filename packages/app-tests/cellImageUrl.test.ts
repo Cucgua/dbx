@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { cellImagePreviewUrl } from "../../apps/desktop/src/lib/cellImageUrl.ts";
 
 test("detects obvious remote image URLs", () => {

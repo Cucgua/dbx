@@ -1,6 +1,6 @@
 {
   "name": "@dbx-app/node-core",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Shared Node.js database and DBX connection utilities for DBX CLI and MCP server",
   "type": "module",
   "engines": {
@@ -23,11 +23,11 @@
     "./sql-safety": "./dist/sql-safety.js"
   },
   "scripts": {
-    "test": "tsx --test tests/*.test.ts",
+    "test": "vitest run --config vitest.config.ts",
     "build": "tsc",
     "prepublishOnly": "tsc"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "better-sqlite3": "^12.9.0",
     "keytar": "^7.9.0",

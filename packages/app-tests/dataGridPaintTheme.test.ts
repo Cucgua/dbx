@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { resolveDataGridPaintTheme } from "../../apps/desktop/src/lib/dataGridPaintTheme.ts";
 
 test("canvas grid paint theme falls back from advanced CSS colors", () => {

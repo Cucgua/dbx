@@ -78,6 +78,24 @@ pub async fn connect_db(
     Ok(Json(connection_id))
 }
 
+pub async fn connection_final_proxy_port(
+    State(state): State<Arc<WebState>>,
+    Json(body): Json<ConnectRequest>,
+) -> Result<Json<u16>, AppError> {
+    let runtime_config = body.config.canonicalized();
+    if !runtime_config.has_effective_transport_layers() {
+        return Err(AppError("Connection has no configured transport layers".to_string()));
+    }
+
+    let app = &state.app;
+    let connection_id = runtime_config.id.clone();
+    let db_config = dbx_core::connection::metadata_connection_config(&runtime_config);
+    app.configs.write().await.insert(connection_id.clone(), runtime_config);
+
+    let (_, port) = app.connection_host_port(&connection_id, &db_config).await.map_err(AppError)?;
+    Ok(Json(port))
+}
+
 pub async fn disconnect_db(
     State(state): State<Arc<WebState>>,
     Json(body): Json<DisconnectRequest>,
@@ -93,8 +111,7 @@ pub async fn disconnect_db(
     }
     drop(connections);
 
-    app.tunnels.stop_tunnel(&body.connection_id).await;
-    app.proxy_tunnels.stop_tunnel(&body.connection_id).await;
+    app.reset_connection_transport(&body.connection_id).await;
 
     Ok(Json(()))
 }
@@ -137,7 +154,7 @@ mod tests {
     use axum::extract::State;
     use axum::Json;
     use dbx_core::connection::{AppState, PoolKind};
-    use dbx_core::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
+    use dbx_core::models::connection::{ConnectionConfig, DatabaseType};
     use dbx_core::storage::Storage;
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
@@ -159,26 +176,13 @@ mod tests {
             visible_databases: None,
             attached_databases: Vec::new(),
             color: None,
-            ssh_enabled: false,
-            ssh_host: String::new(),
-            ssh_port: 22,
-            ssh_user: String::new(),
-            ssh_password: String::new(),
-            ssh_key_path: String::new(),
-            ssh_key_passphrase: String::new(),
-            ssh_expose_lan: false,
-            ssh_connect_timeout_secs: dbx_core::models::connection::default_ssh_connect_timeout_secs(),
-            ssh_tunnels: Vec::new(),
+            transport_layers: Vec::new(),
             connect_timeout_secs: dbx_core::models::connection::default_connect_timeout_secs(),
             query_timeout_secs: dbx_core::models::connection::default_query_timeout_secs(),
-            proxy_enabled: false,
-            proxy_type: ProxyType::Socks5,
-            proxy_host: String::new(),
-            proxy_port: 1080,
-            proxy_username: String::new(),
-            proxy_password: String::new(),
             ssl: false,
             ca_cert_path: String::new(),
+            client_cert_path: String::new(),
+            client_key_path: String::new(),
             sysdba: false,
             oracle_connection_type: None,
             connection_string: None,
@@ -189,6 +193,7 @@ mod tests {
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
             redis_cluster_nodes: String::new(),
+            etcd_endpoints: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),

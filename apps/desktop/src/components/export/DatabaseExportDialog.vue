@@ -65,7 +65,7 @@ const pendingPrefillTable = ref("");
 const pendingPrefillTables = ref<string[]>([]);
 
 const sqlConnections = computed(() =>
-  store.connections.filter((c) => !["redis", "mongodb", "elasticsearch"].includes(c.db_type)),
+  store.connections.filter((c) => !["redis", "mongodb", "elasticsearch", "etcd"].includes(c.db_type)),
 );
 
 const canExport = computed(

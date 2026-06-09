@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { evaluateJdbcPluginReleaseBump } from "../../.github/scripts/bump-jdbc-plugin-version.mjs";
 import { evaluateJdbcPluginVersionChange } from "../../.github/scripts/check-jdbc-plugin-version.mjs";
 import { augmentLatestJsonWithJdbcPlugin } from "../../.github/scripts/augment-latest-json-jdbc-plugin.mjs";

@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import {
   SIDEBAR_TREE_ROW_HEIGHT,
   SIDEBAR_TREE_PRERENDER_COUNT,

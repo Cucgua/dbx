@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import test from "node:test";
+import { test } from "vitest";
 
 const packageDir = fileURLToPath(new URL("..", import.meta.url));
 const cliSource = fileURLToPath(new URL("../src/cli.ts", import.meta.url));

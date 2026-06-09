@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { nextDataGridSortState } from "../../apps/desktop/src/lib/dataGridSort.ts";
 
 test("cycles data grid header sort through asc, desc, and clear", () => {

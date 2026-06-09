@@ -488,6 +488,20 @@ fn format_pg_timestamptz(value: DateTime<Local>) -> String {
     value.to_rfc3339()
 }
 
+/// Render PostgreSQL's internal `"char"` type (OID 18) as the character it
+/// stores, matching psql's `charout`. The driver decodes this single-byte type
+/// as i8; emitting the numeric value would leak the raw ASCII code (issue #669).
+/// A zero byte maps to an empty string; any other byte is interpreted as a
+/// Latin-1 code point so the result is always valid UTF-8 and never panics.
+fn pg_char_to_json(byte: i8) -> serde_json::Value {
+    let b = byte as u8;
+    if b == 0 {
+        serde_json::Value::String(String::new())
+    } else {
+        serde_json::Value::String(char::from(b).to_string())
+    }
+}
+
 fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value {
     let upper = type_name.to_uppercase();
 
@@ -539,6 +553,14 @@ fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value
 
     if matches!(upper.as_str(), "OID" | "XID" | "CID") {
         return pg_system_u32_to_json(row, idx).unwrap_or(serde_json::Value::Null);
+    }
+
+    // PostgreSQL's internal "char" type (OID 18, e.g. pg_depend.deptype) is a
+    // single byte the driver decodes as i8. Without this branch it falls through
+    // to the i8 arm below and surfaces the raw ASCII code (110 for 'n') instead
+    // of the character. SQL CHAR(n) is a different type ("bpchar"), unaffected.
+    if upper == "CHAR" {
+        return row.try_get::<_, i8>(idx).map(pg_char_to_json).unwrap_or(serde_json::Value::Null);
     }
 
     if upper.starts_with('_') {
@@ -670,6 +692,7 @@ async fn execute_select_prepared(
         truncated,
         session_id: None,
         has_more: false,
+        column_types,
     })
 }
 
@@ -719,6 +742,7 @@ async fn execute_select_text(
         truncated,
         session_id: None,
         has_more: false,
+        column_types: Vec::new(),
     })
 }
 
@@ -1127,6 +1151,7 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
        CASE c.relkind \
          WHEN 'v' THEN 'VIEW' \
          WHEN 'm' THEN 'VIEW' \
+         WHEN 'S' THEN 'SEQUENCE' \
          ELSE 'TABLE' \
        END AS object_type, \
        obj_description(c.oid) AS object_comment, \
@@ -1138,7 +1163,7 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
        ) AS updated_at, \
        CASE WHEN pc.relkind = 'p' THEN pn.nspname ELSE NULL END AS parent_schema, \
        CASE WHEN pc.relkind = 'p' THEN pc.relname ELSE NULL END AS parent_name, \
-       CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
+       CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 WHEN 'S' THEN 4 ELSE 0 END AS sort_order \
      FROM pg_catalog.pg_class c \
      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
      LEFT JOIN pg_catalog.pg_inherits i ON i.inhrelid = c.oid \
@@ -1147,7 +1172,7 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
      LEFT JOIN LATERAL pg_stat_file( \
        CASE WHEN c.relkind IN ('r','m','f','p') THEN pg_relation_filepath(c.oid) END, true \
      ) stat ON true \
-     WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
+     WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p','S') \
      UNION ALL \
      SELECT p.proname AS object_name, \
        CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS object_type, \
@@ -1168,6 +1193,7 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
        CASE c.relkind \
          WHEN 'v' THEN 'VIEW' \
          WHEN 'm' THEN 'VIEW' \
+         WHEN 'S' THEN 'SEQUENCE' \
          ELSE 'TABLE' \
        END AS object_type, \
        obj_description(c.oid) AS object_comment, \
@@ -1175,13 +1201,13 @@ fn list_objects_sql(include_timestamps: bool) -> &'static str {
        NULL::text AS updated_at, \
        CASE WHEN pc.relkind = 'p' THEN pn.nspname ELSE NULL END AS parent_schema, \
        CASE WHEN pc.relkind = 'p' THEN pc.relname ELSE NULL END AS parent_name, \
-       CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS sort_order \
+       CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 WHEN 'S' THEN 4 ELSE 0 END AS sort_order \
      FROM pg_catalog.pg_class c \
      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
      LEFT JOIN pg_catalog.pg_inherits i ON i.inhrelid = c.oid \
      LEFT JOIN pg_catalog.pg_class pc ON pc.oid = i.inhparent \
      LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace \
-     WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p') \
+     WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','f','p','S') \
      UNION ALL \
      SELECT p.proname AS object_name, \
        CASE p.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END AS object_type, \
@@ -1412,6 +1438,7 @@ pub async fn execute_query_with_max_rows(
             truncated: false,
             session_id: None,
             has_more: false,
+            column_types: Vec::new(),
         })
     }
 }
@@ -1497,6 +1524,7 @@ async fn execute_query_with_max_rows_inner(
             truncated: false,
             session_id: None,
             has_more: false,
+            column_types: Vec::new(),
         })
     }
 }
@@ -1741,6 +1769,25 @@ mod tests {
     }
 
     #[test]
+    fn pg_char_type_renders_byte_as_character() {
+        // The internal "char" type (OID 18, e.g. pg_depend.deptype) is decoded
+        // as i8; we must surface the character, not the ASCII code (issue #669).
+        assert_eq!(Type::CHAR.name(), "char");
+        assert!(i8::accepts(&Type::CHAR));
+        // SQL CHAR(n)/character(n) is a different type ("bpchar") and must not
+        // be routed through the "char" branch.
+        assert_eq!(Type::BPCHAR.name(), "bpchar");
+
+        assert_eq!(pg_char_to_json(b'n' as i8), serde_json::Value::String("n".into()));
+        assert_eq!(pg_char_to_json(b'a' as i8), serde_json::Value::String("a".into()));
+        assert_eq!(pg_char_to_json(b'i' as i8), serde_json::Value::String("i".into()));
+        // A zero byte renders as an empty string (matches psql's charout).
+        assert_eq!(pg_char_to_json(0), serde_json::Value::String(String::new()));
+        // High bytes stay valid UTF-8 (Latin-1) and never panic.
+        assert_eq!(pg_char_to_json(-1), serde_json::Value::String("\u{00ff}".into()));
+    }
+
+    #[test]
     fn pg_any_string_accepts_all_types_and_decodes_utf8() {
         // Accepts any type — built-in, custom enum OIDs, domains, etc.
         assert!(PgAnyString::accepts(&Type::TEXT));
@@ -1841,7 +1888,7 @@ mod tests {
         let escaped = pg_quote_ident(malicious);
         // Double quotes should be doubled, not breaking out
         assert_eq!(escaped, r#""public""; DROP TABLE users; --""#);
-        assert!(escaped.matches('"').count() % 2 == 0, "quote count should be even");
+        assert!(escaped.matches('"').count().is_multiple_of(2), "quote count should be even");
     }
 
     // --- query_result_row_limit ---
@@ -2078,6 +2125,8 @@ mod tests {
         assert!(sql.contains("pg_xact_commit_timestamp"));
         assert!(sql.contains("'PROCEDURE'"));
         assert!(sql.contains("'FUNCTION'"));
+        assert!(sql.contains("'SEQUENCE'"));
+        assert!(sql.contains("'S'"));
     }
 
     #[test]
@@ -2131,14 +2180,14 @@ mod tests {
 
     #[tokio::test]
     async fn execute_batch_whitespace_only_is_filtered() {
-        let statements = vec!["  ".to_string(), "\t\n".to_string(), "".to_string()];
+        let statements = ["  ".to_string(), "\t\n".to_string(), "".to_string()];
         let combined = statements.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(";\n");
         assert!(combined.is_empty());
     }
 
     #[test]
     fn execute_batch_joins_with_semicolons() {
-        let statements = vec!["SELECT 1".to_string(), "SELECT 2".to_string()];
+        let statements = ["SELECT 1".to_string(), "SELECT 2".to_string()];
         let combined = statements.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(";\n");
         assert_eq!(combined, "SELECT 1;\nSELECT 2");
     }

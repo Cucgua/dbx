@@ -12,7 +12,7 @@ use data_grid_tdengine_sql::build_tdengine_data_grid_save_statements;
 
 use crate::models::connection::DatabaseType;
 use crate::sql_dialect::quote_table_identifier;
-use crate::transfer::format_pg_array_sql_literal;
+use crate::transfer::{format_ch_array_sql_literal, format_pg_array_sql_literal};
 
 const DBX_ROWID_COLUMN: &str = "__DBX_ROWID";
 pub(crate) const DBX_NEO4J_ELEMENT_ID_COLUMN: &str = "__DBX_ELEMENT_ID";
@@ -744,6 +744,9 @@ pub fn format_grid_sql_literal(
         return number.to_string();
     }
     if let Some(arr) = value.as_array() {
+        if matches!(database_type, Some(DatabaseType::ClickHouse) | Some(DatabaseType::Databend)) {
+            return format_ch_array_sql_literal(arr);
+        }
         return format_pg_array_sql_literal(arr);
     }
     let text = value.as_str().map_or_else(|| value.to_string(), ToString::to_string);
@@ -983,11 +986,7 @@ fn build_primary_key_where(
                         .unwrap_or(usize::MAX),
                 )
                 .unwrap_or(&Value::Null);
-            format!(
-                "{} = {}",
-                predicate_ident(database_type, primary_key),
-                format_grid_sql_literal(value, database_type, column_info_for(column_info, primary_key))
-            )
+            build_column_predicate(database_type, primary_key, value, column_info_for(column_info, primary_key))
         })
         .collect::<Vec<_>>()
         .join(" AND ")
@@ -1027,9 +1026,28 @@ fn build_column_predicate(
     let ident = predicate_ident(database_type, column);
     if value.is_null() {
         format!("{ident} IS NULL")
+    } else if uses_mysql_binary_text_predicate(database_type, value, column_info) {
+        format!("BINARY {ident} = {}", format_grid_sql_literal(value, database_type, column_info))
     } else {
         format!("{ident} = {}", format_grid_sql_literal(value, database_type, column_info))
     }
+}
+
+fn uses_mysql_binary_text_predicate(
+    database_type: Option<DatabaseType>,
+    value: &Value,
+    column_info: Option<&DataGridColumnInfo>,
+) -> bool {
+    database_type == Some(DatabaseType::Mysql)
+        && value.is_string()
+        && column_info.map(|column| is_textual_column_type(&column.data_type)).unwrap_or(false)
+}
+
+fn is_textual_column_type(data_type: &str) -> bool {
+    let lower = data_type.to_ascii_lowercase();
+    lower.split(|ch: char| !ch.is_ascii_alphanumeric()).any(|token| {
+        matches!(token, "char" | "varchar" | "text" | "tinytext" | "mediumtext" | "longtext" | "enum" | "set")
+    })
 }
 
 fn is_oracle_row_id(database_type: Option<DatabaseType>, name: Option<&str>) -> bool {
@@ -1526,6 +1544,36 @@ mod tests {
         assert_eq!(
             result.statements,
             vec!["UPDATE `policies` SET `insurance_start_time` = '2026-05-12 00:00:00', `raw_text` = '2026-05-12T00:00:00+00:00', `coverage_day` = '2026-05-12', `start_clock` = '09:30:45' WHERE `id` = 1;"]
+        );
+    }
+
+    #[test]
+    fn mysql_text_predicates_use_binary_comparison_for_width_sensitive_edits() {
+        let result = prepare_data_grid_save(DataGridSaveStatementOptions {
+            database_type: Some(DatabaseType::Mysql),
+            table_meta: DataGridTableMeta {
+                schema: None,
+                table_name: "parts".to_string(),
+                primary_keys: vec![],
+                columns: Some(vec![column("code", "varchar(32)", true, None)]),
+            },
+            columns: vec!["code".to_string()],
+            source_columns: None,
+            rows: vec![vec![json!("S471355(0)")]],
+            dirty_rows: vec![(0, vec![(0, json!("S471355（0）"))])],
+            deleted_rows: vec![],
+            new_rows: vec![],
+        });
+
+        assert_eq!(
+            result.statements,
+            vec!["UPDATE `parts` SET `code` = 'S471355（0）' WHERE BINARY `code` = 'S471355(0)';"]
+        );
+        assert_eq!(
+            result.rollback_statements,
+            vec![
+                "UPDATE `parts` SET `code` = 'S471355(0)' WHERE BINARY `code` = 'S471355（0）' AND BINARY `code` = 'S471355（0）';"
+            ]
         );
     }
 

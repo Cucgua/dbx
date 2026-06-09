@@ -1,13 +1,15 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import {
   evaluateMongoAggregateSafety,
   mongoAggregateWriteStage,
   mongoCountToQueryResult,
   mongoDocumentsToQueryResult,
+  mongoIndexesToQueryResult,
   parseMongoAggregateCommand,
   parseMongoCountDocumentsCommand,
   parseMongoFindCommand,
+  parseMongoGetIndexesCommand,
   parseMongoWriteCommand,
 } from "../../apps/desktop/src/lib/mongoShellCommand.ts";
 
@@ -117,6 +119,16 @@ test("parseMongoAggregateCommand normalises ObjectId arguments with either quote
   }
 });
 
+test("parseMongoGetIndexesCommand parses collection index commands", () => {
+  assert.deepEqual(parseMongoGetIndexesCommand("db.web_log.getIndexes();"), {
+    collection: "web_log",
+  });
+  assert.deepEqual(parseMongoGetIndexesCommand('db.getCollection("audit.logs").getIndexes()'), {
+    collection: "audit.logs",
+  });
+  assert.equal(parseMongoGetIndexesCommand("db.web_log.getIndexes({})"), null);
+});
+
 test("evaluateMongoAggregateSafety blocks write stages unless MCP write flags allow them", () => {
   const out = parseMongoAggregateCommand('db.products.aggregate([{"$out":"products_copy"}])');
   assert.ok(out);
@@ -131,6 +143,30 @@ test("evaluateMongoAggregateSafety blocks write stages unless MCP write flags al
     /DBX_MCP_ALLOW_DANGEROUS_SQL=1/,
   );
   assert.equal(evaluateMongoAggregateSafety(merge, { allowWrites: true, allowDangerous: true }).allowed, true);
+});
+
+test("mongoIndexesToQueryResult formats index metadata", () => {
+  assert.deepEqual(
+    mongoIndexesToQueryResult(
+      [
+        {
+          name: "_id_",
+          columns: ["_id"],
+          is_unique: false,
+          is_primary: true,
+          index_type: "_id: 1",
+          filter: null,
+        },
+      ],
+      7,
+    ),
+    {
+      columns: ["name", "columns", "unique", "primary", "type", "filter"],
+      rows: [["_id_", "_id", false, true, "_id: 1", null]],
+      affected_rows: 1,
+      execution_time_ms: 7,
+    },
+  );
 });
 
 test("mongoCountToQueryResult returns a single count row", () => {

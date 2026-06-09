@@ -189,6 +189,18 @@ export function dataGridColumnDetailTsv(detail: DataGridColumnDetail): string {
   return detail.fields.map((field) => displayCellValue(field.value)).join("\n");
 }
 
+export function filterDataGridDetailFields<T extends DataGridCellDetail>(fields: readonly T[], keyword: string): T[] {
+  if (keyword.trim() === "") return [...fields];
+  const kw = keyword.trim().toLowerCase();
+  return fields.filter(
+    (field) =>
+      field.column.toLowerCase().includes(kw) ||
+      field.rawValuePreview.toLowerCase().includes(kw) ||
+      field.displayValuePreview.toLowerCase().includes(kw) ||
+      String(field.rowNumber).includes(kw),
+  );
+}
+
 function looksLikeJsonContainer(text: string): boolean {
   const trimmed = text.trim();
   return trimmed.startsWith("{") || trimmed.startsWith("[");

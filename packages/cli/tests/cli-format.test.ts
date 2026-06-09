@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import type { ConnectionConfig } from "@dbx-app/node-core";
 import { connectionSummary, csvTable, errorPayload, formatCell, formatErrorMessage, mdTable } from "../src/cli-format.js";
 

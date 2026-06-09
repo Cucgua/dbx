@@ -12,6 +12,7 @@ import {
   Code2,
   TableProperties,
   PencilRuler,
+  KeyRound,
   Pencil,
   Package,
   Check,
@@ -224,6 +225,7 @@ const openTabMenuItems = computed(() =>
 
 function tabMenuIcon(tab: QueryTab) {
   if (tab.mode === "data") return Table2;
+  if (tab.mode === "etcd") return KeyRound;
   if (tab.mode === "objects") return TableProperties;
   if (tab.mode === "structure") return PencilRuler;
   return Code2;
@@ -354,6 +356,7 @@ function activateTab(tabId: string) {
               >
                 <span class="shrink-0" :class="tabIconClass(tab)">
                   <Table2 v-if="tab.mode === 'data'" class="h-3.5 w-3.5" />
+                  <KeyRound v-else-if="tab.mode === 'etcd'" class="h-3.5 w-3.5" />
                   <TableProperties v-else-if="tab.mode === 'objects'" class="h-3.5 w-3.5" />
                   <PencilRuler v-else-if="tab.mode === 'structure'" class="h-3.5 w-3.5" />
                   <Code2 v-else class="h-3.5 w-3.5" />

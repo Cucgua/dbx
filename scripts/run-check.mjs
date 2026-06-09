@@ -19,8 +19,8 @@ const tasks = [
   },
   {
     name: "test",
-    command: "tsx",
-    args: ["--tsconfig", "apps/desktop/tsconfig.json", "--test", "packages/app-tests/*.test.ts"],
+    command: "vitest",
+    args: ["run"],
   },
 ];
 

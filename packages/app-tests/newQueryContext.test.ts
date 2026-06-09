@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { resolveNewQueryTarget } from "../../apps/desktop/src/lib/newQueryContext.ts";
 import type { ConnectionConfig, QueryTab, TreeNode } from "../../apps/desktop/src/types/database.ts";
 

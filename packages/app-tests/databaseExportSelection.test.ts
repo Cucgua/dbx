@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { buildSelectedTablesPayload } from "../../apps/desktop/src/lib/databaseExportSelection.ts";
 
 test("omits selected table payload when every table is selected", () => {

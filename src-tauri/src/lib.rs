@@ -45,6 +45,10 @@ impl DesktopEventSink for TauriMcpEvents {
     }
 }
 
+pub(crate) fn apply_debug_log_level(debug_logging_enabled: bool) {
+    log::set_max_level(if debug_logging_enabled { log::LevelFilter::Debug } else { log::LevelFilter::Off });
+}
+
 fn should_hide_window_on_close(target_os: &str) -> bool {
     matches!(target_os, "macos" | "windows")
 }
@@ -175,6 +179,7 @@ fn apply_desktop_tray_icon_theme(app: &tauri::AppHandle, icon_theme: DesktopIcon
 }
 
 pub(crate) fn apply_desktop_settings(app: &tauri::AppHandle, desktop_settings: &DesktopSettings) -> tauri::Result<()> {
+    apply_debug_log_level(desktop_settings.debug_logging_enabled);
     apply_desktop_icon_theme(app, desktop_settings.icon_theme)?;
     if matches!(std::env::consts::OS, "macos" | "windows") {
         if let Some(tray) = app.tray_by_id(DESKTOP_TRAY_ID) {
@@ -188,6 +193,7 @@ pub(crate) fn apply_desktop_settings(app: &tauri::AppHandle, desktop_settings: &
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{should_hide_window_on_close, should_setup_desktop_tray, should_show_main_window_after_setup};
 
@@ -287,10 +293,6 @@ pub fn run() {
             let setup_start = Instant::now();
             eprintln!("[STARTUP] plugins registered in {:?}", startup_begin.elapsed());
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build())?;
-            }
-
             let default_data_dir =
                 app.path().app_data_dir().map_err(|e| e.to_string()).expect("Failed to resolve app data dir");
             let data_dir = data_dir::resolve_data_dir(default_data_dir);
@@ -307,6 +309,8 @@ pub fn run() {
                 s
             });
             let desktop_settings = tauri::async_runtime::block_on(storage.load_desktop_settings()).unwrap_or_default();
+            app.handle().plugin(tauri_plugin_log::Builder::default().level(log::LevelFilter::Debug).build())?;
+            apply_debug_log_level(desktop_settings.debug_logging_enabled);
             eprintln!("[STARTUP] storage ready in {:?}", t.elapsed());
 
             let state = if data_dir::uses_custom_data_dir() {
@@ -392,6 +396,7 @@ pub fn run() {
             commands::app_settings::load_mcp_http_status,
             commands::app_settings::load_mcp_http_config,
             commands::app_settings::save_mcp_http_config,
+            commands::app_settings::load_native_debug_logs,
             commands::cloud_sync::webdav_sync_test,
             commands::cloud_sync::webdav_password_status,
             commands::cloud_sync::save_webdav_saved_password,
@@ -400,6 +405,7 @@ pub fn run() {
             commands::cloud_sync::webdav_sync_download,
             commands::connection::test_connection,
             commands::connection::connect_db,
+            commands::connection::connection_final_proxy_port,
             commands::connection::disconnect_db,
             commands::connection::close_database_connection,
             commands::connection::refresh_connections,
@@ -458,6 +464,8 @@ pub fn run() {
             commands::query::prepare_query_pagination_execution_plan,
             commands::query::build_sorted_query_sql,
             commands::query::build_explain_sql,
+            commands::query::get_explain_info,
+            commands::query::build_create_user_sql,
             commands::query::build_dropped_file_preview_sql,
             commands::query::build_table_select_sql,
             commands::query::build_database_search_sql,
@@ -526,6 +534,10 @@ pub fn run() {
             commands::redis_cmd::redis_flush_db,
             commands::redis_cmd::redis_execute_command,
             commands::redis_cmd::redis_load_more,
+            commands::etcd_cmd::etcd_list_prefix,
+            commands::etcd_cmd::etcd_get,
+            commands::etcd_cmd::etcd_put,
+            commands::etcd_cmd::etcd_delete,
             commands::saved_sql::load_saved_sql_library,
             commands::saved_sql::save_saved_sql_folder,
             commands::saved_sql::delete_saved_sql_folder,

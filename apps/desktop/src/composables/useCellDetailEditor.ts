@@ -8,11 +8,11 @@ import {
   highlightSpecialChars,
   highlightActiveLine,
 } from "@codemirror/view";
-import { vscodeSelectionLayer } from "@/lib/codemirrorVscodeSelectionLayer";
 import { json } from "@codemirror/lang-json";
 import { search as cmSearch } from "@codemirror/search";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { bracketMatching } from "@codemirror/language";
+import { trimmedSelectionLayer } from "@/lib/codemirrorTrimmedSelectionLayer";
 import {
   EDITOR_FONT_FAMILY_CSS_VAR,
   EDITOR_FONT_SIZE_CSS_VAR,
@@ -192,7 +192,7 @@ export function useCellDetailEditor(options: UseCellDetailEditorOptions): UseCel
         highlightSpecialChars(),
         history(),
         drawSelection(),
-        vscodeSelectionLayer(),
+        trimmedSelectionLayer(),
         dropCursor(),
         highlightActiveLine(),
         EditorView.theme({

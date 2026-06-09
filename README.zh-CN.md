@@ -274,7 +274,7 @@ pnpm tauri build
 
 <details>
 <summary><strong>DBX 是免费的吗？</strong></summary>
-是的。DBX 基于 AGPL-3.0 协议开源，所有功能均免费使用。
+是的。DBX 基于 Apache-2.0 协议开源，所有功能均免费使用。
 </details>
 
 <details>
@@ -284,7 +284,7 @@ pnpm tauri build
 
 <details>
 <summary><strong>可以离线使用吗？</strong></summary>
-可以。桌面端完全支持离线使用。AI 功能需要网络访问模型端点（或通过 Ollama 使用本地模型）。
+可以。桌面端完全支持离线使用。内网环境安装驱动时，可在有网机器打开[离线驱动下载页](https://dbxio.com/cn/drivers)下载离线驱动包，传输到内网机器后，在 DBX 的「设置 > 驱动管理」中导入。AI 功能需要网络访问模型端点（或通过 Ollama 使用本地模型）。
 </details>
 
 <details>
@@ -320,4 +320,4 @@ MySQL、PostgreSQL、SQLite、Redis、MongoDB、DuckDB、ClickHouse、SQL Server
 
 ## 开源协议
 
-[AGPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)

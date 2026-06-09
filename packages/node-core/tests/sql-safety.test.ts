@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { evaluateSqlSafety, sqlSafetyFromEnv } from "../src/sql-safety.js";
 
 test("allows read-only SQL by default", () => {

@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { shouldDeleteHistoryEntry, shouldClearHistory } from "../../apps/desktop/src/lib/historyActions.ts";
 
 test("requires confirmation before deleting history entries", () => {

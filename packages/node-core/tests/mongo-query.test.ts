@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import {
   executeQuery,
   inferMongoColumns,
@@ -8,6 +8,7 @@ import {
   parseMongoAggregateCommand,
   parseMongoCountDocumentsCommand,
   parseMongoFindCommand,
+  parseMongoGetIndexesCommand,
   parseMongoWriteCommand,
 } from "../src/database.js";
 
@@ -51,6 +52,16 @@ test("parseMongoAggregateCommand accepts aggregate pipelines", () => {
     collection: "projects",
     pipeline: '[{"$match":{"active":true}},{"$group":{"_id":"$owner","total":{"$sum":1}}}]',
   });
+});
+
+test("parseMongoGetIndexesCommand accepts shell-style index commands", () => {
+  assert.deepEqual(parseMongoGetIndexesCommand("db.web_log.getIndexes();"), {
+    collection: "web_log",
+  });
+  assert.deepEqual(parseMongoGetIndexesCommand('db.getCollection("audit.logs").getIndexes()'), {
+    collection: "audit.logs",
+  });
+  assert.equal(parseMongoGetIndexesCommand("db.web_log.getIndexes({})"), null);
 });
 
 test("mongoAggregateWriteStage detects write stages", () => {

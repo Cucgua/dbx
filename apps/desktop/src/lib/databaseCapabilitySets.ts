@@ -25,14 +25,16 @@ export const SCHEMA_AWARE_TYPES = new Set<DatabaseType>([
   "snowflake",
   "trino",
   "hive",
+  "databend",
   "db2",
   "tdengine",
   "xugu",
+  "iotdb",
   "iris",
   "duckdb",
 ]);
 
-export const SQL_FILE_UNSUPPORTED_TYPES = new Set<DatabaseType>(["redis", "mongodb", "elasticsearch"]);
+export const SQL_FILE_UNSUPPORTED_TYPES = new Set<DatabaseType>(["redis", "mongodb", "elasticsearch", "etcd"]);
 
 export const DIAGRAM_SUPPORTED_TYPES = new Set<DatabaseType>([
   "mysql",
@@ -106,6 +108,8 @@ export const DATABASE_SEARCH_SUPPORTED_TYPES = new Set<DatabaseType>([
   "sundb",
   "tdengine",
   "xugu",
+  "iotdb",
+  "etcd",
   "iris",
 ]);
 
@@ -165,7 +169,6 @@ export const CREATE_DATABASE_SUPPORTED_TYPES = new Set<DatabaseType>([
   "sqlserver",
   "clickhouse",
   "oracle",
-  "dameng",
   "gaussdb",
   "kwdb",
   "opengauss",
@@ -224,6 +227,7 @@ export const TREE_SCHEMA_TYPES = new Set<DatabaseType>([
   "h2",
   "tdengine",
   "xugu",
+  "iotdb",
   "iris",
   "duckdb",
 ]);
@@ -239,6 +243,7 @@ export const AGENT_DRIVER_TYPES = new Set<DatabaseType>([
   "vastbase",
   "yashandb",
   "goldendb",
+  "databend",
   "databricks",
   "saphana",
   "teradata",
@@ -264,6 +269,7 @@ export const AGENT_DRIVER_TYPES = new Set<DatabaseType>([
   "gaussdb",
   "tdengine",
   "xugu",
+  "iotdb",
   "iris",
 ]);
 

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import test from "node:test";
+import { test } from "vitest";
 import { isMainModule } from "../src/entrypoint.js";
 
 test("matches a module invoked through its real file path", async () => {

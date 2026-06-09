@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import { staleConnectionMessage, shouldMarkDisconnected } from "../../apps/desktop/src/lib/connectionHealth.ts";
 
 test("metadata connection errors should turn off connected state", () => {

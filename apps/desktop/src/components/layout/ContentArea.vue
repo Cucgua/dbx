@@ -14,8 +14,10 @@ import {
   TableProperties,
   ChevronDown,
   ChevronUp,
+  Inbox,
   RefreshCcw,
   Wrench,
+  ListChecks,
 } from "@lucide/vue";
 import { Splitpanes, Pane } from "splitpanes";
 import "splitpanes/dist/splitpanes.css";
@@ -44,16 +46,19 @@ function preloadDataGridComponent() {
 
 const DataGrid = defineAsyncComponent(loadDataGridComponent);
 const RedisKeyBrowser = defineAsyncComponent(() => import("@/components/redis/RedisKeyBrowser.vue"));
+const EtcdKeyBrowser = defineAsyncComponent(() => import("@/components/etcd/EtcdKeyBrowser.vue"));
 const MongoDocBrowser = defineAsyncComponent(() => import("@/components/mongo/MongoDocBrowser.vue"));
 const ObjectBrowser = defineAsyncComponent(() => import("@/components/objects/ObjectBrowser.vue"));
 const TableStructureEditor = defineAsyncComponent(() => import("@/components/structure/TableStructureEditor.vue"));
+const DatabaseUserAdmin = defineAsyncComponent(() => import("@/components/admin/DatabaseUserAdmin.vue"));
 const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
 const QueryChart = defineAsyncComponent(() => import("@/components/chart/QueryChart.vue"));
 import { useQueryStore } from "@/stores/queryStore";
 import { canCancelQueryExecution, queryExecutionLabelKey } from "@/lib/queryExecutionState";
-import { databaseDisplayNameForTab } from "@/lib/tabPresentation";
+import { databaseDisplayNameForTab, executionSummaryItems, tabularResultItems } from "@/lib/tabPresentation";
 import { isTableDataEditable } from "@/lib/tableEditing";
 import { tableMetaForDataTab } from "@/lib/tableDataTabMeta";
+import { formatShortcut } from "@/lib/shortcutRegistry";
 import { effectiveDatabaseTypeForConnection } from "@/lib/jdbcDialect";
 import type { QueryTab, ConnectionConfig } from "@/types/database";
 import type { SqlFormatDialect } from "@/lib/sqlFormatter";
@@ -86,20 +91,20 @@ const props = defineProps<{
   activeTab: QueryTab;
   activeConnection?: ConnectionConfig;
   executableSql: string;
-  activeOutputView: "result" | "explain" | "chart";
-  formatSqlRequestId: number;
+  activeOutputView: "result" | "summary" | "explain" | "chart";
+  formatSqlRequest: { id: number; tabId: string } | null;
   selectedSql: string;
   cursorPos: number;
 }>();
 
 const emit = defineEmits<{
-  "update:activeOutputView": [value: "result" | "explain" | "chart"];
+  "update:activeOutputView": [value: "result" | "summary" | "explain" | "chart"];
   fixWithAi: [errorMessage: string];
   execute: [sqlOverride?: string];
   saveSql: [];
   cancel: [];
   explain: [];
-  editorUpdate: [value: string];
+  editorUpdate: [tabId: string, value: string];
   editorSelectionChange: [value: string];
   editorCursorChange: [pos: number];
   formatError: [];
@@ -146,6 +151,7 @@ const columnVisibilityOptions = computed(
   () => dataGridRef.value?.filteredColumnVisibilityOptions(columnVisibilitySearch.value) ?? [],
 );
 const redisKeyBrowserRef = ref<SearchableBrowserHandle>();
+const etcdKeyBrowserRef = ref<SearchableBrowserHandle>();
 const objectBrowserRef = ref<SearchableBrowserHandle>();
 const activeTableMeta = computed(() => props.activeTab.tableMeta);
 const activeDataTabTableMeta = computed(() => tableMetaForDataTab(props.activeTab));
@@ -177,6 +183,12 @@ const editorDialect = computed<"mysql" | "postgres" | "sqlserver">(() => {
 
 const shortcutModifier = computed(() => (navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl"));
 
+const modRKeys = computed(() =>
+  formatShortcut("Mod+R")
+    .split("+")
+    .map((key) => (key === "Cmd" ? "⌘" : key)),
+);
+
 const hasNumericData = computed(() => {
   const r = props.activeTab.result;
   if (!r || r.rows.length === 0) return false;
@@ -196,6 +208,13 @@ const hasQueryOutput = computed(
     props.activeTab.isExecuting === true ||
     props.activeTab.isExplaining === true,
 );
+const tabularResults = computed(() => tabularResultItems(props.activeTab.results));
+const summaryItems = computed(() => executionSummaryItems(props.activeTab));
+const hasExecutionSummary = computed(() => summaryItems.value.length > 0 || props.activeTab.isExecuting);
+const hasTabularResult = computed(() => {
+  if (props.activeTab.result?.columns.length) return true;
+  return tabularResults.value.length > 0;
+});
 const resultsPaneOpen = ref(false);
 
 watch(
@@ -211,6 +230,17 @@ watch(
   () => {
     resultsPaneOpen.value = hasQueryOutput.value;
   },
+);
+
+watch(
+  () => [props.activeTab.id, props.activeTab.result, props.activeTab.results, props.activeTab.isExecuting] as const,
+  () => {
+    if (props.activeTab.isExecuting) return;
+    if (hasExecutionSummary.value && !hasTabularResult.value && props.activeOutputView === "result") {
+      emit("update:activeOutputView", "summary");
+    }
+  },
+  { immediate: true },
 );
 
 watch(
@@ -337,6 +367,7 @@ function onHandleCloseColumnPanel() {
 
 function focusSearch(): boolean {
   if (props.activeTab.mode === "redis") return redisKeyBrowserRef.value?.focusSearch() ?? false;
+  if (props.activeTab.mode === "etcd") return etcdKeyBrowserRef.value?.focusSearch() ?? false;
   if (props.activeTab.mode === "objects") return objectBrowserRef.value?.focusSearch() ?? false;
   if (props.activeTab.mode === "query") return queryEditorRef.value?.openSearch() ?? false;
   return dataGridRef.value?.focusSearch() ?? false;
@@ -352,6 +383,10 @@ function handleModRTarget(target: Element): boolean {
   if (target.closest("[data-query-editor-root]")) return queryEditorRef.value?.openReplace() ?? false;
   if (target.closest("[data-cell-detail-editor-root]")) return dataGridRef.value?.openCellDetailSearch() ?? false;
   if (target.closest("[data-grid-root]")) return refreshData();
+  if (props.activeTab.mode === "data" && !props.activeTab.result && !props.activeTab.isExecuting) {
+    emit("reload");
+    return true;
+  }
   return false;
 }
 
@@ -375,9 +410,9 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
               :database-type="activeEffectiveDatabaseType"
               :dialect="editorDialect"
               :format-dialect="activeSqlFormatDialect"
-              :format-request-id="formatSqlRequestId"
+              :format-request-id="formatSqlRequest?.tabId === activeTab.id ? formatSqlRequest.id : undefined"
               :execution-error="activeQueryError"
-              @update:model-value="emit('editorUpdate', $event)"
+              @update:model-value="emit('editorUpdate', activeTab.id, $event)"
               @selection-change="emit('editorSelectionChange', $event)"
               @cursor-change="emit('editorCursorChange', $event)"
               @format-error="emit('formatError')"
@@ -417,33 +452,38 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
                 size="sm"
                 :variant="activeOutputView === 'result' ? 'secondary' : 'ghost'"
                 class="h-6 px-2 text-xs"
-                :disabled="!activeTab.result && !activeTab.isExecuting"
+                :disabled="!hasTabularResult && !activeTab.isExecuting"
                 @click="emit('update:activeOutputView', 'result')"
               >
                 {{ t("tabs.tableData") }}
               </Button>
-              <template v-if="activeOutputView === 'result' && activeTab.results && activeTab.results.length > 1">
+              <template v-if="tabularResults.length > 1">
                 <span class="mx-1 h-4 w-px bg-border" />
                 <Button
-                  v-for="(_, rIdx) in activeTab.results"
-                  :key="rIdx"
+                  v-for="item in tabularResults"
+                  :key="item.index"
                   size="sm"
-                  :variant="activeTab.activeResultIndex === rIdx ? 'default' : 'ghost'"
+                  :variant="
+                    activeOutputView === 'result' && activeTab.activeResultIndex === item.index ? 'default' : 'ghost'
+                  "
                   class="h-6 px-2 text-xs shrink-0"
-                  @click="queryStore.setActiveResultIndex(activeTab.id, rIdx)"
+                  @click="
+                    queryStore.setActiveResultIndex(activeTab.id, item.index);
+                    emit('update:activeOutputView', 'result');
+                  "
                 >
-                  {{ t("tabs.resultN", { n: rIdx + 1 }) }}
+                  {{ t("tabs.resultN", { n: item.n }) }}
                 </Button>
               </template>
               <Button
                 size="sm"
-                :variant="activeOutputView === 'explain' ? 'secondary' : 'ghost'"
+                :variant="activeOutputView === 'summary' ? 'secondary' : 'ghost'"
                 class="h-6 px-2 text-xs gap-1"
-                :disabled="!activeTab.explainPlan && !activeTab.explainError && !activeTab.isExplaining"
-                @click="emit('update:activeOutputView', 'explain')"
+                :disabled="!hasExecutionSummary"
+                @click="emit('update:activeOutputView', 'summary')"
               >
-                <GitBranch class="h-3.5 w-3.5" />
-                {{ t("explain.title") }}
+                <ListChecks class="h-3.5 w-3.5" />
+                {{ t("tabs.executionSummary") }}
               </Button>
               <Button
                 size="sm"
@@ -454,6 +494,17 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
               >
                 <BarChart3 class="h-3.5 w-3.5" />
                 {{ t("chart.title") }}
+              </Button>
+              <span class="mx-1 h-4 w-px shrink-0 bg-border" />
+              <Button
+                size="sm"
+                :variant="activeOutputView === 'explain' ? 'secondary' : 'ghost'"
+                class="h-6 px-2 text-xs gap-1"
+                :disabled="!activeTab.explainPlan && !activeTab.explainError && !activeTab.isExplaining"
+                @click="emit('update:activeOutputView', 'explain')"
+              >
+                <GitBranch class="h-3.5 w-3.5" />
+                {{ t("explain.title") }}
               </Button>
               <Popover v-if="activeOutputView === 'result' && activeTab.result">
                 <PopoverTrigger as-child>
@@ -501,7 +552,7 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
                 </PopoverContent>
               </Popover>
               <Button
-                v-if="activeOutputView === 'result' && activeTab.result"
+                v-if="activeOutputView === 'result' && hasTabularResult"
                 variant="ghost"
                 size="sm"
                 class="h-6 shrink-0 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
@@ -516,7 +567,7 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
                 variant="ghost"
                 size="sm"
                 class="h-6 shrink-0 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                :class="{ 'ml-auto': activeOutputView !== 'result' || !activeTab.result }"
+                :class="{ 'ml-auto': activeOutputView !== 'result' || !hasTabularResult }"
                 @click="resultsPaneOpen = false"
               >
                 <ChevronDown class="h-3.5 w-3.5" />
@@ -540,9 +591,67 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
               :result="activeTab.result"
             />
 
+            <div v-else-if="activeOutputView === 'summary'" class="flex-1 min-h-0 overflow-auto bg-background">
+              <div
+                v-if="activeTab.isExecuting"
+                class="flex h-full items-center justify-center text-sm text-muted-foreground"
+              >
+                <Loader2 class="mr-2 h-4 w-4 animate-spin" />
+                {{ t("executionSummary.executing") }}
+              </div>
+              <div
+                v-else-if="summaryItems.length === 0"
+                class="flex h-full items-center justify-center text-sm text-muted-foreground"
+              >
+                {{ t("executionSummary.empty") }}
+              </div>
+              <div v-else>
+                <div class="overflow-hidden border-b">
+                  <div
+                    class="grid grid-cols-[4rem_1fr_8rem_8rem_7rem] border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground"
+                  >
+                    <div>{{ t("executionSummary.statement") }}</div>
+                    <div>{{ t("executionSummary.type") }}</div>
+                    <div class="text-right">{{ t("executionSummary.rows") }}</div>
+                    <div class="text-right">{{ t("executionSummary.affected") }}</div>
+                    <div class="text-right">{{ t("executionSummary.time") }}</div>
+                  </div>
+                  <div
+                    v-for="item in summaryItems"
+                    :key="item.index"
+                    class="grid grid-cols-[4rem_1fr_8rem_8rem_7rem] items-center border-b px-3 py-2 text-xs last:border-b-0"
+                  >
+                    <div class="font-mono text-muted-foreground">#{{ item.index + 1 }}</div>
+                    <div class="flex min-w-0 items-center gap-2">
+                      <span
+                        class="inline-flex h-5 items-center rounded-full border px-2 text-[10px]"
+                        :class="
+                          item.isError
+                            ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                            : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        "
+                      >
+                        {{ item.isError ? t("executionSummary.error") : t("executionSummary.success") }}
+                      </span>
+                      <span class="truncate">
+                        {{
+                          item.hasTabularResult
+                            ? t("executionSummary.returnedTable", { count: item.returnedColumns })
+                            : t("executionSummary.noTable")
+                        }}
+                      </span>
+                    </div>
+                    <div class="text-right tabular-nums">{{ item.returnedRows.toLocaleString() }}</div>
+                    <div class="text-right tabular-nums">{{ item.affectedRows.toLocaleString() }}</div>
+                    <div class="text-right tabular-nums">{{ item.executionTimeMs }}ms</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <template v-else>
               <DataGrid
-                v-if="activeTab.result"
+                v-if="activeTab.result && hasTabularResult"
                 ref="dataGridRef"
                 :key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`"
                 :cache-key="`${activeTab.id}-${activeTab.activeResultIndex ?? 0}`"
@@ -860,6 +969,16 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
         <div v-else class="h-full flex flex-col items-center justify-center gap-3 text-muted-foreground text-sm">
           <Inbox class="h-8 w-8 opacity-60" />
           <div>{{ t("grid.dataUnavailable") }}</div>
+          <div class="text-xs text-muted-foreground/70 inline-flex items-center gap-1">
+            <span>{{ t("grid.dataUnavailableHintPrefix") }}</span>
+            <kbd
+              v-for="key in modRKeys"
+              :key="key"
+              class="min-w-5 rounded border border-border/60 bg-muted/50 px-1.5 py-0.5 text-center font-mono text-[12px] leading-none text-muted-foreground shadow-xs"
+              >{{ key }}</kbd
+            >
+            <span>{{ t("grid.dataUnavailableHintSuffix") }}</span>
+          </div>
           <Button variant="outline" size="sm" class="h-7 gap-1.5" @click="emit('reload')">
             <RefreshCcw class="h-3.5 w-3.5" />
             {{ t("grid.refresh") }}
@@ -877,6 +996,13 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
           :connection-id="activeTab.connectionId"
           :db="Number(activeTab.database)"
         />
+      </div>
+    </template>
+
+    <!-- etcd mode: key browser -->
+    <template v-else-if="activeTab.mode === 'etcd'">
+      <div class="flex-1 min-h-0">
+        <EtcdKeyBrowser ref="etcdKeyBrowserRef" :key="activeTab.id" :connection-id="activeTab.connectionId" />
       </div>
     </template>
 
@@ -916,6 +1042,10 @@ defineExpose({ focusSearch, refreshData, handleModRTarget });
         @saved="(commentChanged) => emit('structureEditorSaved', commentChanged)"
         @close="emit('structureEditorClose')"
       />
+    </template>
+
+    <template v-else-if="activeTab.mode === 'users' && activeConnection">
+      <DatabaseUserAdmin :key="activeTab.id" :connection="activeConnection" />
     </template>
   </div>
 </template>

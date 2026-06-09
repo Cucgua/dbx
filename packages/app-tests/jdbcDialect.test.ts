@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import {
+  connectionObjectTreeNodeSchema,
   connectionObjectTreeQuerySchema,
+  connectionUsesSchemaExecutionContext,
   connectionUsesDatabaseObjectTreeMode,
   effectiveDatabaseTypeForConnection,
   inferJdbcDialect,
@@ -19,9 +21,10 @@ test("infers JDBC dialect from URL, driver class, and driver jar path", () => {
     "mysql",
   );
   assert.equal(inferJdbcDialect({ db_type: "jdbc", jdbc_driver_class: "org.apache.hive.jdbc.HiveDriver" }), "hive");
+  assert.equal(inferJdbcDialect({ db_type: "jdbc", jdbc_driver_paths: ["/drivers/starrocks-jdbc.jar"] }), "starrocks");
   assert.equal(
-    inferJdbcDialect({ db_type: "jdbc", jdbc_driver_paths: ["/drivers/starrocks-jdbc.jar"] }),
-    "starrocks",
+    inferJdbcDialect({ db_type: "jdbc", connection_string: "jdbc:databend://db.example.com:8000/default" }),
+    "databend",
   );
 });
 
@@ -29,12 +32,18 @@ test("effective database type keeps non-JDBC types and enables compatible JDBC s
   assert.equal(effectiveDatabaseTypeForConnection({ db_type: "postgres" }), "postgres");
   assert.equal(effectiveDatabaseTypeForConnection({ db_type: "jdbc" }), "jdbc");
   assert.equal(
-    effectiveDatabaseTypeForConnection({ db_type: "jdbc", jdbc_driver_class: "org.apache.kyuubi.jdbc.KyuubiHiveDriver" }),
+    effectiveDatabaseTypeForConnection({
+      db_type: "jdbc",
+      jdbc_driver_class: "org.apache.kyuubi.jdbc.KyuubiHiveDriver",
+    }),
     "mysql",
   );
   assert.equal(
     supportsTableStructureEditing(
-      effectiveDatabaseTypeForConnection({ db_type: "jdbc", jdbc_driver_class: "org.apache.kyuubi.jdbc.KyuubiHiveDriver" }),
+      effectiveDatabaseTypeForConnection({
+        db_type: "jdbc",
+        jdbc_driver_class: "org.apache.kyuubi.jdbc.KyuubiHiveDriver",
+      }),
     ),
     true,
   );
@@ -56,5 +65,23 @@ test("JDBC tree shape follows the inferred driver dialect", () => {
       tableName: "dws_event_analyse",
     }),
     "`test`.`dws_event_analyse`",
+  );
+});
+
+test("Databend JDBC keeps database as schema context for table data", () => {
+  const databend = { db_type: "jdbc" as const, connection_string: "jdbc:databend://db.example.com:8000/dbx_test" };
+
+  assert.equal(effectiveDatabaseTypeForConnection(databend), "databend");
+  assert.equal(connectionUsesDatabaseObjectTreeMode(databend), true);
+  assert.equal(connectionUsesSchemaExecutionContext(databend), true);
+  assert.equal(connectionObjectTreeQuerySchema(databend, "dbx_test", undefined), "dbx_test");
+  assert.equal(connectionObjectTreeNodeSchema(databend, "dbx_test", undefined), "dbx_test");
+  assert.equal(
+    qualifiedTableName({
+      databaseType: effectiveDatabaseTypeForConnection(databend),
+      schema: connectionObjectTreeNodeSchema(databend, "dbx_test", undefined),
+      tableName: "jdbc_probe",
+    }),
+    "`dbx_test`.`jdbc_probe`",
   );
 });

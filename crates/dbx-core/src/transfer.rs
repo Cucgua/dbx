@@ -485,7 +485,10 @@ pub fn escape_value_typed(val: &serde_json::Value, db_type: &DatabaseType, colum
         serde_json::Value::String(s) => {
             format!("'{}'", format_literal_string(s, db_type, column_type).replace('\\', "\\\\").replace('\'', "''"))
         }
-        serde_json::Value::Array(arr) => format_pg_array_sql_literal(arr),
+        serde_json::Value::Array(arr) => match db_type {
+            DatabaseType::ClickHouse | DatabaseType::Databend => format_ch_array_sql_literal(arr),
+            _ => format_pg_array_sql_literal(arr),
+        },
         _ => {
             let s = val.to_string();
             format!("'{}'", s.replace('\\', "\\\\").replace('\'', "''"))
@@ -528,6 +531,43 @@ fn format_pg_array_element(val: &serde_json::Value) -> String {
             let json = serde_json::to_string(o).unwrap_or_default();
             let escaped = json.replace('\\', "\\\\").replace('"', "\\\"");
             format!("\"{}\"", escaped)
+        }
+    }
+}
+
+pub fn format_ch_array_sql_literal(arr: &[serde_json::Value]) -> String {
+    if arr.is_empty() {
+        return "[]".to_string();
+    }
+    let elements: Vec<String> = arr.iter().map(format_ch_array_element).collect();
+    format!("[{}]", elements.join(","))
+}
+
+fn format_ch_array_element(val: &serde_json::Value) -> String {
+    match val {
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Array(arr) => {
+            if arr.is_empty() {
+                return "[]".to_string();
+            }
+            let elements: Vec<String> = arr.iter().map(format_ch_array_element).collect();
+            format!("[{}]", elements.join(","))
+        }
+        serde_json::Value::String(s) => {
+            let escaped = s.replace('\\', "\\\\").replace('\'', "''");
+            format!("'{}'", escaped)
+        }
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => {
+            if *b {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
+        serde_json::Value::Object(o) => {
+            let json = serde_json::to_string(o).unwrap_or_default();
+            format!("'{}'", json.replace('\\', "\\\\").replace('\'', "''"))
         }
     }
 }
@@ -1183,6 +1223,7 @@ fn max_transfer_write_rows(db_type: &DatabaseType, mode: &TransferMode) -> usize
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_transfer_write_sql(
     mode: &TransferMode,
     columns: &[String],
@@ -1199,6 +1240,7 @@ fn generate_transfer_write_sql(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn generate_transfer_write_sql_batches(
     mode: &TransferMode,
     columns: &[String],
@@ -1307,6 +1349,7 @@ pub fn pagination_sql_with_order(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn pagination_sql_with_filter_order(
     columns: &[String],
     table: &str,
@@ -1669,6 +1712,7 @@ pub async fn execute_on_pool_with_max_rows(
                     }
                     Ok(db::QueryResult {
                         columns,
+                        column_types: Vec::new(),
                         rows: result_rows,
                         affected_rows: 0,
                         execution_time_ms: start.elapsed().as_millis(),
@@ -1680,6 +1724,7 @@ pub async fn execute_on_pool_with_max_rows(
                     let affected = con.execute(&sql, []).map_err(|e| e.to_string())?;
                     Ok(db::QueryResult {
                         columns: vec![],
+                        column_types: Vec::new(),
                         rows: vec![],
                         affected_rows: affected as u64,
                         execution_time_ms: start.elapsed().as_millis(),
@@ -2915,7 +2960,9 @@ where
                 rewrite_postgres_routine_schema(&object.source, &request.target_schema)
                     .unwrap_or_else(|| object.source.clone())
             }
-            db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => object.source.clone(),
+            db::ObjectSourceKind::Sequence | db::ObjectSourceKind::Package | db::ObjectSourceKind::PackageBody => {
+                object.source.clone()
+            }
         };
         let statements = build_executable_object_source_statements(EditableObjectSourceSqlInput {
             database_type: DatabaseType::Postgres,
@@ -3085,26 +3132,13 @@ mod tests {
             visible_databases: None,
             attached_databases: Vec::new(),
             color: None,
-            ssh_enabled: false,
-            ssh_host: String::new(),
-            ssh_port: 22,
-            ssh_user: String::new(),
-            ssh_password: String::new(),
-            ssh_key_path: String::new(),
-            ssh_key_passphrase: String::new(),
-            ssh_expose_lan: false,
-            ssh_connect_timeout_secs: 5,
-            ssh_tunnels: Vec::new(),
+            transport_layers: Vec::new(),
             connect_timeout_secs: 5,
             query_timeout_secs: 30,
-            proxy_enabled: false,
-            proxy_type: crate::models::connection::ProxyType::Socks5,
-            proxy_host: String::new(),
-            proxy_port: 1080,
-            proxy_username: String::new(),
-            proxy_password: String::new(),
             ssl: false,
             ca_cert_path: String::new(),
+            client_cert_path: String::new(),
+            client_key_path: String::new(),
             sysdba: false,
             oracle_connection_type: None,
             connection_string: None,
@@ -3115,6 +3149,7 @@ mod tests {
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
             redis_cluster_nodes: String::new(),
+            etcd_endpoints: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),

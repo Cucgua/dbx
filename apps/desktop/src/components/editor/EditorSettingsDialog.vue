@@ -10,6 +10,7 @@ import {
   Loader2,
   Pencil,
   RefreshCw,
+  RotateCcw,
   Settings,
   Trash2,
   Upload,
@@ -47,6 +48,8 @@ import { loadEditorTheme, editorFontTheme } from "@/lib/editorThemes";
 import ThemeCustomizerDialog from "./ThemeCustomizerDialog.vue";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { useTheme } from "@/composables/useTheme";
+import { copyToClipboard } from "@/lib/clipboard";
+import { clearDebugLogs as clearStoredDebugLogs, downloadDebugLogs, getDebugLogBundleText } from "@/lib/debugLog";
 import {
   aiListModels,
   aiTestConnection,
@@ -64,7 +67,6 @@ import { eventToShortcut } from "@/lib/keyboardShortcuts";
 import {
   SHORTCUT_DEFINITIONS,
   findShortcutConflict,
-  formatShortcut,
   normalizeShortcutSettings,
   type ShortcutActionId,
 } from "@/lib/shortcutRegistry";
@@ -110,10 +112,15 @@ const editConfirmDangerousSqlExecution = ref(settingsStore.editorSettings.confir
 const editAppLayout = ref(settingsStore.editorSettings.appLayout);
 const editShowTrayIcon = ref(settingsStore.desktopSettings.show_tray_icon);
 const editIconTheme = ref<DesktopIconTheme>(settingsStore.desktopSettings.icon_theme);
+const editDebugLoggingEnabled = ref(settingsStore.desktopSettings.debug_logging_enabled);
+const debugLogCopied = ref(false);
+const debugLogDownloaded = ref(false);
 const editShowColumnCommentsInHeader = ref(settingsStore.editorSettings.showColumnCommentsInHeader);
+const editShowColumnTypesInHeader = ref(settingsStore.editorSettings.showColumnTypesInHeader);
 const editCompactColumnHeaderActions = ref(settingsStore.editorSettings.compactColumnHeaderActions);
 const editRedisScanPageSize = ref(settingsStore.editorSettings.redisScanPageSize);
 const editShortcuts = ref(normalizeShortcutSettings(settingsStore.editorSettings.shortcuts));
+const editingShortcutId = ref<ShortcutActionId | null>(null);
 const editSidebarActivation = ref(settingsStore.editorSettings.sidebarActivation);
 const editSidebarObjectDisplay = ref(settingsStore.editorSettings.sidebarObjectDisplay);
 const sidebarObjectDisplayHelp = ref<"grouped" | "simple" | null>(null);
@@ -122,6 +129,7 @@ const editDisconnectTabHandlingMode = ref<DisconnectTabHandlingMode>(
   settingsStore.editorSettings.disconnectTabHandlingMode,
 );
 const editReuseDataTab = ref(settingsStore.editorSettings.reuseDataTab);
+const editUpdateNotificationsEnabled = ref(settingsStore.editorSettings.updateNotificationsEnabled);
 const editSidebarHiddenTablePrefixes = ref(settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n"));
 const editSidebarHideTableComments = ref(settingsStore.editorSettings.sidebarHideTableComments);
 const editSidebarAllowHorizontalScroll = ref(settingsStore.editorSettings.sidebarAllowHorizontalScroll);
@@ -265,7 +273,9 @@ watch(
       editAppLayout.value = settingsStore.editorSettings.appLayout;
       editShowTrayIcon.value = settingsStore.desktopSettings.show_tray_icon;
       editIconTheme.value = settingsStore.desktopSettings.icon_theme;
+      editDebugLoggingEnabled.value = settingsStore.desktopSettings.debug_logging_enabled;
       editShowColumnCommentsInHeader.value = settingsStore.editorSettings.showColumnCommentsInHeader;
+      editShowColumnTypesInHeader.value = settingsStore.editorSettings.showColumnTypesInHeader;
       editCompactColumnHeaderActions.value = settingsStore.editorSettings.compactColumnHeaderActions;
       editRedisScanPageSize.value = settingsStore.editorSettings.redisScanPageSize;
       editShortcuts.value = normalizeShortcutSettings(settingsStore.editorSettings.shortcuts);
@@ -274,6 +284,7 @@ watch(
       editAutoSelectActiveSidebarNode.value = settingsStore.editorSettings.autoSelectActiveSidebarNode;
       editDisconnectTabHandlingMode.value = settingsStore.editorSettings.disconnectTabHandlingMode;
       editReuseDataTab.value = settingsStore.editorSettings.reuseDataTab;
+      editUpdateNotificationsEnabled.value = settingsStore.editorSettings.updateNotificationsEnabled;
       editSidebarHiddenTablePrefixes.value = settingsStore.editorSettings.sidebarHiddenTablePrefixes.join("\n");
       editSidebarHideTableComments.value = settingsStore.editorSettings.sidebarHideTableComments;
       editSidebarAllowHorizontalScroll.value = settingsStore.editorSettings.sidebarAllowHorizontalScroll;
@@ -311,7 +322,9 @@ function hasChanges(): boolean {
     editAppLayout.value !== settingsStore.editorSettings.appLayout ||
     editShowTrayIcon.value !== settingsStore.desktopSettings.show_tray_icon ||
     editIconTheme.value !== settingsStore.desktopSettings.icon_theme ||
+    editDebugLoggingEnabled.value !== settingsStore.desktopSettings.debug_logging_enabled ||
     editShowColumnCommentsInHeader.value !== settingsStore.editorSettings.showColumnCommentsInHeader ||
+    editShowColumnTypesInHeader.value !== settingsStore.editorSettings.showColumnTypesInHeader ||
     editCompactColumnHeaderActions.value !== settingsStore.editorSettings.compactColumnHeaderActions ||
     editRedisScanPageSize.value !== settingsStore.editorSettings.redisScanPageSize ||
     JSON.stringify(editShortcuts.value) !== JSON.stringify(settingsStore.editorSettings.shortcuts) ||
@@ -320,6 +333,7 @@ function hasChanges(): boolean {
     editAutoSelectActiveSidebarNode.value !== settingsStore.editorSettings.autoSelectActiveSidebarNode ||
     editDisconnectTabHandlingMode.value !== settingsStore.editorSettings.disconnectTabHandlingMode ||
     editReuseDataTab.value !== settingsStore.editorSettings.reuseDataTab ||
+    editUpdateNotificationsEnabled.value !== settingsStore.editorSettings.updateNotificationsEnabled ||
     editSidebarHideTableComments.value !== settingsStore.editorSettings.sidebarHideTableComments ||
     editSidebarAllowHorizontalScroll.value !== settingsStore.editorSettings.sidebarAllowHorizontalScroll ||
     editExportBatchSize.value !== settingsStore.editorSettings.exportBatchSize ||
@@ -345,6 +359,7 @@ async function persistSettings() {
     confirmDangerousSqlExecution: editConfirmDangerousSqlExecution.value,
     appLayout: editAppLayout.value,
     showColumnCommentsInHeader: editShowColumnCommentsInHeader.value,
+    showColumnTypesInHeader: editShowColumnTypesInHeader.value,
     compactColumnHeaderActions: editCompactColumnHeaderActions.value,
     redisScanPageSize: editRedisScanPageSize.value,
     shortcuts: editShortcuts.value,
@@ -353,6 +368,7 @@ async function persistSettings() {
     autoSelectActiveSidebarNode: editAutoSelectActiveSidebarNode.value,
     disconnectTabHandlingMode: editDisconnectTabHandlingMode.value,
     reuseDataTab: editReuseDataTab.value,
+    updateNotificationsEnabled: editUpdateNotificationsEnabled.value,
     sidebarHideTableComments: editSidebarHideTableComments.value,
     sidebarAllowHorizontalScroll: editSidebarAllowHorizontalScroll.value,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(editSidebarHiddenTablePrefixes.value),
@@ -362,6 +378,7 @@ async function persistSettings() {
   await settingsStore.updateDesktopSettings({
     show_tray_icon: editShowTrayIcon.value,
     icon_theme: editIconTheme.value,
+    debug_logging_enabled: editDebugLoggingEnabled.value,
   });
   if (sidebarObjectDisplayChanged) {
     await connectionStore.refreshAllTree();
@@ -390,7 +407,9 @@ function resetDefaults() {
   editAppLayout.value = DEFAULT_EDITOR_SETTINGS.appLayout;
   editShowTrayIcon.value = DEFAULT_DESKTOP_SETTINGS.show_tray_icon;
   editIconTheme.value = DEFAULT_DESKTOP_SETTINGS.icon_theme;
+  editDebugLoggingEnabled.value = DEFAULT_DESKTOP_SETTINGS.debug_logging_enabled;
   editShowColumnCommentsInHeader.value = DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader;
+  editShowColumnTypesInHeader.value = DEFAULT_EDITOR_SETTINGS.showColumnTypesInHeader;
   editCompactColumnHeaderActions.value = DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions;
   editRedisScanPageSize.value = DEFAULT_EDITOR_SETTINGS.redisScanPageSize;
   editShortcuts.value = normalizeShortcutSettings(DEFAULT_EDITOR_SETTINGS.shortcuts);
@@ -399,6 +418,7 @@ function resetDefaults() {
   editAutoSelectActiveSidebarNode.value = DEFAULT_EDITOR_SETTINGS.autoSelectActiveSidebarNode;
   editDisconnectTabHandlingMode.value = DEFAULT_EDITOR_SETTINGS.disconnectTabHandlingMode;
   editReuseDataTab.value = DEFAULT_EDITOR_SETTINGS.reuseDataTab;
+  editUpdateNotificationsEnabled.value = DEFAULT_EDITOR_SETTINGS.updateNotificationsEnabled;
   editSidebarHideTableComments.value = DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments;
   editSidebarAllowHorizontalScroll.value = DEFAULT_EDITOR_SETTINGS.sidebarAllowHorizontalScroll;
   editSidebarHiddenTablePrefixes.value = DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes.join("\n");
@@ -486,9 +506,56 @@ function onShortcutChange(actionId: ShortcutActionId, value: any) {
 function onShortcutKeydown(actionId: ShortcutActionId, event: KeyboardEvent) {
   event.preventDefault();
   event.stopPropagation();
+  if (editingShortcutId.value !== actionId) return;
+  if (event.key === "Escape") {
+    editingShortcutId.value = null;
+    return;
+  }
   const shortcut = eventToShortcut(event);
   if (!shortcut) return;
   onShortcutChange(actionId, shortcut);
+  editingShortcutId.value = null;
+}
+
+function formatShortcutPill(shortcut: string): string {
+  const isMac = globalThis.navigator?.platform?.toLowerCase().includes("mac") ?? false;
+  return shortcut
+    .split("+")
+    .filter(Boolean)
+    .map((part) => {
+      if (part === "Mod") return isMac ? "⌘" : "Ctrl";
+      if (part === "Meta") return isMac ? "⌘" : "Meta";
+      if (part === "Shift") return isMac ? "⇧" : "Shift";
+      if (part === "Alt") return isMac ? "⌥" : "Alt";
+      if (part === "Control" || part === "Ctrl") return isMac ? "⌃" : "Ctrl";
+      if (part === "Enter") return "↵";
+      if (part === "Backspace") return "⌫";
+      if (part === "Delete") return isMac ? "⌦" : "Del";
+      if (part === "Escape") return "Esc";
+      if (part === "ArrowUp") return "↑";
+      if (part === "ArrowDown") return "↓";
+      if (part === "ArrowLeft") return "←";
+      if (part === "ArrowRight") return "→";
+      if (part === " ") return "Space";
+      return part.length === 1 ? part.toUpperCase() : part;
+    })
+    .join(isMac ? " " : " + ");
+}
+
+const shortcutPressShortcutLabel = computed(() => t("settings.shortcutPressShortcut"));
+const shortcutPressShortcutInputWidth = computed(() => `${shortcutPressShortcutLabel.value.length + 2}em`);
+
+function focusShortcutInput(actionId: ShortcutActionId) {
+  editingShortcutId.value = actionId;
+  const input = document.querySelector<HTMLInputElement>(`[data-shortcut-input="${actionId}"]`);
+  requestAnimationFrame(() => {
+    input?.focus();
+    input?.select();
+  });
+}
+
+function cancelShortcutEdit() {
+  editingShortcutId.value = null;
 }
 
 function resetShortcut(actionId: ShortcutActionId) {
@@ -566,6 +633,29 @@ function openExternalUrl(url: string) {
   } else {
     window.open(url, "_blank", "noopener,noreferrer");
   }
+}
+
+async function copyDebugLogs() {
+  await copyToClipboard(await getDebugLogBundleText());
+  debugLogCopied.value = true;
+  window.setTimeout(() => {
+    debugLogCopied.value = false;
+  }, 1500);
+}
+
+function clearDebugLogs() {
+  clearStoredDebugLogs();
+  debugLogCopied.value = false;
+  debugLogDownloaded.value = false;
+}
+
+async function exportDebugLogs() {
+  const saved = await downloadDebugLogs();
+  if (!saved) return;
+  debugLogDownloaded.value = true;
+  window.setTimeout(() => {
+    debugLogDownloaded.value = false;
+  }, 1500);
 }
 
 // ---------- WebDAV Sync ----------
@@ -713,6 +803,7 @@ watch(
       await settingsStore.initDesktopSettings();
       editShowTrayIcon.value = settingsStore.desktopSettings.show_tray_icon;
       editIconTheme.value = settingsStore.desktopSettings.icon_theme;
+      editDebugLoggingEnabled.value = settingsStore.desktopSettings.debug_logging_enabled;
       webdavPassword.value = "";
       await refreshWebDavPasswordStatus();
       syncAiEditState();
@@ -1466,6 +1557,39 @@ watch(
                 <Switch id="show-tray-icon" v-model="editShowTrayIcon" />
               </div>
 
+              <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                <div class="space-y-1">
+                  <Label for="update-notifications-enabled">{{ t("settings.updateNotificationsEnabled") }}</Label>
+                  <p class="text-xs text-muted-foreground">
+                    {{ t("settings.updateNotificationsEnabledDescription") }}
+                  </p>
+                </div>
+                <Switch id="update-notifications-enabled" v-model="editUpdateNotificationsEnabled" />
+              </div>
+
+              <div v-if="!isWeb" class="flex flex-col gap-3 rounded-md border bg-muted/20 px-3 py-2">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="space-y-1">
+                    <Label for="debug-logging-enabled">{{ t("settings.debugLoggingEnabled") }}</Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ t("settings.debugLoggingEnabledDescription") }}
+                    </p>
+                  </div>
+                  <Switch id="debug-logging-enabled" v-model="editDebugLoggingEnabled" />
+                </div>
+                <div class="flex justify-end gap-2">
+                  <Button type="button" variant="outline" size="sm" @click="clearDebugLogs">
+                    {{ t("settings.debugLogsClear") }}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" @click="copyDebugLogs">
+                    {{ debugLogCopied ? t("settings.debugLogsCopied") : t("settings.debugLogsCopy") }}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" @click="exportDebugLogs">
+                    {{ debugLogDownloaded ? t("settings.debugLogsDownloaded") : t("settings.debugLogsDownload") }}
+                  </Button>
+                </div>
+              </div>
+
               <Separator />
 
               <div class="space-y-3">
@@ -1480,6 +1604,17 @@ watch(
                     </p>
                   </div>
                   <Switch id="show-column-comments-in-header" v-model="editShowColumnCommentsInHeader" />
+                </div>
+                <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                  <div class="space-y-1">
+                    <Label for="show-column-types-in-header">
+                      {{ t("settings.showColumnTypesInHeader") }}
+                    </Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ t("settings.showColumnTypesInHeaderDescription") }}
+                    </p>
+                  </div>
+                  <Switch id="show-column-types-in-header" v-model="editShowColumnTypesInHeader" />
                 </div>
                 <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
                   <div class="space-y-1">
@@ -1754,40 +1889,80 @@ watch(
             </section>
 
             <section v-else-if="activeSettingsTab === 'shortcuts'" class="flex flex-col gap-2 py-2">
-              <div class="overflow-hidden rounded-md border bg-background">
+              <div class="overflow-hidden rounded-md border border-border/70 bg-background">
                 <div
                   v-for="definition in SHORTCUT_DEFINITIONS"
                   :key="definition.id"
-                  class="-mt-px grid gap-2 border-t border-border px-3 py-2 sm:first:mt-0 sm:first:border-t-0 sm:grid-cols-[minmax(0,1fr)_208px] sm:items-center"
+                  class="group -mt-px grid gap-2 border-t border-border/70 px-3 py-2 transition-colors first:mt-0 first:border-t-0 hover:bg-muted/40 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
                 >
                   <div class="min-w-0">
                     <div class="flex min-w-0 items-center gap-2">
                       <Label class="min-w-0 truncate leading-none">{{ t(definition.labelKey) }}</Label>
-                      <Badge variant="outline" class="h-5 shrink-0 rounded-md px-1.5 text-[11px] text-muted-foreground">
+                      <Badge
+                        variant="outline"
+                        class="h-5 shrink-0 rounded-md border-border/60 px-1.5 text-[11px] font-normal text-muted-foreground"
+                      >
                         {{
                           t(`settings.shortcutScope${definition.scope[0].toUpperCase()}${definition.scope.slice(1)}`)
                         }}
                       </Badge>
                     </div>
                   </div>
-                  <div class="space-y-1">
-                    <div class="flex gap-2">
-                      <Input
-                        :model-value="formatShortcut(editShortcuts[definition.id])"
+                  <div class="min-w-0 space-y-1">
+                    <div class="flex items-center justify-end gap-1.5">
+                      <input
+                        :data-shortcut-input="definition.id"
+                        :value="
+                          editingShortcutId === definition.id ? '' : formatShortcutPill(editShortcuts[definition.id])
+                        "
+                        :style="{
+                          width:
+                            editingShortcutId === definition.id
+                              ? shortcutPressShortcutInputWidth
+                              : `${Math.max(4, formatShortcutPill(editShortcuts[definition.id]).length + 2)}ch`,
+                        }"
                         readonly
                         :aria-invalid="shortcutConflicts.includes(definition.id)"
                         :placeholder="t('settings.shortcutPressShortcut')"
-                        class="h-9 font-mono"
+                        class="h-7 w-auto min-w-12 max-w-32 shrink-0 cursor-default rounded-full border border-transparent bg-muted px-2.5 text-center font-mono text-[13px] font-semibold text-foreground/75 shadow-inner outline-none selection:bg-transparent placeholder:text-muted-foreground aria-invalid:border-destructive/70 aria-invalid:text-destructive aria-invalid:ring-destructive/20"
+                        :class="
+                          editingShortcutId === definition.id
+                            ? 'max-w-44 cursor-text border-border/80 bg-background text-left text-foreground shadow-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/35'
+                            : ''
+                        "
                         @keydown="(event: KeyboardEvent) => onShortcutKeydown(definition.id, event)"
                       />
                       <Button
+                        v-if="editingShortcutId !== definition.id"
                         type="button"
-                        variant="outline"
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                        :aria-label="t('settings.shortcutPressShortcut')"
+                        @click="focusShortcutInput(definition.id)"
+                      >
+                        <Pencil class="h-4 w-4" />
+                      </Button>
+                      <Button
+                        v-else
+                        type="button"
+                        variant="ghost"
                         size="sm"
-                        class="h-9 shrink-0 px-3"
+                        class="h-7 shrink-0 px-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+                        @click="cancelShortcutEdit"
+                      >
+                        {{ t("settings.cancel") }}
+                      </Button>
+                      <Button
+                        v-if="editingShortcutId !== definition.id"
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                        :aria-label="t('settings.reset')"
                         @click="resetShortcut(definition.id)"
                       >
-                        {{ t("settings.reset") }}
+                        <RotateCcw class="h-4 w-4" />
                       </Button>
                     </div>
                     <p v-if="shortcutConflicts.includes(definition.id)" class="text-xs text-destructive">
@@ -1957,8 +2132,6 @@ watch(
 
             <!-- AI Settings Tab -->
             <section v-else-if="activeSettingsTab === 'ai'" class="flex flex-col gap-5 py-2">
-              <p class="text-xs text-muted-foreground">{{ t("ai.settingsHint") }}</p>
-
               <div class="space-y-3">
                 <div class="grid grid-cols-3 items-center gap-3">
                   <Label class="text-right text-xs">{{ t("ai.provider") }}</Label>

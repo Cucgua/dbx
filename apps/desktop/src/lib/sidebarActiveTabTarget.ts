@@ -16,6 +16,10 @@ export type ActiveTabSidebarTarget =
       collectionName: string;
     }
   | {
+      type: "etcd-root";
+      connectionId: string;
+    }
+  | {
       type: "saved-sql-file";
       savedSqlId: string;
     }
@@ -54,6 +58,10 @@ export function activeTabSidebarTarget(tab: QueryTab | undefined | null): Active
       database: tab.database,
       collectionName,
     };
+  }
+
+  if (tab.mode === "etcd") {
+    return { type: "etcd-root", connectionId: tab.connectionId };
   }
 
   if (tab.mode === "query") {
@@ -98,6 +106,10 @@ export function matchesTarget(node: TreeNode, target: ActiveTabSidebarTarget): b
       );
     }
     return node.type === "database" && node.connectionId === target.connectionId && node.label === target.database;
+  }
+
+  if (target.type === "etcd-root") {
+    return node.type === "etcd-root" && node.connectionId === target.connectionId;
   }
 
   return (

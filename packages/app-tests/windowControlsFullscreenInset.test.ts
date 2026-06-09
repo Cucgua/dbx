@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import * as windowControlsModule from "../../apps/desktop/src/composables/useWindowControls.ts";
 
 test("mac traffic-light inset is removed in fullscreen", () => {

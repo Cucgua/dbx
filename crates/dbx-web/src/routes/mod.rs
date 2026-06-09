@@ -4,6 +4,7 @@ pub mod app_settings;
 pub mod connection;
 pub mod data_compare;
 pub mod database_export;
+pub mod etcd;
 pub mod history;
 pub mod jdbc;
 pub mod layout;

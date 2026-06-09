@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import test from "node:test";
+import { test } from "vitest";
 import type { ConnectionConfig } from "../src/connections.js";
 import { describeTable, executeQuery, listTables } from "../src/database.js";
 

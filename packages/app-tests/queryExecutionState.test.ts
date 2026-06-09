@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { canCancelQueryExecution, queryExecutionLabelKey } from "../../apps/desktop/src/lib/queryExecutionState.ts";
 
 test("only allows cancelling an active execution with an execution id", () => {

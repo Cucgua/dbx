@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { buildXlsxWorkbook } from "../../apps/desktop/src/lib/xlsxExport.ts";
 
 test("builds an xlsx workbook zip with worksheet data", () => {

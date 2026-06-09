@@ -8,6 +8,7 @@ import {
   parseMongoAggregateCommand,
   parseMongoCountDocumentsCommand,
   parseMongoFindCommand,
+  parseMongoGetIndexesCommand,
   parseMongoWriteCommand,
   type MongoWriteCommand,
 } from "./database.js";
@@ -188,6 +189,21 @@ export async function executeQuery(config: ConnectionConfig, sql: string, option
       const result = (await res.json()) as { documents: unknown[]; total: number };
       return mongoDocumentsToQueryResult(result.documents.slice(0, options?.maxRows ?? result.documents.length), result.total);
     }
+    const getIndexes = parseMongoGetIndexesCommand(sql);
+    if (getIndexes) {
+      const res = await apiFetch("/api/mongo/aggregate-documents", {
+        method: "POST",
+        body: JSON.stringify({
+          connectionId: config.id,
+          database: config.database || "",
+          collection: getIndexes.collection,
+          pipelineJson: '[{"$indexStats":{}}]',
+          maxRows: options?.maxRows ?? 100,
+        }),
+      });
+      const result = (await res.json()) as { documents: unknown[]; total: number };
+      return mongoDocumentsToQueryResult(result.documents.slice(0, options?.maxRows ?? result.documents.length), result.total);
+    }
     const write = parseMongoWriteCommand(sql);
     if (write) {
       const safety = evaluateMongoWriteSafety(write, sqlSafetyFromEnv());
@@ -196,7 +212,7 @@ export async function executeQuery(config: ConnectionConfig, sql: string, option
       return { columns: [], rows: [], row_count: affected };
     }
     throw new Error(
-      "Use MongoDB shell-style commands, for example: db.projects.find({}).limit(100), db.projects.countDocuments({}), db.projects.insertOne({...}), db.projects.updateOne({...}, {$set: {...}}), or db.projects.deleteOne({...})",
+      "Use MongoDB shell-style commands, for example: db.projects.find({}).limit(100), db.projects.countDocuments({}), db.projects.getIndexes(), db.projects.insertOne({...}), db.projects.updateOne({...}, {$set: {...}}), or db.projects.deleteOne({...})",
     );
   }
   const res = await apiFetch("/api/query/execute", {

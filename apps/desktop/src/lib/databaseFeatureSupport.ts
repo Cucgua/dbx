@@ -93,7 +93,7 @@ export function supportsDriverManagement(dbType?: DatabaseType): boolean {
 }
 
 export function supportsObjectBrowser(dbType?: DatabaseType): boolean {
-  return !!dbType && !["redis", "mongodb", "elasticsearch"].includes(dbType);
+  return !!dbType && !["redis", "mongodb", "elasticsearch", "etcd"].includes(dbType);
 }
 
 export function supportsObjectBrowserTreeNode(dbType: DatabaseType | undefined, nodeType: TreeNodeType): boolean {

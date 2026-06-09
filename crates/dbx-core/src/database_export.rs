@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::models::connection::DatabaseType;
 use crate::sql_dialect::{qualified_table_name, quote_table_identifier};
-use crate::transfer::format_pg_array_sql_literal;
+use crate::transfer::{format_ch_array_sql_literal, format_pg_array_sql_literal};
 
 static EXPORT_CANCELLED: std::sync::LazyLock<RwLock<HashSet<String>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashSet::new()));
@@ -145,6 +145,11 @@ fn format_export_sql_literal_typed(
 ) -> String {
     if matches!(database_type, Some(DatabaseType::Mysql)) && column_type.is_some_and(is_mysql_bit_type) {
         return format_mysql_bit_literal(value);
+    }
+    if let Some(arr) = value.as_array() {
+        if matches!(database_type, Some(DatabaseType::ClickHouse) | Some(DatabaseType::Databend)) {
+            return format_ch_array_sql_literal(arr);
+        }
     }
     format_export_sql_literal(value)
 }
@@ -373,7 +378,8 @@ pub async fn export_database_sql_core(
 
     if request.include_objects && request.selected_tables.is_empty() {
         if let Ok(objects) =
-            crate::schema::list_objects_core(state, &request.connection_id, &request.database, &request.schema).await
+            crate::schema::list_objects_core(state, &request.connection_id, &request.database, &request.schema, None)
+                .await
         {
             for obj in &objects {
                 let ot = obj.object_type.to_uppercase();
@@ -854,7 +860,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            vec![
+            [
                 "-- DBX database export".to_string(),
                 "-- Database: app".to_string(),
                 "-- Exported at: 2026-05-02T00:00:00.000Z".to_string(),

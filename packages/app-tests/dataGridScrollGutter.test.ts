@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { dataGridHeaderContentWidth, scrollbarGutterWidth } from "../../apps/desktop/src/lib/dataGridScrollGutter.ts";
 
 test("calculates scrollbar gutter from element dimensions", () => {

@@ -178,6 +178,23 @@ pub fn build_paginated_query_sql(options: PaginatedQuerySqlOptions) -> QuerySqlB
         return ok(add_mysql_limit(&statement, safe_limit, safe_offset));
     }
 
+    if options.database_type == Some(DatabaseType::Elasticsearch) {
+        // If the user wrote their own LIMIT, leave the SQL alone — they
+        // explicitly bounded the result set and the front-end will paginate
+        // client-side. Otherwise wrap with an explicit OFFSET (even when
+        // 0) so the ES driver can tell a plan-wrapped query from one the
+        // user wrote, which decides whether affected_rows should reflect
+        // the index total or the row count we actually returned.
+        if has_top_level_limit(&statement) {
+            return err("unsupported");
+        }
+        return ok(format!("{statement} LIMIT {safe_limit} OFFSET {safe_offset};"));
+    }
+
+    if options.database_type == Some(DatabaseType::Oracle) {
+        return ok(format!("{statement};"));
+    }
+
     if options.database_type.is_some_and(uses_fetch_first) {
         return ok(add_fetch_first_limit(&statement, safe_limit, safe_offset));
     }
@@ -190,6 +207,11 @@ pub fn build_count_query_sql(options: CountQuerySqlOptions) -> QuerySqlBuildResu
         return err(single_statement_error_reason(&options.original_sql));
     };
     if unsupported_pagination_type(options.database_type) {
+        return err("unsupported");
+    }
+    // ES SQL can't wrap a SELECT in `SELECT COUNT(*) FROM (...)` — the
+    // driver already reports the true match count via affected_rows.
+    if options.database_type == Some(DatabaseType::Elasticsearch) {
         return err("unsupported");
     }
 
@@ -225,7 +247,9 @@ pub fn build_sorted_query_sql(options: SortedQuerySqlOptions) -> QuerySqlBuildRe
     }
 
     let aliases = build_derived_column_aliases(&options.result_columns);
-    let use_derived_column_aliases = options.database_type != Some(DatabaseType::Mysql);
+    let use_derived_column_aliases = options.database_type != Some(DatabaseType::Mysql)
+        && options.database_type != Some(DatabaseType::Sqlite)
+        && options.database_type != Some(DatabaseType::DuckDb);
     let sort_alias = if use_derived_column_aliases {
         aliases
             .get(options.column_index)
@@ -272,10 +296,7 @@ fn err(reason: &str) -> QuerySqlBuildResult {
 }
 
 fn unsupported_pagination_type(database_type: Option<DatabaseType>) -> bool {
-    matches!(
-        database_type,
-        Some(DatabaseType::Neo4j | DatabaseType::MongoDb | DatabaseType::Redis | DatabaseType::Elasticsearch)
-    )
+    matches!(database_type, Some(DatabaseType::Neo4j | DatabaseType::MongoDb | DatabaseType::Redis))
 }
 
 fn single_selectable_statement(original_sql: &str) -> Result<String, ()> {
@@ -627,7 +648,7 @@ mod tests {
             offset: 200,
         });
 
-        assert_eq!(result.ok, true);
+        assert!(result.ok);
         assert_eq!(result.sql.unwrap(), "SELECT id, name FROM users LIMIT 100 OFFSET 200;");
     }
 
@@ -640,7 +661,7 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.ok, true);
+        assert!(result.ok);
         assert_eq!(result.sql.unwrap(), "SELECT TOP (100) id FROM users ORDER BY id DESC");
     }
 
@@ -653,7 +674,7 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.ok, true);
+        assert!(result.ok);
         assert_eq!(result.sql.unwrap(), "SELECT TOP (100) COUNT(*) FROM TicketInfo");
     }
 
@@ -666,7 +687,7 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.ok, true);
+        assert!(result.ok);
         assert_eq!(
             result.sql.unwrap(),
             "SELECT DISTINCT TOP (100) ProjectType FROM JDDR_sys_BasicConfig_ProjectInfo_Data"
@@ -682,7 +703,7 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.ok, true);
+        assert!(result.ok);
         assert_eq!(result.sql.unwrap(), "SELECT ALL TOP (100) ProjectType FROM JDDR_sys_BasicConfig_ProjectInfo_Data");
     }
 
@@ -695,7 +716,7 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.ok, true);
+        assert!(result.ok);
         assert_eq!(result.sql.unwrap(), "SELECT TOP (100) AllProjectType FROM JDDR_sys_BasicConfig_ProjectInfo_Data");
     }
 
@@ -708,7 +729,7 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.ok, true);
+        assert!(result.ok);
         assert_eq!(result.sql.unwrap(), "SELECT TOP 1000 * FROM TicketInfo");
     }
 
@@ -737,7 +758,7 @@ mod tests {
             database_type: Some(DatabaseType::SqlServer),
         });
 
-        assert_eq!(result.ok, false);
+        assert!(!result.ok);
         assert!(result.sql.is_none());
     }
 
@@ -750,7 +771,7 @@ mod tests {
             offset: 0,
         });
 
-        assert_eq!(result.ok, true);
+        assert!(result.ok);
         assert_eq!(result.sql.unwrap(), "SELECT TOP (100) @@version");
     }
 
@@ -767,10 +788,22 @@ mod tests {
     }
 
     #[test]
-    fn uses_fetch_first_pagination_for_oracle() {
+    fn oracle_pagination_skips_sql_clause() {
         let result = build_paginated_query_sql(PaginatedQuerySqlOptions {
             original_sql: "SELECT id FROM users".to_string(),
             database_type: Some(DatabaseType::Oracle),
+            limit: 100,
+            offset: 0,
+        });
+
+        assert_eq!(result.sql.unwrap(), "SELECT id FROM users;");
+    }
+
+    #[test]
+    fn uses_fetch_first_pagination_for_db2() {
+        let result = build_paginated_query_sql(PaginatedQuerySqlOptions {
+            original_sql: "SELECT id FROM users".to_string(),
+            database_type: Some(DatabaseType::Db2),
             limit: 100,
             offset: 0,
         });

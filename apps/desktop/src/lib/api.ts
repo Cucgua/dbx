@@ -1,5 +1,6 @@
 import { isTauriRuntime } from "./tauriRuntime";
 import type * as TauriModule from "./tauri";
+import { appendDebugLog } from "./debugLog";
 
 // ---------------------------------------------------------------------------
 // Lazy backend resolution (avoids top-level await)
@@ -21,8 +22,25 @@ async function getBackend(): Promise<Backend> {
 
 function forward<K extends keyof Backend>(name: K): Backend[K] {
   return (async (...args: unknown[]) => {
+    const startedAt = performance.now();
+    const operation = String(name);
+    appendDebugLog("debug", "[DBX][api:start]", operation);
     const b = await getBackend();
-    return (b[name] as (...a: unknown[]) => unknown)(...args);
+    try {
+      const result = await (b[name] as (...a: unknown[]) => unknown)(...args);
+      appendDebugLog("debug", "[DBX][api:success]", {
+        operation,
+        elapsedMs: Math.round(performance.now() - startedAt),
+      });
+      return result;
+    } catch (error) {
+      appendDebugLog("error", "[DBX][api:error]", {
+        operation,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        error,
+      });
+      throw error;
+    }
   }) as unknown as Backend[K];
 }
 
@@ -33,6 +51,7 @@ function forward<K extends keyof Backend>(name: K): Backend[K] {
 // Connection
 export const testConnection = forward("testConnection");
 export const connectDb = forward("connectDb");
+export const connectionFinalProxyPort = forward("connectionFinalProxyPort");
 export const disconnectDb = forward("disconnectDb");
 export const closeDatabaseConnection = forward("closeDatabaseConnection");
 export const refreshConnections = forward("refreshConnections");
@@ -115,6 +134,8 @@ export const findStatementAtCursor = forward("findStatementAtCursor");
 export const prepareQueryPaginationExecutionPlan = forward("prepareQueryPaginationExecutionPlan");
 export const buildSortedQuerySql = forward("buildSortedQuerySql");
 export const buildExplainSql = forward("buildExplainSql");
+export const getExplainInfo = forward("getExplainInfo");
+export const buildCreateUserSql = forward("buildCreateUserSql");
 export const buildDroppedFilePreviewSql = forward("buildDroppedFilePreviewSql");
 export const buildTableSelectSql = forward("buildTableSelectSql");
 export const buildDatabaseSearchSql = forward("buildDatabaseSearchSql");
@@ -233,6 +254,12 @@ export const redisFlushDb = forward("redisFlushDb");
 export const redisExecuteCommand = forward("redisExecuteCommand");
 export const redisLoadMore = forward("redisLoadMore");
 
+// etcd
+export const etcdListPrefix = forward("etcdListPrefix");
+export const etcdGet = forward("etcdGet");
+export const etcdPut = forward("etcdPut");
+export const etcdDelete = forward("etcdDelete");
+
 // MongoDB
 export const mongoListDatabases = forward("mongoListDatabases");
 export const mongoListCollections = forward("mongoListCollections");
@@ -325,6 +352,14 @@ export type {
   RedisScanResult,
   RedisCommandSafety,
   RedisCommandResult,
+  KvValueEncoding,
+  KvValue,
+  KvKeyMetadata,
+  KvKeySummary,
+  KvListPrefixResponse,
+  KvGetResponse,
+  KvPutResponse,
+  KvDeleteResponse,
   MongoDocumentResult,
   HistoryEntry,
   SqlFileStatus,

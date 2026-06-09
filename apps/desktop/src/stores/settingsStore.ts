@@ -13,6 +13,7 @@ import { normalizeSidebarHiddenTablePrefixes } from "@/lib/sidebarTableNameDispl
 import type { SidebarActivation } from "@/lib/treeNodeClick";
 import type { SqlSnippet } from "@/types/database";
 import { DEFAULT_SQL_SNIPPETS } from "@/lib/sqlCompletion";
+import { setDebugLoggingEnabled } from "@/lib/debugLog";
 
 export type AiProvider =
   | "claude"
@@ -54,6 +55,7 @@ export interface SchemaResearchModelConfig {
 export interface DesktopSettings {
   show_tray_icon: boolean;
   icon_theme: DesktopIconTheme;
+  debug_logging_enabled: boolean;
 }
 
 export type DesktopIconTheme = "default" | "black";
@@ -61,6 +63,7 @@ export type DesktopIconTheme = "default" | "black";
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   show_tray_icon: true,
   icon_theme: "default",
+  debug_logging_enabled: false,
 };
 
 function normalizeDesktopSettings(settings: Partial<DesktopSettings> | null | undefined): DesktopSettings {
@@ -68,6 +71,7 @@ function normalizeDesktopSettings(settings: Partial<DesktopSettings> | null | un
   return {
     show_tray_icon: settings?.show_tray_icon ?? DEFAULT_DESKTOP_SETTINGS.show_tray_icon,
     icon_theme: iconTheme,
+    debug_logging_enabled: settings?.debug_logging_enabled ?? DEFAULT_DESKTOP_SETTINGS.debug_logging_enabled,
   };
 }
 
@@ -297,6 +301,7 @@ export interface EditorSettings {
   redisScanPageSize: number;
   mongoViewMode: "document" | "table";
   showColumnCommentsInHeader: boolean;
+  showColumnTypesInHeader: boolean;
   compactColumnHeaderActions: boolean;
   dataGridRenderMode: DataGridRenderMode;
   structureEditorDensity: StructureEditorDensity;
@@ -309,6 +314,7 @@ export interface EditorSettings {
   autoSelectActiveSidebarNode: boolean;
   disconnectTabHandlingMode: DisconnectTabHandlingMode;
   reuseDataTab: boolean;
+  updateNotificationsEnabled: boolean;
   sidebarHiddenTablePrefixes: string[];
   sidebarHideTableComments: boolean;
   sidebarAllowHorizontalScroll: boolean;
@@ -361,6 +367,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   redisScanPageSize: 1000,
   mongoViewMode: "document",
   showColumnCommentsInHeader: false,
+  showColumnTypesInHeader: true,
   compactColumnHeaderActions: true,
   dataGridRenderMode: "canvas",
   structureEditorDensity: "compact",
@@ -373,6 +380,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   autoSelectActiveSidebarNode: false,
   disconnectTabHandlingMode: "close-tabs",
   reuseDataTab: false,
+  updateNotificationsEnabled: true,
   sidebarHiddenTablePrefixes: [],
   sidebarHideTableComments: false,
   sidebarAllowHorizontalScroll: false,
@@ -515,6 +523,7 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
     mongoViewMode: settings.mongoViewMode === "table" ? "table" : DEFAULT_EDITOR_SETTINGS.mongoViewMode,
     showColumnCommentsInHeader:
       settings.showColumnCommentsInHeader ?? DEFAULT_EDITOR_SETTINGS.showColumnCommentsInHeader,
+    showColumnTypesInHeader: settings.showColumnTypesInHeader ?? DEFAULT_EDITOR_SETTINGS.showColumnTypesInHeader,
     compactColumnHeaderActions:
       settings.compactColumnHeaderActions ?? DEFAULT_EDITOR_SETTINGS.compactColumnHeaderActions,
     dataGridRenderMode: normalizeDataGridRenderMode(settings.dataGridRenderMode),
@@ -546,6 +555,8 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>, exist
       (settings as Partial<EditorSettings> & { closeQueryTabsOnDisconnect?: boolean }).closeQueryTabsOnDisconnect,
     ),
     reuseDataTab: settings.reuseDataTab ?? DEFAULT_EDITOR_SETTINGS.reuseDataTab,
+    updateNotificationsEnabled:
+      settings.updateNotificationsEnabled ?? DEFAULT_EDITOR_SETTINGS.updateNotificationsEnabled,
     sidebarHiddenTablePrefixes: normalizeSidebarHiddenTablePrefixes(settings.sidebarHiddenTablePrefixes),
     sidebarHideTableComments: settings.sidebarHideTableComments ?? DEFAULT_EDITOR_SETTINGS.sidebarHideTableComments,
     sidebarAllowHorizontalScroll:
@@ -611,6 +622,7 @@ export const useSettingsStore = defineStore("settings", () => {
   async function initDesktopSettings() {
     if (isDesktopSettingsLoaded.value) return;
     desktopSettings.value = normalizeDesktopSettings(await api.loadDesktopSettings().catch(() => null));
+    setDebugLoggingEnabled(desktopSettings.value.debug_logging_enabled);
     isDesktopSettingsLoaded.value = true;
   }
 
@@ -621,10 +633,12 @@ export const useSettingsStore = defineStore("settings", () => {
       ...partial,
     };
     desktopSettings.value = normalizeDesktopSettings(next);
+    setDebugLoggingEnabled(desktopSettings.value.debug_logging_enabled);
     try {
       await api.saveDesktopSettings(desktopSettings.value);
     } catch (error) {
       desktopSettings.value = previous;
+      setDebugLoggingEnabled(previous.debug_logging_enabled);
       throw error;
     }
   }
@@ -695,6 +709,8 @@ export const useSettingsStore = defineStore("settings", () => {
     if (partial.mongoViewMode !== undefined) editorSettings.value.mongoViewMode = partial.mongoViewMode;
     if (partial.showColumnCommentsInHeader !== undefined)
       editorSettings.value.showColumnCommentsInHeader = partial.showColumnCommentsInHeader;
+    if (partial.showColumnTypesInHeader !== undefined)
+      editorSettings.value.showColumnTypesInHeader = partial.showColumnTypesInHeader;
     if (partial.compactColumnHeaderActions !== undefined)
       editorSettings.value.compactColumnHeaderActions = partial.compactColumnHeaderActions;
     if (partial.dataGridRenderMode !== undefined)
@@ -718,6 +734,8 @@ export const useSettingsStore = defineStore("settings", () => {
         partial.disconnectTabHandlingMode,
       );
     if (partial.reuseDataTab !== undefined) editorSettings.value.reuseDataTab = partial.reuseDataTab;
+    if (partial.updateNotificationsEnabled !== undefined)
+      editorSettings.value.updateNotificationsEnabled = partial.updateNotificationsEnabled;
     if (partial.sidebarHiddenTablePrefixes !== undefined)
       editorSettings.value.sidebarHiddenTablePrefixes = normalizeSidebarHiddenTablePrefixes(
         partial.sidebarHiddenTablePrefixes,

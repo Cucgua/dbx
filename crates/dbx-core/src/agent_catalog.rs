@@ -62,6 +62,13 @@ const AGENT_CATALOG: &[AgentCatalogEntry] = &[
         profiles: &[],
     },
     AgentCatalogEntry {
+        db_type: DatabaseType::Databend,
+        key: "databend",
+        label: "Databend",
+        store_visible: true,
+        profiles: &[],
+    },
+    AgentCatalogEntry {
         db_type: DatabaseType::Databricks,
         key: "databricks",
         label: "Databricks SQL",
@@ -217,6 +224,14 @@ const AGENT_CATALOG: &[AgentCatalogEntry] = &[
         store_visible: true,
         profiles: &[],
     },
+    AgentCatalogEntry {
+        db_type: DatabaseType::Iotdb,
+        key: "iotdb",
+        label: "Apache IoTDB",
+        store_visible: true,
+        profiles: &[],
+    },
+    AgentCatalogEntry { db_type: DatabaseType::Etcd, key: "etcd", label: "etcd", store_visible: false, profiles: &[] },
     AgentCatalogEntry {
         db_type: DatabaseType::MongoDb,
         key: "mongodb",

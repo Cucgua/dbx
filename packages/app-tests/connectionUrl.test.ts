@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { normalizeMongoConnectionString, parseConnectionUrl } from "../../apps/desktop/src/lib/connectionUrl.ts";
 
 test("parses postgres connection URLs", () => {
@@ -135,6 +135,20 @@ test("parses XuguDB JDBC URLs", () => {
   assert.equal(parsed.urlParams, "charset=utf8");
 });
 
+test("parses Apache IoTDB JDBC URLs", () => {
+  const parsed = parseConnectionUrl("jdbc:iotdb://root:secret@iotdb.example.com:6667?sql_dialect=table");
+
+  assert.equal(parsed.dbType, "iotdb");
+  assert.equal(parsed.driverProfile, "iotdb");
+  assert.equal(parsed.driverLabel, "Apache IoTDB");
+  assert.equal(parsed.host, "iotdb.example.com");
+  assert.equal(parsed.port, 6667);
+  assert.equal(parsed.username, "root");
+  assert.equal(parsed.password, "secret");
+  assert.equal(parsed.database, undefined);
+  assert.equal(parsed.urlParams, "sql_dialect=table");
+});
+
 test("parses GBase 8s JDBC URLs", () => {
   const parsed = parseConnectionUrl(
     "jdbc:gbasedbt-sqli://gbasedbt:secret@gbase.example.com:20013/testdb:GBASEDBTSERVER=gbase01;CLIENT_LOCALE=zh_cn.utf8",
@@ -268,6 +282,66 @@ test("parses HTTPS ClickHouse URLs with selected profile", () => {
   assert.equal(parsed.database, "default");
   assert.equal(parsed.urlParams, "secure=true");
   assert.equal(parsed.ssl, true);
+});
+
+test("parses MongoDB multi-host replica set URL", () => {
+  const source =
+    "mongodb://test:test@1.1.1.1:27017,1.1.1.2:27017,1.1.1.3:27017/admin?authMechanism=SCRAM-SHA-256&authSource=admin&replicaSet=testRS0";
+  const parsed = parseConnectionUrl(source);
+
+  assert.equal(parsed.dbType, "mongodb");
+  assert.equal(parsed.driverProfile, "mongodb");
+  assert.equal(parsed.host, "1.1.1.1");
+  assert.equal(parsed.port, 27017);
+  assert.equal(parsed.username, "test");
+  assert.equal(parsed.password, "test");
+  assert.equal(parsed.database, "admin");
+  assert.equal(parsed.urlParams, "authMechanism=SCRAM-SHA-256&authSource=admin&replicaSet=testRS0");
+  assert.equal(parsed.connectionString, source);
+  assert.equal(parsed.useMongoUrl, true);
+  assert.equal(parsed.ssl, false);
+});
+
+test("parses MongoDB single-host URL with replicaSet and auth params", () => {
+  const source =
+    "mongodb://test:test@1.1.1.1:27017/?authMechanism=SCRAM-SHA-256&authSource=admin&replicaSet=testRS0";
+  const parsed = parseConnectionUrl(source);
+
+  assert.equal(parsed.dbType, "mongodb");
+  assert.equal(parsed.host, "1.1.1.1");
+  assert.equal(parsed.port, 27017);
+  assert.equal(parsed.username, "test");
+  assert.equal(parsed.password, "test");
+  assert.equal(parsed.urlParams, "authMechanism=SCRAM-SHA-256&authSource=admin&replicaSet=testRS0");
+  assert.equal(parsed.connectionString, source);
+  assert.equal(parsed.useMongoUrl, true);
+});
+
+test("parses MongoDB multi-host URL without credentials", () => {
+  const source = "mongodb://host1:27017,host2:27017/?replicaSet=rs0";
+  const parsed = parseConnectionUrl(source);
+
+  assert.equal(parsed.dbType, "mongodb");
+  assert.equal(parsed.host, "host1");
+  assert.equal(parsed.port, 27017);
+  assert.equal(parsed.username, "");
+  assert.equal(parsed.password, "");
+  assert.equal(parsed.urlParams, "replicaSet=rs0");
+  assert.equal(parsed.connectionString, source);
+  assert.equal(parsed.useMongoUrl, true);
+});
+
+test("parses MongoDB URL with simple authSource only", () => {
+  const source = "mongodb://test:test@1.1.1.1:27017/?authSource=admin";
+  const parsed = parseConnectionUrl(source);
+
+  assert.equal(parsed.dbType, "mongodb");
+  assert.equal(parsed.host, "1.1.1.1");
+  assert.equal(parsed.port, 27017);
+  assert.equal(parsed.username, "test");
+  assert.equal(parsed.password, "test");
+  assert.equal(parsed.urlParams, "authSource=admin");
+  assert.equal(parsed.useMongoUrl, true);
 });
 
 test("rejects unsupported URL schemes", () => {

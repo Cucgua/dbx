@@ -9,6 +9,7 @@ type LucideIconNode = Array<[string, Record<string, string>]>;
 
 export const EDITOR_FONT_SIZE_CSS_VAR = "--dbx-editor-font-size";
 export const EDITOR_FONT_FAMILY_CSS_VAR = "--dbx-editor-font-family";
+const EDITOR_SELECTION_BACKGROUND_CSS_VAR = "--dbx-editor-selection-background";
 
 const SUPPORTS_COLOR_MIX =
   typeof CSS !== "undefined" &&
@@ -82,6 +83,7 @@ function createCustomTheme(
       "&": {
         backgroundColor: c.background,
         color: c.foreground,
+        [EDITOR_SELECTION_BACKGROUND_CSS_VAR]: c.selection,
       },
       ".cm-content": {
         caretColor: c.cursor,
@@ -317,9 +319,21 @@ export function buildEditorFontThemeRules(
       height: "1.6em !important",
       transform: "translateY(-0.3em)",
     },
-    ".cm-vscodeSelection": {
-      opacity: "0.38",
-      background: "rgb(148, 163, 184)",
+    ".cm-trimmedSelection": {
+      backgroundColor: `var(${EDITOR_SELECTION_BACKGROUND_CSS_VAR}, rgb(148 163 184 / 38%))`,
+      borderRadius: "0",
+    },
+    ".cm-trimmedSelection-topLeft": {
+      borderTopLeftRadius: "3px",
+    },
+    ".cm-trimmedSelection-topRight": {
+      borderTopRightRadius: "3px",
+    },
+    ".cm-trimmedSelection-bottomLeft": {
+      borderBottomLeftRadius: "3px",
+    },
+    ".cm-trimmedSelection-bottomRight": {
+      borderBottomRightRadius: "3px",
     },
     ".cm-gutters": {
       borderRight: "0 !important",
