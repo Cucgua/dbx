@@ -3,6 +3,7 @@ export type DatabaseType =
   | "postgres"
   | "sqlite"
   | "rqlite"
+  | "turso"
   | "redis"
   | "duckdb"
   | "clickhouse"

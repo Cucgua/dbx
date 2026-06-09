@@ -115,6 +115,9 @@ export function connectionUrlPlaceholder(dbType: DatabaseType): string {
     case "rqlite":
       return "http://user:password@host:4001";
 
+    case "turso":
+      return "https://[your-db]-[org].turso.io";
+
     case "duckdb":
       return "duckdb:///absolute/path/to/database.duckdb";
 

@@ -400,6 +400,31 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                     .await
                     .map(|_| "Connection successful".to_string())
             }
+            DatabaseType::Turso => {
+                let auth_token = if !config.password.is_empty() {
+                    config.password.clone()
+                } else {
+                    config
+                        .url_params
+                        .as_deref()
+                        .and_then(|p| {
+                            p.trim()
+                                .trim_start_matches('?')
+                                .split('&')
+                                .filter_map(|pair| pair.split_once('='))
+                                .find(|(key, _)| {
+                                    let k = key.trim().to_ascii_lowercase();
+                                    k == "auth_token" || k == "authtoken" || k == "auth-token"
+                                })
+                                .map(|(_, value)| value.trim().to_string())
+                        })
+                        .unwrap_or_default()
+                };
+                let client = db::turso_driver::TursoClient::new(&url, &auth_token, config.ssl, connect_timeout)?;
+                db::turso_driver::test_connection(&client, connect_timeout)
+                    .await
+                    .map(|_| "Connection successful".to_string())
+            }
             db_type if database_capabilities::is_agent_type(&db_type) => {
                 test_agent_connection(state.inner(), &config, &host, port).await
             }
@@ -566,6 +591,30 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
             )?;
             db::rqlite_driver::test_connection(&client, connect_timeout).await?;
             PoolKind::Rqlite(client)
+        }
+        DatabaseType::Turso => {
+            let auth_token = if !db_config.password.is_empty() {
+                db_config.password.clone()
+            } else {
+                db_config
+                    .url_params
+                    .as_deref()
+                    .and_then(|p| {
+                        p.trim()
+                            .trim_start_matches('?')
+                            .split('&')
+                            .filter_map(|pair| pair.split_once('='))
+                            .find(|(key, _)| {
+                                let k = key.trim().to_ascii_lowercase();
+                                k == "auth_token" || k == "authtoken" || k == "auth-token"
+                            })
+                            .map(|(_, value)| value.trim().to_string())
+                    })
+                    .unwrap_or_default()
+            };
+            let client = db::turso_driver::TursoClient::new(&url, &auth_token, db_config.ssl, connect_timeout)?;
+            db::turso_driver::test_connection(&client, connect_timeout).await?;
+            PoolKind::Turso(client)
         }
         db_type if database_capabilities::is_agent_type(&db_type) => {
             connect_agent_pool(state.inner(), &db_config, &host, port).await?

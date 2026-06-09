@@ -452,6 +452,7 @@ const DATABASE_SQL_KEYWORDS: Partial<Record<DatabaseType, string[]>> = {
   postgres: POSTGRES_SQL_KEYWORDS,
   sqlite: SQLITE_SQL_KEYWORDS,
   rqlite: SQLITE_SQL_KEYWORDS,
+  turso: SQLITE_SQL_KEYWORDS,
   sqlserver: SQLSERVER_SQL_KEYWORDS,
 };
 
@@ -850,6 +851,7 @@ const DATABASE_FUNCTION_SIGNATURES: Partial<Record<DatabaseType, Map<string, str
   postgres: POSTGRES_FUNCTION_SIGNATURES,
   sqlite: SQLITE_FUNCTION_SIGNATURES,
   rqlite: SQLITE_FUNCTION_SIGNATURES,
+  turso: SQLITE_FUNCTION_SIGNATURES,
   sqlserver: SQLSERVER_FUNCTION_SIGNATURES,
 };
 

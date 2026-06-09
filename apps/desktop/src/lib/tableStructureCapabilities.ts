@@ -224,6 +224,7 @@ const capabilityByType: Partial<Record<DatabaseType, TableStructureCapabilities>
   kingbase: postgresCapabilities,
   sqlite: sqliteCapabilities,
   rqlite: sqliteCapabilities,
+  turso: sqliteCapabilities,
   duckdb: duckdbCapabilities,
   sqlserver: sqlserverCapabilities,
   oracle: oracleCapabilities,

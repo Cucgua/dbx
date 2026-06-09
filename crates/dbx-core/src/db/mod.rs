@@ -15,6 +15,7 @@ pub mod sqlite;
 pub mod sqlserver;
 pub mod ssh_tunnel;
 pub mod transport_layer_tunnel;
+pub mod turso_driver;
 
 use reqwest::ClientBuilder;
 use std::future::Future;

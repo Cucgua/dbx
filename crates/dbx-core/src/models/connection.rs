@@ -270,6 +270,8 @@ pub enum DatabaseType {
     Etcd,
     #[serde(rename = "iris")]
     Iris,
+    #[serde(rename = "turso")]
+    Turso,
     Jdbc,
 }
 
@@ -554,7 +556,7 @@ impl ConnectionConfig {
             },
             DatabaseType::Redshift => Some("dev"),
             DatabaseType::ClickHouse => Some("default"),
-            DatabaseType::Rqlite => Some("main"),
+            DatabaseType::Rqlite | DatabaseType::Turso => Some("main"),
             DatabaseType::Gaussdb | DatabaseType::OpenGauss => Some("postgres"),
             DatabaseType::Kwdb => Some("defaultdb"),
             DatabaseType::Kingbase | DatabaseType::Vastbase => Some("postgres"),
@@ -642,6 +644,7 @@ impl ConnectionConfig {
             }
             DatabaseType::ClickHouse => clickhouse_http_url(self, raw_host, port),
             DatabaseType::Rqlite => rqlite_http_url(self, raw_host, port),
+            DatabaseType::Turso => turso_http_url(self, raw_host, port),
             DatabaseType::SqlServer => {
                 format!("server=tcp:{host},{port};database={}", self.database.as_deref().unwrap_or("master"))
             }
@@ -758,6 +761,7 @@ impl ConnectionConfig {
             }
             DatabaseType::ClickHouse => clickhouse_http_url(self, raw_host, port),
             DatabaseType::Rqlite => rqlite_http_url(self, raw_host, port),
+            DatabaseType::Turso => turso_http_url(self, raw_host, port),
             DatabaseType::SqlServer => format!(
                 "server=tcp:{host},{port};user={};password={};database={}",
                 self.username,
@@ -1125,6 +1129,19 @@ fn clickhouse_http_url(config: &ConnectionConfig, host: &str, port: u16) -> Stri
 fn rqlite_http_url(config: &ConnectionConfig, host: &str, port: u16) -> String {
     let trimmed = host.trim();
     if let Some(rest) = trimmed.strip_prefix("https://") {
+        return format!("https://{}", trim_http_host_port(rest, port));
+    }
+    if let Some(rest) = trimmed.strip_prefix("http://") {
+        let scheme = if config.ssl { "https" } else { "http" };
+        return format!("{scheme}://{}", trim_http_host_port(rest, port));
+    }
+    let scheme = if config.ssl { "https" } else { "http" };
+    format!("{scheme}://{}:{port}", bracket_ipv6(trimmed))
+}
+
+fn turso_http_url(config: &ConnectionConfig, host: &str, port: u16) -> String {
+    let trimmed = host.trim();
+    if let Some(rest) = trimmed.strip_prefix("https://").or_else(|| trimmed.strip_prefix("libsql://")) {
         return format!("https://{}", trim_http_host_port(rest, port));
     }
     if let Some(rest) = trimmed.strip_prefix("http://") {

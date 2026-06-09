@@ -40,6 +40,7 @@ pub enum PoolKind {
     Postgres(deadpool_postgres::Pool),
     Sqlite(db::sqlite::SqliteHandle),
     Rqlite(db::rqlite_driver::RqliteClient),
+    Turso(db::turso_driver::TursoClient),
     Redis(db::redis_driver::RedisConnection),
     DuckDb(Arc<std::sync::Mutex<duckdb::Connection>>),
     MongoDb(mongodb::Client),
@@ -376,6 +377,16 @@ impl AppState {
                 )?;
                 db::rqlite_driver::test_connection(&client, connect_timeout).await?;
                 PoolKind::Rqlite(client)
+            }
+            DatabaseType::Turso => {
+                let auth_token = if !db_config.password.is_empty() {
+                    db_config.password.clone()
+                } else {
+                    db_config.url_params.as_deref().and_then(extract_auth_token_from_params).unwrap_or_default()
+                };
+                let client = db::turso_driver::TursoClient::new(&url, &auth_token, db_config.ssl, connect_timeout)?;
+                db::turso_driver::test_connection(&client, connect_timeout).await?;
+                PoolKind::Turso(client)
             }
             DatabaseType::Redis => {
                 let con = if db_config.uses_redis_cluster() {
@@ -939,6 +950,7 @@ pub async fn close_pool_kind(pool: PoolKind) {
         PoolKind::Postgres(p) => p.close(),
         PoolKind::Sqlite(_) => {}
         PoolKind::Rqlite(_) => {}
+        PoolKind::Turso(_) => {}
         PoolKind::Redis(_) => {}
         PoolKind::DuckDb(con) => {
             crate::db::duckdb_driver::close_connection(con);
@@ -954,6 +966,19 @@ pub async fn close_pool_kind(pool: PoolKind) {
         PoolKind::ExternalTabular(_) => {}
         PoolKind::ExternalDriver { .. } => {}
     }
+}
+
+fn extract_auth_token_from_params(params: &str) -> Option<String> {
+    params
+        .trim()
+        .trim_start_matches('?')
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| {
+            let k = key.trim().to_ascii_lowercase();
+            k == "auth_token" || k == "authtoken" || k == "auth-token"
+        })
+        .map(|(_, value)| value.trim().to_string())
 }
 
 fn base_pool_key_for(

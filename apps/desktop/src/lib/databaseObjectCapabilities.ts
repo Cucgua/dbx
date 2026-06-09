@@ -16,6 +16,7 @@ const ORACLE_OBJECTS: SidebarObjectKind[] = ["TABLE", "VIEW", "PROCEDURE", "FUNC
 const TABLE_VIEW_ONLY_TYPES = new Set<DatabaseType>([
   "sqlite",
   "rqlite",
+  "turso",
   "duckdb",
   "clickhouse",
   "doris",

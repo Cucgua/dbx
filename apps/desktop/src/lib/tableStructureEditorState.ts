@@ -115,6 +115,7 @@ export const DATA_TYPE_OPTIONS: Record<string, string[]> = {
   ],
   sqlite: ["integer", "real", "text", "blob", "numeric"],
   rqlite: ["integer", "real", "text", "blob", "numeric"],
+  turso: ["integer", "real", "text", "blob", "numeric"],
   sqlserver: [
     "bit",
     "tinyint",

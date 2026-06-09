@@ -198,6 +198,7 @@ const sourceFormatDialect = computed<SqlFormatDialect>(() => {
     case "sqlserver":
       return effectiveDatabaseType.value;
     case "rqlite":
+    case "turso":
       return "sqlite";
     case "gaussdb":
     case "kwdb":

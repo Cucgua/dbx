@@ -648,6 +648,17 @@ pub async fn do_execute(
             )
             .await
         }
+        PoolKind::Turso(client) => {
+            let client = client.clone();
+            let max_rows = options.max_rows;
+            drop(connections);
+            wait_for_query_opt(
+                cancel_token,
+                query_timeout,
+                db::turso_driver::execute_query_with_max_rows(&client, sql, max_rows),
+            )
+            .await
+        }
         PoolKind::ClickHouse(client) => {
             let client = client.clone();
             let database = pool_key.split(':').nth(1).unwrap_or("default").to_string();
@@ -925,6 +936,19 @@ pub async fn execute_multi_core_with_options(
 
     if is_sqlserver {
         return execute_multi_sqlserver(state, &pool_key, sql, cancel_token, options).await;
+    }
+
+    let is_turso = {
+        let configs = state.configs.read().await;
+        configs.get(connection_id).is_some_and(|c| c.db_type == DatabaseType::Turso)
+    };
+
+    // Turso sends all statements in one HTTP pipeline for transactional integrity.
+    if is_turso {
+        let result =
+            execute_sql_statement_with_options(state, connection_id, database, sql, schema, cancel_token, options)
+                .await?;
+        return Ok(vec![result]);
     }
 
     let db_type = connection_database_type(state, connection_id).await;
@@ -1210,9 +1234,11 @@ pub async fn execute_statements_in_transaction(
             PoolKind::Postgres(pg) => TxPath::Pg(pg.clone()),
             PoolKind::Mysql(mp, _mode) => TxPath::Mysql(mp.clone(), false),
             PoolKind::Sqlite(sq) => TxPath::Sqlite(sq.clone()),
-            PoolKind::ClickHouse(_) | PoolKind::Rqlite(_) | PoolKind::SqlServer(_) | PoolKind::Agent(_) => {
-                TxPath::Explicit
-            }
+            PoolKind::ClickHouse(_)
+            | PoolKind::Rqlite(_)
+            | PoolKind::Turso(_)
+            | PoolKind::SqlServer(_)
+            | PoolKind::Agent(_) => TxPath::Explicit,
             PoolKind::DuckDb(_)
             | PoolKind::Redis(_)
             | PoolKind::MongoDb(_)

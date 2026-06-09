@@ -104,7 +104,7 @@ export function supportsObjectBrowserTreeNode(dbType: DatabaseType | undefined, 
 }
 
 export function supportsTableTruncate(dbType?: DatabaseType): boolean {
-  return !!dbType && dbType !== "sqlite" && dbType !== "rqlite" && dbType !== "duckdb";
+  return !!dbType && dbType !== "sqlite" && dbType !== "rqlite" && dbType !== "turso" && dbType !== "duckdb";
 }
 
 export function usesPostgresLikeStructureCopy(dbType?: DatabaseType): boolean {
