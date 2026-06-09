@@ -82,7 +82,7 @@ export interface AiRequestInput {
 export type SchemaResearchResumeMode = "continue" | "revise" | "narrow" | "compare";
 
 export interface SchemaResearchResumeInstruction {
-  objective: string;
+  objective?: string;
   keep?: string[];
   change?: string[];
   discard?: string[];
@@ -2019,8 +2019,8 @@ export function buildToolSystemPrompt(action: AiAction, context: AiContext, mode
         "查询表、字段、字段详情、表关系或文档映射时，只能调用 dbx_schema_research_task；这是你唯一的 Schema 查询入口。",
         "dbx_schema_research_task 会让 Schema Research 子任务内部消化低级工具结果并返回压缩证据；主对话不能直接调用低级 schema tools。",
         "dbx_schema_research_task 返回的 promptSummary 是给你生成最终 SQL 用的压缩证据；最终 SQL 只能使用其中已 verified 的字段、当前明确 @table 上下文中的字段，或用户确认后再次由 Schema Research 验证过的字段。",
-        "如果用户是在修改或延续上一次同一个 Schema Research 子任务的答案，可以把上一次工具结果里的 sessionId 传给 dbx_schema_research_task；同时必须提供 resumeMode 和 resumeInstruction.objective，说明具体调整目标。",
-        "resumeInstruction 不能只写“继续”；要写清哪些证据保留、哪些要修改或丢弃、哪些要重新验证，以及输出关注点。新问题或无关问题不要传 sessionId，直接发起全新的 Schema Research 子任务。",
+        "如果用户是在修改或延续上一次同一个 Schema Research 子任务的答案，可以把上一次工具结果里的 sessionId 传给 dbx_schema_research_task；task 仍必须写本次具体 schema research 目标。",
+        "resumeMode 和 resumeInstruction 是可选的继续指导；如果提供 resumeInstruction.objective，不能只写“继续”，要写清哪些证据保留、哪些要修改或丢弃、哪些要重新验证，以及输出关注点。新问题或无关问题不要传 sessionId，直接发起全新的 Schema Research 子任务。",
         "当用户用中文业务词查表或字段时，工具 query 要同时包含原始中文词和可能的英文业务词、表名/字段名片段，例如：评价 review rating comment feedback score。",
         "当问题涉及当前上下文未提供的表、字段或关系时，调用 dbx_schema_research_task，并把业务意图、表角色、字段角色、关系需求和可能的中英文检索词写清楚。",
         "Schema Research 返回 partial 时，继续发起更窄的 dbx_schema_research_task；如果仍无法确定，调用用户选择/关系确认工具。",
@@ -2041,8 +2041,8 @@ export function buildToolSystemPrompt(action: AiAction, context: AiContext, mode
         "To query tables, columns, column details, table relationships, or document mappings, call only dbx_schema_research_task. It is your only schema-query entrypoint.",
         "dbx_schema_research_task lets the Schema Research subtask digest low-level tool results and return compact evidence. The main conversation must not call low-level schema tools directly.",
         "The promptSummary returned by dbx_schema_research_task is compact evidence for final SQL generation. Final SQL may use only columns marked verified there, columns in the current explicit @table context, or user-confirmed candidates that were verified again by Schema Research.",
-        "If the user is revising or continuing the same previous Schema Research subtask answer, pass that tool result's sessionId to dbx_schema_research_task; also pass resumeMode and resumeInstruction.objective with the concrete adjustment objective.",
-        "resumeInstruction must not be a vague 'continue'; state what to keep, change, discard, verify, and the output focus. For new or unrelated questions, omit sessionId to start a fresh Schema Research subtask.",
+        "If the user is revising or continuing the same previous Schema Research subtask answer, pass that tool result's sessionId to dbx_schema_research_task; task must still contain the concrete current schema research goal.",
+        "resumeMode and resumeInstruction are optional resume guidance. If resumeInstruction.objective is provided, it must not be a vague 'continue'; state what to keep, change, discard, verify, and the output focus. For new or unrelated questions, omit sessionId to start a fresh Schema Research subtask.",
         "When a Chinese business term is used to search tables or columns, include the original Chinese term plus likely English business terms and identifier fragments in tool queries, for example: 评价 review rating comment feedback score.",
         "When the request needs tables, columns, or relationships not already in context, call dbx_schema_research_task and include the business intent, table roles, column roles, relation needs, and likely Chinese/English search terms.",
         "When Schema Research returns partial evidence, start a narrower dbx_schema_research_task. If the result remains ambiguous, call a user-choice or relation-confirmation tool.",
@@ -2106,8 +2106,8 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       function: {
         name: "dbx_schema_research_task",
         description: isZh
-          ? "发起一个 AI Schema Research 子任务。子任务会内部调用低级 schema tools，消化候选表/字段/关系，只把压缩后的结构化证据返回给主模型。优先用于复杂查表、找字段、判断关系。传入 sessionId 时必须同时传 resumeInstruction.objective 和 resumeMode。"
-          : "Start an AI Schema Research subtask. The subtask internally calls low-level schema tools, digests candidate tables/columns/relations, and returns compact structured evidence to the main model. Prefer this for complex table, column, and relation research. When sessionId is provided, resumeInstruction.objective and resumeMode are required.",
+          ? "发起一个 AI Schema Research 子任务。子任务会内部调用低级 schema tools，消化候选表/字段/关系，只把压缩后的结构化证据返回给主模型。优先用于复杂查表、找字段、判断关系。传入 sessionId 时会复用/延续旧会话；task 仍是本次具体 research 目标。"
+          : "Start an AI Schema Research subtask. The subtask internally calls low-level schema tools, digests candidate tables/columns/relations, and returns compact structured evidence to the main model. Prefer this for complex table, column, and relation research. When sessionId is provided, it reuses/resumes that session; task remains the concrete current research goal.",
         parameters: {
           type: "object",
           properties: {
@@ -2120,27 +2120,27 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             sessionId: {
               type: "string",
               description: isZh
-                ? "可选。只在修改或延续同一个旧 Schema Research 子任务时传入。传入 sessionId 时必须同时提供 resumeMode 和 resumeInstruction.objective。新问题不要传。"
-                : "Optional. Pass only when revising or continuing the same previous Schema Research subtask. When sessionId is provided, resumeMode and resumeInstruction.objective are required. Omit for new questions.",
+                ? "可选。只在修改或延续同一个旧 Schema Research 子任务时传入，用于复用/恢复旧会话。新问题不要传。"
+                : "Optional. Pass only when revising or continuing the same previous Schema Research subtask to reuse/resume that session. Omit for new questions.",
             },
             resumeMode: {
               type: "string",
               enum: ["continue", "revise", "narrow", "compare"],
               description: isZh
-                ? "传入 sessionId 时必填，说明本次是继续、修订、缩窄范围还是对比。"
-                : "Required with sessionId. States whether this call continues, revises, narrows, or compares the previous result.",
+                ? "可选。延续会话时说明本次是继续、修订、缩窄范围还是对比；未传时按 continue 处理。"
+                : "Optional. For resumed sessions, states whether this call continues, revises, narrows, or compares the previous result; defaults to continue.",
             },
             resumeInstruction: {
               type: "object",
               description: isZh
-                ? "传入 sessionId 时必填。说明调整方向或具体目的，不能只写“继续”。"
-                : "Required with sessionId. Describes the adjustment direction or concrete goal; do not write a vague 'continue'.",
+                ? "可选。补充延续会话的调整方向或具体目的；如果提供 objective，不能只写“继续”。"
+                : "Optional. Adds richer guidance for a resumed session; if objective is provided, do not write a vague 'continue'.",
               properties: {
                 objective: {
                   type: "string",
                   description: isZh
-                    ? "具体调整目标，例如：保留订单表证据，把客户表换成 CRM 主表并重新验证关联字段。"
-                    : "Concrete adjustment objective, for example: keep order table evidence, replace the customer table with the CRM master table, and re-verify relation columns.",
+                    ? "可选的具体调整目标，例如：保留订单表证据，把客户表换成 CRM 主表并重新验证关联字段。"
+                    : "Optional concrete adjustment objective, for example: keep order table evidence, replace the customer table with the CRM master table, and re-verify relation columns.",
                 },
                 keep: {
                   type: "array",
@@ -3030,49 +3030,31 @@ type SchemaResearchSessionValidation =
   | { ok: true }
   | {
       ok: false;
-      code:
-        | "session_resume_instruction_required"
-        | "session_resume_instruction_too_vague"
-        | "session_resume_mode_required"
-        | "session_resume_mode_invalid";
+      code: "session_resume_instruction_too_vague" | "session_resume_mode_invalid";
       message: string;
     };
 
 function validateSchemaResearchSessionResume(args: Record<string, any>): SchemaResearchSessionValidation {
   const sessionId = String(args.sessionId || "").trim();
   if (!sessionId) return { ok: true };
+  const resumeMode = String(args.resumeMode || "").trim();
+  if (resumeMode && !["continue", "revise", "narrow", "compare"].includes(resumeMode)) {
+    return {
+      ok: false,
+      code: "session_resume_mode_invalid",
+      message: "resumeMode must be one of: continue, revise, narrow, compare",
+    };
+  }
   const instruction =
     args.resumeInstruction && typeof args.resumeInstruction === "object"
       ? (args.resumeInstruction as Record<string, unknown>)
       : {};
   const objective = String(instruction.objective || "").trim();
-  if (!objective) {
-    return {
-      ok: false,
-      code: "session_resume_instruction_required",
-      message: "resumeInstruction.objective is required when sessionId is provided",
-    };
-  }
-  if (objective.length < 8 || SCHEMA_RESEARCH_VAGUE_OBJECTIVES.has(objective.toLowerCase())) {
+  if (objective && (objective.length < 8 || SCHEMA_RESEARCH_VAGUE_OBJECTIVES.has(objective.toLowerCase()))) {
     return {
       ok: false,
       code: "session_resume_instruction_too_vague",
-      message: "resumeInstruction.objective must describe the concrete adjustment goal",
-    };
-  }
-  const resumeMode = String(args.resumeMode || "").trim();
-  if (!resumeMode) {
-    return {
-      ok: false,
-      code: "session_resume_mode_required",
-      message: "resumeMode is required when sessionId is provided",
-    };
-  }
-  if (!["continue", "revise", "narrow", "compare"].includes(resumeMode)) {
-    return {
-      ok: false,
-      code: "session_resume_mode_invalid",
-      message: "resumeMode must be one of: continue, revise, narrow, compare",
+      message: "resumeInstruction.objective, when provided, must describe a concrete adjustment goal",
     };
   }
   return { ok: true };
@@ -3133,20 +3115,20 @@ function normalizeSchemaResearchResumeInstruction(
     args.resumeInstruction && typeof args.resumeInstruction === "object" ? args.resumeInstruction : undefined;
   if (!value) return undefined;
   const data = value as Record<string, unknown>;
-  const instruction: SchemaResearchResumeInstruction = {
-    objective: String(data.objective || "").trim(),
-  };
+  const instruction: SchemaResearchResumeInstruction = {};
+  const objective = String(data.objective || "").trim();
   const keep = normalizeStringList(data.keep);
   const change = normalizeStringList(data.change);
   const discard = normalizeStringList(data.discard);
   const verify = normalizeStringList(data.verify);
   const outputFocus = String(data.outputFocus || "").trim();
+  if (objective) instruction.objective = objective;
   if (keep.length) instruction.keep = keep;
   if (change.length) instruction.change = change;
   if (discard.length) instruction.discard = discard;
   if (verify.length) instruction.verify = verify;
   if (outputFocus) instruction.outputFocus = outputFocus;
-  return instruction;
+  return Object.keys(instruction).length ? instruction : undefined;
 }
 
 function schemaResearchSessionErrorResult(
@@ -3195,6 +3177,21 @@ function buildSchemaResearchResumeUserPrompt(
   session: SchemaResearchSessionSnapshot,
 ): string {
   const instruction = normalizeSchemaResearchResumeInstruction(args);
+  const reverifyGuidance = instruction
+    ? "Do not repeat previous searches unless task or resumeInstruction requires re-verification."
+    : "Do not repeat previous searches unless task requires re-verification.";
+  const conflictGuidance = instruction
+    ? "Do not preserve previous conclusions that conflict with task or the optional resumeInstruction."
+    : "Do not preserve previous conclusions that conflict with task.";
+  const guidance = [
+    "You are resuming a previous Schema Research session, not starting from scratch.",
+    "Use task as the concrete current schema research objective.",
+    "Use previousSession.summary and previousSession.evidenceSummary as already collected context.",
+    instruction ? "Use resumeInstruction fields as optional richer guidance for what to keep, change, discard, verify, and focus on." : "",
+    reverifyGuidance,
+    conflictGuidance,
+    "Focus the final JSON on the updated answer and changed evidence.",
+  ].filter(Boolean);
   const payload = {
     mode: "resume_schema_research_session",
     sessionId: session.id,
@@ -3208,14 +3205,7 @@ function buildSchemaResearchResumeUserPrompt(
       messageCount: session.messageCount,
     },
     currentScope: schemaResearchSessionScope(input.context),
-    guidance: [
-      "You are resuming a previous Schema Research session, not starting from scratch.",
-      "Use previousSession.summary and previousSession.evidenceSummary as already collected context.",
-      "Follow resumeInstruction.objective and its keep/change/discard/verify/outputFocus fields.",
-      "Do not repeat previous searches unless the resume objective requires re-verification.",
-      "Do not preserve previous conclusions that conflict with the new adjustment objective.",
-      "Focus the final JSON on the updated answer and changed evidence.",
-    ],
+    guidance,
   };
   return JSON.stringify(payload, null, 2);
 }
@@ -3230,11 +3220,11 @@ function formatSchemaResearchSessionsForMainPrompt(
   const lines = isZh
     ? [
         "可恢复的 Schema Research 子任务 session：",
-        "只有当用户是在修改或延续对应 session 的旧答案时，才把 sessionId 传给 dbx_schema_research_task；传入时必须提供具体 resumeInstruction.objective。",
+        "只有当用户是在修改或延续对应 session 的旧答案时，才把 sessionId 传给 dbx_schema_research_task；task 仍要写本次具体 research 目标，resumeInstruction 可选。",
       ]
     : [
         "Recoverable Schema Research subtask sessions:",
-        "Pass sessionId to dbx_schema_research_task only when the user is revising or continuing that session's previous answer; include a concrete resumeInstruction.objective.",
+        "Pass sessionId to dbx_schema_research_task only when the user is revising or continuing that session's previous answer; task still carries the concrete current research goal, and resumeInstruction is optional.",
       ];
   for (const session of activeSessions) {
     const scope = [

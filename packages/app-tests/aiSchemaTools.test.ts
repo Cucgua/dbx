@@ -123,6 +123,7 @@ test("main AI schema tools expose only schema research and user confirmation too
     "dbx_request_relation",
   ]);
   const researchTool = tools.find((tool: any) => tool?.function?.name === "dbx_schema_research_task") as any;
+  assert.deepEqual(researchTool?.function?.parameters?.required, ["task"]);
   assert.equal(researchTool?.function?.parameters?.properties?.task?.type, "string");
   assert.equal(researchTool?.function?.parameters?.properties?.sessionId?.type, "string");
   assert.deepEqual(researchTool?.function?.parameters?.properties?.resumeMode?.enum, [
@@ -143,7 +144,8 @@ test("main AI schema tools expose only schema research and user confirmation too
   assert.equal(researchTool?.function?.parameters?.properties?.requiredEvidence?.type, "array");
   assert.equal(researchTool?.function?.parameters?.properties?.constraints?.properties?.maxTables?.type, "integer");
   assert.match(researchTool?.function?.description || "", /Schema Research|子任务/);
-  assert.match(researchTool?.function?.description || "", /sessionId.*resumeInstruction|resumeInstruction.*sessionId/i);
+  assert.match(researchTool?.function?.description || "", /sessionId.*reuses|复用|延续/i);
+  assert.match(researchTool?.function?.description || "", /task.*concrete|具体.*research 目标/i);
   const tableChoiceTool = tools.find((tool: any) => tool?.function?.name === "dbx_request_table_choice") as any;
   assert.equal(tableChoiceTool?.function?.parameters?.properties?.allowManual?.type, "boolean");
   assert.match(tableChoiceTool?.function?.description || "", /manually enter|手动输入/);
@@ -238,7 +240,8 @@ test("main schema prompt allows schema queries only through schema research task
   assert.match(prompt, /唯一的 Schema 查询入口|only schema-query entrypoint/);
   assert.match(prompt, /sessionId/);
   assert.match(prompt, /resumeInstruction/);
-  assert.match(prompt, /调整目标|adjustment objective/);
+  assert.match(prompt, /本次具体 schema research 目标|concrete current schema research goal/);
+  assert.match(prompt, /可选|optional/i);
   assert.doesNotMatch(prompt, /优先调用 dbx_search_schema/);
   assert.doesNotMatch(prompt, /调用 dbx_get_column_details/);
   assert.doesNotMatch(prompt, /调用 dbx_get_related_tables/);
@@ -263,14 +266,25 @@ test("schema research user-choice gate requires a user confirmation tool", () =>
   assert.match(instruction || "", /dbx_request_relation/);
 });
 
-test("schema research session resume requires a concrete adjustment objective", () => {
+test("schema research session resume keeps task as the concrete objective", () => {
   assert.deepEqual(validateSchemaResearchSessionResumeForTest({ task: "查订单表" }), { ok: true });
 
-  assert.deepEqual(validateSchemaResearchSessionResumeForTest({ sessionId: "sr-1", task: "继续" }), {
-    ok: false,
-    code: "session_resume_instruction_required",
-    message: "resumeInstruction.objective is required when sessionId is provided",
-  });
+  assert.deepEqual(
+    validateSchemaResearchSessionResumeForTest({
+      sessionId: "sr-1",
+      task: "继续查订单表与客户表的关联字段",
+      resumeMode: "continue",
+    }),
+    { ok: true },
+  );
+
+  assert.deepEqual(
+    validateSchemaResearchSessionResumeForTest({
+      sessionId: "sr-1",
+      task: "继续查订单表与客户表的关联字段",
+    }),
+    { ok: true },
+  );
 
   assert.deepEqual(
     validateSchemaResearchSessionResumeForTest({
@@ -282,7 +296,7 @@ test("schema research session resume requires a concrete adjustment objective", 
     {
       ok: false,
       code: "session_resume_instruction_too_vague",
-      message: "resumeInstruction.objective must describe the concrete adjustment goal",
+      message: "resumeInstruction.objective, when provided, must describe a concrete adjustment goal",
     },
   );
 
@@ -360,6 +374,38 @@ test("schema research resume prompt carries previous evidence and explicit direc
   assert.match(prompt, /do not repeat previous searches/i);
 });
 
+test("schema research resume prompt accepts task-only resume guidance", () => {
+  const prompt = buildSchemaResearchResumeUserPromptForTest(
+    context(),
+    {
+      task: "继续查订单表与客户表的关联字段",
+      sessionId: "sr-1",
+      resumeMode: "continue",
+    },
+    {
+      id: "sr-1",
+      createdAt: "2026-06-06T08:00:00.000Z",
+      updatedAt: "2026-06-06T08:05:00.000Z",
+      scope: {
+        connectionId: "conn-1",
+        databaseType: "postgres",
+        database: "app",
+        schema: "public",
+      },
+      messageCount: 4,
+      summary: "上次找到 ORDER_HEADER 和 CUSTOMER_ARCHIVE。",
+      evidenceSummary:
+        "Schema Research 状态：partial\n摘要：上次找到 ORDER_HEADER 和 CUSTOMER_ARCHIVE。\n证据表：\n- public.ORDER_HEADER, confidence=high: verified order table",
+    },
+  );
+
+  assert.match(prompt, /resume_schema_research_session/);
+  assert.match(prompt, /继续查订单表与客户表的关联字段/);
+  assert.match(prompt, /上次找到 ORDER_HEADER 和 CUSTOMER_ARCHIVE/);
+  assert.match(prompt, /Use task as the concrete current schema research objective/);
+  assert.doesNotMatch(prompt, /resumeInstruction/);
+});
+
 test("schema research sessions expire after idle ttl and keep latest eight", () => {
   const now = Date.parse("2026-06-06T09:00:00.000Z");
   const freshSessions = Array.from({ length: 9 }, (_, index) => ({
@@ -415,7 +461,8 @@ test("main prompt session context exposes resumable session ids without full evi
 
   assert.match(prompt, /sessionId=sr-active/);
   assert.match(prompt, /修改或延续/);
-  assert.match(prompt, /resumeInstruction\.objective/);
+  assert.match(prompt, /task 仍要写本次具体 research 目标/);
+  assert.match(prompt, /resumeInstruction 可选/);
   assert.match(prompt, /找到订单表和客户表候选/);
   assert.doesNotMatch(prompt, /VERY_LONG_EVIDENCE/);
 });
