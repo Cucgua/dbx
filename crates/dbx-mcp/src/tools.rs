@@ -2,7 +2,7 @@ pub const QUERY_ROW_LIMIT: usize = 100;
 
 use dbx_core::models::connection::{
     default_connect_timeout_secs, default_query_timeout_secs, default_ssh_connect_timeout_secs, ConnectionConfig,
-    DatabaseType, ProxyType,
+    DatabaseType, ProxyTunnelConfig, ProxyType, SshTunnelConfig, TransportLayerConfig,
 };
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
@@ -187,6 +187,45 @@ fn clean_optional(value: Option<String>) -> Option<String> {
     value.map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
 }
 
+fn legacy_transport_layers(args: &CreateConnectionArgs) -> Result<Vec<TransportLayerConfig>, String> {
+    let mut layers = Vec::new();
+
+    if args.ssh_enabled.unwrap_or(false) {
+        if let Some(host) = clean_optional(args.ssh_host.clone()) {
+            layers.push(TransportLayerConfig::Ssh(SshTunnelConfig {
+                id: "legacy".to_string(),
+                name: "SSH".to_string(),
+                enabled: true,
+                host,
+                port: args.ssh_port.unwrap_or(22),
+                user: clean_optional(args.ssh_user.clone()).unwrap_or_default(),
+                password: args.ssh_password.clone().unwrap_or_default(),
+                key_path: clean_optional(args.ssh_key_path.clone()).unwrap_or_default(),
+                key_passphrase: args.ssh_key_passphrase.clone().unwrap_or_default(),
+                connect_timeout_secs: args.ssh_connect_timeout_secs.unwrap_or_else(default_ssh_connect_timeout_secs),
+                expose_lan: args.ssh_expose_lan.unwrap_or(false),
+            }));
+        }
+    }
+
+    if args.proxy_enabled.unwrap_or(false) {
+        if let Some(host) = clean_optional(args.proxy_host.clone()) {
+            layers.push(TransportLayerConfig::Proxy(ProxyTunnelConfig {
+                id: "legacy-proxy".to_string(),
+                name: "Proxy".to_string(),
+                enabled: true,
+                proxy_type: parse_proxy_type(args.proxy_type.clone())?,
+                host,
+                port: args.proxy_port.unwrap_or(1080),
+                username: clean_optional(args.proxy_username.clone()).unwrap_or_default(),
+                password: args.proxy_password.clone().unwrap_or_default(),
+            }));
+        }
+    }
+
+    Ok(layers)
+}
+
 fn profile_defaults(kind: &str) -> Result<ProfileDefaults, String> {
     let normalized = kind.trim().to_lowercase();
     let defaults = match normalized.as_str() {
@@ -263,6 +302,7 @@ fn default_port(db_type: DatabaseType) -> u16 {
         DatabaseType::Sqlite | DatabaseType::DuckDb | DatabaseType::Access | DatabaseType::Jdbc => 0,
         DatabaseType::Rqlite => 4001,
         DatabaseType::Redis => 6379,
+        DatabaseType::Databend => 8000,
         DatabaseType::ClickHouse => 8123,
         DatabaseType::SqlServer => 1433,
         DatabaseType::MongoDb => 27017,
@@ -292,6 +332,8 @@ fn default_port(db_type: DatabaseType) -> u16 {
         DatabaseType::Kylin => 7070,
         DatabaseType::Sundb => 22000,
         DatabaseType::Tdengine => 6041,
+        DatabaseType::Iotdb => 6667,
+        DatabaseType::Etcd => 2379,
         DatabaseType::Xugu => 5138,
         DatabaseType::Iris => 1972,
     }
@@ -304,7 +346,9 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         | DatabaseType::StarRocks
         | DatabaseType::Goldendb
         | DatabaseType::Sundb
+        | DatabaseType::Iotdb
         | DatabaseType::Tdengine => "root",
+        DatabaseType::Databend => "databend",
         DatabaseType::Postgres | DatabaseType::Vastbase => "postgres",
         DatabaseType::Kwdb => "root",
         DatabaseType::Redshift => "awsuser",
@@ -339,6 +383,7 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         | DatabaseType::Rqlite
         | DatabaseType::Redis
         | DatabaseType::DuckDb
+        | DatabaseType::Etcd
         | DatabaseType::Access
         | DatabaseType::MongoDb
         | DatabaseType::Elasticsearch
@@ -353,6 +398,7 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
     }
 
     let defaults = profile_defaults(&args.db_type)?;
+    let transport_layers = legacy_transport_layers(&args)?;
     let driver_profile = clean_optional(args.driver_profile).or_else(|| defaults.driver_profile.map(str::to_string));
     let driver_label = clean_optional(args.driver_label).or_else(|| defaults.driver_label.map(str::to_string));
 
@@ -371,26 +417,13 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         visible_databases: args.visible_databases,
         attached_databases: Vec::new(),
         color: clean_optional(args.color),
-        ssh_enabled: args.ssh_enabled.unwrap_or(false),
-        ssh_host: clean_optional(args.ssh_host).unwrap_or_default(),
-        ssh_port: args.ssh_port.unwrap_or(22),
-        ssh_user: clean_optional(args.ssh_user).unwrap_or_default(),
-        ssh_password: args.ssh_password.unwrap_or_default(),
-        ssh_key_path: clean_optional(args.ssh_key_path).unwrap_or_default(),
-        ssh_key_passphrase: args.ssh_key_passphrase.unwrap_or_default(),
-        ssh_tunnels: Vec::new(),
-        ssh_expose_lan: args.ssh_expose_lan.unwrap_or(false),
-        ssh_connect_timeout_secs: args.ssh_connect_timeout_secs.unwrap_or_else(default_ssh_connect_timeout_secs),
+        transport_layers,
         connect_timeout_secs: args.connect_timeout_secs.unwrap_or_else(default_connect_timeout_secs),
         query_timeout_secs: args.query_timeout_secs.unwrap_or_else(default_query_timeout_secs),
-        proxy_enabled: args.proxy_enabled.unwrap_or(false),
-        proxy_type: parse_proxy_type(args.proxy_type)?,
-        proxy_host: clean_optional(args.proxy_host).unwrap_or_default(),
-        proxy_port: args.proxy_port.unwrap_or(1080),
-        proxy_username: clean_optional(args.proxy_username).unwrap_or_default(),
-        proxy_password: args.proxy_password.unwrap_or_default(),
         ssl: args.ssl.unwrap_or(false),
         ca_cert_path: String::new(),
+        client_cert_path: String::new(),
+        client_key_path: String::new(),
         sysdba: args.sysdba.unwrap_or(false),
         oracle_connection_type: None,
         connection_string: clean_optional(args.connection_string),
@@ -401,6 +434,7 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         redis_sentinel_password: String::new(),
         redis_sentinel_tls: false,
         redis_cluster_nodes: clean_optional(args.redis_cluster_nodes).unwrap_or_default(),
+        etcd_endpoints: String::new(),
         external_config: None,
         jdbc_driver_class: clean_optional(args.jdbc_driver_class),
         jdbc_driver_paths: args.jdbc_driver_paths.unwrap_or_default(),
@@ -451,7 +485,7 @@ pub fn resolve_schema(config: &ConnectionConfig, database: &str, requested: Opti
 mod tests {
     use super::*;
     use dbx_core::models::connection::{
-        default_connect_timeout_secs, default_query_timeout_secs, default_ssh_connect_timeout_secs, ProxyType,
+        default_connect_timeout_secs, default_query_timeout_secs, ProxyType, TransportLayerConfig,
     };
 
     fn config(db_type: DatabaseType, database: Option<&str>) -> ConnectionConfig {
@@ -470,26 +504,13 @@ mod tests {
             visible_databases: None,
             attached_databases: Vec::new(),
             color: None,
-            ssh_enabled: false,
-            ssh_host: String::new(),
-            ssh_port: 22,
-            ssh_user: String::new(),
-            ssh_password: String::new(),
-            ssh_key_path: String::new(),
-            ssh_key_passphrase: String::new(),
-            ssh_tunnels: Vec::new(),
-            ssh_expose_lan: false,
-            ssh_connect_timeout_secs: default_ssh_connect_timeout_secs(),
+            transport_layers: Vec::new(),
             connect_timeout_secs: default_connect_timeout_secs(),
             query_timeout_secs: default_query_timeout_secs(),
-            proxy_enabled: false,
-            proxy_type: ProxyType::Socks5,
-            proxy_host: String::new(),
-            proxy_port: 1080,
-            proxy_username: String::new(),
-            proxy_password: String::new(),
             ssl: false,
             ca_cert_path: String::new(),
+            client_cert_path: String::new(),
+            client_key_path: String::new(),
             sysdba: false,
             oracle_connection_type: None,
             connection_string: None,
@@ -500,6 +521,7 @@ mod tests {
             redis_sentinel_password: String::new(),
             redis_sentinel_tls: false,
             redis_cluster_nodes: String::new(),
+            etcd_endpoints: String::new(),
             external_config: None,
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
@@ -581,12 +603,15 @@ mod tests {
         assert_eq!(config.port, 5432);
         assert_eq!(config.database.as_deref(), Some("appdb"));
         assert_eq!(config.ca_cert_path, "");
+        assert_eq!(config.client_cert_path, "");
+        assert_eq!(config.client_key_path, "");
         assert_eq!(config.redis_connection_mode, None);
         assert_eq!(config.redis_sentinel_master, "");
         assert_eq!(config.redis_sentinel_nodes, "");
         assert_eq!(config.redis_sentinel_username, "");
         assert_eq!(config.redis_sentinel_password, "");
         assert!(!config.redis_sentinel_tls);
+        assert_eq!(config.etcd_endpoints, "");
     }
 
     #[test]
@@ -606,17 +631,80 @@ mod tests {
     }
 
     #[test]
+    fn create_connection_config_uses_defaults_for_new_upstream_database_types() {
+        for (db_type, expected_type, expected_port, expected_username) in [
+            ("databend", DatabaseType::Databend, 8000, "databend"),
+            ("iotdb", DatabaseType::Iotdb, 6667, "root"),
+            ("etcd", DatabaseType::Etcd, 2379, ""),
+        ] {
+            let mut args = create_args();
+            args.db_type = db_type.to_string();
+            args.port = None;
+            args.username = None;
+
+            let config = build_connection_config(args, "generated-id".to_string()).unwrap();
+
+            assert_eq!(config.db_type, expected_type);
+            assert_eq!(config.port, expected_port);
+            assert_eq!(config.username, expected_username);
+        }
+    }
+
+    #[test]
+    fn create_connection_config_maps_legacy_ssh_fields_to_transport_layer() {
+        let mut args = create_args();
+        args.ssh_enabled = Some(true);
+        args.ssh_host = Some(" jump.example.com ".to_string());
+        args.ssh_port = Some(2222);
+        args.ssh_user = Some("ssh-user".to_string());
+        args.ssh_password = Some("ssh-secret".to_string());
+        args.ssh_key_path = Some(" /keys/id_ed25519 ".to_string());
+        args.ssh_key_passphrase = Some("key-secret".to_string());
+        args.ssh_expose_lan = Some(true);
+        args.ssh_connect_timeout_secs = Some(12);
+
+        let config = build_connection_config(args, "generated-id".to_string()).unwrap();
+
+        assert_eq!(config.transport_layers.len(), 1);
+        match &config.transport_layers[0] {
+            TransportLayerConfig::Ssh(ssh) => {
+                assert!(ssh.enabled);
+                assert_eq!(ssh.host, "jump.example.com");
+                assert_eq!(ssh.port, 2222);
+                assert_eq!(ssh.user, "ssh-user");
+                assert_eq!(ssh.password, "ssh-secret");
+                assert_eq!(ssh.key_path, "/keys/id_ed25519");
+                assert_eq!(ssh.key_passphrase, "key-secret");
+                assert_eq!(ssh.connect_timeout_secs, 12);
+                assert!(ssh.expose_lan);
+            }
+            TransportLayerConfig::Proxy(_) => panic!("expected ssh transport layer"),
+        }
+    }
+
+    #[test]
     fn create_connection_config_keeps_secret_fields_for_storage_layer() {
         let mut args = create_args();
         args.connection_string = Some("MY_TNS_ALIAS".to_string());
         args.proxy_enabled = Some(true);
+        args.proxy_host = Some("127.0.0.1".to_string());
+        args.proxy_username = Some("proxy-user".to_string());
         args.proxy_password = Some("proxy-secret".to_string());
 
         let config = build_connection_config(args, "generated-id".to_string()).unwrap();
 
         assert_eq!(config.password, "secret");
         assert_eq!(config.connection_string.as_deref(), Some("MY_TNS_ALIAS"));
-        assert!(config.proxy_enabled);
-        assert_eq!(config.proxy_password, "proxy-secret");
+        assert_eq!(config.transport_layers.len(), 1);
+        match &config.transport_layers[0] {
+            TransportLayerConfig::Proxy(proxy) => {
+                assert!(proxy.enabled);
+                assert_eq!(proxy.proxy_type, ProxyType::Socks5);
+                assert_eq!(proxy.host, "127.0.0.1");
+                assert_eq!(proxy.username, "proxy-user");
+                assert_eq!(proxy.password, "proxy-secret");
+            }
+            TransportLayerConfig::Ssh(_) => panic!("expected proxy transport layer"),
+        }
     }
 }
