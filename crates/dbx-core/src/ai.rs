@@ -1297,7 +1297,7 @@ async fn stream_openai_raw_chat(
                             });
                         }
                         if let Some(text) = openai_stream_text(&event) {
-                            accumulator.push_content(text);
+                            accumulator.push_content(&text);
                             on_chunk(AiStreamChunk {
                                 session_id: session_id.to_string(),
                                 delta: text.to_string(),

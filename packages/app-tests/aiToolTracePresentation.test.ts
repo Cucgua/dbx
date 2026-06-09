@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import test from "node:test";
+import { test } from "vitest";
 import { buildAiToolTraceChildPresentation } from "../../apps/desktop/src/lib/aiToolTracePresentation.ts";
 import type { AiToolTrace } from "../../apps/desktop/src/lib/api.ts";
 
