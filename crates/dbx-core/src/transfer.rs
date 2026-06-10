@@ -1624,6 +1624,8 @@ pub async fn execute_on_pool_with_max_rows(
     sql: &str,
     max_rows: Option<usize>,
 ) -> Result<db::QueryResult, String> {
+    // Read-only check: block transfer operations in readonly mode
+    crate::query::check_read_only_for_connection(state, pool_key, sql).await?;
     let connections = state.connections.read().await;
     let pool = connections.get(pool_key).ok_or("Connection not found")?;
 
@@ -1713,6 +1715,7 @@ pub async fn execute_on_pool_with_max_rows(
                     Ok(db::QueryResult {
                         columns,
                         column_types: Vec::new(),
+                        column_sortables: vec![],
                         rows: result_rows,
                         affected_rows: 0,
                         execution_time_ms: start.elapsed().as_millis(),
@@ -1725,6 +1728,7 @@ pub async fn execute_on_pool_with_max_rows(
                     Ok(db::QueryResult {
                         columns: vec![],
                         column_types: Vec::new(),
+                        column_sortables: vec![],
                         rows: vec![],
                         affected_rows: affected as u64,
                         execution_time_ms: start.elapsed().as_millis(),
@@ -1817,6 +1821,13 @@ pub async fn get_columns_for_transfer(
         drop(connections);
         let mut client = client.lock().await;
         return db::sqlserver::get_columns(&mut client, &schema, &table).await;
+    }
+    if let Some(PoolKind::InfluxDb(client)) = connections.get(pool_key) {
+        let client = client.clone();
+        let database = database.to_string();
+        let table = table.to_string();
+        drop(connections);
+        return db::influxdb_driver::get_columns(&client, &database, &table).await;
     }
     if let Some(PoolKind::Agent(client)) = connections.get(pool_key) {
         let client = client.clone();
@@ -3135,6 +3146,7 @@ mod tests {
             transport_layers: Vec::new(),
             connect_timeout_secs: 5,
             query_timeout_secs: 30,
+            idle_timeout_secs: 60,
             ssl: false,
             ca_cert_path: String::new(),
             client_cert_path: String::new(),
@@ -3154,6 +3166,7 @@ mod tests {
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
             one_time: false,
+            read_only: false,
         }
     }
 

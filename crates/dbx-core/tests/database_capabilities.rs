@@ -63,6 +63,7 @@ fn maps_agent_database_types_to_driver_keys() {
     assert_eq!(agent_key(&DatabaseType::Access, None), Some("access"));
     assert_eq!(agent_key(&DatabaseType::Oracle, None), Some("oracle"));
     assert_eq!(agent_key(&DatabaseType::Databend, None), Some("databend"));
+    assert_eq!(agent_key(&DatabaseType::InfluxDb, None), Some("influxdb"));
     assert_eq!(agent_key(&DatabaseType::Oracle, Some("oracle-legacy")), Some("oracle-legacy"));
     assert_eq!(agent_key(&DatabaseType::Oracle, Some("oracle-10g")), Some("oracle-10g"));
     assert_eq!(agent_key(&DatabaseType::Postgres, None), None);
@@ -86,6 +87,7 @@ fn classifies_agent_database_types() {
     assert!(is_agent_type(&DatabaseType::Gbase));
     assert!(is_agent_type(&DatabaseType::Access));
     assert!(is_agent_type(&DatabaseType::Databend));
+    assert!(is_agent_type(&DatabaseType::InfluxDb));
     assert!(!is_agent_type(&DatabaseType::Mysql));
     assert!(!is_agent_type(&DatabaseType::Jdbc));
     assert!(!is_agent_type(&DatabaseType::Gaussdb));
@@ -136,6 +138,7 @@ fn skips_tcp_probe_for_local_file_plugin_and_agent_types() {
     assert!(skips_tcp_probe(&DatabaseType::OceanbaseOracle));
     assert!(skips_tcp_probe(&DatabaseType::Gbase));
     assert!(skips_tcp_probe(&DatabaseType::Databend));
+    assert!(skips_tcp_probe(&DatabaseType::InfluxDb));
     assert!(!skips_tcp_probe(&DatabaseType::Postgres));
     assert!(!skips_tcp_probe(&DatabaseType::Mysql));
     assert!(!skips_tcp_probe(&DatabaseType::Gaussdb));

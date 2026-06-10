@@ -1,10 +1,5 @@
 import type { AiAction, AiAssistantMode } from "@/lib/ai";
-import {
-  classifyAiSqlExecution,
-  shouldAttemptAiAutoExecute,
-  stripAiSqlComments,
-  type AiSqlExecutionDecision,
-} from "@/lib/aiSqlExecutionPolicy";
+import { classifyAiSqlExecution, shouldAttemptAiAutoExecute, stripAiSqlComments, type AiSqlExecutionDecision } from "@/lib/aiSqlExecutionPolicy";
 import type { ConnectionConfig } from "@/types/database";
 
 export type AiAgentStep =

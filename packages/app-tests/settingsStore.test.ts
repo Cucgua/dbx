@@ -1,12 +1,49 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
+import { createPinia, setActivePinia } from "pinia";
+import { DEFAULT_SQL_FORMATTER_SETTINGS } from "../../apps/desktop/src/lib/sqlFormatterConfig.ts";
 import {
   AI_PROVIDER_PRESETS,
   DEFAULT_EDITOR_SETTINGS,
   normalizeAiConfig,
   normalizeEditorSettings,
   normalizeSchemaResearchModelConfig,
+  useSettingsStore,
 } from "../../apps/desktop/src/stores/settingsStore.ts";
+
+const OLD_FONT_SIZE_KEY = "dbx-query-editor-font-size";
+
+function withMockLocalStorage(initial: Record<string, string>, run: () => void) {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const values = new Map(Object.entries(initial));
+  const localStorageMock = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+    removeItem: (key: string) => {
+      values.delete(key);
+    },
+    clear: () => {
+      values.clear();
+    },
+  };
+
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: localStorageMock,
+  });
+
+  try {
+    run();
+  } finally {
+    if (previousDescriptor) {
+      Object.defineProperty(globalThis, "localStorage", previousDescriptor);
+    } else {
+      delete (globalThis as any).localStorage;
+    }
+  }
+}
 
 test("defaults Redis scan page size to 1000 keys", () => {
   assert.equal(DEFAULT_EDITOR_SETTINGS.redisScanPageSize, 1000);
@@ -131,10 +168,7 @@ test("normalizes table structure editor density", () => {
   assert.equal(DEFAULT_EDITOR_SETTINGS.structureEditorDensity, "compact");
   assert.equal(normalizeEditorSettings({}).structureEditorDensity, "compact");
   assert.equal(normalizeEditorSettings({ structureEditorDensity: "standard" }).structureEditorDensity, "standard");
-  assert.equal(
-    normalizeEditorSettings({ structureEditorDensity: "comfortable" }).structureEditorDensity,
-    "comfortable",
-  );
+  assert.equal(normalizeEditorSettings({ structureEditorDensity: "comfortable" }).structureEditorDensity, "comfortable");
   assert.equal(normalizeEditorSettings({ structureEditorDensity: "invalid" as any }).structureEditorDensity, "compact");
 });
 
@@ -158,10 +192,7 @@ test("keeps saved active tab sidebar selection", () => {
 });
 
 test("keeps saved sidebar horizontal scroll preference", () => {
-  assert.equal(
-    normalizeEditorSettings({ sidebarAllowHorizontalScroll: true } as any).sidebarAllowHorizontalScroll,
-    true,
-  );
+  assert.equal(normalizeEditorSettings({ sidebarAllowHorizontalScroll: true } as any).sidebarAllowHorizontalScroll, true);
 });
 
 test("keeps saved sidebar activation", () => {
@@ -171,11 +202,7 @@ test("keeps saved sidebar activation", () => {
 
 test("normalizes saved sidebar hidden table prefixes", () => {
   assert.deepEqual(DEFAULT_EDITOR_SETTINGS.sidebarHiddenTablePrefixes, []);
-  assert.deepEqual(
-    normalizeEditorSettings({ sidebarHiddenTablePrefixes: [" app_", "app_", "", "ods."] } as any)
-      .sidebarHiddenTablePrefixes,
-    ["app_", "ods."],
-  );
+  assert.deepEqual(normalizeEditorSettings({ sidebarHiddenTablePrefixes: [" app_", "app_", "", "ods."] } as any).sidebarHiddenTablePrefixes, ["app_", "ods."]);
 });
 
 test("defaults column formatters to an empty record", () => {
@@ -219,6 +246,8 @@ test("AI provider presets include common hosted and local providers", () => {
   assert.equal(AI_PROVIDER_PRESETS.qwen.endpoint, "https://dashscope.aliyuncs.com/compatible-mode/v1");
   assert.equal(AI_PROVIDER_PRESETS.ollama.endpoint, "http://localhost:11434/v1");
   assert.equal(AI_PROVIDER_PRESETS.ollama.requiresApiKey, false);
+  assert.equal(AI_PROVIDER_PRESETS.claude.authMethod, "api-key");
+  assert.equal(AI_PROVIDER_PRESETS.openai.authMethod, "bearer");
   assert.equal(AI_PROVIDER_PRESETS.openai.iconSlug, "openai");
   assert.equal(AI_PROVIDER_PRESETS.deepseek.iconSlug, "deepseek");
 });
@@ -234,6 +263,7 @@ test("normalizes legacy AI config and fills provider defaults", () => {
   assert.equal(legacy.apiStyle, "completions");
   assert.equal(legacy.provider, "openai");
   assert.equal(legacy.apiKey, "key");
+  assert.equal(legacy.authMethod, "bearer");
   assert.equal(legacy.schemaResearch?.enabled, true);
   assert.equal(legacy.schemaResearch?.useMainModel, true);
   assert.equal(legacy.schemaResearch?.provider, "openai");
@@ -246,6 +276,10 @@ test("normalizes legacy AI config and fills provider defaults", () => {
   assert.equal(ollama.endpoint, "http://localhost:11434/v1");
   assert.equal(ollama.model, "llama3.1");
   assert.equal(ollama.apiKey, "");
+  assert.equal(ollama.authMethod, "bearer");
+
+  const claudeToken = normalizeAiConfig({ provider: "claude", apiKey: "token", authMethod: "bearer" } as any);
+  assert.equal(claudeToken.authMethod, "bearer");
 });
 
 test("infers legacy AI provider from saved endpoint and model", () => {
@@ -341,4 +375,102 @@ test("normalizeEditorSettings clamps UI scale into the supported range", () => {
 
 test("normalizeEditorSettings keeps valid UI scales with two-decimal precision", () => {
   assert.equal(normalizeEditorSettings({ uiScale: 1.125 }).uiScale, 1.13);
+});
+
+test("defaults SQL formatter settings", () => {
+  assert.deepEqual(DEFAULT_EDITOR_SETTINGS.sqlFormatter, {
+    keywordCase: "upper",
+    dataTypeCase: "preserve",
+    functionCase: "preserve",
+    useTabs: false,
+    tabWidth: 2,
+    logicalOperatorNewline: "before",
+    expressionWidth: 50,
+    linesBetweenQueries: 1,
+    denseOperators: false,
+    newlineBeforeSemicolon: false,
+  });
+  assert.deepEqual(normalizeEditorSettings({}).sqlFormatter, DEFAULT_EDITOR_SETTINGS.sqlFormatter);
+});
+
+test("normalizes saved SQL formatter settings", () => {
+  assert.deepEqual(
+    normalizeEditorSettings({
+      sqlFormatter: {
+        keywordCase: "lower",
+        functionCase: "upper",
+        dataTypeCase: "upper",
+        useTabs: true,
+        tabWidth: 4,
+        logicalOperatorNewline: "after",
+        expressionWidth: 120,
+        linesBetweenQueries: 2,
+        denseOperators: true,
+        newlineBeforeSemicolon: true,
+      },
+    } as any).sqlFormatter,
+    {
+      keywordCase: "lower",
+      functionCase: "upper",
+      dataTypeCase: "upper",
+      useTabs: true,
+      tabWidth: 4,
+      logicalOperatorNewline: "after",
+      expressionWidth: 120,
+      linesBetweenQueries: 2,
+      denseOperators: true,
+      newlineBeforeSemicolon: true,
+    },
+  );
+});
+
+test("keeps SQL formatter default objects distinct", () => {
+  const normalized = normalizeEditorSettings({});
+
+  assert.notEqual(DEFAULT_EDITOR_SETTINGS.sqlFormatter, DEFAULT_SQL_FORMATTER_SETTINGS);
+  assert.notEqual(normalized.sqlFormatter, DEFAULT_EDITOR_SETTINGS.sqlFormatter);
+  assert.notEqual(normalized.sqlFormatter, DEFAULT_SQL_FORMATTER_SETTINGS);
+});
+
+test("does not leak default-loaded SQL formatter mutations into defaults", () => {
+  withMockLocalStorage({}, () => {
+    setActivePinia(createPinia());
+    const store = useSettingsStore();
+    const editorDefaultKeywordCase = DEFAULT_EDITOR_SETTINGS.sqlFormatter.keywordCase;
+    const formatterDefaultKeywordCase = DEFAULT_SQL_FORMATTER_SETTINGS.keywordCase;
+
+    try {
+      store.editorSettings.sqlFormatter.keywordCase = "lower";
+
+      assert.notEqual(store.editorSettings.sqlFormatter, DEFAULT_EDITOR_SETTINGS.sqlFormatter);
+      assert.notEqual(store.editorSettings.sqlFormatter, DEFAULT_SQL_FORMATTER_SETTINGS);
+      assert.equal(DEFAULT_EDITOR_SETTINGS.sqlFormatter.keywordCase, editorDefaultKeywordCase);
+      assert.equal(DEFAULT_SQL_FORMATTER_SETTINGS.keywordCase, formatterDefaultKeywordCase);
+    } finally {
+      DEFAULT_EDITOR_SETTINGS.sqlFormatter.keywordCase = editorDefaultKeywordCase;
+      DEFAULT_SQL_FORMATTER_SETTINGS.keywordCase = formatterDefaultKeywordCase;
+    }
+  });
+});
+
+test("does not leak migrated SQL formatter mutations into defaults", () => {
+  withMockLocalStorage({ [OLD_FONT_SIZE_KEY]: "18" }, () => {
+    setActivePinia(createPinia());
+    const store = useSettingsStore();
+    const editorDefaultKeywordCase = DEFAULT_EDITOR_SETTINGS.sqlFormatter.keywordCase;
+    const formatterDefaultKeywordCase = DEFAULT_SQL_FORMATTER_SETTINGS.keywordCase;
+
+    try {
+      assert.equal(store.editorSettings.fontSize, 18);
+      store.editorSettings.sqlFormatter.keywordCase = "lower";
+
+      assert.notEqual(store.editorSettings.sqlFormatter, DEFAULT_EDITOR_SETTINGS.sqlFormatter);
+      assert.notEqual(store.editorSettings.sqlFormatter, DEFAULT_SQL_FORMATTER_SETTINGS);
+      assert.equal(DEFAULT_EDITOR_SETTINGS.sqlFormatter.keywordCase, editorDefaultKeywordCase);
+      assert.equal(DEFAULT_SQL_FORMATTER_SETTINGS.keywordCase, formatterDefaultKeywordCase);
+    } finally {
+      DEFAULT_EDITOR_SETTINGS.sqlFormatter.keywordCase = editorDefaultKeywordCase;
+      DEFAULT_SQL_FORMATTER_SETTINGS.keywordCase = formatterDefaultKeywordCase;
+    }
+  });
 });

@@ -192,7 +192,9 @@ fn capabilities_for(database_type: Option<DatabaseType>) -> TableStructureCapabi
             | DatabaseType::Doris
             | DatabaseType::StarRocks
             | DatabaseType::Goldendb
-            | DatabaseType::Sundb,
+            | DatabaseType::Sundb
+            | DatabaseType::Databend
+            | DatabaseType::Gbase,
         ) => TableStructureCapabilities {
             dialect: StructureDialect::Mysql,
             add_column: true,
@@ -215,7 +217,8 @@ fn capabilities_for(database_type: Option<DatabaseType>) -> TableStructureCapabi
             | DatabaseType::OpenGauss
             | DatabaseType::Highgo
             | DatabaseType::Vastbase
-            | DatabaseType::Kingbase,
+            | DatabaseType::Kingbase
+            | DatabaseType::Firebird,
         ) => TableStructureCapabilities {
             dialect: StructureDialect::Postgres,
             add_column: true,
@@ -233,7 +236,7 @@ fn capabilities_for(database_type: Option<DatabaseType>) -> TableStructureCapabi
             alter_primary_key: true,
             ..base
         },
-        Some(DatabaseType::Redshift) => TableStructureCapabilities {
+        Some(DatabaseType::Redshift | DatabaseType::Vertica) => TableStructureCapabilities {
             dialect: StructureDialect::Postgres,
             add_column: true,
             drop_column: true,
@@ -279,21 +282,26 @@ fn capabilities_for(database_type: Option<DatabaseType>) -> TableStructureCapabi
             index_comment: true,
             ..base
         },
-        Some(DatabaseType::Oracle | DatabaseType::Dameng | DatabaseType::OceanbaseOracle | DatabaseType::Iris) => {
-            TableStructureCapabilities {
-                dialect: StructureDialect::Oracle,
-                add_column: true,
-                drop_column: true,
-                rename_column: true,
-                alter_existing_column: true,
-                comment: true,
-                create_index: true,
-                drop_index: true,
-                rebuild_index: true,
-                index_type: true,
-                ..base
-            }
-        }
+        Some(
+            DatabaseType::Oracle
+            | DatabaseType::Dameng
+            | DatabaseType::OceanbaseOracle
+            | DatabaseType::Iris
+            | DatabaseType::Yashandb
+            | DatabaseType::Xugu,
+        ) => TableStructureCapabilities {
+            dialect: StructureDialect::Oracle,
+            add_column: true,
+            drop_column: true,
+            rename_column: true,
+            alter_existing_column: true,
+            comment: true,
+            create_index: true,
+            drop_index: true,
+            rebuild_index: true,
+            index_type: true,
+            ..base
+        },
         Some(DatabaseType::H2) => TableStructureCapabilities {
             dialect: StructureDialect::H2,
             add_column: true,

@@ -275,6 +275,10 @@ async fn list_databases_once(state: &AppState, connection_id: &str) -> Result<Ve
             drop(connections);
             return db::clickhouse_driver::list_databases(&client).await;
         }
+        if let Some(client) = extract_pool!(&connections, connection_id, InfluxDb) {
+            drop(connections);
+            return db::influxdb_driver::list_databases(&client).await;
+        }
         try_sqlserver!(connections, connection_id, list_databases);
         if let Some(client) = extract_pool!(&connections, connection_id, Agent) {
             let is_mongo =
@@ -303,6 +307,7 @@ async fn list_databases_once(state: &AppState, connection_id: &str) -> Result<Ve
         PoolKind::Postgres(p) => db::postgres::list_databases(p).await,
         PoolKind::Sqlite(p) => db::sqlite::list_databases(p).await,
         PoolKind::Rqlite(client) => db::rqlite_driver::list_databases(client).await,
+        PoolKind::Turso(client) => db::turso_driver::list_databases(client).await,
         PoolKind::DuckDb(con) => {
             let con = con.lock().map_err(|e| e.to_string())?;
             duckdb_list_databases_with_attached(&con, &duckdb_attached_names)
@@ -447,6 +452,10 @@ async fn list_tables_once(
             drop(connections);
             return db::clickhouse_driver::list_tables(&client, clickhouse_metadata_database(database, schema)).await;
         }
+        if let Some(client) = extract_pool!(&connections, &pool_key, InfluxDb) {
+            drop(connections);
+            return db::influxdb_driver::list_tables(&client, database).await;
+        }
         try_sqlserver!(connections, &pool_key, list_tables, schema, filter, limit);
         if let Some(client) = extract_pool!(&connections, &pool_key, Agent) {
             let fallback_config = db_config.clone();
@@ -521,6 +530,9 @@ async fn list_tables_once(
             .await
             .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())),
         PoolKind::Rqlite(client) => db::rqlite_driver::list_tables(client, schema)
+            .await
+            .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())),
+        PoolKind::Turso(client) => db::turso_driver::list_tables(client, schema)
             .await
             .map(|tables| filter_table_infos_for_config(tables, filter, limit, db_config.as_ref())),
         PoolKind::MongoDb(client) => db::mongo_driver::list_collections(client, database)
@@ -638,6 +650,7 @@ mod tests {
             transport_layers: Vec::new(),
             connect_timeout_secs: 5,
             query_timeout_secs: 30,
+            idle_timeout_secs: 60,
             ssl: false,
             ca_cert_path: String::new(),
             client_cert_path: String::new(),
@@ -657,6 +670,7 @@ mod tests {
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
             one_time: false,
+            read_only: false,
         }
     }
 
@@ -1230,6 +1244,10 @@ pub async fn get_columns_core(
                 .await
                 .map(deduplicate_column_infos);
         }
+        if let Some(client) = extract_pool!(&connections, &pool_key, InfluxDb) {
+            drop(connections);
+            return db::influxdb_driver::get_columns(&client, database, table).await.map(deduplicate_column_infos);
+        }
         try_sqlserver!(connections, &pool_key, get_columns, schema, table);
         if let Some(client) = extract_pool!(&connections, &pool_key, Agent) {
             let fallback_config = db_config.clone();
@@ -1296,6 +1314,9 @@ pub async fn get_columns_core(
         PoolKind::Sqlite(p) => db::sqlite::get_columns(p, schema, table).await.map(deduplicate_column_infos),
         PoolKind::Rqlite(client) => {
             db::rqlite_driver::get_columns(client, schema, table).await.map(deduplicate_column_infos)
+        }
+        PoolKind::Turso(client) => {
+            db::turso_driver::get_columns(client, schema, table).await.map(deduplicate_column_infos)
         }
         PoolKind::Elasticsearch(client) => {
             db::elasticsearch_driver::get_columns(client, table).await.map(deduplicate_column_infos)
@@ -1372,6 +1393,7 @@ pub async fn list_indexes_core(
         PoolKind::Postgres(p) => db::postgres::list_indexes(p, schema, table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_indexes(p, schema, table).await,
         PoolKind::Rqlite(client) => db::rqlite_driver::list_indexes(client, schema, table).await,
+        PoolKind::Turso(client) => db::turso_driver::list_indexes(client, schema, table).await,
         PoolKind::MongoDb(client) => db::mongo_driver::list_indexes(client, database, table).await,
         _ => Ok(vec![]),
     }
@@ -1402,6 +1424,7 @@ pub async fn list_foreign_keys_core(
         PoolKind::Postgres(p) => db::postgres::list_foreign_keys(p, schema, table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_foreign_keys(p, schema, table).await,
         PoolKind::Rqlite(client) => db::rqlite_driver::list_foreign_keys(client, schema, table).await,
+        PoolKind::Turso(client) => db::turso_driver::list_foreign_keys(client, schema, table).await,
         _ => Ok(vec![]),
     }
 }
@@ -1431,6 +1454,7 @@ pub async fn list_triggers_core(
         PoolKind::Postgres(p) => db::postgres::list_triggers(p, schema, table).await,
         PoolKind::Sqlite(p) => db::sqlite::list_triggers(p, schema, table).await,
         PoolKind::Rqlite(client) => db::rqlite_driver::list_triggers(client, schema, table).await,
+        PoolKind::Turso(client) => db::turso_driver::list_triggers(client, schema, table).await,
         _ => Ok(vec![]),
     }
 }
@@ -1499,6 +1523,7 @@ pub async fn get_table_ddl_core(
         PoolKind::Postgres(p) => pg_ddl(p, schema, table).await,
         PoolKind::Sqlite(p) => sqlite_ddl(p, table).await,
         PoolKind::Rqlite(client) => db::rqlite_driver::table_ddl(client, table).await,
+        PoolKind::Turso(client) => db::turso_driver::table_ddl(client, table).await,
         _ => Err("DDL not supported for this database type".to_string()),
     }
 }
@@ -1754,6 +1779,9 @@ pub async fn get_object_source_core(
                 )?,
                 PoolKind::Rqlite(client) => {
                     return db::rqlite_driver::object_source(client, name, &object_type).await;
+                }
+                PoolKind::Turso(client) => {
+                    return db::turso_driver::object_source(client, name, &object_type).await;
                 }
                 PoolKind::ClickHouse(client) if matches!(object_type, db::ObjectSourceKind::View) => {
                     let result = db::clickhouse_driver::execute_query(
