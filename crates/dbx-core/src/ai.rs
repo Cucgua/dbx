@@ -1756,6 +1756,7 @@ mod tests {
             proxy_enabled: false,
             proxy_url: String::new(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
 
         let api_key_headers = claude_headers(&config).unwrap();
@@ -1811,6 +1812,7 @@ mod tests {
             proxy_enabled: false,
             proxy_url: String::new(),
             enable_thinking: true,
+            schema_research: Default::default(),
         };
 
         assert!(!supports_temperature(&config));
@@ -1901,6 +1903,7 @@ mod tests {
         let mut config = AiConfig {
             provider: AiProvider::Deepseek,
             api_key: "key".to_string(),
+            auth_method: AiAuthMethod::Bearer,
             endpoint: "https://example.test/v1".to_string(),
             model: "test-model".to_string(),
             api_style: AiApiStyle::Completions,
