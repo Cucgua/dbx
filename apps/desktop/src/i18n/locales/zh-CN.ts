@@ -990,8 +990,7 @@
     enableThinking: "Thinking",
     enableThinkingOn: "已启用",
     enableThinkingOff: "已禁用",
-    enableThinkingHint:
-      "此选项仅对 /chat/completions API 且部分支持的模型生效。设为禁用后可大幅节省 token，但生成结果质量可能会略微下降。",
+    enableThinkingHint: "此选项仅对 /chat/completions API 且部分支持的模型生效。设为禁用后可大幅节省 token，但生成结果质量可能会略微下降。",
     toolCall: "工具调用",
     toolRunning: "运行中",
     toolSucceeded: "已完成",
@@ -1011,8 +1010,7 @@
     thoughtShowAll: "显示全部",
     thoughtShowRecent: "只看最近",
     schemaResearchTitle: "SQL 助手子 agent",
-    schemaResearchHint:
-      "用于在 RAG 对话中调用 schema 工具取证并压缩结果。可复用主助手模型，也可配置独立模型节省上下文成本。",
+    schemaResearchHint: "用于在 RAG 对话中调用 schema 工具取证并压缩结果。可复用主助手模型，也可配置独立模型节省上下文成本。",
     schemaResearchEnabled: "启用",
     schemaResearchEnabledOn: "已启用",
     schemaResearchEnabledOff: "已禁用",
@@ -1021,8 +1019,7 @@
     schemaResearchProxyEnable: "SQL 助手请求通过代理发送",
     schemaResearchMaxToolRounds: "最大工具轮次",
     schemaResearchMaxOutputTokens: "最大输出 token",
-    schemaResearchNotice:
-      "SQL 助手会接收用户请求、当前 SQL、schema 元数据和压缩后的工具摘要，不会发送表数据。该模型必须支持 /chat/completions function call。",
+    schemaResearchNotice: "SQL 助手会接收用户请求、当前 SQL、schema 元数据和压缩后的工具摘要，不会发送表数据。该模型必须支持 /chat/completions function call。",
     actions: {
       generate: "生成 SQL",
       explain: "解释 SQL",
@@ -1200,11 +1197,9 @@
     schemaRagRefreshTable: "刷新当前表智能索引",
     schemaRagImportApiDocs: "导入接口文档",
     schemaRagDelete: "删除 Schema 智能索引",
-    schemaRagAnalyzeConfirm:
-      "本功能会将当前 Schema 的表名、字段名、类型、注释、索引、外键等元数据发送到你配置的外部 embedding 服务。不会发送表数据。是否继续？",
+    schemaRagAnalyzeConfirm: "本功能会将当前 Schema 的表名、字段名、类型、注释、索引、外键等元数据发送到你配置的外部 embedding 服务。不会发送表数据。是否继续？",
     schemaRagAnalyzeSuccess: "Schema 智能索引已更新：{tables} 张表，{columns} 个字段",
-    schemaRagRefreshTableConfirm:
-      "本功能会重新读取当前表的字段、索引、外键等元数据，并发送到你配置的外部 embedding 服务。不会发送表数据。是否继续？",
+    schemaRagRefreshTableConfirm: "本功能会重新读取当前表的字段、索引、外键等元数据，并发送到你配置的外部 embedding 服务。不会发送表数据。是否继续？",
     schemaRagRefreshTableSuccess: "当前表智能索引已刷新：重建 {documents} 条文档",
     schemaRagOperationFailed: "Schema 智能索引操作失败：{message}",
     schemaRagDeleteConfirm: "确定删除 Schema「{name}」的智能索引吗？",
@@ -1219,8 +1214,7 @@
     schemaRagProgressScan: "扫描表结构 {done}/{total}：{table}",
     schemaRagProgressBuildDocuments: "正在生成表/字段 embedding 文档",
     schemaRagProgressEmbeddingQueued: "已生成 {total} 条 embedding 文档，共 {batches} 批，并发 {concurrency}",
-    schemaRagProgressEmbeddingRequest:
-      "正在发送 embedding 第 {batch}/{batches} 批，已完成 {done}/{total}，本批 {size} 条，并发 {concurrency}，飞行中 {inFlight}",
+    schemaRagProgressEmbeddingRequest: "正在发送 embedding 第 {batch}/{batches} 批，已完成 {done}/{total}，本批 {size} 条，并发 {concurrency}，飞行中 {inFlight}",
     schemaRagProgressEmbeddingDone: "embedding 第 {batch}/{batches} 批已返回，已完成 {done}/{total}，飞行中 {inFlight}",
     schemaRagProgressEmbeddingFailed: "embedding 第 {batch}/{batches} 批失败",
     schemaRagProgressWrite: "正在写入 Schema 智能索引文件",

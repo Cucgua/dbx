@@ -205,11 +205,7 @@ function shouldExpandThoughtNode(status: AiWorkflowNodeStatus): boolean {
 }
 
 function shouldExpandUpdatedThoughtNode(status: AiWorkflowNodeStatus, existing: AiThoughtNodeState): boolean {
-  if (
-    status === "success" &&
-    (existing.kind === "model" || existing.kind === "agent") &&
-    (existing.content.trim() || existing.children.length)
-  ) {
+  if (status === "success" && (existing.kind === "model" || existing.kind === "agent") && (existing.content.trim() || existing.children.length)) {
     return existing.defaultExpanded;
   }
   return shouldExpandThoughtNode(status);
@@ -219,10 +215,7 @@ function upsertThoughtNode(nodes: AiThoughtNodeState[], node: AiThoughtNodeState
   const withoutNode = removeThoughtNode(nodes, node.id);
   const adoptedChildren = collectDetachedChildren(withoutNode, node.id);
   const nodeWithChildren = mergeThoughtNodeChildren(node, adoptedChildren);
-  const withoutAdoptedChildren = adoptedChildren.reduce(
-    (current, child) => removeThoughtNode(current, child.id),
-    withoutNode,
-  );
+  const withoutAdoptedChildren = adoptedChildren.reduce((current, child) => removeThoughtNode(current, child.id), withoutNode);
   if (nodeWithChildren.parentId) {
     const parent = findThoughtNode(withoutAdoptedChildren, nodeWithChildren.parentId);
     if (parent) {
@@ -283,10 +276,7 @@ function findThoughtNode(nodes: AiThoughtNodeState[], nodeId: string): AiThought
   return undefined;
 }
 
-function mapThoughtNodes(
-  nodes: AiThoughtNodeState[],
-  mapper: (node: AiThoughtNodeState) => AiThoughtNodeState,
-): AiThoughtNodeState[] {
+function mapThoughtNodes(nodes: AiThoughtNodeState[], mapper: (node: AiThoughtNodeState) => AiThoughtNodeState): AiThoughtNodeState[] {
   return nodes.map((node) =>
     mapper({
       ...node,

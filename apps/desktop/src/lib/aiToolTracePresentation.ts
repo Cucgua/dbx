@@ -18,10 +18,7 @@ export interface AiToolTraceChildPresentation<T> {
 
 const CHILD_TRACE_COLLAPSE_THRESHOLD = 3;
 
-export function buildAiToolTraceChildPresentation<T extends AiToolTracePresentationItem>(
-  children: readonly T[],
-  expanded = false,
-): AiToolTraceChildPresentation<T> {
+export function buildAiToolTraceChildPresentation<T extends AiToolTracePresentationItem>(children: readonly T[], expanded = false): AiToolTraceChildPresentation<T> {
   if (children.length <= CHILD_TRACE_COLLAPSE_THRESHOLD) {
     return { summary: null, visibleChildren: [...children] };
   }

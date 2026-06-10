@@ -48,9 +48,7 @@ async function save() {
     <div class="rounded-md border bg-muted/20 p-4">
       <div class="space-y-1">
         <Label class="text-base">Schema RAG</Label>
-        <p class="text-xs text-muted-foreground">
-          Embedding and rerank settings are stored in the Schema RAG extension config.
-        </p>
+        <p class="text-xs text-muted-foreground">Embedding and rerank settings are stored in the Schema RAG extension config.</p>
       </div>
     </div>
 
@@ -62,11 +60,7 @@ async function save() {
       </div>
       <div class="grid grid-cols-3 items-center gap-3">
         <Label class="text-right text-xs">Endpoint</Label>
-        <Input
-          v-model="draft.embeddingEndpoint"
-          class="col-span-2 h-8 text-xs"
-          placeholder="https://api.example.com/v1"
-        />
+        <Input v-model="draft.embeddingEndpoint" class="col-span-2 h-8 text-xs" placeholder="https://api.example.com/v1" />
       </div>
       <div class="grid grid-cols-3 items-center gap-3">
         <Label class="text-right text-xs">Model</Label>
@@ -86,13 +80,7 @@ async function save() {
       </div>
       <div class="grid grid-cols-3 items-center gap-3">
         <Label class="text-right text-xs">Concurrency</Label>
-        <Input
-          v-model.number="draft.embeddingConcurrency"
-          type="number"
-          min="1"
-          max="16"
-          class="col-span-2 h-8 text-xs"
-        />
+        <Input v-model.number="draft.embeddingConcurrency" type="number" min="1" max="16" class="col-span-2 h-8 text-xs" />
       </div>
     </div>
 
@@ -126,12 +114,7 @@ async function save() {
 
     <div class="grid grid-cols-3 items-center gap-3">
       <Label class="text-right text-xs">Proxy URL</Label>
-      <Input
-        v-model="draft.proxyUrl"
-        class="col-span-2 h-8 text-xs"
-        placeholder="socks5://127.0.0.1:7890"
-        :disabled="!draft.proxyEnabled"
-      />
+      <Input v-model="draft.proxyUrl" class="col-span-2 h-8 text-xs" placeholder="socks5://127.0.0.1:7890" :disabled="!draft.proxyEnabled" />
     </div>
 
     <div class="flex items-center gap-3">

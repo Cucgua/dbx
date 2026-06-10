@@ -1,8 +1,4 @@
-import {
-  buildAiToolTraceChildPresentation,
-  type AiToolTraceChildSummary,
-  type AiToolTracePresentationStatus,
-} from "@/lib/aiToolTracePresentation";
+import { buildAiToolTraceChildPresentation, type AiToolTraceChildSummary, type AiToolTracePresentationStatus } from "@/lib/aiToolTracePresentation";
 import type { AiThoughtNodeState, AiWorkflowNodeStatus } from "@/lib/aiWorkflowEvents";
 
 export interface AiThoughtNodeChildPresentation {
@@ -10,10 +6,7 @@ export interface AiThoughtNodeChildPresentation {
   visibleChildren: AiThoughtNodeState[];
 }
 
-export function buildAiThoughtNodeChildPresentation(
-  children: readonly AiThoughtNodeState[],
-  expanded = false,
-): AiThoughtNodeChildPresentation {
+export function buildAiThoughtNodeChildPresentation(children: readonly AiThoughtNodeState[], expanded = false): AiThoughtNodeChildPresentation {
   const toolChildren = children.filter((child) => child.kind === "tool");
   const toolPresentation = buildAiToolTraceChildPresentation(
     toolChildren.map((child) => ({

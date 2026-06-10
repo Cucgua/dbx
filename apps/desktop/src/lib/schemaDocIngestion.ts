@@ -25,10 +25,7 @@ export interface ApiDocImportTextFile {
   content: string;
 }
 
-export async function buildApiDocExtractionRequest(
-  file: ApiDocImportTextFile,
-  schema: string,
-): Promise<ApiDocExtractionRequest> {
+export async function buildApiDocExtractionRequest(file: ApiDocImportTextFile, schema: string): Promise<ApiDocExtractionRequest> {
   const sourceId = await apiDocSourceId(file.path);
   return {
     sourceId,
@@ -89,12 +86,7 @@ function markdownHeading(line: string): { level: number; title: string } | null 
   return { level: match[1].length, title };
 }
 
-function pushMarkdownSection(
-  sourceId: string,
-  sections: ApiDocExtractionSection[],
-  titlePath: string[],
-  lines: string[],
-) {
+function pushMarkdownSection(sourceId: string, sections: ApiDocExtractionSection[], titlePath: string[], lines: string[]) {
   const text = lines.join("\n").trim();
   if (!text) return;
   const path = titlePath.length ? titlePath : ["参考文档"];

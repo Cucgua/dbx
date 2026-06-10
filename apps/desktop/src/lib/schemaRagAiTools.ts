@@ -4,12 +4,7 @@ import * as api from "@/lib/api";
 import { defaultDatabaseTargetsSchema } from "@/lib/defaultDatabase";
 import type { SchemaRagGraphSeed } from "@/lib/schemaRagApi";
 
-export const SCHEMA_RAG_AI_TOOL_NAMES = new Set([
-  "dbx_search_schema",
-  "dbx_search_table_columns",
-  "dbx_load_table_schema",
-  "dbx_expand_schema_graph",
-]);
+export const SCHEMA_RAG_AI_TOOL_NAMES = new Set(["dbx_search_schema", "dbx_search_table_columns", "dbx_load_table_schema", "dbx_expand_schema_graph"]);
 
 export interface SchemaRagAiToolContext {
   connectionId?: string;
@@ -71,8 +66,7 @@ export function buildSchemaRagAiTools(): unknown[] {
       type: "function",
       function: {
         name: "dbx_search_schema",
-        description:
-          "Search the analyzed Schema RAG index for relevant tables, columns, and relationships in the active schema.",
+        description: "Search the analyzed Schema RAG index for relevant tables, columns, and relationships in the active schema.",
         parameters: {
           type: "object",
           properties: {
@@ -124,8 +118,7 @@ export function buildSchemaRagAiTools(): unknown[] {
       type: "function",
       function: {
         name: "dbx_load_table_schema",
-        description:
-          "Load live columns, indexes, and foreign keys for one confirmed table before using its fields in final SQL.",
+        description: "Load live columns, indexes, and foreign keys for one confirmed table before using its fields in final SQL.",
         parameters: {
           type: "object",
           properties: {
@@ -140,8 +133,7 @@ export function buildSchemaRagAiTools(): unknown[] {
       type: "function",
       function: {
         name: "dbx_expand_schema_graph",
-        description:
-          "Expand Schema RAG graph evidence from table, column, API field, business concept, or join-candidate seeds.",
+        description: "Expand Schema RAG graph evidence from table, column, API field, business concept, or join-candidate seeds.",
         parameters: {
           type: "object",
           properties: {
@@ -152,15 +144,7 @@ export function buildSchemaRagAiTools(): unknown[] {
                 properties: {
                   kind: {
                     type: "string",
-                    enum: [
-                      "table",
-                      "column",
-                      "api_doc_source",
-                      "api_doc_section",
-                      "api_field",
-                      "business_concept",
-                      "join_candidate",
-                    ],
+                    enum: ["table", "column", "api_doc_source", "api_doc_section", "api_field", "business_concept", "join_candidate"],
                   },
                   id: { type: "string" },
                   schema: { type: "string" },
@@ -188,12 +172,7 @@ export function buildSchemaRagAiTools(): unknown[] {
   ];
 }
 
-export async function executeSchemaRagAiTool(
-  name: string,
-  rawArguments: string,
-  context: SchemaRagAiToolContext,
-  budget: SchemaRagAiToolBudget,
-): Promise<unknown> {
+export async function executeSchemaRagAiTool(name: string, rawArguments: string, context: SchemaRagAiToolContext, budget: SchemaRagAiToolBudget): Promise<unknown> {
   if (!isSchemaRagAiToolName(name)) return { error: `Unknown Schema RAG tool: ${name}` };
   const args = parseToolArguments(rawArguments);
   if (name === "dbx_search_schema") return executeSchemaSearch(context, budget, args);
@@ -203,11 +182,7 @@ export async function executeSchemaRagAiTool(
   return { error: `Unhandled Schema RAG tool: ${name}` };
 }
 
-async function executeSchemaSearch(
-  context: SchemaRagAiToolContext,
-  budget: SchemaRagAiToolBudget,
-  args: Record<string, unknown>,
-): Promise<unknown> {
+async function executeSchemaSearch(context: SchemaRagAiToolContext, budget: SchemaRagAiToolBudget, args: Record<string, unknown>): Promise<unknown> {
   const scope = activeScope(context);
   if (!scope) return { error: "No active connection/schema for Schema RAG." };
   if (budget.schemaSearches >= MAX_SCHEMA_SEARCHES) return { error: "Schema search budget exceeded." };
@@ -253,11 +228,7 @@ async function executeSchemaSearch(
   };
 }
 
-async function executeColumnSearch(
-  context: SchemaRagAiToolContext,
-  budget: SchemaRagAiToolBudget,
-  args: Record<string, unknown>,
-): Promise<unknown> {
+async function executeColumnSearch(context: SchemaRagAiToolContext, budget: SchemaRagAiToolBudget, args: Record<string, unknown>): Promise<unknown> {
   const scope = activeScope(context, stringArg(args.schema));
   if (!scope) return { error: "No active connection/schema for Schema RAG column search." };
   if (budget.columnSearches >= MAX_COLUMN_SEARCHES) return { error: "Column search budget exceeded." };
@@ -307,11 +278,7 @@ async function executeColumnSearch(
   };
 }
 
-async function executeLoadTableSchema(
-  context: SchemaRagAiToolContext,
-  budget: SchemaRagAiToolBudget,
-  args: Record<string, unknown>,
-): Promise<unknown> {
+async function executeLoadTableSchema(context: SchemaRagAiToolContext, budget: SchemaRagAiToolBudget, args: Record<string, unknown>): Promise<unknown> {
   if (!context.connectionId) return { error: "No active connection for schema loading." };
   if (budget.tableLoads >= MAX_TABLE_LOADS) return { error: "Table schema load budget exceeded." };
 
@@ -349,18 +316,12 @@ async function executeLoadTableSchema(
   };
 }
 
-async function executeExpandGraph(
-  context: SchemaRagAiToolContext,
-  budget: SchemaRagAiToolBudget,
-  args: Record<string, unknown>,
-): Promise<unknown> {
+async function executeExpandGraph(context: SchemaRagAiToolContext, budget: SchemaRagAiToolBudget, args: Record<string, unknown>): Promise<unknown> {
   const scope = activeScope(context);
   if (!scope) return { error: "No active connection/schema for graph expansion." };
   if (budget.graphExpansions >= MAX_GRAPH_EXPANSIONS) return { error: "Schema graph expansion budget exceeded." };
 
-  const seeds = Array.isArray(args.seeds)
-    ? args.seeds.map(normalizeGraphSeed).filter((seed): seed is SchemaRagGraphSeed => !!seed)
-    : [];
+  const seeds = Array.isArray(args.seeds) ? args.seeds.map(normalizeGraphSeed).filter((seed): seed is SchemaRagGraphSeed => !!seed) : [];
   if (!seeds.length) return { error: "seeds are required" };
   budget.graphExpansions += 1;
 
@@ -393,10 +354,7 @@ async function executeExpandGraph(
   };
 }
 
-export function schemaRagScopeForContext(
-  context: SchemaRagAiToolContext,
-  schemaOverride?: string,
-): SchemaRagAiToolScope | null {
+export function schemaRagScopeForContext(context: SchemaRagAiToolContext, schemaOverride?: string): SchemaRagAiToolScope | null {
   if (!context.connectionId) return null;
   const schema = schemaOverride || context.schema || "";
   if (!schema) return null;
@@ -444,17 +402,7 @@ function normalizeGraphSeed(value: unknown): SchemaRagGraphSeed | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
   const kind = stringArg(data.kind);
-  if (
-    ![
-      "table",
-      "column",
-      "api_doc_source",
-      "api_doc_section",
-      "api_field",
-      "business_concept",
-      "join_candidate",
-    ].includes(kind)
-  ) {
+  if (!["table", "column", "api_doc_source", "api_doc_section", "api_field", "business_concept", "join_candidate"].includes(kind)) {
     return null;
   }
   const seed: SchemaRagGraphSeed = { kind: kind as SchemaRagGraphSeed["kind"] };

@@ -368,11 +368,7 @@ export async function aiStream(sessionId: string, request: AiCompletionRequest, 
   }
 }
 
-export async function aiRawChatStream(
-  sessionId: string,
-  request: AiRawChatRequest,
-  onChunk: (chunk: AiStreamChunk) => void,
-): Promise<AiRawChatResponse> {
+export async function aiRawChatStream(sessionId: string, request: AiRawChatRequest, onChunk: (chunk: AiStreamChunk) => void): Promise<AiRawChatResponse> {
   const unlisten: UnlistenFn = await listen<AiStreamChunk>("ai-stream-chunk", (event) => {
     if (event.payload.session_id === sessionId) {
       onChunk(event.payload);
@@ -555,21 +551,15 @@ export async function analyzeSchemaRag(request: AnalyzeSchemaRagRequest): Promis
   return invoke("analyze_schema_rag", { request });
 }
 
-export async function importSchemaRagApiDocs(
-  request: ImportSchemaRagApiDocsRequest,
-): Promise<ImportSchemaRagApiDocsResponse> {
+export async function importSchemaRagApiDocs(request: ImportSchemaRagApiDocsRequest): Promise<ImportSchemaRagApiDocsResponse> {
   return invoke("import_schema_rag_api_docs", { request });
 }
 
-export async function expandSchemaRagGraph(
-  request: ExpandSchemaRagGraphRequest,
-): Promise<ExpandSchemaRagGraphResponse> {
+export async function expandSchemaRagGraph(request: ExpandSchemaRagGraphRequest): Promise<ExpandSchemaRagGraphResponse> {
   return invoke("expand_schema_rag_graph", { request });
 }
 
-export async function refreshSchemaRagTable(
-  request: RefreshSchemaRagTableRequest,
-): Promise<RefreshSchemaRagTableResponse> {
+export async function refreshSchemaRagTable(request: RefreshSchemaRagTableRequest): Promise<RefreshSchemaRagTableResponse> {
   return invoke("refresh_schema_rag_table", { request });
 }
 
@@ -577,15 +567,11 @@ export async function searchSchemaRag(request: SearchSchemaRagRequest): Promise<
   return invoke("search_schema_rag", { request });
 }
 
-export async function searchTableColumnsRag(
-  request: SearchTableColumnsRagRequest,
-): Promise<SchemaRagColumnSearchResult> {
+export async function searchTableColumnsRag(request: SearchTableColumnsRagRequest): Promise<SchemaRagColumnSearchResult> {
   return invoke("search_table_columns_rag", { request });
 }
 
-export async function saveSchemaRagEnrichment(
-  request: SaveSchemaRagEnrichmentRequest,
-): Promise<SaveSchemaRagEnrichmentResponse> {
+export async function saveSchemaRagEnrichment(request: SaveSchemaRagEnrichmentRequest): Promise<SaveSchemaRagEnrichmentResponse> {
   return invoke("save_schema_rag_enrichment", { request });
 }
 
@@ -597,19 +583,11 @@ export async function deleteSchemaRagIndex(request: SchemaRagScopeRequest): Prom
   return invoke("delete_schema_rag_index", { request });
 }
 
-export async function listenSchemaRagProgress(
-  handler: (progress: SchemaRagProgressEvent) => void,
-): Promise<UnlistenFn> {
+export async function listenSchemaRagProgress(handler: (progress: SchemaRagProgressEvent) => void): Promise<UnlistenFn> {
   return listen<SchemaRagProgressEvent>("schema-rag-progress", (event) => handler(event.payload));
 }
 
-export async function listTables(
-  connectionId: string,
-  database: string,
-  schema: string,
-  filter?: string,
-  limit?: number,
-): Promise<TableInfo[]> {
+export async function listTables(connectionId: string, database: string, schema: string, filter?: string, limit?: number): Promise<TableInfo[]> {
   return invoke("list_tables", { connectionId, database, schema, filter, limit });
 }
 

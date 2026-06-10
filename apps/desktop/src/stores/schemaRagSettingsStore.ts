@@ -1,11 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import * as api from "@/lib/api";
-import {
-  createDefaultSchemaRagEmbeddingConfig,
-  normalizeSchemaRagEmbeddingConfig,
-  type SchemaRagEmbeddingConfig,
-} from "@/lib/schemaRagSettings";
+import { createDefaultSchemaRagEmbeddingConfig, normalizeSchemaRagEmbeddingConfig, type SchemaRagEmbeddingConfig } from "@/lib/schemaRagSettings";
 
 export const useSchemaRagSettingsStore = defineStore("schemaRagSettings", () => {
   const config = ref<SchemaRagEmbeddingConfig>(createDefaultSchemaRagEmbeddingConfig());

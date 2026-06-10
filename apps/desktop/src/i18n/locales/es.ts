@@ -833,13 +833,11 @@
     proxy: "Proxy",
     proxyEnable: "Enviar solicitudes de IA mediante proxy",
     proxyUrl: "URL del proxy",
-    settingsHint:
-      "La configuración se almacena en el directorio de datos local de la aplicación. Las solicitudes son enviadas por el backend de Tauri en lugar de directamente desde el frontend.",
+    settingsHint: "La configuración se almacena en el directorio de datos local de la aplicación. Las solicitudes son enviadas por el backend de Tauri en lugar de directamente desde el frontend.",
     includeWorkspaceContext: "Contexto del editor",
     includeWorkspaceContextOn: "Incluido",
     includeWorkspaceContextOff: "No incluido",
-    includeWorkspaceContextHint:
-      "Al desactivarlo, el SQL actual, el último error y la vista previa del resultado no se envían a la IA.",
+    includeWorkspaceContextHint: "Al desactivarlo, el SQL actual, el último error y la vista previa del resultado no se envían a la IA.",
     tableChoiceTitle: "Confirmar tabla",
     columnChoiceTitle: "Confirmar columnas",
     relationConfirmTitle: "Confirmar relación",
@@ -857,14 +855,12 @@
     enableThinking: "Thinking",
     enableThinkingOn: "Activado",
     enableThinkingOff: "Desactivado",
-    enableThinkingHint:
-      "Esta opción solo se aplica a APIs /chat/completions y modelos compatibles. Al desactivarla se puede reducir mucho el uso de tokens, pero la calidad puede bajar ligeramente.",
+    enableThinkingHint: "Esta opción solo se aplica a APIs /chat/completions y modelos compatibles. Al desactivarla se puede reducir mucho el uso de tokens, pero la calidad puede bajar ligeramente.",
     toolCall: "Herramienta",
     toolRunning: "Ejecutando",
     toolSucceeded: "Listo",
     toolFailed: "Falló",
-    toolTraceCollapsedSummary:
-      "{total} llamadas de herramientas: {success} listas, {failed} fallidas, {running} en ejecución",
+    toolTraceCollapsedSummary: "{total} llamadas de herramientas: {success} listas, {failed} fallidas, {running} en ejecución",
     thoughtChain: "Ejecución",
     thoughtNodeLoading: "Ejecutando",
     thoughtNodeSuccess: "Listo",
@@ -879,8 +875,7 @@
     thoughtShowAll: "Mostrar todo",
     thoughtShowRecent: "Mostrar reciente",
     schemaResearchTitle: "Modelo Schema Research",
-    schemaResearchHint:
-      "Procesa resultados de herramientas de schema y devuelve evidencia compacta. Puede reutilizar el modelo principal o usar un modelo más barato.",
+    schemaResearchHint: "Procesa resultados de herramientas de schema y devuelve evidencia compacta. Puede reutilizar el modelo principal o usar un modelo más barato.",
     schemaResearchEnabled: "Activado",
     schemaResearchEnabledOn: "Activado",
     schemaResearchEnabledOff: "Desactivado",
@@ -889,8 +884,7 @@
     schemaResearchProxyEnable: "Enviar solicitudes de Schema Research mediante proxy",
     schemaResearchMaxToolRounds: "Rondas máximas",
     schemaResearchMaxOutputTokens: "Tokens máximos de salida",
-    schemaResearchNotice:
-      "Schema Research recibe la solicitud, SQL actual, metadatos de schema y resúmenes de herramientas. No se envían datos de tablas. El modelo debe soportar function calling en /chat/completions.",
+    schemaResearchNotice: "Schema Research recibe la solicitud, SQL actual, metadatos de schema y resúmenes de herramientas. No se envían datos de tablas. El modelo debe soportar function calling en /chat/completions.",
     actions: {
       generate: "Generar SQL",
       explain: "Explicar SQL",

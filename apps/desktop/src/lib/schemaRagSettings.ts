@@ -6,10 +6,7 @@ export function createDefaultSchemaRagEmbeddingConfig(): SchemaRagEmbeddingConfi
   return { ...DEFAULT_SCHEMA_RAG_CONFIG };
 }
 
-export function normalizeSchemaRagEmbeddingConfig(
-  config: Partial<SchemaRagEmbeddingConfig> | null | undefined,
-  previousConfig?: Pick<SchemaRagEmbeddingConfig, "embeddingApiKey" | "rerankApiKey"> | null,
-): SchemaRagEmbeddingConfig {
+export function normalizeSchemaRagEmbeddingConfig(config: Partial<SchemaRagEmbeddingConfig> | null | undefined, previousConfig?: Pick<SchemaRagEmbeddingConfig, "embeddingApiKey" | "rerankApiKey"> | null): SchemaRagEmbeddingConfig {
   return normalizeSchemaRagConfig(config, previousConfig);
 }
 

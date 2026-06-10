@@ -13,15 +13,7 @@ export type AiAgentStep =
   | {
       kind: "execute_sql";
       status: "skipped";
-      reason:
-        | "ask_mode"
-        | "no_sql"
-        | "no_execution_intent"
-        | "unsupported_action"
-        | "blocked_by_policy"
-        | "requires_confirmation"
-        | "rag_mode"
-        | "schema_rag_context";
+      reason: "ask_mode" | "no_sql" | "no_execution_intent" | "unsupported_action" | "blocked_by_policy" | "requires_confirmation" | "rag_mode" | "schema_rag_context";
     };
 
 interface AiAgentToolTraceLike {
@@ -110,10 +102,5 @@ function extractFirstExecutableSqlCodeBlock(content: string): string | undefined
 }
 
 function isSchemaRagToolName(name: string): boolean {
-  return [
-    "dbx_schema_research_task",
-    "dbx_search_schema",
-    "dbx_search_table_columns",
-    "dbx_expand_schema_graph",
-  ].includes(name);
+  return ["dbx_schema_research_task", "dbx_search_schema", "dbx_search_table_columns", "dbx_expand_schema_graph"].includes(name);
 }

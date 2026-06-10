@@ -21,11 +21,7 @@ export function hasSchemaRagAnalysis(status: SchemaRagStatus | null | undefined)
   return !!status?.indexed && !!status.manifest;
 }
 
-export function getAiRagModeAvailability(
-  config: AiConfig,
-  context: SchemaRagAiToolContext | null | undefined,
-  status: SchemaRagStatus | null | undefined,
-): AiRagModeAvailability {
+export function getAiRagModeAvailability(config: AiConfig, context: SchemaRagAiToolContext | null | undefined, status: SchemaRagStatus | null | undefined): AiRagModeAvailability {
   if (!context?.connectionId || !context.schema) {
     return { available: false, reason: "no-schema" };
   }
@@ -52,10 +48,7 @@ export function getAiRagModeAvailability(
   return { available: true, reason: null };
 }
 
-export function resolveSchemaResearchRuntimeConfig(
-  config: AiConfig,
-  fallbackMaxTokens: number,
-): SchemaResearchRuntimeConfig {
+export function resolveSchemaResearchRuntimeConfig(config: AiConfig, fallbackMaxTokens: number): SchemaResearchRuntimeConfig {
   const toolConfig = resolveSchemaResearchAiConfig(config);
   const schemaResearch = toolConfig.schemaResearch;
   return {
@@ -81,11 +74,7 @@ export function resolveSchemaResearchAiConfig(config: AiConfig): AiConfig {
   };
 }
 
-export function normalizeAiAssistantModeForRagAvailability(
-  currentMode: AiAssistantMode,
-  ragAvailable: boolean,
-  options: { preferRag?: boolean } = {},
-): AiAssistantMode {
+export function normalizeAiAssistantModeForRagAvailability(currentMode: AiAssistantMode, ragAvailable: boolean, options: { preferRag?: boolean } = {}): AiAssistantMode {
   if (ragAvailable && options.preferRag) return "rag";
   if (!ragAvailable && currentMode === "rag") return "ask";
   return currentMode;

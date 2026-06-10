@@ -3,16 +3,7 @@ import type { ApiDocExtractionRequest } from "@/lib/schemaDocIngestion";
 
 export const SCHEMA_DOC_IMPORT_LOG_LIMIT = 50;
 
-export type SchemaDocImportStage =
-  | "idle"
-  | "selecting"
-  | "reading"
-  | "splitting"
-  | "extracting"
-  | "importing"
-  | "refreshing"
-  | "finished"
-  | "failed";
+export type SchemaDocImportStage = "idle" | "selecting" | "reading" | "splitting" | "extracting" | "importing" | "refreshing" | "finished" | "failed";
 
 export interface SchemaDocImportProgressState {
   stage: SchemaDocImportStage;
@@ -49,11 +40,7 @@ export function schemaDocImportProgressPercent(progress: SchemaDocImportProgress
   return Math.min(100, Math.max(0, percent));
 }
 
-export function appendSchemaDocImportLog(
-  progress: SchemaDocImportProgressState,
-  message: string,
-  limit = SCHEMA_DOC_IMPORT_LOG_LIMIT,
-): SchemaDocImportProgressState {
+export function appendSchemaDocImportLog(progress: SchemaDocImportProgressState, message: string, limit = SCHEMA_DOC_IMPORT_LOG_LIMIT): SchemaDocImportProgressState {
   const trimmed = message.trim();
   if (!trimmed) return progress;
   return {

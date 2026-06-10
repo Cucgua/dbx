@@ -3,35 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { uuid } from "@/lib/utils";
 import { useI18n } from "vue-i18n";
 import { translateBackendError } from "@/i18n/backend-errors";
-import {
-  ArrowUp,
-  ArrowRightLeft,
-  AlertTriangle,
-  Bot,
-  Check,
-  ChevronRight,
-  CircleSlash,
-  Copy,
-  Database,
-  HelpCircle,
-  History,
-  Loader2,
-  MessageSquarePlus,
-  Replace,
-  Server,
-  ShieldCheck,
-  Sparkles,
-  Table2,
-  Play,
-  Square,
-  Trash2,
-  Terminal,
-  Wand2,
-  Wrench,
-  X,
-  Zap,
-  TestTube,
-} from "@lucide/vue";
+import { ArrowUp, ArrowRightLeft, AlertTriangle, Bot, Check, ChevronRight, CircleSlash, Copy, Database, HelpCircle, History, Loader2, MessageSquarePlus, Replace, Server, ShieldCheck, Sparkles, Table2, Play, Square, Trash2, Terminal, Wand2, Wrench, X, Zap, TestTube } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -64,41 +36,19 @@ import { buildAiAgentPlan, hasSchemaRagToolTrace } from "@/lib/aiAgentPlan";
 import { buildAiAgentStepItems, type AiAgentStepItem, type AiAgentStepTone } from "@/lib/aiAgentStepPresentation";
 import { createAiShikiCodeHighlighter, type AiCodeHighlighter } from "@/lib/aiCodeHighlighter";
 import { buildAiToolTraceChildPresentation } from "@/lib/aiToolTracePresentation";
-import {
-  createAiMessageRenderer,
-  shouldRenderAssistantMessage,
-  shouldShowLegacyAssistantProgress,
-} from "@/lib/aiMessageRender";
+import { createAiMessageRenderer, shouldRenderAssistantMessage, shouldShowLegacyAssistantProgress } from "@/lib/aiMessageRender";
 import { Marked } from "marked";
-import {
-  aiCancelStream,
-  saveAiConversation,
-  loadAiConversations,
-  deleteAiConversation,
-  loadSchemaRagStatus,
-  listSchemas,
-  listTables,
-  type AiConversation,
-} from "@/lib/api";
+import { aiCancelStream, saveAiConversation, loadAiConversations, deleteAiConversation, loadSchemaRagStatus, listSchemas, listTables, type AiConversation } from "@/lib/api";
 import type { AiMessage, AiTimelineItem, AiToolTrace } from "@/lib/api";
 import type { SchemaRagStatus } from "@/lib/schemaRagApi";
 import type { ConnectionConfig, QueryTab, TableInfo } from "@/types/database";
 import { useDatabaseOptions } from "@/composables/useDatabaseOptions";
-import {
-  decodeSelectableDatabaseValue,
-  encodeSelectableDatabaseValue,
-  formatDatabaseLabel,
-  resolveDefaultDatabase,
-} from "@/lib/defaultDatabase";
+import { decodeSelectableDatabaseValue, encodeSelectableDatabaseValue, formatDatabaseLabel, resolveDefaultDatabase } from "@/lib/defaultDatabase";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
 import { copyToClipboard } from "@/lib/clipboard";
 import { formatAiTableMention, parseAiTableMentions, type AiTableMention } from "@/lib/aiTableMentions";
 import { isAiPromptImeCompositionEvent, shouldSubmitAiPromptOnKeydown } from "@/lib/aiPromptKeyboard";
-import {
-  getAiRagModeAvailability,
-  normalizeAiAssistantModeForRagAvailability,
-  type AiRagModeUnavailableReason,
-} from "@/lib/aiRagMode";
+import { getAiRagModeAvailability, normalizeAiAssistantModeForRagAvailability, type AiRagModeUnavailableReason } from "@/lib/aiRagMode";
 import { schemaRagScopeForContext, type SchemaRagAiToolContext } from "@/lib/schemaRagAiTools";
 import { applyAiWorkflowEvent, type AiThoughtNodeState, type AiWorkflowEvent } from "@/lib/aiWorkflowEvents";
 
@@ -240,9 +190,7 @@ function toggleIncludeWorkspaceContext() {
 
 const promptMentionChips = computed(() => selectedMentions.value);
 
-const activePlaceholder = computed(
-  () => `${t(`ai.placeholders.${activeAction.value}`)} ${t("ai.tableMentionPlaceholderHint")}`,
-);
+const activePlaceholder = computed(() => `${t(`ai.placeholders.${activeAction.value}`)} ${t("ai.tableMentionPlaceholderHint")}`);
 const schemaRagStatus = ref<SchemaRagStatus | null>(null);
 const schemaRagStatusLoading = ref(false);
 let schemaRagStatusRequestId = 0;
@@ -252,12 +200,7 @@ const aiRagContext = computed<SchemaRagAiToolContext | null>(() => {
   const tab = props.tab;
   const connection = props.connection;
   if (!tab || !connection || !tab.database) return null;
-  const schema =
-    tab.tableMeta?.schema ||
-    tab.schema ||
-    tab.objectBrowser?.schema ||
-    tab.objectSource?.schema ||
-    (!isSchemaAware(connection.db_type) ? tab.database || connection.database || "main" : undefined);
+  const schema = tab.tableMeta?.schema || tab.schema || tab.objectBrowser?.schema || tab.objectSource?.schema || (!isSchemaAware(connection.db_type) ? tab.database || connection.database || "main" : undefined);
   if (!schema) return null;
   return {
     connectionId: connection.id,
@@ -273,9 +216,7 @@ const aiRagScopeKey = computed(() => {
   return scope ? `${scope.connectionId}:${scope.database}:${scope.schema}` : "";
 });
 
-const aiRagModeAvailability = computed(() =>
-  getAiRagModeAvailability(settings.aiConfig, aiRagContext.value, schemaRagStatus.value),
-);
+const aiRagModeAvailability = computed(() => getAiRagModeAvailability(settings.aiConfig, aiRagContext.value, schemaRagStatus.value));
 
 const aiRagModeHint = computed(() => {
   if (schemaRagStatusLoading.value) return t("ai.modeHints.ragChecking");
@@ -283,9 +224,7 @@ const aiRagModeHint = computed(() => {
   return ragUnavailableHint(aiRagModeAvailability.value.reason);
 });
 
-const activeModeHint = computed(() =>
-  assistantMode.value === "rag" ? aiRagModeHint.value : t(`ai.modeHints.${assistantMode.value}`),
-);
+const activeModeHint = computed(() => (assistantMode.value === "rag" ? aiRagModeHint.value : t(`ai.modeHints.${assistantMode.value}`)));
 const assistantModeItems = computed(() => [
   {
     value: "ask",
@@ -336,9 +275,7 @@ const dbSelectOptions = computed(() => {
   }));
 });
 
-const selectedDatabaseSelectValue = computed(() =>
-  props.connection ? encodeSelectableDatabaseValue(props.connection.db_type, props.tab?.database || "") : "",
-);
+const selectedDatabaseSelectValue = computed(() => (props.connection ? encodeSelectableDatabaseValue(props.connection.db_type, props.tab?.database || "") : ""));
 
 const selectedDatabaseLabel = computed(() => {
   if (!props.connection) return t("editor.selectDatabase");
@@ -369,15 +306,10 @@ function selectAssistantMode(value: string) {
 
 function syncAssistantModeWithRagAvailability(preferRag: boolean) {
   const key = aiRagScopeKey.value;
-  const shouldPreferRag =
-    preferRag && !!key && aiRagModeAvailability.value.available && !autoSelectedRagScopeKeys.has(key);
-  const nextMode = normalizeAiAssistantModeForRagAvailability(
-    assistantMode.value,
-    aiRagModeAvailability.value.available,
-    {
-      preferRag: shouldPreferRag,
-    },
-  );
+  const shouldPreferRag = preferRag && !!key && aiRagModeAvailability.value.available && !autoSelectedRagScopeKeys.has(key);
+  const nextMode = normalizeAiAssistantModeForRagAvailability(assistantMode.value, aiRagModeAvailability.value.available, {
+    preferRag: shouldPreferRag,
+  });
   if (nextMode !== assistantMode.value) assistantMode.value = nextMode;
   if (shouldPreferRag) autoSelectedRagScopeKeys.add(key);
 }
@@ -578,9 +510,7 @@ function confirmPendingTableChoice() {
     pendingTableChoice.value = null;
     return;
   }
-  const selected = pending.request.candidates.find(
-    (candidate) => tableChoiceKey(candidate.schema, candidate.table) === pending.selectedKey,
-  );
+  const selected = pending.request.candidates.find((candidate) => tableChoiceKey(candidate.schema, candidate.table) === pending.selectedKey);
   if (!selected) return;
   pending.resolve({
     confirmed: true,
@@ -640,9 +570,7 @@ function togglePendingColumnChoice(column: string) {
     pending.selectedColumns = [column];
     return;
   }
-  pending.selectedColumns = pending.selectedColumns.includes(column)
-    ? pending.selectedColumns.filter((item) => item !== column)
-    : [...pending.selectedColumns, column];
+  pending.selectedColumns = pending.selectedColumns.includes(column) ? pending.selectedColumns.filter((item) => item !== column) : [...pending.selectedColumns, column];
 }
 
 function setPendingColumnManualMode(manualMode: boolean) {
@@ -743,9 +671,7 @@ function relationColumnLabel(side: RelationColumnSide, columnName: string): stri
 function confirmPendingRelation() {
   const pending = pendingRelation.value;
   if (!pending) return;
-  const columnPairs = pending.pairs
-    .map((pair) => ({ leftColumn: pair.leftColumn, rightColumn: pair.rightColumn }))
-    .filter((pair) => pair.leftColumn && pair.rightColumn);
+  const columnPairs = pending.pairs.map((pair) => ({ leftColumn: pair.leftColumn, rightColumn: pair.rightColumn })).filter((pair) => pair.leftColumn && pair.rightColumn);
   if (!columnPairs.length) return;
   pending.resolve({
     confirmed: true,
@@ -878,18 +804,10 @@ async function loadMentionCandidates(query: string) {
     let candidates: AiMentionCandidate[] = [];
     if (isSchemaAware(props.connection.db_type)) {
       const schemas = mentionSchemaOrder(await listSchemas(props.tab.connectionId, props.tab.database));
-      const filteredSchemas = schemaPrefix
-        ? schemas.filter((schema) => schema.toLowerCase().includes(schemaPrefix.toLowerCase()))
-        : schemas;
+      const filteredSchemas = schemaPrefix ? schemas.filter((schema) => schema.toLowerCase().includes(schemaPrefix.toLowerCase())) : schemas;
       const results = await Promise.all(
         filteredSchemas.slice(0, 8).map(async (schema) => {
-          const tables = await listTables(
-            props.tab!.connectionId,
-            props.tab!.database,
-            schema,
-            tableFilter || undefined,
-            20,
-          );
+          const tables = await listTables(props.tab!.connectionId, props.tab!.database, schema, tableFilter || undefined, 20);
           return filterMentionCandidates(
             tables.map((table) => mentionCandidateFromTable(table, schema)),
             tableFilter,
@@ -937,8 +855,7 @@ function removeMentionChip(mention: AiTableMention) {
 function addSelectedMention(candidate: AiMentionCandidate) {
   const raw = formatAiTableMention(candidate.schema, candidate.name);
   const key = `${candidate.schema || ""}.${candidate.name}`.toLowerCase();
-  if (selectedMentions.value.some((mention) => `${mention.schema || ""}.${mention.table}`.toLowerCase() === key))
-    return;
+  if (selectedMentions.value.some((mention) => `${mention.schema || ""}.${mention.table}`.toLowerCase() === key)) return;
   selectedMentions.value.push({ raw, schema: candidate.schema, table: candidate.name });
 }
 
@@ -950,15 +867,9 @@ function formatMentionTableType(tableType: string) {
   return t("ai.tableMentionTypes.table");
 }
 
-function filterMentionCandidates(
-  candidates: AiMentionCandidate[],
-  tableFilter: string,
-  limit: number,
-): AiMentionCandidate[] {
+function filterMentionCandidates(candidates: AiMentionCandidate[], tableFilter: string, limit: number): AiMentionCandidate[] {
   const normalizedFilter = tableFilter.toLowerCase();
-  return candidates
-    .filter((candidate) => !normalizedFilter || candidate.name.toLowerCase().includes(normalizedFilter))
-    .slice(0, limit);
+  return candidates.filter((candidate) => !normalizedFilter || candidate.name.toLowerCase().includes(normalizedFilter)).slice(0, limit);
 }
 
 function refreshMentionState() {
@@ -997,10 +908,7 @@ function onPromptKeydown(event: KeyboardEvent) {
   if (mentionOpen.value) {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      mentionSelectedIndex.value = Math.min(
-        mentionSelectedIndex.value + 1,
-        Math.max(mentionCandidates.value.length - 1, 0),
-      );
+      mentionSelectedIndex.value = Math.min(mentionSelectedIndex.value + 1, Math.max(mentionCandidates.value.length - 1, 0));
       return;
     }
     if (event.key === "ArrowUp") {
@@ -1235,14 +1143,7 @@ function normalizeStoredSchemaResearchSessions(value: unknown): SchemaResearchSe
       if (!item || typeof item !== "object") return false;
       const session = item as Record<string, unknown>;
       const scope = session.scope as Record<string, unknown> | undefined;
-      return (
-        typeof session.id === "string" &&
-        typeof session.createdAt === "string" &&
-        typeof session.updatedAt === "string" &&
-        !!scope &&
-        typeof scope.databaseType === "string" &&
-        typeof scope.database === "string"
-      );
+      return typeof session.id === "string" && typeof session.createdAt === "string" && typeof session.updatedAt === "string" && !!scope && typeof scope.databaseType === "string" && typeof scope.database === "string";
     }),
   );
 }
@@ -1332,10 +1233,7 @@ const messageRenderer = computed(() => {
 
 <template>
   <div class="flex h-full min-h-0 flex-col overflow-hidden">
-    <div
-      class="flex items-center gap-2 border-b px-3 shrink-0"
-      :class="settings.editorSettings.appLayout === 'classic' ? 'h-9' : 'h-10'"
-    >
+    <div class="flex items-center gap-2 border-b px-3 shrink-0" :class="settings.editorSettings.appLayout === 'classic' ? 'h-9' : 'h-10'">
       <span class="flex flex-1 self-stretch items-center truncate text-xs font-medium" data-tauri-drag-region>
         {{ chatTitle }}
       </span>
@@ -1343,11 +1241,7 @@ const messageRenderer = computed(() => {
         variant="ghost"
         size="sm"
         class="h-6 w-[3.25rem] shrink-0 gap-1 px-1.5 text-[10px] font-semibold"
-        :class="
-          includeWorkspaceContext
-            ? 'border border-primary/30 bg-primary/15 text-primary hover:bg-primary/20'
-            : 'border border-border/70 bg-muted/20 text-muted-foreground hover:bg-muted/35'
-        "
+        :class="includeWorkspaceContext ? 'border border-primary/30 bg-primary/15 text-primary hover:bg-primary/20' : 'border border-border/70 bg-muted/20 text-muted-foreground hover:bg-muted/35'"
         :title="includeWorkspaceContextTitle"
         :aria-label="includeWorkspaceContextTitle"
         :aria-pressed="includeWorkspaceContext"
@@ -1362,13 +1256,7 @@ const messageRenderer = computed(() => {
       </Button>
       <Popover :open="showConversationList" @update:open="setConversationListOpen">
         <PopoverTrigger as-child>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6"
-            :class="{ 'bg-accent': showConversationList }"
-            :title="t('history.title')"
-          >
+          <Button variant="ghost" size="icon" class="h-6 w-6" :class="{ 'bg-accent': showConversationList }" :title="t('history.title')">
             <History class="h-3.5 w-3.5" />
           </Button>
         </PopoverTrigger>
@@ -1383,18 +1271,9 @@ const messageRenderer = computed(() => {
             {{ t("history.empty") }}
           </div>
           <div v-else class="max-h-64 overflow-auto p-1">
-            <div
-              v-for="conv in conversations"
-              :key="conv.id"
-              class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted"
-              :class="{ 'bg-muted': conv.id === conversationId }"
-              @click="selectConversation(conv)"
-            >
+            <div v-for="conv in conversations" :key="conv.id" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted" :class="{ 'bg-muted': conv.id === conversationId }" @click="selectConversation(conv)">
               <span class="min-w-0 flex-1 truncate">{{ conv.title }}</span>
-              <button
-                class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-destructive"
-                @click.stop="deleteConversation(conv.id)"
-              >
+              <button class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-destructive" @click.stop="deleteConversation(conv.id)">
                 <X class="h-3 w-3" />
               </button>
             </div>
@@ -1409,10 +1288,7 @@ const messageRenderer = computed(() => {
       </Button>
     </div>
 
-    <div
-      v-if="messages.length === 0"
-      class="flex-1 min-h-0 flex flex-col items-center justify-center text-center text-muted-foreground"
-    >
+    <div v-if="messages.length === 0" class="flex-1 min-h-0 flex flex-col items-center justify-center text-center text-muted-foreground">
       <Bot class="h-10 w-10 mb-3 opacity-30" />
       <p class="text-sm">{{ t("ai.welcome") }}</p>
     </div>
@@ -1430,33 +1306,17 @@ const messageRenderer = computed(() => {
               <AiThoughtChain v-if="msg.thoughtNodes?.length" :nodes="msg.thoughtNodes" class="mb-2" />
               <div v-else-if="shouldShowLegacyAssistantProgress(msg)" class="mb-2">
                 <div class="space-y-1.5">
-                  <div
-                    v-for="item in msg.timeline || buildLegacyTimeline(msg.reasoning, msg.toolTraces) || []"
-                    :key="item.id"
-                  >
-                    <div
-                      v-if="item.kind === 'reasoning'"
-                      class="rounded border border-border/50 bg-background/35 px-2 py-1.5"
-                    >
-                      <button
-                        class="flex w-full items-center gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                        @click="toggleReasoning(i)"
-                      >
-                        <ChevronRight
-                          class="h-3 w-3 shrink-0 transition-transform duration-200"
-                          :class="{ 'rotate-90': expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) }"
-                        />
-                        <Loader2
-                          v-if="isActiveReasoningTimelineItem(msg, item)"
-                          class="h-3 w-3 shrink-0 animate-spin"
-                        />
+                  <div v-for="item in msg.timeline || buildLegacyTimeline(msg.reasoning, msg.toolTraces) || []" :key="item.id">
+                    <div v-if="item.kind === 'reasoning'" class="rounded border border-border/50 bg-background/35 px-2 py-1.5">
+                      <button class="flex w-full items-center gap-1 text-left text-[11px] text-muted-foreground hover:text-foreground transition-colors" @click="toggleReasoning(i)">
+                        <ChevronRight class="h-3 w-3 shrink-0 transition-transform duration-200" :class="{ 'rotate-90': expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) }" />
+                        <Loader2 v-if="isActiveReasoningTimelineItem(msg, item)" class="h-3 w-3 shrink-0 animate-spin" />
                         <span>{{ t("ai.reasoningProcess") }}</span>
                       </button>
                       <div
                         class="overflow-hidden transition-all duration-200 ease-in-out"
                         :style="{
-                          maxHeight:
-                            expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) ? '12000px' : '0px',
+                          maxHeight: expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) ? '12000px' : '0px',
                           opacity: expandedReasoning.has(i) || isActiveReasoningTimelineItem(msg, item) ? '1' : '0',
                         }"
                       >
@@ -1465,22 +1325,14 @@ const messageRenderer = computed(() => {
                         </div>
                       </div>
                     </div>
-                    <div
-                      v-else-if="item.toolTrace"
-                      class="rounded border border-border/60 bg-background/55 px-2 py-1.5 text-muted-foreground"
-                    >
+                    <div v-else-if="item.toolTrace" class="rounded border border-border/60 bg-background/55 px-2 py-1.5 text-muted-foreground">
                       <div class="flex min-w-0 items-center gap-1.5">
                         <Loader2 v-if="item.toolTrace.status === 'running'" class="h-3 w-3 shrink-0 animate-spin" />
-                        <Check
-                          v-else-if="item.toolTrace.status === 'success'"
-                          class="h-3 w-3 shrink-0 text-emerald-500"
-                        />
+                        <Check v-else-if="item.toolTrace.status === 'success'" class="h-3 w-3 shrink-0 text-emerald-500" />
                         <AlertTriangle v-else class="h-3 w-3 shrink-0 text-amber-500" />
                         <span class="shrink-0 font-medium text-foreground/75">{{ t("ai.toolCall") }}</span>
                         <span class="truncate font-mono">{{ item.toolTrace.name }}</span>
-                        <span class="shrink-0 text-[10px] opacity-70">{{
-                          t(toolStatusLabelKey(item.toolTrace.status))
-                        }}</span>
+                        <span class="shrink-0 text-[10px] opacity-70">{{ t(toolStatusLabelKey(item.toolTrace.status)) }}</span>
                       </div>
                       <div v-if="item.toolTrace.arguments" class="mt-1 break-words font-mono text-[10px] opacity-80">
                         {{ item.toolTrace.arguments }}
@@ -1496,29 +1348,17 @@ const messageRenderer = computed(() => {
                           :aria-expanded="isToolTraceChildrenExpanded(item.toolTrace.id)"
                           @click.stop="toggleToolTraceChildren(item.toolTrace.id)"
                         >
-                          <ChevronRight
-                            class="h-3 w-3 shrink-0 opacity-70 transition-transform duration-200"
-                            :class="{ 'rotate-90': isToolTraceChildrenExpanded(item.toolTrace.id) }"
-                          />
+                          <ChevronRight class="h-3 w-3 shrink-0 opacity-70 transition-transform duration-200" :class="{ 'rotate-90': isToolTraceChildrenExpanded(item.toolTrace.id) }" />
                           <span class="min-w-0 flex-1 truncate">{{ toolTraceChildSummaryText(item.toolTrace) }}</span>
                         </button>
-                        <div
-                          v-for="childTrace in toolTraceChildPresentation(item.toolTrace).visibleChildren"
-                          :key="childTrace.id"
-                          class="rounded border border-border/45 bg-background/40 px-2 py-1"
-                        >
+                        <div v-for="childTrace in toolTraceChildPresentation(item.toolTrace).visibleChildren" :key="childTrace.id" class="rounded border border-border/45 bg-background/40 px-2 py-1">
                           <div class="flex min-w-0 items-center gap-1.5">
                             <Loader2 v-if="childTrace.status === 'running'" class="h-3 w-3 shrink-0 animate-spin" />
-                            <Check
-                              v-else-if="childTrace.status === 'success'"
-                              class="h-3 w-3 shrink-0 text-emerald-500"
-                            />
+                            <Check v-else-if="childTrace.status === 'success'" class="h-3 w-3 shrink-0 text-emerald-500" />
                             <AlertTriangle v-else class="h-3 w-3 shrink-0 text-amber-500" />
                             <span class="shrink-0 text-[10px] text-foreground/70">{{ t("ai.toolCall") }}</span>
                             <span class="truncate font-mono text-[10px]">{{ childTrace.name }}</span>
-                            <span class="shrink-0 text-[10px] opacity-70">{{
-                              t(toolStatusLabelKey(childTrace.status))
-                            }}</span>
+                            <span class="shrink-0 text-[10px] opacity-70">{{ t(toolStatusLabelKey(childTrace.status)) }}</span>
                           </div>
                           <div v-if="childTrace.arguments" class="mt-1 break-words font-mono text-[10px] opacity-75">
                             {{ childTrace.arguments }}
@@ -1533,13 +1373,7 @@ const messageRenderer = computed(() => {
                 </div>
               </div>
               <div v-if="msg.agentSteps?.length" class="mb-2 flex flex-wrap gap-1.5">
-                <span
-                  v-for="step in msg.agentSteps"
-                  :key="step.key"
-                  class="inline-flex h-5 max-w-full items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium"
-                  :class="agentStepClass(step.tone)"
-                  :title="agentStepTitle(step)"
-                >
+                <span v-for="step in msg.agentSteps" :key="step.key" class="inline-flex h-5 max-w-full items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium" :class="agentStepClass(step.tone)" :title="agentStepTitle(step)">
                   <component :is="agentStepIcon(step.tone)" class="h-3 w-3 shrink-0" />
                   <span class="truncate">{{ t(step.labelKey) }}</span>
                 </span>
@@ -1549,38 +1383,21 @@ const messageRenderer = computed(() => {
                   <div v-if="seg.type === 'text'" class="ai-markdown whitespace-normal">
                     <div v-html="seg.html" />
                   </div>
-                  <div
-                    v-else
-                    class="my-2 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-700/50 dark:bg-zinc-900"
-                  >
-                    <div
-                      class="flex items-center border-b border-zinc-200 px-3 py-1.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700/50 dark:text-zinc-400"
-                    >
+                  <div v-else class="my-2 overflow-hidden rounded-md border border-zinc-200 bg-zinc-50 dark:border-zinc-700/50 dark:bg-zinc-900">
+                    <div class="flex items-center border-b border-zinc-200 px-3 py-1.5 text-[10px] font-medium text-zinc-600 dark:border-zinc-700/50 dark:text-zinc-400">
                       <component :is="seg.isSql ? Database : Terminal" class="h-3 w-3 mr-1.5" />
                       <span>{{ seg.lang }}</span>
                       <span class="flex-1" />
                       <div class="flex items-center gap-1.5">
-                        <button
-                          v-if="seg.isSql"
-                          class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-                          :title="t('ai.executeSql')"
-                          @click="executeSql(seg.content)"
-                        >
+                        <button v-if="seg.isSql" class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200" :title="t('ai.executeSql')" @click="executeSql(seg.content)">
                           <Play class="h-3.5 w-3.5" />
                         </button>
-                        <button
-                          v-if="seg.isSql"
-                          class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-                          :title="t('ai.apply')"
-                          @click="applySql(seg.content)"
-                        >
+                        <button v-if="seg.isSql" class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200" :title="t('ai.apply')" @click="applySql(seg.content)">
                           <Replace class="h-3.5 w-3.5" />
                         </button>
                         <button
                           class="rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-                          :title="
-                            copiedIndex === `${i}-${j}` ? t('ai.copied') : t(seg.isSql ? 'ai.copySql' : 'ai.copyCode')
-                          "
+                          :title="copiedIndex === `${i}-${j}` ? t('ai.copied') : t(seg.isSql ? 'ai.copySql' : 'ai.copyCode')"
                           @click="copyCode(seg.content, `${i}-${j}`)"
                         >
                           <Check v-if="copiedIndex === `${i}-${j}`" class="h-3.5 w-3.5 text-green-400" />
@@ -1588,9 +1405,7 @@ const messageRenderer = computed(() => {
                         </button>
                       </div>
                     </div>
-                    <pre
-                      class="ai-code-block whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-900 dark:text-zinc-100"
-                    ><code v-html="seg.html"></code></pre>
+                    <pre class="ai-code-block whitespace-pre-wrap break-words p-3 text-xs leading-relaxed text-zinc-900 dark:text-zinc-100"><code v-html="seg.html"></code></pre>
                   </div>
                 </template>
               </div>
@@ -1613,25 +1428,12 @@ const messageRenderer = computed(() => {
               :key="`${candidate.schema}.${candidate.table}`"
               type="button"
               class="flex w-full min-w-0 items-start gap-2 rounded border px-2 py-1.5 text-left transition-colors"
-              :class="
-                tableChoiceKey(candidate.schema, candidate.table) === pendingTableChoice.selectedKey
-                  ? 'border-primary bg-primary/10 text-foreground'
-                  : 'border-border/70 bg-background/55 text-muted-foreground hover:bg-background'
-              "
+              :class="tableChoiceKey(candidate.schema, candidate.table) === pendingTableChoice.selectedKey ? 'border-primary bg-primary/10 text-foreground' : 'border-border/70 bg-background/55 text-muted-foreground hover:bg-background'"
               @click="setPendingTableCandidate(candidate.schema, candidate.table)"
             >
-              <Check
-                class="mt-0.5 h-3.5 w-3.5 shrink-0"
-                :class="
-                  tableChoiceKey(candidate.schema, candidate.table) === pendingTableChoice.selectedKey
-                    ? 'text-primary'
-                    : 'text-transparent'
-                "
-              />
+              <Check class="mt-0.5 h-3.5 w-3.5 shrink-0" :class="tableChoiceKey(candidate.schema, candidate.table) === pendingTableChoice.selectedKey ? 'text-primary' : 'text-transparent'" />
               <span class="min-w-0 flex-1">
-                <span class="block truncate font-mono text-[11px] text-foreground">
-                  {{ candidate.schema }}.{{ candidate.table }}
-                </span>
+                <span class="block truncate font-mono text-[11px] text-foreground"> {{ candidate.schema }}.{{ candidate.table }} </span>
                 <span class="mt-0.5 block truncate text-[10px]">
                   {{ [candidate.tableType, candidate.comment, candidate.reason].filter(Boolean).join(" · ") }}
                 </span>
@@ -1643,14 +1445,7 @@ const messageRenderer = computed(() => {
             <Input v-model="pendingTableChoice.manualTable" class="h-7 text-xs" :placeholder="t('ai.manualTable')" />
           </div>
           <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <Button
-              v-if="pendingTableChoice.request.allowManual"
-              type="button"
-              variant="ghost"
-              size="sm"
-              class="h-7 px-2 text-xs"
-              @click="setPendingTableManualMode(!pendingTableChoice.manualMode)"
-            >
+            <Button v-if="pendingTableChoice.request.allowManual" type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="setPendingTableManualMode(!pendingTableChoice.manualMode)">
               {{ pendingTableChoice.manualMode ? t("ai.backToCandidates") : t("ai.manualChoice") }}
             </Button>
             <span v-else />
@@ -1658,17 +1453,7 @@ const messageRenderer = computed(() => {
               <Button type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="skipPendingTableChoice">
                 {{ t("ai.skipChoice") }}
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                class="h-7 px-2 text-xs"
-                :disabled="
-                  pendingTableChoice.manualMode
-                    ? !pendingTableChoice.manualTable.trim()
-                    : !pendingTableChoice.selectedKey
-                "
-                @click="confirmPendingTableChoice"
-              >
+              <Button type="button" size="sm" class="h-7 px-2 text-xs" :disabled="pendingTableChoice.manualMode ? !pendingTableChoice.manualTable.trim() : !pendingTableChoice.selectedKey" @click="confirmPendingTableChoice">
                 {{ t("ai.confirmChoice") }}
               </Button>
             </div>
@@ -1681,9 +1466,7 @@ const messageRenderer = computed(() => {
             <span class="truncate">{{ t("ai.columnChoiceTitle") }}</span>
           </div>
           <div class="mb-2 text-[11px] text-muted-foreground">
-            <span class="font-mono"
-              >{{ pendingColumnChoice.request.schema }}.{{ pendingColumnChoice.request.table }}</span
-            >
+            <span class="font-mono">{{ pendingColumnChoice.request.schema }}.{{ pendingColumnChoice.request.table }}</span>
             <span class="mx-1">·</span>
             <span>{{ pendingColumnChoice.request.question }}</span>
             <span v-if="pendingColumnChoice.request.reason"> · {{ pendingColumnChoice.request.reason }}</span>
@@ -1694,50 +1477,21 @@ const messageRenderer = computed(() => {
               :key="candidate.column"
               type="button"
               class="flex min-w-0 items-start gap-2 rounded border px-2 py-1.5 text-left transition-colors"
-              :class="
-                isPendingColumnSelected(candidate.column)
-                  ? 'border-primary bg-primary/10 text-foreground'
-                  : 'border-border/70 bg-background/55 text-muted-foreground hover:bg-background'
-              "
+              :class="isPendingColumnSelected(candidate.column) ? 'border-primary bg-primary/10 text-foreground' : 'border-border/70 bg-background/55 text-muted-foreground hover:bg-background'"
               @click="togglePendingColumnChoice(candidate.column)"
             >
-              <Check
-                class="mt-0.5 h-3.5 w-3.5 shrink-0"
-                :class="isPendingColumnSelected(candidate.column) ? 'text-primary' : 'text-transparent'"
-              />
+              <Check class="mt-0.5 h-3.5 w-3.5 shrink-0" :class="isPendingColumnSelected(candidate.column) ? 'text-primary' : 'text-transparent'" />
               <span class="min-w-0 flex-1">
                 <span class="block truncate font-mono text-[11px] text-foreground">{{ candidate.column }}</span>
                 <span class="mt-0.5 block truncate text-[10px]">
-                  {{
-                    [
-                      candidate.dataType,
-                      candidate.primaryKey ? "PK" : "",
-                      candidate.nullable === false ? "NOT NULL" : "",
-                      candidate.comment,
-                      candidate.reason,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")
-                  }}
+                  {{ [candidate.dataType, candidate.primaryKey ? "PK" : "", candidate.nullable === false ? "NOT NULL" : "", candidate.comment, candidate.reason].filter(Boolean).join(" · ") }}
                 </span>
               </span>
             </button>
           </div>
-          <Input
-            v-else
-            v-model="pendingColumnChoice.manualColumns"
-            class="h-7 text-xs"
-            :placeholder="t('ai.manualColumns')"
-          />
+          <Input v-else v-model="pendingColumnChoice.manualColumns" class="h-7 text-xs" :placeholder="t('ai.manualColumns')" />
           <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <Button
-              v-if="pendingColumnChoice.request.allowManual"
-              type="button"
-              variant="ghost"
-              size="sm"
-              class="h-7 px-2 text-xs"
-              @click="setPendingColumnManualMode(!pendingColumnChoice.manualMode)"
-            >
+            <Button v-if="pendingColumnChoice.request.allowManual" type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="setPendingColumnManualMode(!pendingColumnChoice.manualMode)">
               {{ pendingColumnChoice.manualMode ? t("ai.backToCandidates") : t("ai.manualChoice") }}
             </Button>
             <span v-else />
@@ -1745,17 +1499,7 @@ const messageRenderer = computed(() => {
               <Button type="button" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="skipPendingColumnChoice">
                 {{ t("ai.skipChoice") }}
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                class="h-7 px-2 text-xs"
-                :disabled="
-                  pendingColumnChoice.manualMode
-                    ? !pendingColumnChoice.manualColumns.trim()
-                    : !pendingColumnChoice.selectedColumns.length
-                "
-                @click="confirmPendingColumnChoice"
-              >
+              <Button type="button" size="sm" class="h-7 px-2 text-xs" :disabled="pendingColumnChoice.manualMode ? !pendingColumnChoice.manualColumns.trim() : !pendingColumnChoice.selectedColumns.length" @click="confirmPendingColumnChoice">
                 {{ t("ai.confirmChoice") }}
               </Button>
             </div>
@@ -1768,21 +1512,13 @@ const messageRenderer = computed(() => {
             <span class="truncate">{{ t("ai.relationConfirmTitle") }}</span>
           </div>
           <div class="mb-2 text-[11px] text-muted-foreground">
-            <span class="font-mono"
-              >{{ pendingRelation.request.left.schema }}.{{ pendingRelation.request.left.table }}</span
-            >
+            <span class="font-mono">{{ pendingRelation.request.left.schema }}.{{ pendingRelation.request.left.table }}</span>
             <span class="mx-1">↔</span>
-            <span class="font-mono"
-              >{{ pendingRelation.request.right.schema }}.{{ pendingRelation.request.right.table }}</span
-            >
+            <span class="font-mono">{{ pendingRelation.request.right.schema }}.{{ pendingRelation.request.right.table }}</span>
             <span v-if="pendingRelation.request.reason"> · {{ pendingRelation.request.reason }}</span>
           </div>
           <div class="space-y-1.5">
-            <div
-              v-for="pair in pendingRelation.pairs"
-              :key="pair.id"
-              class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden"
-            >
+            <div v-for="pair in pendingRelation.pairs" :key="pair.id" class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden">
               <Select v-model="pair.leftColumn">
                 <SelectTrigger class="h-7 w-full min-w-0 text-xs">
                   <SelectValue as-child>
@@ -1792,12 +1528,7 @@ const messageRenderer = computed(() => {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent class="max-h-64 max-w-80">
-                  <SelectItem
-                    v-for="column in pendingRelation.request.left.columns"
-                    :key="column.name"
-                    :value="column.name"
-                    class="max-w-full *:[span]:last:min-w-0 *:[span]:last:flex-1"
-                  >
+                  <SelectItem v-for="column in pendingRelation.request.left.columns" :key="column.name" :value="column.name" class="max-w-full *:[span]:last:min-w-0 *:[span]:last:flex-1">
                     <span class="flex w-full min-w-0 flex-col items-start gap-0.5 leading-tight">
                       <span class="max-w-full truncate font-mono" :title="column.name">{{ column.name }}</span>
                       <span class="max-w-full truncate text-[10px] text-muted-foreground" :title="column.dataType">
@@ -1817,12 +1548,7 @@ const messageRenderer = computed(() => {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent class="max-h-64 max-w-80">
-                  <SelectItem
-                    v-for="column in pendingRelation.request.right.columns"
-                    :key="column.name"
-                    :value="column.name"
-                    class="max-w-full *:[span]:last:min-w-0 *:[span]:last:flex-1"
-                  >
+                  <SelectItem v-for="column in pendingRelation.request.right.columns" :key="column.name" :value="column.name" class="max-w-full *:[span]:last:min-w-0 *:[span]:last:flex-1">
                     <span class="flex w-full min-w-0 flex-col items-start gap-0.5 leading-tight">
                       <span class="max-w-full truncate font-mono" :title="column.name">{{ column.name }}</span>
                       <span class="max-w-full truncate text-[10px] text-muted-foreground" :title="column.dataType">
@@ -1832,13 +1558,7 @@ const messageRenderer = computed(() => {
                   </SelectItem>
                 </SelectContent>
               </Select>
-              <button
-                type="button"
-                class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40"
-                :disabled="pendingRelation.pairs.length <= 1"
-                :title="t('common.delete')"
-                @click="removeRelationPair(pair.id)"
-              >
+              <button type="button" class="rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40" :disabled="pendingRelation.pairs.length <= 1" :title="t('common.delete')" @click="removeRelationPair(pair.id)">
                 <X class="h-3.5 w-3.5" />
               </button>
             </div>
@@ -1880,12 +1600,8 @@ const messageRenderer = computed(() => {
           <DatabaseIcon v-if="connection" :db-type="connectionIconType(connection)" class="h-3 w-3 shrink-0" />
           <Server v-else class="h-3 w-3 shrink-0" />
           <Select :model-value="connection?.id || ''" @update:model-value="(v: any) => changeConnection(v)">
-            <SelectTrigger
-              class="h-5 w-auto border-0 rounded-md bg-transparent dark:bg-transparent p-0 px-1 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3"
-            >
-              <SelectValue :placeholder="t('editor.selectConnection')">{{
-                connection?.name || t("editor.selectConnection")
-              }}</SelectValue>
+            <SelectTrigger class="h-5 w-auto border-0 rounded-md bg-transparent dark:bg-transparent p-0 px-1 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3">
+              <SelectValue :placeholder="t('editor.selectConnection')">{{ connection?.name || t("editor.selectConnection") }}</SelectValue>
             </SelectTrigger>
             <SelectContent class="min-w-48">
               <SelectItem v-for="conn in connectionStore.connections" :key="conn.id" :value="conn.id">
@@ -1907,26 +1623,17 @@ const messageRenderer = computed(() => {
                 }
               "
             >
-              <SelectTrigger
-                class="h-5 w-auto border-0 rounded-md bg-transparent dark:bg-transparent p-0 px-1 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3"
-              >
+              <SelectTrigger class="h-5 w-auto border-0 rounded-md bg-transparent dark:bg-transparent p-0 px-1 text-xs text-foreground/80 shadow-none focus:ring-0 focus-visible:ring-0 [&_svg]:size-3">
                 <SelectValue :placeholder="t('editor.selectDatabase')">{{ selectedDatabaseLabel }}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="option in dbSelectOptions" :key="option.value" :value="option.value">{{
-                  option.label
-                }}</SelectItem>
-                <SelectItem v-if="!dbSelectOptions.length && connection && tab" :value="selectedDatabaseSelectValue">{{
-                  selectedDatabaseLabel
-                }}</SelectItem>
+                <SelectItem v-for="option in dbSelectOptions" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
+                <SelectItem v-if="!dbSelectOptions.length && connection && tab" :value="selectedDatabaseSelectValue">{{ selectedDatabaseLabel }}</SelectItem>
               </SelectContent>
             </Select>
           </template>
         </div>
-        <div
-          v-if="mentionOpen"
-          class="absolute bottom-full left-2 right-2 z-20 mb-1 max-h-56 overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md"
-        >
+        <div v-if="mentionOpen" class="absolute bottom-full left-2 right-2 z-20 mb-1 max-h-56 overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md">
           <div v-if="mentionLoading" class="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
             <Loader2 class="h-3.5 w-3.5 animate-spin" />
             <span>{{ t("common.loading") }}</span>
@@ -1951,9 +1658,7 @@ const messageRenderer = computed(() => {
               <span class="min-w-0 flex-1 truncate">
                 <template v-if="candidate.schema">{{ candidate.schema }}.</template>{{ candidate.name }}
               </span>
-              <span class="shrink-0 text-[10px] text-muted-foreground">{{
-                formatMentionTableType(candidate.tableType)
-              }}</span>
+              <span class="shrink-0 text-[10px] text-muted-foreground">{{ formatMentionTableType(candidate.tableType) }}</span>
             </button>
           </div>
         </div>
@@ -1986,35 +1691,13 @@ const messageRenderer = computed(() => {
           @keydown="onPromptKeydown"
         />
         <div class="flex items-center gap-1.5">
-          <LightDropdown
-            :model-value="assistantMode"
-            :items="assistantModeItems"
-            :aria-label="activeModeHint"
-            item-class="text-xs px-2"
-            @update:model-value="selectAssistantMode"
-          />
-          <LightDropdown
-            :model-value="activeAction"
-            :items="actionMenuItems"
-            content-class="w-max min-w-0"
-            item-class="text-xs px-2"
-            @update:model-value="(value) => selectAction(value as AiAction)"
-          />
+          <LightDropdown :model-value="assistantMode" :items="assistantModeItems" :aria-label="activeModeHint" item-class="text-xs px-2" @update:model-value="selectAssistantMode" />
+          <LightDropdown :model-value="activeAction" :items="actionMenuItems" content-class="w-max min-w-0" item-class="text-xs px-2" @update:model-value="(value) => selectAction(value as AiAction)" />
           <span class="flex-1" />
-          <button
-            v-if="isGenerating"
-            class="h-7 w-7 shrink-0 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center"
-            :title="t('ai.stopGenerating')"
-            @click="cancelStream"
-          >
+          <button v-if="isGenerating" class="h-7 w-7 shrink-0 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center" :title="t('ai.stopGenerating')" @click="cancelStream">
             <Square class="h-3.5 w-3.5" />
           </button>
-          <button
-            v-else
-            class="h-7 w-7 shrink-0 rounded-full bg-foreground text-background flex items-center justify-center disabled:opacity-30"
-            :disabled="!prompt.trim() || !props.tab?.database"
-            @click="send"
-          >
+          <button v-else class="h-7 w-7 shrink-0 rounded-full bg-foreground text-background flex items-center justify-center disabled:opacity-30" :disabled="!prompt.trim() || !props.tab?.database" @click="send">
             <ArrowUp class="h-4 w-4" />
           </button>
         </div>

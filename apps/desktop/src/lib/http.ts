@@ -414,21 +414,15 @@ export async function analyzeSchemaRag(_request: AnalyzeSchemaRagRequest): Promi
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
-export async function importSchemaRagApiDocs(
-  _request: ImportSchemaRagApiDocsRequest,
-): Promise<ImportSchemaRagApiDocsResponse> {
+export async function importSchemaRagApiDocs(_request: ImportSchemaRagApiDocsRequest): Promise<ImportSchemaRagApiDocsResponse> {
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
-export async function expandSchemaRagGraph(
-  _request: ExpandSchemaRagGraphRequest,
-): Promise<ExpandSchemaRagGraphResponse> {
+export async function expandSchemaRagGraph(_request: ExpandSchemaRagGraphRequest): Promise<ExpandSchemaRagGraphResponse> {
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
-export async function refreshSchemaRagTable(
-  _request: RefreshSchemaRagTableRequest,
-): Promise<RefreshSchemaRagTableResponse> {
+export async function refreshSchemaRagTable(_request: RefreshSchemaRagTableRequest): Promise<RefreshSchemaRagTableResponse> {
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
@@ -436,15 +430,11 @@ export async function searchSchemaRag(_request: SearchSchemaRagRequest): Promise
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
-export async function searchTableColumnsRag(
-  _request: SearchTableColumnsRagRequest,
-): Promise<SchemaRagColumnSearchResult> {
+export async function searchTableColumnsRag(_request: SearchTableColumnsRagRequest): Promise<SchemaRagColumnSearchResult> {
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
-export async function saveSchemaRagEnrichment(
-  _request: SaveSchemaRagEnrichmentRequest,
-): Promise<SaveSchemaRagEnrichmentResponse> {
+export async function saveSchemaRagEnrichment(_request: SaveSchemaRagEnrichmentRequest): Promise<SaveSchemaRagEnrichmentResponse> {
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
@@ -456,9 +446,7 @@ export async function deleteSchemaRagIndex(_request: SchemaRagScopeRequest): Pro
   throw new Error("Schema RAG is only available in the desktop app.");
 }
 
-export async function listenSchemaRagProgress(
-  _handler: (progress: SchemaRagProgressEvent) => void,
-): Promise<UnlistenFn> {
+export async function listenSchemaRagProgress(_handler: (progress: SchemaRagProgressEvent) => void): Promise<UnlistenFn> {
   return () => {};
 }
 
@@ -782,19 +770,11 @@ export async function aiRawChat(_request: AiRawChatRequest): Promise<AiRawChatRe
   throw new Error("AI tool calls are only available in the desktop app.");
 }
 
-export async function aiRawChatStream(
-  _sessionId: string,
-  _request: AiRawChatRequest,
-  _onChunk: (chunk: AiStreamChunk) => void,
-): Promise<AiRawChatResponse> {
+export async function aiRawChatStream(_sessionId: string, _request: AiRawChatRequest, _onChunk: (chunk: AiStreamChunk) => void): Promise<AiRawChatResponse> {
   throw new Error("AI streaming tool calls are only available in the desktop app.");
 }
 
-export async function aiStream(
-  sessionId: string,
-  request: AiCompletionRequest,
-  onChunk: (chunk: AiStreamChunk) => void,
-): Promise<void> {
+export async function aiStream(sessionId: string, request: AiCompletionRequest, onChunk: (chunk: AiStreamChunk) => void): Promise<void> {
   const res = await fetch("/api/ai/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1447,9 +1427,7 @@ export async function loadMcpHttpConfig(): Promise<import("./tauri").McpHttpConf
   };
 }
 
-export async function saveMcpHttpConfig(
-  config: import("./tauri").McpHttpConfig,
-): Promise<import("./tauri").McpHttpConfig> {
+export async function saveMcpHttpConfig(config: import("./tauri").McpHttpConfig): Promise<import("./tauri").McpHttpConfig> {
   return config;
 }
 

@@ -2,15 +2,7 @@ export type SchemaResearchStatus = "sufficient" | "partial" | "need_user_choice"
 
 export type SchemaEvidenceConfidence = "high" | "medium" | "low";
 
-export type SchemaEvidenceColumnUsage =
-  | "select"
-  | "filter"
-  | "join"
-  | "group"
-  | "order"
-  | "insert"
-  | "update"
-  | "unknown";
+export type SchemaEvidenceColumnUsage = "select" | "filter" | "join" | "group" | "order" | "insert" | "update" | "unknown";
 
 export interface SchemaEvidenceColumn {
   name: string;
@@ -97,38 +89,15 @@ export const EMPTY_SCHEMA_EVIDENCE_PACKAGE: SchemaEvidencePackage = {
   notes: [],
 };
 
-const STATUS_VALUES = new Set<SchemaResearchStatus>([
-  "sufficient",
-  "partial",
-  "need_user_choice",
-  "not_found",
-  "error",
-]);
+const STATUS_VALUES = new Set<SchemaResearchStatus>(["sufficient", "partial", "need_user_choice", "not_found", "error"]);
 
 const CONFIDENCE_VALUES = new Set<SchemaEvidenceConfidence>(["high", "medium", "low"]);
 
-const COLUMN_USAGE_VALUES = new Set<SchemaEvidenceColumnUsage>([
-  "select",
-  "filter",
-  "join",
-  "group",
-  "order",
-  "insert",
-  "update",
-  "unknown",
-]);
+const COLUMN_USAGE_VALUES = new Set<SchemaEvidenceColumnUsage>(["select", "filter", "join", "group", "order", "insert", "update", "unknown"]);
 
-const RELATION_SOURCE_VALUES = new Set<SchemaEvidenceRelation["source"]>([
-  "foreign_key",
-  "user_confirmed",
-  "known_enrichment",
-  "model_candidate",
-]);
+const RELATION_SOURCE_VALUES = new Set<SchemaEvidenceRelation["source"]>(["foreign_key", "user_confirmed", "known_enrichment", "model_candidate"]);
 
-export function normalizeSchemaResearchTaskResult(
-  value: unknown,
-  limits: SchemaResearchResultLimits = {},
-): SchemaResearchTaskResult {
+export function normalizeSchemaResearchTaskResult(value: unknown, limits: SchemaResearchResultLimits = {}): SchemaResearchTaskResult {
   const data = asRecord(value);
   const evidence = normalizeEvidencePackage(data.evidence, limits);
   const uncertainties = normalizeUncertainties(data.uncertainties).slice(0, limits.maxUncertainties ?? 6);
@@ -142,10 +111,7 @@ export function normalizeSchemaResearchTaskResult(
   };
 }
 
-export function parseSchemaResearchTaskResultText(
-  text: string,
-  limits: SchemaResearchResultLimits = {},
-): SchemaResearchTaskResult {
+export function parseSchemaResearchTaskResultText(text: string, limits: SchemaResearchResultLimits = {}): SchemaResearchTaskResult {
   const jsonText = extractJsonObject(text);
   if (!jsonText) {
     return normalizeSchemaResearchTaskResult(
@@ -183,23 +149,15 @@ export function parseSchemaResearchTaskResultText(
   }
 }
 
-export function formatSchemaResearchTaskResultForPrompt(
-  result: SchemaResearchTaskResult,
-  options: { isZh?: boolean } = {},
-): string {
+export function formatSchemaResearchTaskResultForPrompt(result: SchemaResearchTaskResult, options: { isZh?: boolean } = {}): string {
   const isZh = options.isZh === true;
-  const lines: string[] = [
-    isZh ? `Schema Research 状态：${result.status}` : `Schema research status: ${result.status}`,
-    isZh ? `摘要：${result.summary}` : `Summary: ${result.summary}`,
-  ];
+  const lines: string[] = [isZh ? `Schema Research 状态：${result.status}` : `Schema research status: ${result.status}`, isZh ? `摘要：${result.summary}` : `Summary: ${result.summary}`];
 
   if (result.evidence.tables.length) {
     lines.push(isZh ? "证据表：" : "Evidence tables:");
     for (const table of result.evidence.tables) {
       const tableName = [table.schema, table.table].filter(Boolean).join(".");
-      lines.push(
-        `- ${tableName}${table.tableType ? ` (${table.tableType})` : ""}, confidence=${table.confidence}: ${table.reason}`,
-      );
+      lines.push(`- ${tableName}${table.tableType ? ` (${table.tableType})` : ""}, confidence=${table.confidence}: ${table.reason}`);
       const columns = table.columns.map(formatEvidenceColumn).join("; ");
       if (columns) lines.push(`  columns: ${columns}`);
     }
@@ -208,9 +166,7 @@ export function formatSchemaResearchTaskResultForPrompt(
   if (result.evidence.relations.length) {
     lines.push(isZh ? "关系证据：" : "Relation evidence:");
     for (const relation of result.evidence.relations) {
-      lines.push(
-        `- ${relation.leftSchema}.${relation.leftTable}.${relation.leftColumn} = ${relation.rightSchema}.${relation.rightTable}.${relation.rightColumn} (${relation.source}, confidence=${relation.confidence})`,
-      );
+      lines.push(`- ${relation.leftSchema}.${relation.leftTable}.${relation.leftColumn} = ${relation.rightSchema}.${relation.rightTable}.${relation.rightColumn} (${relation.source}, confidence=${relation.confidence})`);
     }
   }
 
@@ -235,25 +191,14 @@ export function formatSchemaResearchTaskResultForPrompt(
   }
 
   const budget = result.toolBudget;
-  lines.push(
-    `Tool budget: rounds=${budget.usedRounds}, schemaSearches=${budget.schemaSearches}, columnSearches=${budget.columnSearches}, tableLoads=${budget.tableLoads}, columnDetails=${budget.columnDetails}, relationLookups=${budget.relationLookups}`,
-  );
-  lines.push(
-    isZh
-      ? "最终 SQL 只能使用已验证字段。若表、字段或关系仍不确定，先请求用户确认。"
-      : "Use only verified columns in final SQL. If tables, columns, or relations remain uncertain, ask the user to confirm first.",
-  );
+  lines.push(`Tool budget: rounds=${budget.usedRounds}, schemaSearches=${budget.schemaSearches}, columnSearches=${budget.columnSearches}, tableLoads=${budget.tableLoads}, columnDetails=${budget.columnDetails}, relationLookups=${budget.relationLookups}`);
+  lines.push(isZh ? "最终 SQL 只能使用已验证字段。若表、字段或关系仍不确定，先请求用户确认。" : "Use only verified columns in final SQL. If tables, columns, or relations remain uncertain, ask the user to confirm first.");
 
   return lines.join("\n");
 }
 
 function formatEvidenceColumn(column: SchemaEvidenceColumn): string {
-  const flags = [
-    column.verified ? "verified" : "unverified",
-    column.primaryKey ? "PK" : "",
-    column.nullable === true ? "nullable" : column.nullable === false ? "not-null" : "",
-    column.usage ? `usage=${column.usage}` : "",
-  ].filter(Boolean);
+  const flags = [column.verified ? "verified" : "unverified", column.primaryKey ? "PK" : "", column.nullable === true ? "nullable" : column.nullable === false ? "not-null" : "", column.usage ? `usage=${column.usage}` : ""].filter(Boolean);
   return `${column.name}${column.dataType ? ` ${column.dataType}` : ""}${flags.length ? ` [${flags.join(", ")}]` : ""}: ${column.reason}`;
 }
 
@@ -264,10 +209,7 @@ function normalizeEvidencePackage(value: unknown, limits: SchemaResearchResultLi
   return {
     tables: normalizeTables(data.tables, maxTables, maxColumnsPerTable),
     relations: normalizeRelations(data.relations).slice(0, limits.maxRelations ?? 8),
-    rejectedCandidates: normalizeRejectedCandidates(data.rejectedCandidates).slice(
-      0,
-      limits.maxRejectedCandidates ?? 8,
-    ),
+    rejectedCandidates: normalizeRejectedCandidates(data.rejectedCandidates).slice(0, limits.maxRejectedCandidates ?? 8),
     notes: normalizeStringArray(data.notes).slice(0, limits.maxNotes ?? 8),
   };
 }
@@ -334,18 +276,10 @@ function normalizeRelations(value: unknown): SchemaEvidenceRelation[] {
       source: normalizeRelationSource(data.source),
       confidence: normalizeConfidence(data.confidence),
     };
-    if (
-      !relation.leftSchema ||
-      !relation.leftTable ||
-      !relation.leftColumn ||
-      !relation.rightSchema ||
-      !relation.rightTable ||
-      !relation.rightColumn
-    ) {
+    if (!relation.leftSchema || !relation.leftTable || !relation.leftColumn || !relation.rightSchema || !relation.rightTable || !relation.rightColumn) {
       continue;
     }
-    const key =
-      `${relation.leftSchema}.${relation.leftTable}.${relation.leftColumn}:${relation.rightSchema}.${relation.rightTable}.${relation.rightColumn}`.toLowerCase();
+    const key = `${relation.leftSchema}.${relation.leftTable}.${relation.leftColumn}:${relation.rightSchema}.${relation.rightTable}.${relation.rightColumn}`.toLowerCase();
     if (!unique.has(key)) unique.set(key, relation);
   }
   return [...unique.values()];
@@ -397,11 +331,7 @@ function normalizeToolBudget(value: unknown): SchemaResearchToolBudget {
   };
 }
 
-function normalizeStatus(
-  value: unknown,
-  evidence: SchemaEvidencePackage,
-  uncertainties: SchemaResearchUncertainty[],
-): SchemaResearchStatus {
+function normalizeStatus(value: unknown, evidence: SchemaEvidencePackage, uncertainties: SchemaResearchUncertainty[]): SchemaResearchStatus {
   const status = String(value || "").trim() as SchemaResearchStatus;
   if (STATUS_VALUES.has(status)) return status;
   if (uncertainties.length) return "partial";
@@ -429,11 +359,7 @@ function normalizeNonNegativeInteger(value: unknown): number {
   return Math.floor(parsed);
 }
 
-function fallbackSummary(
-  status: SchemaResearchStatus,
-  evidence: SchemaEvidencePackage,
-  uncertainties: SchemaResearchUncertainty[],
-): string {
+function fallbackSummary(status: SchemaResearchStatus, evidence: SchemaEvidencePackage, uncertainties: SchemaResearchUncertainty[]): string {
   if (status === "not_found") return "No matching schema evidence was found.";
   if (status === "need_user_choice") return "Schema evidence needs user confirmation.";
   if (uncertainties.length) return "Schema evidence is partial and has unresolved uncertainty.";

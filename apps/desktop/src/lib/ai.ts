@@ -1,15 +1,7 @@
 import { AI_PROVIDER_PRESETS, type AiConfig } from "@/stores/settingsStore";
 import { uuid } from "@/lib/utils";
 import type { AiToolTrace } from "@/lib/api";
-import type {
-  ColumnInfo,
-  ConnectionConfig,
-  DatabaseType,
-  ForeignKeyInfo,
-  IndexInfo,
-  QueryResult,
-  QueryTab,
-} from "@/types/database";
+import type { ColumnInfo, ConnectionConfig, DatabaseType, ForeignKeyInfo, IndexInfo, QueryResult, QueryTab } from "@/types/database";
 import * as api from "@/lib/api";
 import { currentLocale } from "@/i18n";
 import { defaultDatabaseTargetsSchema, resolveDefaultDatabase } from "@/lib/defaultDatabase";
@@ -17,23 +9,9 @@ import { aiTableMentionKey, type AiTableMention } from "@/lib/aiTableMentions";
 import { aiSkillForAction } from "@/lib/aiSkills";
 import { isSchemaAware } from "@/lib/databaseCapabilities";
 import { createAiWorkflowEvent, type AiWorkflowEvent, type AiWorkflowEventInput } from "@/lib/aiWorkflowEvents";
-import {
-  formatSchemaResearchTaskResultForPrompt,
-  normalizeSchemaResearchTaskResult,
-  parseSchemaResearchTaskResultText,
-  type SchemaEvidencePackage,
-  type SchemaResearchResultLimits,
-  type SchemaResearchStatus,
-  type SchemaResearchTaskResult,
-} from "@/lib/schemaResearch";
+import { formatSchemaResearchTaskResultForPrompt, normalizeSchemaResearchTaskResult, parseSchemaResearchTaskResultText, type SchemaEvidencePackage, type SchemaResearchResultLimits, type SchemaResearchStatus, type SchemaResearchTaskResult } from "@/lib/schemaResearch";
 import type { ApiDocExtractionRequest } from "@/lib/schemaDocIngestion";
-import type {
-  ApiDocExtractionStatus,
-  SchemaRagApiDocExtraction,
-  SchemaRagApiFieldFact,
-  SchemaRagBusinessConceptFact,
-  SchemaRagJoinCandidateFact,
-} from "@/lib/schemaRag";
+import type { ApiDocExtractionStatus, SchemaRagApiDocExtraction, SchemaRagApiFieldFact, SchemaRagBusinessConceptFact, SchemaRagJoinCandidateFact } from "@/lib/schemaRag";
 
 export type AiAction = "generate" | "explain" | "optimize" | "fix" | "convert" | "sampleData";
 export type AiAssistantMode = "ask" | "agent" | "rag";
@@ -248,16 +226,7 @@ export async function runAiAction(input: AiRequestInput, history?: api.AiMessage
   const systemPrompt = buildSystemPrompt(input.action, input.context, input.mode);
   const instruction = isZh ? skill.userInstruction.zh : skill.userInstruction.en;
   const schemaResearchSessionContext = formatSchemaResearchSessionsForMainPrompt(input.schemaResearchSessions, isZh);
-  const userPrompt = [
-    `Action: ${input.action}`,
-    instruction,
-    schemaResearchSessionContext ? `\n${schemaResearchSessionContext}` : "",
-    "",
-    "User request:",
-    input.instruction.trim() || "(No extra instruction provided.)",
-  ]
-    .filter((part) => part !== "")
-    .join("\n");
+  const userPrompt = [`Action: ${input.action}`, instruction, schemaResearchSessionContext ? `\n${schemaResearchSessionContext}` : "", "", "User request:", input.instruction.trim() || "(No extra instruction provided.)"].filter((part) => part !== "").join("\n");
 
   const messages: api.AiMessage[] = [...(history || []), { role: "user", content: userPrompt }];
 
@@ -287,13 +256,7 @@ export async function runAiStream(
   const skill = aiSkillForAction(input.action);
   const systemPrompt = buildSystemPrompt(input.action, input.context, input.mode);
   const instruction = isZh ? skill.userInstruction.zh : skill.userInstruction.en;
-  const userPrompt = [
-    `Action: ${input.action}`,
-    instruction,
-    "",
-    "User request:",
-    input.instruction.trim() || "(No extra instruction provided.)",
-  ].join("\n");
+  const userPrompt = [`Action: ${input.action}`, instruction, "", "User request:", input.instruction.trim() || "(No extra instruction provided.)"].join("\n");
 
   const messages: api.AiMessage[] = [...(history || []), { role: "user", content: userPrompt }];
 
@@ -309,20 +272,7 @@ export async function runAiStream(
     status: "loading",
   });
 
-  const toolResult = await runAiToolLoop(
-    input,
-    messages,
-    maxTokens,
-    params.temperature,
-    onReasoningDelta,
-    onToolTrace,
-    onRelationRequest,
-    onTableChoiceRequest,
-    onColumnChoiceRequest,
-    onEvent,
-    mainNodeId,
-    onDelta,
-  ).catch(() => undefined);
+  const toolResult = await runAiToolLoop(input, messages, maxTokens, params.temperature, onReasoningDelta, onToolTrace, onRelationRequest, onTableChoiceRequest, onColumnChoiceRequest, onEvent, mainNodeId, onDelta).catch(() => undefined);
   if (toolResult != null) {
     emitAiWorkflowEvent(onEvent, {
       type: "node.update",
@@ -433,16 +383,10 @@ export function buildSystemPrompt(action: AiAction, context: AiContext, mode: Ai
   const lastError = context.lastError ? `\nLast error:\n${context.lastError}\n` : "";
 
   const isZh = currentLocale() === "zh-CN";
-  const schemaRag = context.schemaRagContext
-    ? `\n${isZh ? "Schema 智能检索结果" : "Smart schema retrieval"}:\n${context.schemaRagContext}\n`
-    : "";
+  const schemaRag = context.schemaRagContext ? `\n${isZh ? "Schema 智能检索结果" : "Smart schema retrieval"}:\n${context.schemaRagContext}\n` : "";
   const schemaScope = context.schemaScope ?? "database";
 
-  const lines: string[] = [
-    ...buildBasePromptLines(isZh),
-    ...buildModePromptLines(mode, isZh),
-    ...buildActionPromptLines(action, isZh),
-  ];
+  const lines: string[] = [...buildBasePromptLines(isZh), ...buildModePromptLines(mode, isZh), ...buildActionPromptLines(action, isZh)];
 
   if (context.truncated) {
     lines.push(
@@ -460,18 +404,12 @@ export function buildSystemPrompt(action: AiAction, context: AiContext, mode: Ai
   }
 
   lines.push(
-    isZh
-      ? "返回 SQL 时放在 ```sql 代码块中。额外说明简短实用。"
-      : "Put SQL in a fenced ```sql code block. Keep extra explanation short and practical.",
+    isZh ? "返回 SQL 时放在 ```sql 代码块中。额外说明简短实用。" : "Put SQL in a fenced ```sql code block. Keep extra explanation short and practical.",
     "",
     `Database type: ${context.databaseType}`,
     `Connection: ${context.connectionName}`,
     `Database: ${context.database}`,
-    schemaScope === "focused_table"
-      ? "Schema context is focused table only; not a complete database table list."
-      : context.truncated
-        ? "Schema context is truncated."
-        : "Schema context is complete.",
+    schemaScope === "focused_table" ? "Schema context is focused table only; not a complete database table list." : context.truncated ? "Schema context is truncated." : "Schema context is complete.",
     "",
     `Current SQL:\n${context.currentSql.trim() || "(empty)"}`,
     lastError,
@@ -486,31 +424,15 @@ export function buildSystemPrompt(action: AiAction, context: AiContext, mode: Ai
 function buildBasePromptLines(isZh: boolean): string[] {
   return [
     isZh ? "你是 DBX 内置的数据库助手。用中文回复。" : "You are DBX's built-in database assistant. Reply in English.",
-    isZh
-      ? "精确、保守，根据当前数据库方言生成 SQL。"
-      : "Be precise, conservative, and adapt SQL to the active database dialect.",
-    isZh
-      ? "严格使用当前数据库方言；标识符引用、分页、日期函数、字符串拼接、LIMIT/TOP/OFFSET 语法必须匹配数据库类型。"
-      : "Strictly use the active database dialect; identifier quoting, pagination, date functions, string concatenation, and LIMIT/TOP/OFFSET syntax must match the database type.",
-    isZh
-      ? "下面的 Schema 上下文已包含表、列、索引和外键信息，直接使用即可。不要查询 information_schema 或系统表来获取结构信息。"
-      : "The schema context below already contains tables, columns, indexes, and foreign keys — use it directly. Do NOT query information_schema or system tables.",
-    isZh
-      ? "当用户要求分析或查看某个表时，生成 SELECT 查询获取数据，而不是查询元数据。"
-      : "When the user asks to 'analyze' or 'look at' a table, generate a SELECT query to retrieve data, not a metadata query.",
+    isZh ? "精确、保守，根据当前数据库方言生成 SQL。" : "Be precise, conservative, and adapt SQL to the active database dialect.",
+    isZh ? "严格使用当前数据库方言；标识符引用、分页、日期函数、字符串拼接、LIMIT/TOP/OFFSET 语法必须匹配数据库类型。" : "Strictly use the active database dialect; identifier quoting, pagination, date functions, string concatenation, and LIMIT/TOP/OFFSET syntax must match the database type.",
+    isZh ? "下面的 Schema 上下文已包含表、列、索引和外键信息，直接使用即可。不要查询 information_schema 或系统表来获取结构信息。" : "The schema context below already contains tables, columns, indexes, and foreign keys — use it directly. Do NOT query information_schema or system tables.",
+    isZh ? "当用户要求分析或查看某个表时，生成 SELECT 查询获取数据，而不是查询元数据。" : "When the user asks to 'analyze' or 'look at' a table, generate a SELECT query to retrieve data, not a metadata query.",
     isZh ? "不要编造 Schema 中不存在的表或列。" : "Never invent tables or columns that are not in the schema context.",
-    isZh
-      ? "用户输入中的 @schema.table 或 @table 表示用户明确提到的表；这些表已优先放入 Schema 上下文。"
-      : "User input may contain @schema.table or @table mentions. Treat them as explicit table references; mentioned tables are prioritized in the schema context.",
-    isZh
-      ? "不要生成多语句 SQL，除非用户明确要求。不要在同一个回答里混合 SELECT 和写操作。"
-      : "Do not generate multi-statement SQL unless the user explicitly asks for it. Do not mix SELECT statements and write operations in the same answer.",
-    isZh
-      ? "对于 DROP、DELETE、TRUNCATE、ALTER 或没有 WHERE 的 UPDATE，简要警告并优先提供安全的 SELECT 预览。"
-      : "For destructive statements (DROP, DELETE, TRUNCATE, ALTER, UPDATE without WHERE), warn briefly and prefer a safer SELECT preview.",
-    isZh
-      ? "对于 UPDATE 或 DELETE，必须带 WHERE 并说明影响范围；生产库写操作只给建议，不主动建议执行。"
-      : "For UPDATE or DELETE, require a WHERE clause and explain the affected scope; for production writes, provide guidance but do not proactively suggest execution.",
+    isZh ? "用户输入中的 @schema.table 或 @table 表示用户明确提到的表；这些表已优先放入 Schema 上下文。" : "User input may contain @schema.table or @table mentions. Treat them as explicit table references; mentioned tables are prioritized in the schema context.",
+    isZh ? "不要生成多语句 SQL，除非用户明确要求。不要在同一个回答里混合 SELECT 和写操作。" : "Do not generate multi-statement SQL unless the user explicitly asks for it. Do not mix SELECT statements and write operations in the same answer.",
+    isZh ? "对于 DROP、DELETE、TRUNCATE、ALTER 或没有 WHERE 的 UPDATE，简要警告并优先提供安全的 SELECT 预览。" : "For destructive statements (DROP, DELETE, TRUNCATE, ALTER, UPDATE without WHERE), warn briefly and prefer a safer SELECT preview.",
+    isZh ? "对于 UPDATE 或 DELETE，必须带 WHERE 并说明影响范围；生产库写操作只给建议，不主动建议执行。" : "For UPDATE or DELETE, require a WHERE clause and explain the affected scope; for production writes, provide guidance but do not proactively suggest execution.",
   ];
 }
 
@@ -520,41 +442,25 @@ function buildModePromptLines(mode: AiAssistantMode, isZh: boolean): string[] {
       isZh
         ? "你处于 RAG 模式。使用完整 Schema Research 工具链为表、字段、业务含义或接口文档映射取证，再生成最终 SQL 或说明。"
         : "You are in RAG mode. Use the full Schema Research tool chain to gather evidence for table, column, business-meaning, or API-doc mappings before producing final SQL or an explanation.",
-      isZh
-        ? "第一个 ```sql 代码块只能包含最终建议的 SQL；不要暗示已经执行、即将自动执行或需要系统自动执行。"
-        : "The first ```sql code block must contain only the final suggested SQL. Do not imply that it has run, will auto-run, or should be auto-run by the system.",
-      isZh
-        ? "如果证据不足，先说明缺少哪些表、字段或关系，再给只读预览 SQL 或澄清问题。"
-        : "If evidence is insufficient, explain which tables, columns, or relationships are missing, then provide a read-only preview SQL or a clarifying question.",
+      isZh ? "第一个 ```sql 代码块只能包含最终建议的 SQL；不要暗示已经执行、即将自动执行或需要系统自动执行。" : "The first ```sql code block must contain only the final suggested SQL. Do not imply that it has run, will auto-run, or should be auto-run by the system.",
+      isZh ? "如果证据不足，先说明缺少哪些表、字段或关系，再给只读预览 SQL 或澄清问题。" : "If evidence is insufficient, explain which tables, columns, or relationships are missing, then provide a read-only preview SQL or a clarifying question.",
     ];
   }
 
   if (mode === "agent") {
     return [
-      isZh
-        ? "你处于 Agent 模式。用户表达查询意图时，优先生成一个可直接执行的只读 SQL。"
-        : "You are in Agent mode. When the user expresses query intent, prioritize one directly executable read-only SQL statement.",
-      isZh
-        ? "第一个 ```sql 代码块只能包含最终推荐执行的 SQL；不要把解释性 SQL、备选 SQL、危险 SQL 放在第一个代码块。"
-        : "The first ```sql code block must contain only the final SQL recommended for execution; do not put explanatory SQL, alternatives, or risky SQL in the first code block.",
-      isZh
-        ? "如果安全执行条件不满足，先说明原因，再给只读预览或澄清问题。"
-        : "If safe execution requirements are not met, explain why first, then provide a read-only preview or a clarifying question.",
+      isZh ? "你处于 Agent 模式。用户表达查询意图时，优先生成一个可直接执行的只读 SQL。" : "You are in Agent mode. When the user expresses query intent, prioritize one directly executable read-only SQL statement.",
+      isZh ? "第一个 ```sql 代码块只能包含最终推荐执行的 SQL；不要把解释性 SQL、备选 SQL、危险 SQL 放在第一个代码块。" : "The first ```sql code block must contain only the final SQL recommended for execution; do not put explanatory SQL, alternatives, or risky SQL in the first code block.",
+      isZh ? "如果安全执行条件不满足，先说明原因，再给只读预览或澄清问题。" : "If safe execution requirements are not met, explain why first, then provide a read-only preview or a clarifying question.",
     ];
   }
 
-  return [
-    isZh
-      ? "你处于 Ask 模式。只生成 SQL 和说明，不要暗示已经执行或即将自动执行。"
-      : "You are in Ask mode. Generate SQL and explanations only; do not imply that anything has run or will auto-run.",
-  ];
+  return [isZh ? "你处于 Ask 模式。只生成 SQL 和说明，不要暗示已经执行或即将自动执行。" : "You are in Ask mode. Generate SQL and explanations only; do not imply that anything has run or will auto-run."];
 }
 
 function buildActionPromptLines(action: AiAction, isZh: boolean): string[] {
   const skill = aiSkillForAction(action);
-  return isZh
-    ? [...skill.systemRules.zh, ...skill.outputContract.zh]
-    : [...skill.systemRules.en, ...skill.outputContract.en];
+  return isZh ? [...skill.systemRules.zh, ...skill.outputContract.zh] : [...skill.systemRules.en, ...skill.outputContract.en];
 }
 
 export function supportsAiSchemaToolLoop(config: AiConfig, context: AiContext): boolean {
@@ -593,9 +499,7 @@ async function runAiToolLoop(
         type: "node.update",
         nodeId: mainNodeId,
         status: "loading",
-        description: isZh
-          ? `主模型正在决定下一步（第 ${round + 1} 轮）`
-          : `Main model is deciding the next step (round ${round + 1})`,
+        description: isZh ? `主模型正在决定下一步（第 ${round + 1} 轮）` : `Main model is deciding the next step (round ${round + 1})`,
       });
     }
     const response = await runRawChatForToolLoop(
@@ -619,8 +523,7 @@ async function runAiToolLoop(
     messages.push(assistantMessage);
     const reasoningContent = response.__reasoningStreamed ? "" : rawMessageReasoningContent(response.rawMessage);
     if (reasoningContent) {
-      if (mainNodeId)
-        emitAiWorkflowEvent(onEvent, { type: "node.delta", nodeId: mainNodeId, delta: `${reasoningContent}\n\n` });
+      if (mainNodeId) emitAiWorkflowEvent(onEvent, { type: "node.delta", nodeId: mainNodeId, delta: `${reasoningContent}\n\n` });
       onReasoningDelta?.(`${reasoningContent}\n\n`);
     }
     if (!response.toolCalls.length) {
@@ -638,9 +541,7 @@ async function runAiToolLoop(
             type: "node.update",
             nodeId: mainNodeId,
             status: pendingEvidenceGate?.status === "need_user_choice" ? "waiting" : "loading",
-            description: isZh
-              ? "Schema Research 证据不足，要求主模型继续检索或向用户确认"
-              : "Schema Research evidence is insufficient; asking the main model to continue or ask the user",
+            description: isZh ? "Schema Research 证据不足，要求主模型继续检索或向用户确认" : "Schema Research evidence is insufficient; asking the main model to continue or ask the user",
           });
         }
         evidenceGateInstructionUsed = true;
@@ -668,20 +569,10 @@ async function runAiToolLoop(
         });
       }
       onToolTrace?.(buildRunningSchemaToolTrace(call));
-      const output = await executeAiSchemaToolCall(
-        input,
-        input.context,
-        budget,
-        call.name,
-        call.arguments,
-        onRelationRequest,
-        onTableChoiceRequest,
-        onColumnChoiceRequest,
-        {
-          onEvent,
-          parentNodeId: toolNodeId,
-        },
-      ).catch((error) => ({
+      const output = await executeAiSchemaToolCall(input, input.context, budget, call.name, call.arguments, onRelationRequest, onTableChoiceRequest, onColumnChoiceRequest, {
+        onEvent,
+        parentNodeId: toolNodeId,
+      }).catch((error) => ({
         error: error?.message || String(error),
       }));
       const completedTrace = buildCompletedSchemaToolTrace(call, output, isZh);
@@ -715,9 +606,7 @@ async function runAiToolLoop(
 
   messages.push({
     role: "user",
-    content: isZh
-      ? "工具调用预算已用完。请只基于已经返回的工具结果生成最终 SQL；如果信息不足，请明确说明缺少哪些表或字段。"
-      : "The tool-call budget is exhausted. Generate the final SQL only from returned tool results; if information is insufficient, state which tables or columns are missing.",
+    content: isZh ? "工具调用预算已用完。请只基于已经返回的工具结果生成最终 SQL；如果信息不足，请明确说明缺少哪些表或字段。" : "The tool-call budget is exhausted. Generate the final SQL only from returned tool results; if information is insufficient, state which tables or columns are missing.",
   });
   const finalResponse = await runRawChatForToolLoop(
     {
@@ -780,8 +669,7 @@ async function runRawChatForToolLoop(
           type: "node.update",
           nodeId: hooks.mainNodeId || sid,
           status: "loading",
-          description:
-            currentLocale() === "zh-CN" ? "模型正在准备工具调用参数" : "Model is preparing tool-call arguments",
+          description: currentLocale() === "zh-CN" ? "模型正在准备工具调用参数" : "Model is preparing tool-call arguments",
         });
       }
       if (chunk.delta && canStreamContentLive && !sawToolCall) {
@@ -791,12 +679,7 @@ async function runRawChatForToolLoop(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error || "");
-    const description =
-      currentLocale() === "zh-CN"
-        ? `OpenAI 兼容流式工具调用不可用，已退回非流式工具调用${message ? `：${message}` : ""}`
-        : `OpenAI-compatible streaming tool calls are unavailable; falling back to non-streaming tool calls${
-            message ? `: ${message}` : ""
-          }`;
+    const description = currentLocale() === "zh-CN" ? `OpenAI 兼容流式工具调用不可用，已退回非流式工具调用${message ? `：${message}` : ""}` : `OpenAI-compatible streaming tool calls are unavailable; falling back to non-streaming tool calls${message ? `: ${message}` : ""}`;
     emitAiWorkflowEvent(hooks.onEvent, {
       type: "node.update",
       nodeId: hooks.mainNodeId || sid,
@@ -870,10 +753,7 @@ function buildApiDocExtractionSystemPrompt(): string {
       ].join("\n");
 }
 
-function buildApiDocExtractionUserPrompt(
-  request: ApiDocExtractionRequest,
-  metadata: ApiDocExtractionBatchMetadata = apiDocSingleBatchMetadata(request),
-): string {
+function buildApiDocExtractionUserPrompt(request: ApiDocExtractionRequest, metadata: ApiDocExtractionBatchMetadata = apiDocSingleBatchMetadata(request)): string {
   const sections = request.sections.map((section) => ({
     id: section.id,
     titlePath: section.titlePath,
@@ -890,22 +770,15 @@ function buildApiDocExtractionUserPrompt(
         totalSections: metadata.totalSections,
         omittedBefore: metadata.omittedBefore,
         omittedAfter: metadata.omittedAfter,
-        note:
-          metadata.omittedBefore || metadata.omittedAfter
-            ? "This prompt contains only a slice of the full document. Do not infer facts from omitted chunks."
-            : "This prompt contains the full extraction slice for this document.",
+        note: metadata.omittedBefore || metadata.omittedAfter ? "This prompt contains only a slice of the full document. Do not infer facts from omitted chunks." : "This prompt contains the full extraction slice for this document.",
       },
       previousContext: metadata.previousContext || { recentTables: [], recentColumns: [] },
       instructions: {
-        apiFields:
-          "Return documented table/column fields with meaning and optional candidateTable/candidateColumn if the document states or strongly implies a database mapping.",
-        businessConcepts:
-          "Return business terms, Chinese table names, or entities that may map to a table or column. Do not invent targets.",
+        apiFields: "Return documented table/column fields with meaning and optional candidateTable/candidateColumn if the document states or strongly implies a database mapping.",
+        businessConcepts: "Return business terms, Chinese table names, or entities that may map to a table or column. Do not invent targets.",
         joinCandidates: "Return candidate table relationships only when the document contains evidence for both sides.",
-        continuation:
-          "If this batch begins in the middle of a table and lacks table headers, inspect previousContext. Use previousContext only when the current fields clearly continue that same table.",
-        outputCompaction:
-          "Omit candidateSchema/candidateTable/candidateColumn/confidence/evidence/sectionId and any other optional key when there is no concrete value. Never output null or empty-string keys.",
+        continuation: "If this batch begins in the middle of a table and lacks table headers, inspect previousContext. Use previousContext only when the current fields clearly continue that same table.",
+        outputCompaction: "Omit candidateSchema/candidateTable/candidateColumn/confidence/evidence/sectionId and any other optional key when there is no concrete value. Never output null or empty-string keys.",
       },
       outputContract: {
         topLevelKeys: ["apiFields", "businessConcepts", "joinCandidates", "errors"],
@@ -931,10 +804,8 @@ function buildApiDocExtractionUserPrompt(
             description: "Meaning or business rule stated by the document.",
             sectionId: "One of sections[].id from this prompt.",
             candidateSchema: "Only when explicitly stated.",
-            candidateTable:
-              "Mapped table identifier only when stated or strongly implied by the same table row/header.",
-            candidateColumn:
-              "Mapped column identifier only when stated or strongly implied by the same table row/header.",
+            candidateTable: "Mapped table identifier only when stated or strongly implied by the same table row/header.",
+            candidateColumn: "Mapped column identifier only when stated or strongly implied by the same table row/header.",
             confidence: "Number from 0 to 1. Omit if unsure.",
             evidence: "Short source phrase from the section. Omit if it would be empty.",
           },
@@ -946,13 +817,11 @@ function buildApiDocExtractionUserPrompt(
             leftTable: "Original documented left/source table identifier.",
             leftColumns: "Array of one or more documented left/source column identifiers.",
             rightTable: "Original documented right/target table identifier.",
-            rightColumns:
-              "Array of one or more documented right/target column identifiers. Length must equal leftColumns length.",
+            rightColumns: "Array of one or more documented right/target column identifiers. Length must equal leftColumns length.",
             sectionId: "One of sections[].id from this prompt.",
             leftSchema: "Only when explicitly stated.",
             rightSchema: "Only when explicitly stated.",
-            relation:
-              "Short relationship description, for example foreign_key, parent_child, lookup, same_business_key.",
+            relation: "Short relationship description, for example foreign_key, parent_child, lookup, same_business_key.",
             confidence: "Number from 0 to 1. Omit if unsure.",
             evidence: "Short source phrase from the section. Omit if it would be empty.",
           },
@@ -1055,26 +924,15 @@ export function buildApiDocExtractionBatchesForTest(request: ApiDocExtractionReq
   return buildApiDocExtractionBatches(request);
 }
 
-export function buildApiDocExtractionUserPromptForTest(
-  request: ApiDocExtractionRequest,
-  metadata?: ApiDocExtractionBatchMetadata,
-): string {
+export function buildApiDocExtractionUserPromptForTest(request: ApiDocExtractionRequest, metadata?: ApiDocExtractionBatchMetadata): string {
   return buildApiDocExtractionUserPrompt(request, metadata);
 }
 
 function buildApiDocExtractionJsonRepairSystemPrompt(): string {
   const isZh = currentLocale() === "zh-CN";
   return isZh
-    ? [
-        "你是 JSON 格式修复器。只输出合法 JSON 对象，不要 Markdown，不要解释。",
-        "只能修复语法格式，不能新增、删除或改写事实。",
-        '输出结构必须仍然是：{"apiFields":[],"businessConcepts":[],"joinCandidates":[],"errors":[]}',
-      ].join("\n")
-    : [
-        "You are a JSON syntax repair tool. Output one valid JSON object only. No Markdown and no explanation.",
-        "Repair syntax only. Do not add, remove, or rewrite factual content.",
-        'The output shape must remain: {"apiFields":[],"businessConcepts":[],"joinCandidates":[],"errors":[]}',
-      ].join("\n");
+    ? ["你是 JSON 格式修复器。只输出合法 JSON 对象，不要 Markdown，不要解释。", "只能修复语法格式，不能新增、删除或改写事实。", '输出结构必须仍然是：{"apiFields":[],"businessConcepts":[],"joinCandidates":[],"errors":[]}'].join("\n")
+    : ["You are a JSON syntax repair tool. Output one valid JSON object only. No Markdown and no explanation.", "Repair syntax only. Do not add, remove, or rewrite factual content.", 'The output shape must remain: {"apiFields":[],"businessConcepts":[],"joinCandidates":[],"errors":[]}'].join("\n");
 }
 
 function buildApiDocExtractionJsonRepairPrompt(content: string, parseError: unknown): string {
@@ -1082,14 +940,7 @@ function buildApiDocExtractionJsonRepairPrompt(content: string, parseError: unkn
   const errorMessage = errorMessageText(parseError);
   const clippedContent = clipTextMiddle(content, 24000);
   return isZh
-    ? [
-        "下面是一次表结构/数据字典参考文档 GraphRAG 抽取的模型输出，但它不是合法 JSON。",
-        "请只修复 JSON 语法错误，保留原有事实、字段名、表名、证据和数组内容。",
-        "不要输出 Markdown 代码块，不要输出解释文字。",
-        `解析错误：${errorMessage || "unknown"}`,
-        "原始输出：",
-        clippedContent,
-      ].join("\n")
+    ? ["下面是一次表结构/数据字典参考文档 GraphRAG 抽取的模型输出，但它不是合法 JSON。", "请只修复 JSON 语法错误，保留原有事实、字段名、表名、证据和数组内容。", "不要输出 Markdown 代码块，不要输出解释文字。", `解析错误：${errorMessage || "unknown"}`, "原始输出：", clippedContent].join("\n")
     : [
         "The following table schema/data-dictionary reference document GraphRAG extraction output is not valid JSON.",
         "Repair JSON syntax only while preserving the original facts, field names, table names, evidence, and arrays.",
@@ -1100,18 +951,13 @@ function buildApiDocExtractionJsonRepairPrompt(content: string, parseError: unkn
       ].join("\n");
 }
 
-function normalizeApiDocExtractionResponse(
-  request: ApiDocExtractionRequest,
-  content: string,
-): SchemaRagApiDocExtraction {
+function normalizeApiDocExtractionResponse(request: ApiDocExtractionRequest, content: string): SchemaRagApiDocExtraction {
   const parsed = parseJsonObjectFromText(content);
   const extractedAt = new Date().toISOString();
   const apiFields = normalizeApiFieldFacts(request, parsed.apiFields, extractedAt);
   const businessConcepts = normalizeBusinessConceptFacts(request, parsed.businessConcepts, extractedAt);
   const joinCandidates = normalizeJoinCandidateFacts(request, parsed.joinCandidates, extractedAt);
-  const errors = Array.isArray(parsed.errors)
-    ? parsed.errors.map((item) => String(item || "").trim()).filter(Boolean)
-    : [];
+  const errors = Array.isArray(parsed.errors) ? parsed.errors.map((item) => String(item || "").trim()).filter(Boolean) : [];
   return {
     sourceId: request.sourceId,
     extractedAt,
@@ -1123,11 +969,7 @@ function normalizeApiDocExtractionResponse(
   };
 }
 
-function normalizeApiFieldFacts(
-  request: ApiDocExtractionRequest,
-  value: unknown,
-  extractedAt: string,
-): SchemaRagApiFieldFact[] {
+function normalizeApiFieldFacts(request: ApiDocExtractionRequest, value: unknown, extractedAt: string): SchemaRagApiFieldFact[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item, index) => {
@@ -1137,9 +979,7 @@ function normalizeApiFieldFacts(
       const sectionId = normalizeExtractionSectionId(request, data.sectionId);
       if (!name || !sectionId) return null;
       const fact: SchemaRagApiFieldFact = {
-        id:
-          optionalToolString(data.id) ||
-          `api-field:${request.sourceId}:${index + 1}:${hashLite(`${name}:${extractedAt}`)}`,
+        id: optionalToolString(data.id) || `api-field:${request.sourceId}:${index + 1}:${hashLite(`${name}:${extractedAt}`)}`,
         sourceId: request.sourceId,
         sectionId,
         name,
@@ -1156,11 +996,7 @@ function normalizeApiFieldFacts(
     .filter((item): item is SchemaRagApiFieldFact => !!item);
 }
 
-function normalizeBusinessConceptFacts(
-  request: ApiDocExtractionRequest,
-  value: unknown,
-  extractedAt: string,
-): SchemaRagBusinessConceptFact[] {
+function normalizeBusinessConceptFacts(request: ApiDocExtractionRequest, value: unknown, extractedAt: string): SchemaRagBusinessConceptFact[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item, index) => {
@@ -1170,9 +1006,7 @@ function normalizeBusinessConceptFacts(
       const sectionId = normalizeExtractionSectionId(request, data.sectionId);
       if (!term || !sectionId) return null;
       const fact: SchemaRagBusinessConceptFact = {
-        id:
-          optionalToolString(data.id) ||
-          `api-concept:${request.sourceId}:${index + 1}:${hashLite(`${term}:${extractedAt}`)}`,
+        id: optionalToolString(data.id) || `api-concept:${request.sourceId}:${index + 1}:${hashLite(`${term}:${extractedAt}`)}`,
         sourceId: request.sourceId,
         sectionId,
         term,
@@ -1189,11 +1023,7 @@ function normalizeBusinessConceptFacts(
     .filter((item): item is SchemaRagBusinessConceptFact => !!item);
 }
 
-function normalizeJoinCandidateFacts(
-  request: ApiDocExtractionRequest,
-  value: unknown,
-  extractedAt: string,
-): SchemaRagJoinCandidateFact[] {
+function normalizeJoinCandidateFacts(request: ApiDocExtractionRequest, value: unknown, extractedAt: string): SchemaRagJoinCandidateFact[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item, index) => {
@@ -1205,9 +1035,7 @@ function normalizeJoinCandidateFacts(
       const sectionId = normalizeExtractionSectionId(request, data.sectionId);
       if (!leftTable || !rightTable || !leftColumns.length || !rightColumns.length || !sectionId) return null;
       const fact: SchemaRagJoinCandidateFact = {
-        id:
-          optionalToolString(data.id) ||
-          `api-join:${request.sourceId}:${index + 1}:${hashLite(`${leftTable}:${rightTable}:${extractedAt}`)}`,
+        id: optionalToolString(data.id) || `api-join:${request.sourceId}:${index + 1}:${hashLite(`${leftTable}:${rightTable}:${extractedAt}`)}`,
         sourceId: request.sourceId,
         sectionId,
         leftSchema: optionalToolString(data.leftSchema) || request.schema,
@@ -1226,12 +1054,7 @@ function normalizeJoinCandidateFacts(
     .filter((item): item is SchemaRagJoinCandidateFact => !!item);
 }
 
-function summarizeFrontendExtractionStatus(
-  apiFields: SchemaRagApiFieldFact[],
-  businessConcepts: SchemaRagBusinessConceptFact[],
-  joinCandidates: SchemaRagJoinCandidateFact[],
-  errors: string[],
-): ApiDocExtractionStatus {
+function summarizeFrontendExtractionStatus(apiFields: SchemaRagApiFieldFact[], businessConcepts: SchemaRagBusinessConceptFact[], joinCandidates: SchemaRagJoinCandidateFact[], errors: string[]): ApiDocExtractionStatus {
   const facts = apiFields.length + businessConcepts.length + joinCandidates.length;
   if (!facts) return errors.length ? "failed" : "pending";
   return errors.length ? "partial" : "extracted";
@@ -1271,19 +1094,14 @@ export function parseApiDocExtractionJsonForTest(text: string): Record<string, a
 
 type SchemaDocRawChatDebugLabel = "schema-doc-extraction" | "schema-doc-json-repair";
 
-function schemaDocRawChatOptions(
-  config: AiConfig,
-  debugLabel: SchemaDocRawChatDebugLabel = "schema-doc-extraction",
-): Pick<api.AiRawChatRequest, "debugLabel" | "responseFormat"> {
+function schemaDocRawChatOptions(config: AiConfig, debugLabel: SchemaDocRawChatDebugLabel = "schema-doc-extraction"): Pick<api.AiRawChatRequest, "debugLabel" | "responseFormat"> {
   return {
     debugLabel,
     responseFormat: config.provider === "deepseek" ? { type: "json_object" } : undefined,
   };
 }
 
-export function schemaDocRawChatOptionsForTest(
-  config: AiConfig,
-): Pick<api.AiRawChatRequest, "debugLabel" | "responseFormat"> {
+export function schemaDocRawChatOptionsForTest(config: AiConfig): Pick<api.AiRawChatRequest, "debugLabel" | "responseFormat"> {
   return schemaDocRawChatOptions(config);
 }
 
@@ -1319,10 +1137,7 @@ function hashLite(value: string): string {
   return (hash >>> 0).toString(16);
 }
 
-export async function extractApiDocGraphFactsWithSchemaResearch(
-  config: AiConfig,
-  request: ApiDocExtractionRequest,
-): Promise<SchemaRagApiDocExtraction> {
+export async function extractApiDocGraphFactsWithSchemaResearch(config: AiConfig, request: ApiDocExtractionRequest): Promise<SchemaRagApiDocExtraction> {
   const researchSettings = resolveSchemaResearchSettings(config);
   if (!researchSettings.enabled) {
     throw new Error("Schema Research model is disabled in AI settings.");
@@ -1346,11 +1161,7 @@ export async function extractApiDocGraphFactsWithSchemaResearch(
   return mergeApiDocExtractionBatches(request, batchExtractions);
 }
 
-async function extractApiDocGraphFactsBatchWithSchemaResearch(
-  researchSettings: ResolvedSchemaResearchSettings,
-  request: ApiDocExtractionRequest,
-  metadata: ApiDocExtractionBatchMetadata,
-): Promise<SchemaRagApiDocExtraction> {
+async function extractApiDocGraphFactsBatchWithSchemaResearch(researchSettings: ResolvedSchemaResearchSettings, request: ApiDocExtractionRequest, metadata: ApiDocExtractionBatchMetadata): Promise<SchemaRagApiDocExtraction> {
   const response = await runRawChatForToolLoop(
     {
       config: researchSettings.config,
@@ -1374,57 +1185,24 @@ async function extractApiDocGraphFactsBatchWithSchemaResearch(
     } catch (repairError) {
       const originalMessage = errorMessageText(parseError);
       const repairMessage = errorMessageText(repairError);
-      throw new Error(
-        `API document extraction returned invalid JSON${originalMessage ? `: ${originalMessage}` : ""}. JSON repair failed${
-          repairMessage ? `: ${repairMessage}` : ""
-        }`,
-      );
+      throw new Error(`API document extraction returned invalid JSON${originalMessage ? `: ${originalMessage}` : ""}. JSON repair failed${repairMessage ? `: ${repairMessage}` : ""}`);
     }
   }
 }
 
-function mergeApiDocExtractionBatches(
-  request: ApiDocExtractionRequest,
-  extractions: SchemaRagApiDocExtraction[],
-): SchemaRagApiDocExtraction {
+function mergeApiDocExtractionBatches(request: ApiDocExtractionRequest, extractions: SchemaRagApiDocExtraction[]): SchemaRagApiDocExtraction {
   const extractedAt = new Date().toISOString();
   const apiFields = uniqueBy(
     extractions.flatMap((extraction) => extraction.apiFields),
-    (fact) =>
-      [
-        fact.sectionId,
-        fact.name,
-        fact.candidateSchema || "",
-        fact.candidateTable || "",
-        fact.candidateColumn || "",
-        fact.meaning,
-      ].join("\u0001"),
+    (fact) => [fact.sectionId, fact.name, fact.candidateSchema || "", fact.candidateTable || "", fact.candidateColumn || "", fact.meaning].join("\u0001"),
   );
   const businessConcepts = uniqueBy(
     extractions.flatMap((extraction) => extraction.businessConcepts),
-    (fact) =>
-      [
-        fact.sectionId,
-        fact.term,
-        fact.candidateSchema || "",
-        fact.candidateTable || "",
-        fact.candidateColumn || "",
-        fact.description,
-      ].join("\u0001"),
+    (fact) => [fact.sectionId, fact.term, fact.candidateSchema || "", fact.candidateTable || "", fact.candidateColumn || "", fact.description].join("\u0001"),
   );
   const joinCandidates = uniqueBy(
     extractions.flatMap((extraction) => extraction.joinCandidates),
-    (fact) =>
-      [
-        fact.sectionId,
-        fact.leftSchema,
-        fact.leftTable,
-        fact.leftColumns.join(","),
-        fact.rightSchema,
-        fact.rightTable,
-        fact.rightColumns.join(","),
-        fact.relation,
-      ].join("\u0001"),
+    (fact) => [fact.sectionId, fact.leftSchema, fact.leftTable, fact.leftColumns.join(","), fact.rightSchema, fact.rightTable, fact.rightColumns.join(","), fact.relation].join("\u0001"),
   );
   const errors = extractions.flatMap((extraction) => extraction.errors).filter(Boolean);
   return {
@@ -1438,9 +1216,7 @@ function mergeApiDocExtractionBatches(
   };
 }
 
-function summarizeApiDocExtractionContinuationContext(
-  extractions: SchemaRagApiDocExtraction[],
-): ApiDocExtractionContinuationContext {
+function summarizeApiDocExtractionContinuationContext(extractions: SchemaRagApiDocExtraction[]): ApiDocExtractionContinuationContext {
   const recentTables: string[] = [];
   const recentColumns: string[] = [];
   for (const extraction of extractions.slice(-2)) {
@@ -1499,11 +1275,7 @@ function uniqueBy<T>(items: T[], keyOf: (item: T) => string): T[] {
   return unique;
 }
 
-async function repairApiDocExtractionJson(
-  researchSettings: ResolvedSchemaResearchSettings,
-  content: string,
-  parseError: unknown,
-): Promise<string> {
+async function repairApiDocExtractionJson(researchSettings: ResolvedSchemaResearchSettings, content: string, parseError: unknown): Promise<string> {
   const response = await runRawChatForToolLoop(
     {
       config: researchSettings.config,
@@ -1545,10 +1317,7 @@ function buildCompletedSchemaToolTrace(call: api.AiRawToolCall, output: unknown,
     status: error ? "error" : "success",
     summary: formatSchemaToolResultSummary(call.name, output, isZh),
   };
-  const childTraces =
-    call.name === "dbx_schema_research_task" && output && typeof output === "object"
-      ? (output as Record<string, any>).internalToolTraces
-      : undefined;
+  const childTraces = call.name === "dbx_schema_research_task" && output && typeof output === "object" ? (output as Record<string, any>).internalToolTraces : undefined;
   if (Array.isArray(childTraces)) {
     trace.children = childTraces.filter(isAiToolTraceLike).slice(0, 20);
   }
@@ -1558,12 +1327,7 @@ function buildCompletedSchemaToolTrace(call: api.AiRawToolCall, output: unknown,
 function isAiToolTraceLike(value: unknown): value is AiToolTrace {
   if (!value || typeof value !== "object") return false;
   const trace = value as Record<string, any>;
-  return (
-    typeof trace.id === "string" &&
-    typeof trace.name === "string" &&
-    typeof trace.arguments === "string" &&
-    ["running", "success", "error"].includes(trace.status)
-  );
+  return typeof trace.id === "string" && typeof trace.name === "string" && typeof trace.arguments === "string" && ["running", "success", "error"].includes(trace.status);
 }
 
 function stripUiOnlyToolOutput(output: unknown): unknown {
@@ -1686,9 +1450,7 @@ function formatSchemaToolResultSummary(name: string, output: unknown, isZh: bool
     const relations = Array.isArray(evidence.relations) ? evidence.relations : [];
     const status = typeof data.status === "string" ? data.status : "partial";
     const sessionSuffix = data.sessionId ? `, sessionId=${data.sessionId}` : "";
-    return isZh
-      ? `Schema Research ${status}：${tables.length} 张表，${relations.length} 条关系${sessionSuffix}`
-      : `Schema Research ${status}: ${tables.length} table(s), ${relations.length} relation(s)${sessionSuffix}`;
+    return isZh ? `Schema Research ${status}：${tables.length} 张表，${relations.length} 条关系${sessionSuffix}` : `Schema Research ${status}: ${tables.length} table(s), ${relations.length} relation(s)${sessionSuffix}`;
   }
   if (name === "dbx_search_schema") {
     const tables = Array.isArray(data.tables) ? data.tables : [];
@@ -1697,18 +1459,14 @@ function formatSchemaToolResultSummary(name: string, output: unknown, isZh: bool
       .map((table) => [table.schema, table.name].filter(Boolean).join("."))
       .filter(Boolean)
       .join(", ");
-    return isZh
-      ? `${tables.length} 张表${names ? `：${names}` : ""}`
-      : `${tables.length} table(s)${names ? `: ${names}` : ""}`;
+    return isZh ? `${tables.length} 张表${names ? `：${names}` : ""}` : `${tables.length} table(s)${names ? `: ${names}` : ""}`;
   }
   if (name === "dbx_list_tables") {
     const tables = Array.isArray(data.tables) ? data.tables : [];
     const totalMatched = Number.isFinite(Number(data.totalMatched)) ? Number(data.totalMatched) : tables.length;
     const truncated = data.truncated === true && totalMatched > tables.length;
     if (truncated) {
-      return isZh
-        ? `${tables.length}/${totalMatched} 张表，已截断`
-        : `${tables.length}/${totalMatched} table(s), truncated`;
+      return isZh ? `${tables.length}/${totalMatched} 张表，已截断` : `${tables.length}/${totalMatched} table(s), truncated`;
     }
     return isZh ? `${tables.length} 张表` : `${tables.length} table(s)`;
   }
@@ -1730,20 +1488,14 @@ function formatSchemaToolResultSummary(name: string, output: unknown, isZh: bool
     const truncated = data.truncated === true && totalColumns > columns.length;
     const table = [data.schema, data.table].filter(Boolean).join(".");
     if (truncated) {
-      return isZh
-        ? `${table || "表"}，${columns.length}/${totalColumns} 个字段候选，已截断`
-        : `${table || "table"} with ${columns.length}/${totalColumns} column candidate(s), truncated`;
+      return isZh ? `${table || "表"}，${columns.length}/${totalColumns} 个字段候选，已截断` : `${table || "table"} with ${columns.length}/${totalColumns} column candidate(s), truncated`;
     }
-    return isZh
-      ? `${table || "表"}，${columns.length} 个字段候选`
-      : `${table || "table"} with ${columns.length} column candidate(s)`;
+    return isZh ? `${table || "表"}，${columns.length} 个字段候选` : `${table || "table"} with ${columns.length} column candidate(s)`;
   }
   if (name === "dbx_get_column_details") {
     const columns = Array.isArray(data.columns) ? data.columns : [];
     const table = [data.schema, data.table].filter(Boolean).join(".");
-    return isZh
-      ? `${table || "表"}，${columns.length} 个字段详情`
-      : `${table || "table"} with ${columns.length} column detail(s)`;
+    return isZh ? `${table || "表"}，${columns.length} 个字段详情` : `${table || "table"} with ${columns.length} column detail(s)`;
   }
   if (name === "dbx_load_table_schema") {
     const columns = Array.isArray(data.columns) ? data.columns.length : 0;
@@ -1753,8 +1505,7 @@ function formatSchemaToolResultSummary(name: string, output: unknown, isZh: bool
   if (name === "dbx_request_column_choice") {
     if (data.cancelled) return isZh ? "字段选择已取消" : "Column choice cancelled";
     const columns = Array.isArray(data.selectedColumns) ? data.selectedColumns : [];
-    if (data.confirmed)
-      return isZh ? `用户选择 ${columns.length} 个字段` : `${columns.length} column(s) selected by user`;
+    if (data.confirmed) return isZh ? `用户选择 ${columns.length} 个字段` : `${columns.length} column(s) selected by user`;
     return isZh ? "用户跳过字段选择" : "Column choice skipped";
   }
   if (name === "dbx_save_schema_enrichment") {
@@ -1770,30 +1521,17 @@ function formatSchemaToolResultSummary(name: string, output: unknown, isZh: bool
     const candidates = Array.isArray(data.candidateMappings) ? data.candidateMappings.length : 0;
     const joins = Array.isArray(data.joinCandidates) ? data.joinCandidates.length : 0;
     const concepts = Array.isArray(data.concepts) ? data.concepts.length : 0;
-    return isZh
-      ? `图扩展：verified ${verified}，candidate ${candidates}，关系 ${joins}，概念 ${concepts}`
-      : `Graph expansion: ${verified} verified, ${candidates} candidate(s), ${joins} join(s), ${concepts} concept(s)`;
+    return isZh ? `图扩展：verified ${verified}，candidate ${candidates}，关系 ${joins}，概念 ${concepts}` : `Graph expansion: ${verified} verified, ${candidates} candidate(s), ${joins} join(s), ${concepts} concept(s)`;
   }
   if (name === "dbx_request_relation") {
     if (data.cancelled) return isZh ? "关系确认已取消" : "Relation confirmation cancelled";
-    return data.confirmed
-      ? isZh
-        ? "用户已确认关联关系"
-        : "Relation confirmed by user"
-      : isZh
-        ? "用户跳过关联确认"
-        : "Relation confirmation skipped";
+    return data.confirmed ? (isZh ? "用户已确认关联关系" : "Relation confirmed by user") : isZh ? "用户跳过关联确认" : "Relation confirmation skipped";
   }
   return "";
 }
 
 function isCancelledUserChoiceOutput(name: string, output: unknown): boolean {
-  return (
-    ["dbx_request_relation", "dbx_request_table_choice", "dbx_request_column_choice"].includes(name) &&
-    !!output &&
-    typeof output === "object" &&
-    (output as Record<string, any>).cancelled === true
-  );
+  return ["dbx_request_relation", "dbx_request_table_choice", "dbx_request_column_choice"].includes(name) && !!output && typeof output === "object" && (output as Record<string, any>).cancelled === true;
 }
 
 function isUserChoiceSchemaTool(name: string): boolean {
@@ -1812,20 +1550,13 @@ function userChoiceSchemaToolTitle(name: string, isZh: boolean): string {
   return isZh ? "等待用户确认关系" : "Waiting for relation confirmation";
 }
 
-function userChoiceSchemaToolResultStatus(
-  status: AiToolTrace["status"],
-  output: unknown,
-): "success" | "error" | "abort" {
+function userChoiceSchemaToolResultStatus(status: AiToolTrace["status"], output: unknown): "success" | "error" | "abort" {
   if (status === "error") return "error";
   if (output && typeof output === "object" && (output as Record<string, any>).cancelled === true) return "abort";
   return "success";
 }
 
-function mergeSchemaResearchEvidenceGate(
-  current: SchemaResearchEvidenceGate | undefined,
-  toolName: string,
-  output: unknown,
-): SchemaResearchEvidenceGate | undefined {
+function mergeSchemaResearchEvidenceGate(current: SchemaResearchEvidenceGate | undefined, toolName: string, output: unknown): SchemaResearchEvidenceGate | undefined {
   if (toolName === "dbx_schema_research_task") {
     return schemaResearchEvidenceGateFromToolOutput(output);
   }
@@ -1869,36 +1600,16 @@ function schemaResearchEvidenceGateFromToolOutput(output: unknown): SchemaResear
 }
 
 function isSchemaEvidenceContinuationTool(name: string): boolean {
-  return [
-    "dbx_schema_research_task",
-    "dbx_request_table_choice",
-    "dbx_request_column_choice",
-    "dbx_request_relation",
-  ].includes(name);
+  return ["dbx_schema_research_task", "dbx_request_table_choice", "dbx_request_column_choice", "dbx_request_relation"].includes(name);
 }
 
-export function buildSchemaResearchEvidenceGateInstruction(
-  gate: SchemaResearchEvidenceGate | undefined,
-  isZh: boolean,
-): string | undefined {
+export function buildSchemaResearchEvidenceGateInstruction(gate: SchemaResearchEvidenceGate | undefined, isZh: boolean): string | undefined {
   if (!gate) return undefined;
   const uncertaintyText = formatSchemaResearchGateUncertainties(gate, isZh);
   if (gate.status === "need_user_choice") {
     return isZh
-      ? [
-          "Schema Research 返回 need_user_choice，不能直接生成最终 SQL。",
-          "必须调用 dbx_request_table_choice、dbx_request_column_choice 或 dbx_request_relation 让用户确认不确定的表、字段或关联关系。",
-          `摘要：${gate.summary}`,
-          uncertaintyText,
-        ]
-          .filter(Boolean)
-          .join("\n")
-      : [
-          "Schema Research returned need_user_choice. Do not generate final SQL yet.",
-          "You must call dbx_request_table_choice, dbx_request_column_choice, or dbx_request_relation so the user can confirm the uncertain table, column, or relationship.",
-          `Summary: ${gate.summary}`,
-          uncertaintyText,
-        ]
+      ? ["Schema Research 返回 need_user_choice，不能直接生成最终 SQL。", "必须调用 dbx_request_table_choice、dbx_request_column_choice 或 dbx_request_relation 让用户确认不确定的表、字段或关联关系。", `摘要：${gate.summary}`, uncertaintyText].filter(Boolean).join("\n")
+      : ["Schema Research returned need_user_choice. Do not generate final SQL yet.", "You must call dbx_request_table_choice, dbx_request_column_choice, or dbx_request_relation so the user can confirm the uncertain table, column, or relationship.", `Summary: ${gate.summary}`, uncertaintyText]
           .filter(Boolean)
           .join("\n");
   }
@@ -1924,12 +1635,7 @@ export function buildSchemaResearchEvidenceGateInstruction(
           .join("\n");
   }
   return isZh
-    ? [
-        `Schema Research 返回 ${gate.status}，不能编造表、字段或关系，也不能直接生成最终 SQL。`,
-        "请继续调用更窄的 dbx_schema_research_task 寻找证据；如果没有足够候选，向用户说明缺少哪些表、字段或关系，让用户用 @table 或明确字段补充。",
-        `摘要：${gate.summary}`,
-        uncertaintyText,
-      ]
+    ? [`Schema Research 返回 ${gate.status}，不能编造表、字段或关系，也不能直接生成最终 SQL。`, "请继续调用更窄的 dbx_schema_research_task 寻找证据；如果没有足够候选，向用户说明缺少哪些表、字段或关系，让用户用 @table 或明确字段补充。", `摘要：${gate.summary}`, uncertaintyText]
         .filter(Boolean)
         .join("\n")
     : [
@@ -1942,22 +1648,11 @@ export function buildSchemaResearchEvidenceGateInstruction(
         .join("\n");
 }
 
-function buildSchemaResearchEvidenceGateFallbackResponse(
-  gate: SchemaResearchEvidenceGate | undefined,
-  isZh: boolean,
-): string {
+function buildSchemaResearchEvidenceGateFallbackResponse(gate: SchemaResearchEvidenceGate | undefined, isZh: boolean): string {
   if (!gate) return "";
   const uncertaintyText = formatSchemaResearchGateUncertainties(gate, isZh);
   if (isZh) {
-    return [
-      "我还不能生成可靠 SQL，因为 Schema 证据没有达到可用标准。",
-      `当前状态：${gate.status}`,
-      `摘要：${gate.summary}`,
-      uncertaintyText,
-      "请用 @table 指定相关表，或确认候选表、字段、关联关系后我再生成 SQL。",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    return ["我还不能生成可靠 SQL，因为 Schema 证据没有达到可用标准。", `当前状态：${gate.status}`, `摘要：${gate.summary}`, uncertaintyText, "请用 @table 指定相关表，或确认候选表、字段、关联关系后我再生成 SQL。"].filter(Boolean).join("\n");
   }
   return [
     "I cannot generate reliable SQL yet because the schema evidence is not sufficient.",
@@ -2005,9 +1700,7 @@ function normalizeRawAssistantMessage(rawMessage: unknown, content: string, tool
 
 export function buildToolSystemPrompt(action: AiAction, context: AiContext, mode: AiAssistantMode = "ask"): string {
   const isZh = currentLocale() === "zh-CN";
-  const seedSchema = context.tables.length
-    ? `\n${isZh ? "初始 Schema 上下文，仅来自当前表或用户明确 @table 提到的表：" : "Initial schema context, from current tab or explicit @table mentions only:"}\n${formatSchema(context)}\n`
-    : "";
+  const seedSchema = context.tables.length ? `\n${isZh ? "初始 Schema 上下文，仅来自当前表或用户明确 @table 提到的表：" : "Initial schema context, from current tab or explicit @table mentions only:"}\n${formatSchema(context)}\n` : "";
   const toolRules = isZh
     ? [
         "你是 DBX 内置的数据库助手。用中文回复。",
@@ -2055,18 +1748,7 @@ export function buildToolSystemPrompt(action: AiAction, context: AiContext, mode
       ];
   const resultPreview = context.lastResultPreview ? `\nLast result preview:\n${context.lastResultPreview}\n` : "";
   const lastError = context.lastError ? `\nLast error:\n${context.lastError}\n` : "";
-  return [
-    ...toolRules,
-    "",
-    `Database type: ${context.databaseType}`,
-    `Connection: ${context.connectionName}`,
-    `Database: ${context.database}`,
-    context.schema ? `Schema: ${context.schema}` : "",
-    `Current SQL:\n${context.currentSql.trim() || "(empty)"}`,
-    lastError,
-    resultPreview,
-    seedSchema,
-  ]
+  return [...toolRules, "", `Database type: ${context.databaseType}`, `Connection: ${context.connectionName}`, `Database: ${context.database}`, context.schema ? `Schema: ${context.schema}` : "", `Current SQL:\n${context.currentSql.trim() || "(empty)"}`, lastError, resultPreview, seedSchema]
     .filter(Boolean)
     .join("\n");
 }
@@ -2079,24 +1761,9 @@ export interface AiSchemaToolsOptions {
   includeLoadTableSchema?: boolean;
 }
 
-const MAIN_SCHEMA_TOOL_NAMES = new Set([
-  "dbx_schema_research_task",
-  "dbx_request_table_choice",
-  "dbx_request_column_choice",
-  "dbx_save_schema_enrichment",
-  "dbx_request_relation",
-]);
+const MAIN_SCHEMA_TOOL_NAMES = new Set(["dbx_schema_research_task", "dbx_request_table_choice", "dbx_request_column_choice", "dbx_save_schema_enrichment", "dbx_request_relation"]);
 
-const SCHEMA_RESEARCH_TOOL_NAMES = new Set([
-  "dbx_search_schema",
-  "dbx_list_tables",
-  "dbx_find_columns",
-  "dbx_search_table_columns",
-  "dbx_get_column_details",
-  "dbx_load_table_schema",
-  "dbx_get_related_tables",
-  "dbx_expand_schema_graph",
-]);
+const SCHEMA_RESEARCH_TOOL_NAMES = new Set(["dbx_search_schema", "dbx_list_tables", "dbx_find_columns", "dbx_search_table_columns", "dbx_get_column_details", "dbx_load_table_schema", "dbx_get_related_tables", "dbx_expand_schema_graph"]);
 
 export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[] {
   const isZh = currentLocale() === "zh-CN";
@@ -2113,34 +1780,24 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
           properties: {
             task: {
               type: "string",
-              description: isZh
-                ? "主模型交给子任务的具体 schema research 目标。必须写清业务意图、需要的表角色、字段角色和关系需求。"
-                : "Concrete schema research goal from the main model. Include business intent, table roles, column roles, and relation needs.",
+              description: isZh ? "主模型交给子任务的具体 schema research 目标。必须写清业务意图、需要的表角色、字段角色和关系需求。" : "Concrete schema research goal from the main model. Include business intent, table roles, column roles, and relation needs.",
             },
             sessionId: {
               type: "string",
-              description: isZh
-                ? "可选。只在修改或延续同一个旧 Schema Research 子任务时传入，用于复用/恢复旧会话。新问题不要传。"
-                : "Optional. Pass only when revising or continuing the same previous Schema Research subtask to reuse/resume that session. Omit for new questions.",
+              description: isZh ? "可选。只在修改或延续同一个旧 Schema Research 子任务时传入，用于复用/恢复旧会话。新问题不要传。" : "Optional. Pass only when revising or continuing the same previous Schema Research subtask to reuse/resume that session. Omit for new questions.",
             },
             resumeMode: {
               type: "string",
               enum: ["continue", "revise", "narrow", "compare"],
-              description: isZh
-                ? "可选。延续会话时说明本次是继续、修订、缩窄范围还是对比；未传时按 continue 处理。"
-                : "Optional. For resumed sessions, states whether this call continues, revises, narrows, or compares the previous result; defaults to continue.",
+              description: isZh ? "可选。延续会话时说明本次是继续、修订、缩窄范围还是对比；未传时按 continue 处理。" : "Optional. For resumed sessions, states whether this call continues, revises, narrows, or compares the previous result; defaults to continue.",
             },
             resumeInstruction: {
               type: "object",
-              description: isZh
-                ? "可选。补充延续会话的调整方向或具体目的；如果提供 objective，不能只写“继续”。"
-                : "Optional. Adds richer guidance for a resumed session; if objective is provided, do not write a vague 'continue'.",
+              description: isZh ? "可选。补充延续会话的调整方向或具体目的；如果提供 objective，不能只写“继续”。" : "Optional. Adds richer guidance for a resumed session; if objective is provided, do not write a vague 'continue'.",
               properties: {
                 objective: {
                   type: "string",
-                  description: isZh
-                    ? "可选的具体调整目标，例如：保留订单表证据，把客户表换成 CRM 主表并重新验证关联字段。"
-                    : "Optional concrete adjustment objective, for example: keep order table evidence, replace the customer table with the CRM master table, and re-verify relation columns.",
+                  description: isZh ? "可选的具体调整目标，例如：保留订单表证据，把客户表换成 CRM 主表并重新验证关联字段。" : "Optional concrete adjustment objective, for example: keep order table evidence, replace the customer table with the CRM master table, and re-verify relation columns.",
                 },
                 keep: {
                   type: "array",
@@ -2160,9 +1817,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
                 verify: {
                   type: "array",
                   items: { type: "string" },
-                  description: isZh
-                    ? "必须重新验证的表、字段或关系。"
-                    : "Tables, columns, or relations that must be re-verified.",
+                  description: isZh ? "必须重新验证的表、字段或关系。" : "Tables, columns, or relations that must be re-verified.",
                 },
                 outputFocus: {
                   type: "string",
@@ -2172,16 +1827,12 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             requiredEvidence: {
               type: "array",
-              description: isZh
-                ? "需要子任务找齐的证据清单，例如订单表、用户关联字段、时间筛选字段。"
-                : "Evidence checklist the subtask should collect, such as order table, user relation column, or time filter column.",
+              description: isZh ? "需要子任务找齐的证据清单，例如订单表、用户关联字段、时间筛选字段。" : "Evidence checklist the subtask should collect, such as order table, user relation column, or time filter column.",
               items: { type: "string" },
             },
             knownContext: {
               type: "object",
-              description: isZh
-                ? "主模型已经知道但仍需子任务参考的上下文。"
-                : "Context already known by the main model.",
+              description: isZh ? "主模型已经知道但仍需子任务参考的上下文。" : "Context already known by the main model.",
               properties: {
                 currentSql: { type: "string", description: isZh ? "当前 SQL，可为空。" : "Current SQL, optional." },
                 mentionedTables: {
@@ -2220,9 +1871,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
                 },
                 allowUserChoice: {
                   type: "boolean",
-                  description: isZh
-                    ? "子任务不能直接弹 UI；为 true 时可返回 need_user_choice 让主模型发起选择工具。"
-                    : "The subtask cannot open UI directly; when true, it may return need_user_choice for the main model to ask the user.",
+                  description: isZh ? "子任务不能直接弹 UI；为 true 时可返回 need_user_choice 让主模型发起选择工具。" : "The subtask cannot open UI directly; when true, it may return need_user_choice for the main model to ask the user.",
                 },
               },
             },
@@ -2235,17 +1884,13 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_search_schema",
-        description: isZh
-          ? "在当前已分析的 Schema 中检索相关表、字段和关系。"
-          : "Search the current analyzed schema for relevant tables, columns, and relationships.",
+        description: isZh ? "在当前已分析的 Schema 中检索相关表、字段和关系。" : "Search the current analyzed schema for relevant tables, columns, and relationships.",
         parameters: {
           type: "object",
           properties: {
             query: {
               type: "string",
-              description: isZh
-                ? "自然语言 Schema 检索词。包含需要的业务词、表角色和字段。"
-                : "Natural language schema retrieval query. Include needed business terms, table roles, and columns.",
+              description: isZh ? "自然语言 Schema 检索词。包含需要的业务词、表角色和字段。" : "Natural language schema retrieval query. Include needed business terms, table roles, and columns.",
             },
             limit: {
               type: "integer",
@@ -2262,17 +1907,13 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_list_tables",
-        description: isZh
-          ? "不依赖向量索引，按 schema 和关键词列出实时表/视图。用于没有 Schema 智能索引或需要浏览候选表时。"
-          : "List live tables/views by schema and keyword without using the vector index. Use when no smart schema index exists or when browsing candidates.",
+        description: isZh ? "不依赖向量索引，按 schema 和关键词列出实时表/视图。用于没有 Schema 智能索引或需要浏览候选表时。" : "List live tables/views by schema and keyword without using the vector index. Use when no smart schema index exists or when browsing candidates.",
         parameters: {
           type: "object",
           properties: {
             schema: {
               type: "string",
-              description: isZh
-                ? "Schema 名称。省略时使用当前 schema。"
-                : "Schema name. Defaults to the current schema.",
+              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
             },
             keyword: {
               type: "string",
@@ -2292,9 +1933,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_find_columns",
-        description: isZh
-          ? "不依赖向量索引，在实时元数据中按字段名/注释搜索字段，并返回所属表。"
-          : "Search live metadata for columns by name/comment without using the vector index, returning owning tables.",
+        description: isZh ? "不依赖向量索引，在实时元数据中按字段名/注释搜索字段，并返回所属表。" : "Search live metadata for columns by name/comment without using the vector index, returning owning tables.",
         parameters: {
           type: "object",
           properties: {
@@ -2304,9 +1943,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             schema: {
               type: "string",
-              description: isZh
-                ? "Schema 名称。省略时使用当前 schema。"
-                : "Schema name. Defaults to the current schema.",
+              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
             },
             limit: {
               type: "integer",
@@ -2323,9 +1960,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_request_table_choice",
-        description: isZh
-          ? "当候选表过多或语义接近，无法确定用户想要哪张表时，让用户从候选表中选择，或手动输入都不是的表。"
-          : "Ask the user to choose the intended table from candidates, or manually enter another table, when table candidates are ambiguous.",
+        description: isZh ? "当候选表过多或语义接近，无法确定用户想要哪张表时，让用户从候选表中选择，或手动输入都不是的表。" : "Ask the user to choose the intended table from candidates, or manually enter another table, when table candidates are ambiguous.",
         parameters: {
           type: "object",
           properties: {
@@ -2339,15 +1974,11 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             allowManual: {
               type: "boolean",
-              description: isZh
-                ? "是否允许用户选择都不是并手动输入表名。"
-                : "Whether the user may choose none and manually enter a table.",
+              description: isZh ? "是否允许用户选择都不是并手动输入表名。" : "Whether the user may choose none and manually enter a table.",
             },
             candidates: {
               type: "array",
-              description: isZh
-                ? "候选表列表，必须来自已有工具结果。"
-                : "Candidate tables, all from previous tool results.",
+              description: isZh ? "候选表列表，必须来自已有工具结果。" : "Candidate tables, all from previous tool results.",
               items: {
                 type: "object",
                 properties: {
@@ -2370,17 +2001,13 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_search_table_columns",
-        description: isZh
-          ? "在指定表内使用字段文档向量召回相关字段，只返回字段名、注释、分数和命中原因等轻量摘要。"
-          : "Use vector retrieval over column documents inside one table, returning only lightweight summaries such as name, comment, score, and reason.",
+        description: isZh ? "在指定表内使用字段文档向量召回相关字段，只返回字段名、注释、分数和命中原因等轻量摘要。" : "Use vector retrieval over column documents inside one table, returning only lightweight summaries such as name, comment, score, and reason.",
         parameters: {
           type: "object",
           properties: {
             schema: {
               type: "string",
-              description: isZh
-                ? "Schema 名称。省略时使用当前 schema。"
-                : "Schema name. Defaults to the current schema.",
+              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
             },
             table: {
               type: "string",
@@ -2388,9 +2015,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             query: {
               type: "string",
-              description: isZh
-                ? "字段召回查询词。中文业务词应同时带可能的英文词和字段名片段，例如：评价 review rating comment score。"
-                : "Column retrieval query. Include original business terms plus likely English terms and identifier fragments.",
+              description: isZh ? "字段召回查询词。中文业务词应同时带可能的英文词和字段名片段，例如：评价 review rating comment score。" : "Column retrieval query. Include original business terms plus likely English terms and identifier fragments.",
             },
             limit: {
               type: "integer",
@@ -2400,9 +2025,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             includePrimaryKey: {
               type: "boolean",
-              description: isZh
-                ? "是否在字段摘要中包含 primaryKey 标记。默认包含。"
-                : "Whether to include the primaryKey flag in column summaries. Defaults to true.",
+              description: isZh ? "是否在字段摘要中包含 primaryKey 标记。默认包含。" : "Whether to include the primaryKey flag in column summaries. Defaults to true.",
             },
           },
           required: ["table", "query"],
@@ -2413,17 +2036,13 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_get_column_details",
-        description: isZh
-          ? "获取指定表中指定字段的实时详情。字段要进入最终 SQL 前使用；必须指定 columns，不会返回整表详情。"
-          : "Get real-time details for specified columns in a table before using them in final SQL. Requires columns and never returns whole-table details.",
+        description: isZh ? "获取指定表中指定字段的实时详情。字段要进入最终 SQL 前使用；必须指定 columns，不会返回整表详情。" : "Get real-time details for specified columns in a table before using them in final SQL. Requires columns and never returns whole-table details.",
         parameters: {
           type: "object",
           properties: {
             schema: {
               type: "string",
-              description: isZh
-                ? "Schema 名称。省略时使用当前 schema。"
-                : "Schema name. Defaults to the current schema.",
+              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
             },
             table: { type: "string", description: isZh ? "表名。" : "Table name." },
             columns: {
@@ -2441,9 +2060,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_load_table_schema",
-        description: isZh
-          ? "在 SQL 使用某张表之前，加载该表的实时字段、索引和外键。"
-          : "Load real-time columns, indexes, and foreign keys for a table before using it in SQL.",
+        description: isZh ? "在 SQL 使用某张表之前，加载该表的实时字段、索引和外键。" : "Load real-time columns, indexes, and foreign keys for a table before using it in SQL.",
         parameters: {
           type: "object",
           properties: {
@@ -2461,9 +2078,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_request_column_choice",
-        description: isZh
-          ? "当已确认表但无法确定用户想要哪个字段时，让用户从候选字段中选择，或手动输入都不是的字段。"
-          : "Ask the user to choose intended column(s) from candidates, or manually enter other columns, when columns are ambiguous.",
+        description: isZh ? "当已确认表但无法确定用户想要哪个字段时，让用户从候选字段中选择，或手动输入都不是的字段。" : "Ask the user to choose intended column(s) from candidates, or manually enter other columns, when columns are ambiguous.",
         parameters: {
           type: "object",
           properties: {
@@ -2483,15 +2098,11 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             allowManual: {
               type: "boolean",
-              description: isZh
-                ? "是否允许用户选择都不是并手动输入字段名。"
-                : "Whether the user may choose none and manually enter columns.",
+              description: isZh ? "是否允许用户选择都不是并手动输入字段名。" : "Whether the user may choose none and manually enter columns.",
             },
             candidates: {
               type: "array",
-              description: isZh
-                ? "候选字段列表，必须来自已有工具结果。"
-                : "Candidate columns, all from previous tool results.",
+              description: isZh ? "候选字段列表，必须来自已有工具结果。" : "Candidate columns, all from previous tool results.",
               items: {
                 type: "object",
                 properties: {
@@ -2518,17 +2129,13 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_get_related_tables",
-        description: isZh
-          ? "读取某张表的已知关系。当前包含数据库真实外键；没有外键时可能为空，应考虑请求用户确认关系。"
-          : "Read known relationships for a table. Currently includes real database foreign keys; may be empty when no FK exists, in which case ask the user to confirm relationships.",
+        description: isZh ? "读取某张表的已知关系。当前包含数据库真实外键；没有外键时可能为空，应考虑请求用户确认关系。" : "Read known relationships for a table. Currently includes real database foreign keys; may be empty when no FK exists, in which case ask the user to confirm relationships.",
         parameters: {
           type: "object",
           properties: {
             schema: {
               type: "string",
-              description: isZh
-                ? "Schema 名称。省略时使用当前 schema。"
-                : "Schema name. Defaults to the current schema.",
+              description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to the current schema.",
             },
             table: { type: "string", description: isZh ? "表名。" : "Table name." },
           },
@@ -2554,15 +2161,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
                 properties: {
                   kind: {
                     type: "string",
-                    enum: [
-                      "table",
-                      "column",
-                      "api_doc_source",
-                      "api_doc_section",
-                      "api_field",
-                      "business_concept",
-                      "join_candidate",
-                    ],
+                    enum: ["table", "column", "api_doc_source", "api_doc_section", "api_field", "business_concept", "join_candidate"],
                   },
                   id: {
                     type: "string",
@@ -2577,9 +2176,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             includeCandidates: {
               type: "boolean",
-              description: isZh
-                ? "是否返回 candidate 状态事实。candidate 不能直接作为最终 SQL verified 证据。"
-                : "Whether to include candidate facts. Candidates are not verified final-SQL evidence.",
+              description: isZh ? "是否返回 candidate 状态事实。candidate 不能直接作为最终 SQL verified 证据。" : "Whether to include candidate facts. Candidates are not verified final-SQL evidence.",
             },
             limit: {
               type: "integer",
@@ -2605,15 +2202,11 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             confirmationSource: {
               type: "string",
               enum: ["explicit_user_request", "user_choice_confirmed"],
-              description: isZh
-                ? "确认来源。必须是用户明确要求沉淀，或用户刚刚通过选择器确认。"
-                : "Confirmation source. Must be an explicit user save request or a just-confirmed user choice.",
+              description: isZh ? "确认来源。必须是用户明确要求沉淀，或用户刚刚通过选择器确认。" : "Confirmation source. Must be an explicit user save request or a just-confirmed user choice.",
             },
             aliases: {
               type: "array",
-              description: isZh
-                ? "要保存的业务词映射。只支持表或字段别名，不支持保存 JOIN 关系。"
-                : "Business-term mappings to save. Supports table or column aliases only, not JOIN relationships.",
+              description: isZh ? "要保存的业务词映射。只支持表或字段别名，不支持保存 JOIN 关系。" : "Business-term mappings to save. Supports table or column aliases only, not JOIN relationships.",
               minItems: 1,
               items: {
                 type: "object",
@@ -2629,22 +2222,16 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
                   },
                   schema: {
                     type: "string",
-                    description: isZh
-                      ? "Schema 名称。省略时使用当前 schema。"
-                      : "Schema name. Defaults to current schema.",
+                    description: isZh ? "Schema 名称。省略时使用当前 schema。" : "Schema name. Defaults to current schema.",
                   },
                   table: { type: "string", description: isZh ? "目标表名。" : "Target table name." },
                   column: {
                     type: "string",
-                    description: isZh
-                      ? "目标字段名。targetKind 为 column 时必填。"
-                      : "Target column name. Required for targetKind=column.",
+                    description: isZh ? "目标字段名。targetKind 为 column 时必填。" : "Target column name. Required for targetKind=column.",
                   },
                   note: {
                     type: "string",
-                    description: isZh
-                      ? "可选备注，说明确认来源或业务含义。"
-                      : "Optional note about the confirmation or business meaning.",
+                    description: isZh ? "可选备注，说明确认来源或业务含义。" : "Optional note about the confirmation or business meaning.",
                   },
                 },
                 required: ["term", "targetKind", "table"],
@@ -2659,9 +2246,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
       type: "function",
       function: {
         name: "dbx_request_relation",
-        description: isZh
-          ? "当两张表需要 JOIN 但没有可靠外键或已知关系时，向用户发起结构化关系确认。"
-          : "Ask the user to confirm a structured relationship when two tables need a JOIN but no reliable FK or known relation exists.",
+        description: isZh ? "当两张表需要 JOIN 但没有可靠外键或已知关系时，向用户发起结构化关系确认。" : "Ask the user to confirm a structured relationship when two tables need a JOIN but no reliable FK or known relation exists.",
         parameters: {
           type: "object",
           properties: {
@@ -2675,9 +2260,7 @@ export function buildAiSchemaTools(options: AiSchemaToolsOptions = {}): unknown[
             },
             candidatePairs: {
               type: "array",
-              description: isZh
-                ? "可选。模型认为可能正确的一个或多个字段对应关系，适用于联合主键或多字段 JOIN。"
-                : "Optional. Candidate column pair(s) the model thinks may be correct, including composite-key or multi-column joins.",
+              description: isZh ? "可选。模型认为可能正确的一个或多个字段对应关系，适用于联合主键或多字段 JOIN。" : "Optional. Candidate column pair(s) the model thinks may be correct, including composite-key or multi-column joins.",
               items: {
                 type: "object",
                 properties: {
@@ -2712,10 +2295,7 @@ function filterAiSchemaTools(tools: unknown[], options: AiSchemaToolsOptions): u
     if (scope === "schema_research" && !SCHEMA_RESEARCH_TOOL_NAMES.has(name)) return false;
     if (!includeResearchTask && name === "dbx_schema_research_task") return false;
     if (!includeLoadTableSchema && name === "dbx_load_table_schema") return false;
-    if (
-      !includeUserChoiceTools &&
-      ["dbx_request_table_choice", "dbx_request_column_choice", "dbx_request_relation"].includes(name)
-    ) {
+    if (!includeUserChoiceTools && ["dbx_request_table_choice", "dbx_request_column_choice", "dbx_request_relation"].includes(name)) {
       return false;
     }
     if (!includeEnrichmentTool && name === "dbx_save_schema_enrichment") return false;
@@ -2723,14 +2303,7 @@ function filterAiSchemaTools(tools: unknown[], options: AiSchemaToolsOptions): u
   });
 }
 
-async function executeSchemaResearchTaskTool(
-  input: AiRequestInput,
-  parentBudget: AiSchemaToolBudget,
-  args: Record<string, any>,
-  hooks?: AiSchemaToolWorkflowHooks,
-): Promise<
-  SchemaResearchTaskResult & { promptSummary: string; internalToolTraces?: AiToolTrace[]; sessionId?: string }
-> {
+async function executeSchemaResearchTaskTool(input: AiRequestInput, parentBudget: AiSchemaToolBudget, args: Record<string, any>, hooks?: AiSchemaToolWorkflowHooks): Promise<SchemaResearchTaskResult & { promptSummary: string; internalToolTraces?: AiToolTrace[]; sessionId?: string }> {
   const researchSettings = resolveSchemaResearchSettings(input.config);
   if (!researchSettings.enabled) {
     const result = normalizeSchemaResearchTaskResult({
@@ -2746,8 +2319,7 @@ async function executeSchemaResearchTaskTool(
   if (!supportsSchemaResearchModel(researchSettings.config)) {
     const result = normalizeSchemaResearchTaskResult({
       status: "error",
-      summary:
-        "Schema Research requires a /chat/completions-compatible provider that supports tool calls. Use OpenAI, Qwen, DeepSeek, Ollama, OpenAI Compatible, or Custom completions.",
+      summary: "Schema Research requires a /chat/completions-compatible provider that supports tool calls. Use OpenAI, Qwen, DeepSeek, Ollama, OpenAI Compatible, or Custom completions.",
       evidence: {},
     });
     return {
@@ -2792,48 +2364,23 @@ async function executeSchemaResearchTaskTool(
   if (requestedSessionId) {
     previousSession = findSchemaResearchSession(input.schemaResearchSessions, requestedSessionId);
     if (!previousSession) {
-      return schemaResearchSessionErrorResult(
-        "session_not_found",
-        `Schema Research session ${requestedSessionId} was not found in this conversation.`,
-        requestedSessionId,
-      );
+      return schemaResearchSessionErrorResult("session_not_found", `Schema Research session ${requestedSessionId} was not found in this conversation.`, requestedSessionId);
     }
     if (isSchemaResearchSessionExpired(previousSession)) {
-      return schemaResearchSessionErrorResult(
-        "session_expired",
-        `Schema Research session ${requestedSessionId} expired after 30 minutes of inactivity. Start a fresh schema research task instead.`,
-        requestedSessionId,
-      );
+      return schemaResearchSessionErrorResult("session_expired", `Schema Research session ${requestedSessionId} expired after 30 minutes of inactivity. Start a fresh schema research task instead.`, requestedSessionId);
     }
     const mismatches = schemaResearchSessionScopeMismatch(previousSession.scope, scope);
     if (mismatches.length) {
-      return schemaResearchSessionErrorResult(
-        "session_scope_mismatch",
-        `Schema Research session ${requestedSessionId} belongs to a different scope: ${mismatches.join(", ")}.`,
-        requestedSessionId,
-      );
+      return schemaResearchSessionErrorResult("session_scope_mismatch", `Schema Research session ${requestedSessionId} belongs to a different scope: ${mismatches.join(", ")}.`, requestedSessionId);
     }
   }
 
-  const { result, internalToolTraces, messages } = await runSchemaResearchSubtask(
-    input,
-    args,
-    limits,
-    researchSettings,
-    hooks,
-    previousSession,
-  );
+  const { result, internalToolTraces, messages } = await runSchemaResearchSubtask(input, args, limits, researchSettings, hooks, previousSession);
   const sessionSnapshot = buildSchemaResearchSessionSnapshot(sessionId, scope, result, messages, previousSession);
-  input.schemaResearchSessions = pruneSchemaResearchSessionsForConversation([
-    sessionSnapshot,
-    ...(input.schemaResearchSessions || []).filter((session) => session.id !== sessionSnapshot.id),
-  ]);
+  input.schemaResearchSessions = pruneSchemaResearchSessionsForConversation([sessionSnapshot, ...(input.schemaResearchSessions || []).filter((session) => session.id !== sessionSnapshot.id)]);
   input.onSchemaResearchSessionUpdate?.(sessionSnapshot);
   const isZh = currentLocale() === "zh-CN";
-  const promptSummary = [
-    isZh ? `Schema Research sessionId：${sessionId}` : `Schema Research sessionId: ${sessionId}`,
-    formatSchemaResearchTaskResultForPrompt(result, { isZh }),
-  ].join("\n");
+  const promptSummary = [isZh ? `Schema Research sessionId：${sessionId}` : `Schema Research sessionId: ${sessionId}`, formatSchemaResearchTaskResultForPrompt(result, { isZh })].join("\n");
   return {
     ...result,
     sessionId,
@@ -2865,9 +2412,7 @@ async function runSchemaResearchSubtask(
   const messages: any[] = [
     {
       role: "user",
-      content: previousSession
-        ? buildSchemaResearchResumeUserPrompt(input, args, previousSession)
-        : buildSchemaResearchUserPrompt(input, args, limits),
+      content: previousSession ? buildSchemaResearchResumeUserPrompt(input, args, previousSession) : buildSchemaResearchUserPrompt(input, args, limits),
     },
   ];
   const tools = buildAiSchemaTools({
@@ -2886,9 +2431,7 @@ async function runSchemaResearchSubtask(
       type: "node.update",
       nodeId: agentNodeId,
       status: "loading",
-      description: isZh
-        ? `Schema Research 正在检索证据（第 ${usedRounds} 轮）`
-        : `Schema Research is collecting evidence (round ${usedRounds})`,
+      description: isZh ? `Schema Research 正在检索证据（第 ${usedRounds} 轮）` : `Schema Research is collecting evidence (round ${usedRounds})`,
     });
     const response = await runRawChatForToolLoop(
       {
@@ -2916,12 +2459,7 @@ async function runSchemaResearchSubtask(
     }
 
     if (!response.toolCalls.length) {
-      const result = withSchemaResearchBudget(
-        parseSchemaResearchTaskResultText(response.content, limits),
-        budget,
-        usedRounds,
-        limits,
-      );
+      const result = withSchemaResearchBudget(parseSchemaResearchTaskResultText(response.content, limits), budget, usedRounds, limits);
       emitSchemaResearchEvidenceEvents(hooks?.onEvent, agentNodeId, result, isZh);
       emitAiWorkflowEvent(hooks?.onEvent, {
         type: "node.update",
@@ -2946,20 +2484,10 @@ async function runSchemaResearchSubtask(
         arguments: formatSchemaToolArguments(call),
       });
       const output = isSchemaResearchSubtaskToolAllowed(call.name)
-        ? await executeAiSchemaToolCall(
-            input,
-            context,
-            budget,
-            call.name,
-            call.arguments,
-            undefined,
-            undefined,
-            undefined,
-            {
-              onEvent: hooks?.onEvent,
-              parentNodeId: toolNodeId,
-            },
-          ).catch((error) => ({ error: error?.message || String(error) }))
+        ? await executeAiSchemaToolCall(input, context, budget, call.name, call.arguments, undefined, undefined, undefined, {
+            onEvent: hooks?.onEvent,
+            parentNodeId: toolNodeId,
+          }).catch((error) => ({ error: error?.message || String(error) }))
         : { error: `Tool ${call.name} is not available inside schema research subtask.` };
       const completedTrace = buildCompletedSchemaToolTrace(call, output, isZh);
       emitAiWorkflowEvent(hooks?.onEvent, {
@@ -2980,9 +2508,7 @@ async function runSchemaResearchSubtask(
 
   messages.push({
     role: "user",
-    content: isZh
-      ? "Schema Research 工具轮次已用完。请只基于已经返回的工具结果输出最终 JSON，不要再调用工具。"
-      : "The schema research tool-round budget is exhausted. Return final JSON using only the tool results already returned. Do not call tools.",
+    content: isZh ? "Schema Research 工具轮次已用完。请只基于已经返回的工具结果输出最终 JSON，不要再调用工具。" : "The schema research tool-round budget is exhausted. Return final JSON using only the tool results already returned. Do not call tools.",
   });
   const finalResponse = await runRawChatForToolLoop(
     {
@@ -2999,12 +2525,7 @@ async function runSchemaResearchSubtask(
     },
   );
 
-  const result = withSchemaResearchBudget(
-    parseSchemaResearchTaskResultText(finalResponse.content, limits),
-    budget,
-    usedRounds,
-    limits,
-  );
+  const result = withSchemaResearchBudget(parseSchemaResearchTaskResultText(finalResponse.content, limits), budget, usedRounds, limits);
   emitSchemaResearchEvidenceEvents(hooks?.onEvent, agentNodeId, result, isZh);
   emitAiWorkflowEvent(hooks?.onEvent, {
     type: "node.update",
@@ -3045,10 +2566,7 @@ function validateSchemaResearchSessionResume(args: Record<string, any>): SchemaR
       message: "resumeMode must be one of: continue, revise, narrow, compare",
     };
   }
-  const instruction =
-    args.resumeInstruction && typeof args.resumeInstruction === "object"
-      ? (args.resumeInstruction as Record<string, unknown>)
-      : {};
+  const instruction = args.resumeInstruction && typeof args.resumeInstruction === "object" ? (args.resumeInstruction as Record<string, unknown>) : {};
   const objective = String(instruction.objective || "").trim();
   if (objective && (objective.length < 8 || SCHEMA_RESEARCH_VAGUE_OBJECTIVES.has(objective.toLowerCase()))) {
     return {
@@ -3069,10 +2587,7 @@ function schemaResearchSessionScope(context: AiContext): SchemaResearchSessionSc
   };
 }
 
-function schemaResearchSessionScopeMismatch(
-  expected: SchemaResearchSessionScope,
-  actual: SchemaResearchSessionScope,
-): string[] {
+function schemaResearchSessionScopeMismatch(expected: SchemaResearchSessionScope, actual: SchemaResearchSessionScope): string[] {
   const mismatches: string[] = [];
   for (const key of ["connectionId", "databaseType", "database", "schema"] as const) {
     if ((expected[key] || "") !== (actual[key] || "")) mismatches.push(key);
@@ -3080,10 +2595,7 @@ function schemaResearchSessionScopeMismatch(
   return mismatches;
 }
 
-export function pruneSchemaResearchSessionsForConversation(
-  sessions: SchemaResearchSessionSnapshot[],
-  nowMs = Date.now(),
-): SchemaResearchSessionSnapshot[] {
+export function pruneSchemaResearchSessionsForConversation(sessions: SchemaResearchSessionSnapshot[], nowMs = Date.now()): SchemaResearchSessionSnapshot[] {
   return sessions
     .filter((session) => !isSchemaResearchSessionExpired(session, nowMs))
     .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""))
@@ -3096,10 +2608,7 @@ function isSchemaResearchSessionExpired(session: SchemaResearchSessionSnapshot, 
   return nowMs - updatedAtMs > SCHEMA_RESEARCH_SESSION_IDLE_TTL_MS;
 }
 
-function findSchemaResearchSession(
-  sessions: SchemaResearchSessionSnapshot[] | undefined,
-  sessionId: string,
-): SchemaResearchSessionSnapshot | undefined {
+function findSchemaResearchSession(sessions: SchemaResearchSessionSnapshot[] | undefined, sessionId: string): SchemaResearchSessionSnapshot | undefined {
   return (sessions || []).find((session) => session.id === sessionId);
 }
 
@@ -3108,11 +2617,8 @@ function normalizeStringList(value: unknown): string[] {
   return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
-function normalizeSchemaResearchResumeInstruction(
-  args: Record<string, any>,
-): SchemaResearchResumeInstruction | undefined {
-  const value =
-    args.resumeInstruction && typeof args.resumeInstruction === "object" ? args.resumeInstruction : undefined;
+function normalizeSchemaResearchResumeInstruction(args: Record<string, any>): SchemaResearchResumeInstruction | undefined {
+  const value = args.resumeInstruction && typeof args.resumeInstruction === "object" ? args.resumeInstruction : undefined;
   if (!value) return undefined;
   const data = value as Record<string, unknown>;
   const instruction: SchemaResearchResumeInstruction = {};
@@ -3131,11 +2637,7 @@ function normalizeSchemaResearchResumeInstruction(
   return Object.keys(instruction).length ? instruction : undefined;
 }
 
-function schemaResearchSessionErrorResult(
-  code: string,
-  summary: string,
-  sessionId?: string,
-): SchemaResearchTaskResult & { promptSummary: string; sessionId?: string; error?: string } {
+function schemaResearchSessionErrorResult(code: string, summary: string, sessionId?: string): SchemaResearchTaskResult & { promptSummary: string; sessionId?: string; error?: string } {
   const result = normalizeSchemaResearchTaskResult({
     status: "error",
     summary,
@@ -3150,13 +2652,7 @@ function schemaResearchSessionErrorResult(
   };
 }
 
-function buildSchemaResearchSessionSnapshot(
-  id: string,
-  scope: SchemaResearchSessionScope,
-  result: SchemaResearchTaskResult,
-  messages: unknown[],
-  previous?: SchemaResearchSessionSnapshot,
-): SchemaResearchSessionSnapshot {
+function buildSchemaResearchSessionSnapshot(id: string, scope: SchemaResearchSessionScope, result: SchemaResearchTaskResult, messages: unknown[], previous?: SchemaResearchSessionSnapshot): SchemaResearchSessionSnapshot {
   const now = new Date().toISOString();
   return {
     id,
@@ -3171,18 +2667,10 @@ function buildSchemaResearchSessionSnapshot(
   };
 }
 
-function buildSchemaResearchResumeUserPrompt(
-  input: Pick<AiRequestInput, "context">,
-  args: Record<string, any>,
-  session: SchemaResearchSessionSnapshot,
-): string {
+function buildSchemaResearchResumeUserPrompt(input: Pick<AiRequestInput, "context">, args: Record<string, any>, session: SchemaResearchSessionSnapshot): string {
   const instruction = normalizeSchemaResearchResumeInstruction(args);
-  const reverifyGuidance = instruction
-    ? "Do not repeat previous searches unless task or resumeInstruction requires re-verification."
-    : "Do not repeat previous searches unless task requires re-verification.";
-  const conflictGuidance = instruction
-    ? "Do not preserve previous conclusions that conflict with task or the optional resumeInstruction."
-    : "Do not preserve previous conclusions that conflict with task.";
+  const reverifyGuidance = instruction ? "Do not repeat previous searches unless task or resumeInstruction requires re-verification." : "Do not repeat previous searches unless task requires re-verification.";
+  const conflictGuidance = instruction ? "Do not preserve previous conclusions that conflict with task or the optional resumeInstruction." : "Do not preserve previous conclusions that conflict with task.";
   const guidance = [
     "You are resuming a previous Schema Research session, not starting from scratch.",
     "Use task as the concrete current schema research objective.",
@@ -3210,42 +2698,20 @@ function buildSchemaResearchResumeUserPrompt(
   return JSON.stringify(payload, null, 2);
 }
 
-function formatSchemaResearchSessionsForMainPrompt(
-  sessions: SchemaResearchSessionSnapshot[] | undefined,
-  isZh: boolean,
-  nowMs = Date.now(),
-): string {
+function formatSchemaResearchSessionsForMainPrompt(sessions: SchemaResearchSessionSnapshot[] | undefined, isZh: boolean, nowMs = Date.now()): string {
   const activeSessions = pruneSchemaResearchSessionsForConversation(sessions || [], nowMs).slice(0, 3);
   if (!activeSessions.length) return "";
   const lines = isZh
-    ? [
-        "可恢复的 Schema Research 子任务 session：",
-        "只有当用户是在修改或延续对应 session 的旧答案时，才把 sessionId 传给 dbx_schema_research_task；task 仍要写本次具体 research 目标，resumeInstruction 可选。",
-      ]
-    : [
-        "Recoverable Schema Research subtask sessions:",
-        "Pass sessionId to dbx_schema_research_task only when the user is revising or continuing that session's previous answer; task still carries the concrete current research goal, and resumeInstruction is optional.",
-      ];
+    ? ["可恢复的 Schema Research 子任务 session：", "只有当用户是在修改或延续对应 session 的旧答案时，才把 sessionId 传给 dbx_schema_research_task；task 仍要写本次具体 research 目标，resumeInstruction 可选。"]
+    : ["Recoverable Schema Research subtask sessions:", "Pass sessionId to dbx_schema_research_task only when the user is revising or continuing that session's previous answer; task still carries the concrete current research goal, and resumeInstruction is optional."];
   for (const session of activeSessions) {
-    const scope = [
-      session.scope.connectionId ? `connectionId=${session.scope.connectionId}` : "",
-      `databaseType=${session.scope.databaseType}`,
-      `database=${session.scope.database}`,
-      session.scope.schema ? `schema=${session.scope.schema}` : "",
-    ]
-      .filter(Boolean)
-      .join(", ");
+    const scope = [session.scope.connectionId ? `connectionId=${session.scope.connectionId}` : "", `databaseType=${session.scope.databaseType}`, `database=${session.scope.database}`, session.scope.schema ? `schema=${session.scope.schema}` : ""].filter(Boolean).join(", ");
     lines.push(`- sessionId=${session.id}; updatedAt=${session.updatedAt}; ${scope}; summary=${session.summary}`);
   }
   return lines.join("\n");
 }
 
-function emitSchemaResearchEvidenceEvents(
-  onEvent: AiWorkflowEventHandler | undefined,
-  parentNodeId: string,
-  result: SchemaResearchTaskResult,
-  isZh: boolean,
-) {
+function emitSchemaResearchEvidenceEvents(onEvent: AiWorkflowEventHandler | undefined, parentNodeId: string, result: SchemaResearchTaskResult, isZh: boolean) {
   const tableCount = result.evidence.tables.length;
   const relationCount = result.evidence.relations.length;
   const uncertaintyCount = result.uncertainties.length;
@@ -3254,9 +2720,7 @@ function emitSchemaResearchEvidenceEvents(
     nodeId: uuid(),
     parentId: parentNodeId,
     status: result.status,
-    summary: isZh
-      ? `${result.summary}。证据：${tableCount} 张表，${relationCount} 条关系，${uncertaintyCount} 个不确定项。`
-      : `${result.summary}. Evidence: ${tableCount} table(s), ${relationCount} relation(s), ${uncertaintyCount} uncertainty item(s).`,
+    summary: isZh ? `${result.summary}。证据：${tableCount} 张表，${relationCount} 条关系，${uncertaintyCount} 个不确定项。` : `${result.summary}. Evidence: ${tableCount} table(s), ${relationCount} relation(s), ${uncertaintyCount} uncertainty item(s).`,
   });
 }
 
@@ -3321,14 +2785,9 @@ function supportsSchemaResearchModel(config: AiConfig): boolean {
   return !["claude", "gemini"].includes(config.provider);
 }
 
-function buildSchemaResearchSystemPrompt(
-  input: AiRequestInput,
-  args: Record<string, any>,
-  limits: SchemaResearchResultLimits,
-): string {
+function buildSchemaResearchSystemPrompt(input: AiRequestInput, args: Record<string, any>, limits: SchemaResearchResultLimits): string {
   const isZh = currentLocale() === "zh-CN";
-  const constraints =
-    args.constraints && typeof args.constraints === "object" ? (args.constraints as Record<string, unknown>) : {};
+  const constraints = args.constraints && typeof args.constraints === "object" ? (args.constraints as Record<string, unknown>) : {};
   const requireRelations = constraints.requireRelations === true;
   const allowUserChoice = constraints.allowUserChoice === true;
   const jsonContract = schemaResearchJsonContract(limits);
@@ -3343,9 +2802,7 @@ function buildSchemaResearchSystemPrompt(
         "只有确实需要整表索引或外键时才调用 dbx_load_table_schema。",
         "需要 JOIN 或主任务要求关系时，调用 dbx_get_related_tables 查真实外键；没有可靠关系时，不要猜测为 high confidence。",
         "中文业务词检索时，同时加入英文业务词和标识符片段，例如：评价 review rating comment feedback score。",
-        allowUserChoice
-          ? "如果候选表/字段/关系无法确定，返回 status=need_user_choice，并在 uncertainties 写清要主模型让用户确认什么。"
-          : "如果候选无法确定，返回 status=partial，不要假装确定。",
+        allowUserChoice ? "如果候选表/字段/关系无法确定，返回 status=need_user_choice，并在 uncertainties 写清要主模型让用户确认什么。" : "如果候选无法确定，返回 status=partial，不要假装确定。",
         "不要调用用户选择工具，不要调用沉淀工具，不要编造工具结果中没有的表、字段或关系。",
         `最多返回 ${limits.maxTables ?? MAX_SCHEMA_RESEARCH_TABLES} 张表，每张表最多 ${limits.maxColumnsPerTable ?? MAX_SCHEMA_RESEARCH_COLUMNS_PER_TABLE} 个字段。`,
         requireRelations ? "本任务要求关系证据；如果关系不足，status 不要返回 sufficient。" : "",
@@ -3362,37 +2819,19 @@ function buildSchemaResearchSystemPrompt(
         "Call dbx_load_table_schema only when full indexes or foreign keys are truly needed.",
         "For JOIN needs or relation requirements, call dbx_get_related_tables for real foreign keys; do not mark guessed relations as high confidence.",
         "For Chinese business terms, include English business terms and identifier fragments, for example: 评价 review rating comment feedback score.",
-        allowUserChoice
-          ? "If table/column/relation candidates remain ambiguous, return status=need_user_choice and state what the main model should ask the user to confirm in uncertainties."
-          : "If candidates remain ambiguous, return status=partial rather than pretending certainty.",
+        allowUserChoice ? "If table/column/relation candidates remain ambiguous, return status=need_user_choice and state what the main model should ask the user to confirm in uncertainties." : "If candidates remain ambiguous, return status=partial rather than pretending certainty.",
         "Do not call user-choice tools, do not call enrichment tools, and do not invent tables, columns, or relations not present in tool results.",
         `Return at most ${limits.maxTables ?? MAX_SCHEMA_RESEARCH_TABLES} tables and ${limits.maxColumnsPerTable ?? MAX_SCHEMA_RESEARCH_COLUMNS_PER_TABLE} columns per table.`,
-        requireRelations
-          ? "This task requires relation evidence; do not return sufficient if relations remain missing."
-          : "",
+        requireRelations ? "This task requires relation evidence; do not return sufficient if relations remain missing." : "",
         "Output exactly one JSON object. No Markdown and no explanatory prefix/suffix.",
         jsonContract,
       ];
 
-  return [
-    ...lines,
-    "",
-    `Database type: ${input.context.databaseType}`,
-    `Database: ${input.context.database}`,
-    input.context.schema ? `Schema: ${input.context.schema}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  return [...lines, "", `Database type: ${input.context.databaseType}`, `Database: ${input.context.database}`, input.context.schema ? `Schema: ${input.context.schema}` : ""].filter(Boolean).join("\n");
 }
 
-function buildSchemaResearchUserPrompt(
-  input: AiRequestInput,
-  args: Record<string, any>,
-  limits: SchemaResearchResultLimits,
-): string {
-  const requiredEvidence = Array.isArray(args.requiredEvidence)
-    ? args.requiredEvidence.map((item) => String(item || "").trim()).filter(Boolean)
-    : [];
+function buildSchemaResearchUserPrompt(input: AiRequestInput, args: Record<string, any>, limits: SchemaResearchResultLimits): string {
+  const requiredEvidence = Array.isArray(args.requiredEvidence) ? args.requiredEvidence.map((item) => String(item || "").trim()).filter(Boolean) : [];
   const knownContext = args.knownContext && typeof args.knownContext === "object" ? args.knownContext : {};
   return JSON.stringify(
     {
@@ -3423,10 +2862,8 @@ function schemaResearchJsonContract(limits: SchemaResearchResultLimits): string 
       summary: "short result summary",
       evidence: {
         tables: `array, max ${limits.maxTables ?? MAX_SCHEMA_RESEARCH_TABLES}; each item has schema, table, tableType, comment, reason, confidence, columns`,
-        columns:
-          "inside each table, max per table; each item has name, dataType, nullable, primaryKey, comment, usage, reason, verified",
-        relations:
-          "array; each item has leftSchema, leftTable, leftColumn, rightSchema, rightTable, rightColumn, source, confidence",
+        columns: "inside each table, max per table; each item has name, dataType, nullable, primaryKey, comment, usage, reason, verified",
+        relations: "array; each item has leftSchema, leftTable, leftColumn, rightSchema, rightTable, rightColumn, source, confidence",
         rejectedCandidates: [{ schema: "schema", table: "table", column: "optional", reason: "why rejected" }],
         notes: ["short note"],
       },
@@ -3446,8 +2883,7 @@ function schemaResearchJsonContract(limits: SchemaResearchResultLimits): string 
 }
 
 function schemaResearchLimits(args: Record<string, any>): SchemaResearchResultLimits {
-  const constraints =
-    args.constraints && typeof args.constraints === "object" ? (args.constraints as Record<string, unknown>) : {};
+  const constraints = args.constraints && typeof args.constraints === "object" ? (args.constraints as Record<string, unknown>) : {};
   return {
     maxTables: clampToolLimit(constraints.maxTables, 1, 6, MAX_SCHEMA_RESEARCH_TABLES),
     maxColumnsPerTable: clampToolLimit(constraints.maxColumnsPerTable, 1, 20, MAX_SCHEMA_RESEARCH_COLUMNS_PER_TABLE),
@@ -3458,12 +2894,7 @@ function schemaResearchLimits(args: Record<string, any>): SchemaResearchResultLi
   };
 }
 
-function withSchemaResearchBudget(
-  result: SchemaResearchTaskResult,
-  budget: AiSchemaToolBudget,
-  usedRounds: number,
-  limits: SchemaResearchResultLimits,
-): SchemaResearchTaskResult {
+function withSchemaResearchBudget(result: SchemaResearchTaskResult, budget: AiSchemaToolBudget, usedRounds: number, limits: SchemaResearchResultLimits): SchemaResearchTaskResult {
   return normalizeSchemaResearchTaskResult(
     {
       ...result,
@@ -3487,16 +2918,7 @@ function withSchemaResearchBudget(
   );
 }
 
-const SCHEMA_RESEARCH_SUBTASK_ALLOWED_TOOL_NAMES = [
-  "dbx_search_schema",
-  "dbx_list_tables",
-  "dbx_find_columns",
-  "dbx_search_table_columns",
-  "dbx_get_column_details",
-  "dbx_load_table_schema",
-  "dbx_get_related_tables",
-  "dbx_expand_schema_graph",
-];
+const SCHEMA_RESEARCH_SUBTASK_ALLOWED_TOOL_NAMES = ["dbx_search_schema", "dbx_list_tables", "dbx_find_columns", "dbx_search_table_columns", "dbx_get_column_details", "dbx_load_table_schema", "dbx_get_related_tables", "dbx_expand_schema_graph"];
 
 export function schemaResearchSubtaskAllowedToolNamesForTest(): string[] {
   return [...SCHEMA_RESEARCH_SUBTASK_ALLOWED_TOOL_NAMES];
@@ -3669,11 +3091,7 @@ function parseToolArguments(rawArguments: string): Record<string, any> {
   return parsed && typeof parsed === "object" ? parsed : {};
 }
 
-async function executeSchemaSearchTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-): Promise<unknown> {
+async function executeSchemaSearchTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId || !context.schema) return { error: "No active connection/schema for Schema RAG." };
   if (budget.schemaSearches >= MAX_AI_SCHEMA_SEARCH_CALLS) {
     return { error: `Schema search budget exceeded (${MAX_AI_SCHEMA_SEARCH_CALLS}).` };
@@ -3729,11 +3147,7 @@ async function executeSchemaSearchTool(
   };
 }
 
-async function executeListTablesTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-): Promise<unknown> {
+async function executeListTablesTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId) return { error: "No active connection for table listing." };
   if (budget.tableLists >= MAX_AI_TABLE_LIST_CALLS) {
     return { error: `Table list budget exceeded (${MAX_AI_TABLE_LIST_CALLS}).` };
@@ -3745,9 +3159,7 @@ async function executeListTablesTool(
   const keyword = String(args.keyword || "").trim() || undefined;
   const limit = clampToolLimit(args.limit, 1, 50, 20);
   const tables = await api.listTables(context.connectionId, context.database, schema, keyword, limit);
-  const filteredTables = keyword
-    ? tables.filter((table) => table.name.toLowerCase().includes(keyword.toLowerCase()))
-    : tables;
+  const filteredTables = keyword ? tables.filter((table) => table.name.toLowerCase().includes(keyword.toLowerCase())) : tables;
   const returnedTables = filteredTables.slice(0, limit);
   return {
     schema,
@@ -3768,11 +3180,7 @@ async function executeListTablesTool(
   };
 }
 
-async function executeFindColumnsTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-): Promise<unknown> {
+async function executeFindColumnsTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId) return { error: "No active connection for column search." };
   if (budget.columnSearches >= MAX_AI_COLUMN_SEARCH_CALLS) {
     return { error: `Column search budget exceeded (${MAX_AI_COLUMN_SEARCH_CALLS}).` };
@@ -3793,14 +3201,9 @@ async function executeFindColumnsTool(
   const matches: Array<Record<string, unknown>> = [];
   for (const table of tables) {
     if (matches.length >= limit) break;
-    const columns = await api
-      .getColumns(context.connectionId, context.database, schema, table.name)
-      .catch(() => [] as ColumnInfo[]);
+    const columns = await api.getColumns(context.connectionId, context.database, schema, table.name).catch(() => [] as ColumnInfo[]);
     for (const column of columns) {
-      const haystack = [table.name, table.comment, column.name, column.comment, column.data_type]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+      const haystack = [table.name, table.comment, column.name, column.comment, column.data_type].filter(Boolean).join(" ").toLowerCase();
       if (!terms.length || terms.some((term) => haystack.includes(term))) {
         matches.push({
           schema,
@@ -3828,11 +3231,7 @@ async function executeFindColumnsTool(
   };
 }
 
-async function executeRequestTableChoiceTool(
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-  onTableChoiceRequest?: AiTableChoiceRequestHandler,
-): Promise<unknown> {
+async function executeRequestTableChoiceTool(budget: AiSchemaToolBudget, args: Record<string, any>, onTableChoiceRequest?: AiTableChoiceRequestHandler): Promise<unknown> {
   if (!onTableChoiceRequest) return { confirmed: false, skipped: true, message: "Table choice UI is not available." };
   if (budget.tableChoiceRequests >= MAX_AI_TABLE_CHOICE_REQUESTS) {
     return { error: `Table choice budget exceeded (${MAX_AI_TABLE_CHOICE_REQUESTS}).` };
@@ -3842,9 +3241,7 @@ async function executeRequestTableChoiceTool(
   if (!candidates.length) return { error: "candidates are required" };
   const request: AiTableChoiceRequest = {
     id: uuid(),
-    question: String(
-      args.question || (currentLocale() === "zh-CN" ? "请选择要使用的表" : "Choose the table to use"),
-    ).trim(),
+    question: String(args.question || (currentLocale() === "zh-CN" ? "请选择要使用的表" : "Choose the table to use")).trim(),
     reason: typeof args.reason === "string" ? args.reason : undefined,
     allowManual: true,
     candidates,
@@ -3852,11 +3249,7 @@ async function executeRequestTableChoiceTool(
   return onTableChoiceRequest(request);
 }
 
-async function executeSearchTableColumnsTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-): Promise<unknown> {
+async function executeSearchTableColumnsTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId) return { error: "No active connection for column vector search." };
   if (budget.columnSearches >= MAX_AI_COLUMN_SEARCH_CALLS) {
     return { error: `Column search budget exceeded (${MAX_AI_COLUMN_SEARCH_CALLS}).` };
@@ -3877,8 +3270,7 @@ async function executeSearchTableColumnsTool(
       table,
       query,
       columns: [],
-      message:
-        "Current schema has not been analyzed. Use dbx_find_columns or dbx_get_column_details as a live metadata fallback.",
+      message: "Current schema has not been analyzed. Use dbx_find_columns or dbx_get_column_details as a live metadata fallback.",
       budget: {
         columnSearches: budget.columnSearches,
         maxColumnSearches: MAX_AI_COLUMN_SEARCH_CALLS,
@@ -3916,20 +3308,14 @@ async function executeSearchTableColumnsTool(
   };
 }
 
-async function executeGetColumnDetailsTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-): Promise<unknown> {
+async function executeGetColumnDetailsTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId) return { error: "No active connection for column details." };
   if (budget.columnDetails >= MAX_AI_COLUMN_DETAIL_CALLS) {
     return { error: `Column detail budget exceeded (${MAX_AI_COLUMN_DETAIL_CALLS}).` };
   }
   const schema = String(args.schema || context.schema || "").trim();
   const table = String(args.table || "").trim();
-  const requestedColumns = Array.isArray(args.columns)
-    ? args.columns.map((column) => String(column || "").trim()).filter(Boolean)
-    : [];
+  const requestedColumns = Array.isArray(args.columns) ? args.columns.map((column) => String(column || "").trim()).filter(Boolean) : [];
   if (!schema || !table) return { error: "schema and table are required" };
   if (!requestedColumns.length) return { error: "columns are required" };
   budget.columnDetails += 1;
@@ -3961,11 +3347,7 @@ async function executeGetColumnDetailsTool(
   };
 }
 
-async function executeLoadTableSchemaTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-): Promise<unknown> {
+async function executeLoadTableSchemaTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId) return { error: "No active connection for schema loading." };
   if (budget.tableLoads >= MAX_AI_SCHEMA_TABLE_LOADS) {
     return { error: `Table schema load budget exceeded (${MAX_AI_SCHEMA_TABLE_LOADS}).` };
@@ -4020,12 +3402,7 @@ async function executeLoadTableSchemaTool(
   };
 }
 
-async function executeRequestColumnChoiceTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-  onColumnChoiceRequest?: AiColumnChoiceRequestHandler,
-): Promise<unknown> {
+async function executeRequestColumnChoiceTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>, onColumnChoiceRequest?: AiColumnChoiceRequestHandler): Promise<unknown> {
   if (!onColumnChoiceRequest) return { confirmed: false, skipped: true, message: "Column choice UI is not available." };
   if (!context.connectionId) return { error: "No active connection for column choice." };
   if (budget.columnChoiceRequests >= MAX_AI_COLUMN_CHOICE_REQUESTS) {
@@ -4041,9 +3418,7 @@ async function executeRequestColumnChoiceTool(
     id: uuid(),
     schema,
     table,
-    question: String(
-      args.question || (currentLocale() === "zh-CN" ? "请选择要使用的字段" : "Choose the column(s) to use"),
-    ).trim(),
+    question: String(args.question || (currentLocale() === "zh-CN" ? "请选择要使用的字段" : "Choose the column(s) to use")).trim(),
     reason: typeof args.reason === "string" ? args.reason : undefined,
     multiple: args.multiple === true,
     allowManual: true,
@@ -4100,10 +3475,7 @@ function parseColumnChoiceCandidates(value: unknown, columns: ColumnInfo[]): AiC
   return [...unique.values()].slice(0, MAX_AI_COLUMN_CHOICE_CANDIDATES);
 }
 
-function mergeColumnChoiceCandidates(
-  candidates: AiColumnChoiceCandidate[],
-  columns: ColumnInfo[],
-): AiColumnChoiceCandidate[] {
+function mergeColumnChoiceCandidates(candidates: AiColumnChoiceCandidate[], columns: ColumnInfo[]): AiColumnChoiceCandidate[] {
   if (candidates.length) return candidates.slice(0, MAX_AI_COLUMN_CHOICE_CANDIDATES);
   return columns.slice(0, MAX_AI_COLUMN_CHOICE_CANDIDATES).map((column) => ({
     column: column.name,
@@ -4114,11 +3486,7 @@ function mergeColumnChoiceCandidates(
   }));
 }
 
-async function executeSaveSchemaEnrichmentTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-): Promise<unknown> {
+async function executeSaveSchemaEnrichmentTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId || !context.schema) return { error: "No active connection/schema for schema enrichment." };
   if (budget.enrichmentSaves >= MAX_AI_ENRICHMENT_SAVES) {
     return { error: `Schema enrichment save budget exceeded (${MAX_AI_ENRICHMENT_SAVES}).` };
@@ -4126,8 +3494,7 @@ async function executeSaveSchemaEnrichmentTool(
   const confirmationSource = String(args.confirmationSource || "").trim();
   if (!["explicit_user_request", "user_choice_confirmed"].includes(confirmationSource)) {
     return {
-      error:
-        "confirmationSource must be explicit_user_request or user_choice_confirmed. Do not save model-guessed mappings.",
+      error: "confirmationSource must be explicit_user_request or user_choice_confirmed. Do not save model-guessed mappings.",
     };
   }
   const aliases = parseSchemaEnrichmentAliases(args.aliases, context.schema);
@@ -4203,11 +3570,7 @@ function optionalToolNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-async function executeGetRelatedTablesTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-): Promise<unknown> {
+async function executeGetRelatedTablesTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId) return { error: "No active connection for relation lookup." };
   if (budget.relationLookups >= MAX_AI_RELATION_LOOKUPS) {
     return { error: `Relation lookup budget exceeded (${MAX_AI_RELATION_LOOKUPS}).` };
@@ -4217,9 +3580,7 @@ async function executeGetRelatedTablesTool(
   const schema = String(args.schema || context.schema || "").trim();
   const table = String(args.table || "").trim();
   if (!schema || !table) return { error: "schema and table are required" };
-  const foreignKeys = await api
-    .listForeignKeys(context.connectionId, context.database, schema, table)
-    .catch(() => [] as ForeignKeyInfo[]);
+  const foreignKeys = await api.listForeignKeys(context.connectionId, context.database, schema, table).catch(() => [] as ForeignKeyInfo[]);
   return {
     schema,
     table,
@@ -4232,9 +3593,7 @@ async function executeGetRelatedTablesTool(
       rightTable: fk.ref_table,
       rightColumn: fk.ref_column,
     })),
-    message: foreignKeys.length
-      ? undefined
-      : "No database foreign keys were found for this table. Ask the user to confirm join columns if a join is required.",
+    message: foreignKeys.length ? undefined : "No database foreign keys were found for this table. Ask the user to confirm join columns if a join is required.",
     budget: {
       relationLookups: budget.relationLookups,
       maxRelationLookups: MAX_AI_RELATION_LOOKUPS,
@@ -4244,11 +3603,7 @@ async function executeGetRelatedTablesTool(
 
 async function executeExpandSchemaGraphTool(context: AiContext, args: Record<string, any>): Promise<unknown> {
   if (!context.connectionId || !context.schema) return { error: "No active connection/schema for graph expansion." };
-  const seeds = Array.isArray(args.seeds)
-    ? args.seeds
-        .map((seed) => normalizeSchemaGraphSeed(seed))
-        .filter((seed): seed is NonNullable<ReturnType<typeof normalizeSchemaGraphSeed>> => !!seed)
-    : [];
+  const seeds = Array.isArray(args.seeds) ? args.seeds.map((seed) => normalizeSchemaGraphSeed(seed)).filter((seed): seed is NonNullable<ReturnType<typeof normalizeSchemaGraphSeed>> => !!seed) : [];
   if (!seeds.length) return { error: "seeds are required" };
   const scope = schemaRagScopeForContext(context);
   const status = await api.loadSchemaRagStatus(scope);
@@ -4276,13 +3631,7 @@ async function executeExpandSchemaGraphTool(context: AiContext, args: Record<str
     joinCandidates: result.joinCandidates.slice(0, 20),
     concepts: result.concepts.slice(0, 20),
     sourceEvidence: result.sourceEvidence.slice(0, 20),
-    message:
-      result.verifiedMappings.length ||
-      result.candidateMappings.length ||
-      result.joinCandidates.length ||
-      result.concepts.length
-        ? undefined
-        : "No graph facts matched the provided seeds.",
+    message: result.verifiedMappings.length || result.candidateMappings.length || result.joinCandidates.length || result.concepts.length ? undefined : "No graph facts matched the provided seeds.",
   };
 }
 
@@ -4296,17 +3645,7 @@ function normalizeSchemaGraphSeed(value: unknown): {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
   const kind = String(raw.kind || "").trim();
-  if (
-    ![
-      "table",
-      "column",
-      "api_doc_source",
-      "api_doc_section",
-      "api_field",
-      "business_concept",
-      "join_candidate",
-    ].includes(kind)
-  ) {
+  if (!["table", "column", "api_doc_source", "api_doc_section", "api_field", "business_concept", "join_candidate"].includes(kind)) {
     return null;
   }
   return {
@@ -4318,14 +3657,8 @@ function normalizeSchemaGraphSeed(value: unknown): {
   };
 }
 
-async function executeRequestRelationTool(
-  context: AiContext,
-  budget: AiSchemaToolBudget,
-  args: Record<string, any>,
-  onRelationRequest?: AiRelationRequestHandler,
-): Promise<unknown> {
-  if (!onRelationRequest)
-    return { confirmed: false, skipped: true, message: "Relation confirmation UI is not available." };
+async function executeRequestRelationTool(context: AiContext, budget: AiSchemaToolBudget, args: Record<string, any>, onRelationRequest?: AiRelationRequestHandler): Promise<unknown> {
+  if (!onRelationRequest) return { confirmed: false, skipped: true, message: "Relation confirmation UI is not available." };
   if (!context.connectionId) return { error: "No active connection for relation confirmation." };
   if (budget.relationRequests >= MAX_AI_RELATION_REQUESTS) {
     return { error: `Relation confirmation budget exceeded (${MAX_AI_RELATION_REQUESTS}).` };
@@ -4340,10 +3673,7 @@ async function executeRequestRelationTool(
     return { error: "leftSchema, leftTable, rightSchema, and rightTable are required" };
   }
 
-  const [leftColumns, rightColumns] = await Promise.all([
-    api.getColumns(context.connectionId, context.database, leftSchema, leftTable),
-    api.getColumns(context.connectionId, context.database, rightSchema, rightTable),
-  ]);
+  const [leftColumns, rightColumns] = await Promise.all([api.getColumns(context.connectionId, context.database, leftSchema, leftTable), api.getColumns(context.connectionId, context.database, rightSchema, rightTable)]);
   const request: AiRelationRequest = {
     id: uuid(),
     left: {
@@ -4357,10 +3687,7 @@ async function executeRequestRelationTool(
       columns: rightColumns.map(toRelationRequestColumn),
     },
     reason: typeof args.reason === "string" ? args.reason : undefined,
-    candidates: mergeRelationCandidates(
-      parseRelationCandidatePairs(args.candidatePairs, leftColumns, rightColumns),
-      suggestRelationCandidates(leftColumns, rightColumns),
-    ),
+    candidates: mergeRelationCandidates(parseRelationCandidatePairs(args.candidatePairs, leftColumns, rightColumns), suggestRelationCandidates(leftColumns, rightColumns)),
   };
   return onRelationRequest(request);
 }
@@ -4404,16 +3731,10 @@ function suggestRelationCandidates(leftColumns: ColumnInfo[], rightColumns: Colu
   return [...unique.values()].slice(0, 6);
 }
 
-function parseRelationCandidatePairs(
-  value: unknown,
-  leftColumns: ColumnInfo[],
-  rightColumns: ColumnInfo[],
-): AiRelationCandidatePair[] {
+function parseRelationCandidatePairs(value: unknown, leftColumns: ColumnInfo[], rightColumns: ColumnInfo[]): AiRelationCandidatePair[] {
   if (!Array.isArray(value)) return [];
   const leftColumnNames = new Map(leftColumns.map((column) => [normalizeRelationColumnName(column.name), column.name]));
-  const rightColumnNames = new Map(
-    rightColumns.map((column) => [normalizeRelationColumnName(column.name), column.name]),
-  );
+  const rightColumnNames = new Map(rightColumns.map((column) => [normalizeRelationColumnName(column.name), column.name]));
   const candidates: AiRelationCandidatePair[] = [];
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
@@ -4487,8 +3808,7 @@ function normalizeSchemaToolKey(value: string): string {
 function schemaRagScopeForContext(context: AiContext, schemaOverride?: string): SchemaRagToolScope {
   const connectionId = context.connectionId || "";
   const schema = (schemaOverride || context.schema || "").trim();
-  const database =
-    defaultDatabaseTargetsSchema({ db_type: context.databaseType }) && schema ? schema : context.database;
+  const database = defaultDatabaseTargetsSchema({ db_type: context.databaseType }) && schema ? schema : context.database;
   return { connectionId, database, schema };
 }
 
@@ -4506,18 +3826,9 @@ function formatSchema(context: AiContext): string {
       }
 
       for (const column of table.columns) {
-        const flags = [
-          column.is_primary_key ? "PK" : "",
-          column.is_nullable ? "nullable" : "NOT NULL",
-          column.column_default ? `default ${column.column_default}` : "",
-          column.extra || "",
-        ]
-          .filter(Boolean)
-          .join(", ");
+        const flags = [column.is_primary_key ? "PK" : "", column.is_nullable ? "nullable" : "NOT NULL", column.column_default ? `default ${column.column_default}` : "", column.extra || ""].filter(Boolean).join(", ");
         const columnComment = column.comment?.trim();
-        lines.push(
-          `  - ${column.name}: ${column.data_type}${flags ? ` (${flags})` : ""}${columnComment ? ` -- ${columnComment}` : ""}`,
-        );
+        lines.push(`  - ${column.name}: ${column.data_type}${flags ? ` (${flags})` : ""}${columnComment ? ` -- ${columnComment}` : ""}`);
       }
 
       if (table.indexes?.length) {
@@ -4563,10 +3874,7 @@ export async function buildAiContext(
     schemaScope = "focused_table";
     const s = tab.tableMeta.schema ?? "";
     const tName = tab.tableMeta.tableName;
-    const [indexes, foreignKeys] = await Promise.all([
-      api.listIndexes(tab.connectionId, tab.database, s, tName).catch(() => [] as IndexInfo[]),
-      api.listForeignKeys(tab.connectionId, tab.database, s, tName).catch(() => [] as ForeignKeyInfo[]),
-    ]);
+    const [indexes, foreignKeys] = await Promise.all([api.listIndexes(tab.connectionId, tab.database, s, tName).catch(() => [] as IndexInfo[]), api.listForeignKeys(tab.connectionId, tab.database, s, tName).catch(() => [] as ForeignKeyInfo[])]);
     tables.push({
       schema: tab.tableMeta.schema,
       name: tName,
@@ -4588,12 +3896,7 @@ export async function buildAiContext(
     tables.push(entry);
   }
 
-  if (
-    (options.preloadCandidateSchema ?? true) &&
-    !tab.tableMeta &&
-    !tables.length &&
-    !["redis", "mongodb"].includes(connection.db_type)
-  ) {
+  if ((options.preloadCandidateSchema ?? true) && !tab.tableMeta && !tables.length && !["redis", "mongodb"].includes(connection.db_type)) {
     try {
       const schemas = await loadCandidateSchemas(tab, connection, preferredSchema);
       for (const schema of schemas) {
@@ -4606,9 +3909,7 @@ export async function buildAiContext(
             Promise.all([
               api.getColumns(tab.connectionId, tab.database, schema, table.name),
               api.listIndexes(tab.connectionId, tab.database, schema, table.name).catch(() => [] as IndexInfo[]),
-              api
-                .listForeignKeys(tab.connectionId, tab.database, schema, table.name)
-                .catch(() => [] as ForeignKeyInfo[]),
+              api.listForeignKeys(tab.connectionId, tab.database, schema, table.name).catch(() => [] as ForeignKeyInfo[]),
             ]).then(([columns, indexes, foreignKeys]) => ({
               schema: schema === tab.database && !isSchemaAware(connection.db_type) ? undefined : schema,
               name: table.name,
@@ -4659,12 +3960,7 @@ function resolveCurrentSchemaForRag(tab: QueryTab, connection: ConnectionConfig)
   return undefined;
 }
 
-async function loadMentionedTableContext(
-  tab: QueryTab,
-  connection: ConnectionConfig,
-  mention: AiTableMention,
-  maxColumnsPerTable: number,
-): Promise<AiSchemaTable | undefined> {
+async function loadMentionedTableContext(tab: QueryTab, connection: ConnectionConfig, mention: AiTableMention, maxColumnsPerTable: number): Promise<AiSchemaTable | undefined> {
   const schema = await resolveMentionedTableSchema(tab, connection, mention);
   const [columns, indexes, foreignKeys] = await Promise.all([
     api.getColumns(tab.connectionId, tab.database, schema, mention.table),
@@ -4681,11 +3977,7 @@ async function loadMentionedTableContext(
   };
 }
 
-async function resolveMentionedTableSchema(
-  tab: QueryTab,
-  connection: ConnectionConfig,
-  mention: AiTableMention,
-): Promise<string> {
+async function resolveMentionedTableSchema(tab: QueryTab, connection: ConnectionConfig, mention: AiTableMention): Promise<string> {
   if (mention.schema) return mention.schema;
   if (tab.tableMeta?.tableName.toLowerCase() === mention.table.toLowerCase() && tab.tableMeta.schema) {
     return tab.tableMeta.schema;
@@ -4704,11 +3996,7 @@ function activeTabSchema(tab: QueryTab): string | undefined {
   return tab.tableMeta?.schema || tab.schema || tab.objectBrowser?.schema || tab.objectSource?.schema;
 }
 
-async function loadCandidateSchemas(
-  tab: QueryTab,
-  connection: ConnectionConfig,
-  preferredSchema?: string,
-): Promise<string[]> {
+async function loadCandidateSchemas(tab: QueryTab, connection: ConnectionConfig, preferredSchema?: string): Promise<string[]> {
   if (isSchemaAware(connection.db_type)) {
     const schemas = await api.listSchemas(tab.connectionId, tab.database);
     return prioritizeSchemas(schemas, preferredSchema);
@@ -4724,11 +4012,7 @@ export function validateSchemaResearchSessionResumeForTest(args: Record<string, 
   return validateSchemaResearchSessionResume(args);
 }
 
-export function buildSchemaResearchResumeUserPromptForTest(
-  context: AiContext,
-  args: Record<string, any>,
-  session: SchemaResearchSessionSnapshot,
-): string {
+export function buildSchemaResearchResumeUserPromptForTest(context: AiContext, args: Record<string, any>, session: SchemaResearchSessionSnapshot): string {
   return buildSchemaResearchResumeUserPrompt(
     {
       context,
@@ -4738,11 +4022,7 @@ export function buildSchemaResearchResumeUserPromptForTest(
   );
 }
 
-export function formatSchemaResearchSessionsForMainPromptForTest(
-  sessions: SchemaResearchSessionSnapshot[] | undefined,
-  isZh: boolean,
-  nowMs = Date.now(),
-): string {
+export function formatSchemaResearchSessionsForMainPromptForTest(sessions: SchemaResearchSessionSnapshot[] | undefined, isZh: boolean, nowMs = Date.now()): string {
   return formatSchemaResearchSessionsForMainPrompt(sessions, isZh, nowMs);
 }
 

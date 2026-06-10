@@ -8,15 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { copyToClipboard } from "@/lib/clipboard";
-import {
-  checkMcpServerStatus,
-  loadMcpHttpConfig,
-  loadMcpHttpStatus,
-  saveMcpHttpConfig,
-  type McpHttpConfig,
-  type McpHttpStatus,
-  type McpServerStatus,
-} from "@/lib/api";
+import { checkMcpServerStatus, loadMcpHttpConfig, loadMcpHttpStatus, saveMcpHttpConfig, type McpHttpConfig, type McpHttpStatus, type McpServerStatus } from "@/lib/api";
 
 const mcpStatus = ref<McpServerStatus | null>(null);
 const mcpHttpStatus = ref<McpHttpStatus | null>(null);
@@ -89,9 +81,7 @@ const httpStatusLabel = computed(() => {
   return mcpHttpStatus.value.enabled ? "Listening" : "Disabled";
 });
 
-const configuredEndpoint = computed(
-  () => `http://${mcpHttpConfig.value.host || "127.0.0.1"}:${mcpHttpConfig.value.port || 7424}/mcp`,
-);
+const configuredEndpoint = computed(() => `http://${mcpHttpConfig.value.host || "127.0.0.1"}:${mcpHttpConfig.value.port || 7424}/mcp`);
 
 const mcpCommand = computed(() => {
   if (!mcpStatus.value) return "npm install -g @dbx-app/mcp-server@latest --registry=https://registry.npmjs.org";
@@ -203,13 +193,7 @@ async function copyText(kind: CopyKind, value: string) {
 
       <div class="space-y-1.5">
         <Label for="mcp-http-token" class="text-xs">Bearer token</Label>
-        <Input
-          id="mcp-http-token"
-          v-model="mcpHttpConfig.token"
-          type="password"
-          class="h-8 text-xs"
-          autocomplete="off"
-        />
+        <Input id="mcp-http-token" v-model="mcpHttpConfig.token" type="password" class="h-8 text-xs" autocomplete="off" />
       </div>
 
       <div class="flex items-center gap-3">
@@ -217,11 +201,7 @@ async function copyText(kind: CopyKind, value: string) {
           <Loader2 v-if="savingConfig" class="mr-1 h-3 w-3 animate-spin" />
           Save HTTP config
         </Button>
-        <span
-          v-if="configMessage"
-          class="truncate text-xs"
-          :class="configError ? 'text-destructive' : 'text-green-500'"
-        >
+        <span v-if="configMessage" class="truncate text-xs" :class="configError ? 'text-destructive' : 'text-green-500'">
           {{ configMessage }}
         </span>
       </div>
@@ -234,13 +214,7 @@ async function copyText(kind: CopyKind, value: string) {
           <div class="min-w-0 flex-1 truncate font-mono text-sm">
             {{ mcpHttpStatus?.endpoint || configuredEndpoint }}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            class="h-7 w-7"
-            @click="copyText('http-endpoint', mcpHttpStatus?.endpoint || configuredEndpoint)"
-          >
+          <Button type="button" variant="outline" size="icon" class="h-7 w-7" @click="copyText('http-endpoint', mcpHttpStatus?.endpoint || configuredEndpoint)">
             <CheckCircle2 v-if="copied === 'http-endpoint'" class="h-3.5 w-3.5 text-green-500" />
             <Copy v-else class="h-3.5 w-3.5" />
           </Button>
@@ -252,14 +226,7 @@ async function copyText(kind: CopyKind, value: string) {
           <div class="min-w-0 flex-1 truncate font-mono text-sm">
             {{ mcpHttpStatus?.token ? "********" : "Not available until server starts" }}
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            class="h-7 w-7"
-            :disabled="!mcpHttpStatus?.token"
-            @click="copyText('http-token', mcpHttpStatus?.token || '')"
-          >
+          <Button type="button" variant="outline" size="icon" class="h-7 w-7" :disabled="!mcpHttpStatus?.token" @click="copyText('http-token', mcpHttpStatus?.token || '')">
             <CheckCircle2 v-if="copied === 'http-token'" class="h-3.5 w-3.5 text-green-500" />
             <Copy v-else class="h-3.5 w-3.5" />
           </Button>
@@ -274,21 +241,9 @@ async function copyText(kind: CopyKind, value: string) {
             <PackageSearch class="h-4 w-4 text-muted-foreground" />
             <Label class="text-base">DBX MCP Server package</Label>
           </div>
-          <p class="text-xs text-muted-foreground">
-            Global npm package status for Claude Code, Codex, and other agents.
-          </p>
+          <p class="text-xs text-muted-foreground">Global npm package status for Claude Code, Codex, and other agents.</p>
         </div>
-        <Badge
-          variant="outline"
-          class="shrink-0 rounded-md"
-          :class="
-            statusTone === 'ok'
-              ? 'border-green-500/40 text-green-600 dark:text-green-400'
-              : statusTone === 'warning'
-                ? 'border-amber-500/40 text-amber-600 dark:text-amber-400'
-                : 'text-muted-foreground'
-          "
-        >
+        <Badge variant="outline" class="shrink-0 rounded-md" :class="statusTone === 'ok' ? 'border-green-500/40 text-green-600 dark:text-green-400' : statusTone === 'warning' ? 'border-amber-500/40 text-amber-600 dark:text-amber-400' : 'text-muted-foreground'">
           <Loader2 v-if="loading" class="mr-1 h-3 w-3 animate-spin" />
           <CheckCircle2 v-else-if="statusTone === 'ok'" class="mr-1 h-3 w-3" />
           <AlertTriangle v-else-if="statusTone === 'warning'" class="mr-1 h-3 w-3" />
@@ -315,9 +270,7 @@ async function copyText(kind: CopyKind, value: string) {
     <div class="space-y-2">
       <Label>{{ mcpStatus?.installed ? "Upgrade command" : "Install command" }}</Label>
       <div class="flex min-w-0 items-center gap-2">
-        <div
-          class="min-w-0 flex-1 overflow-x-auto rounded-md border bg-background px-3 py-2 font-mono text-xs whitespace-nowrap"
-        >
+        <div class="min-w-0 flex-1 overflow-x-auto rounded-md border bg-background px-3 py-2 font-mono text-xs whitespace-nowrap">
           {{ mcpCommand }}
         </div>
         <Button type="button" variant="outline" size="icon" @click="copyText('install', mcpCommand)">
@@ -352,16 +305,8 @@ async function copyText(kind: CopyKind, value: string) {
         </TabsList>
         <TabsContent value="claude" class="m-0">
           <div class="relative rounded-md border bg-background p-3">
-            <pre
-              class="overflow-x-auto whitespace-pre text-xs leading-relaxed"
-            ><code>{{ claudeRecommendedConfig }}</code></pre>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              class="absolute right-2 top-2 h-7 w-7"
-              @click="copyText('claude-config', claudeRecommendedConfig)"
-            >
+            <pre class="overflow-x-auto whitespace-pre text-xs leading-relaxed"><code>{{ claudeRecommendedConfig }}</code></pre>
+            <Button type="button" variant="outline" size="icon" class="absolute right-2 top-2 h-7 w-7" @click="copyText('claude-config', claudeRecommendedConfig)">
               <CheckCircle2 v-if="copied === 'claude-config'" class="h-3.5 w-3.5 text-green-500" />
               <Copy v-else class="h-3.5 w-3.5" />
             </Button>
@@ -369,16 +314,8 @@ async function copyText(kind: CopyKind, value: string) {
         </TabsContent>
         <TabsContent value="codex" class="m-0">
           <div class="relative rounded-md border bg-background p-3">
-            <pre
-              class="overflow-x-auto whitespace-pre text-xs leading-relaxed"
-            ><code>{{ codexRecommendedConfig }}</code></pre>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              class="absolute right-2 top-2 h-7 w-7"
-              @click="copyText('codex-config', codexRecommendedConfig)"
-            >
+            <pre class="overflow-x-auto whitespace-pre text-xs leading-relaxed"><code>{{ codexRecommendedConfig }}</code></pre>
+            <Button type="button" variant="outline" size="icon" class="absolute right-2 top-2 h-7 w-7" @click="copyText('codex-config', codexRecommendedConfig)">
               <CheckCircle2 v-if="copied === 'codex-config'" class="h-3.5 w-3.5 text-green-500" />
               <Copy v-else class="h-3.5 w-3.5" />
             </Button>
@@ -387,10 +324,7 @@ async function copyText(kind: CopyKind, value: string) {
       </Tabs>
     </div>
 
-    <div
-      v-if="mcpStatus?.error || statusError"
-      class="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
-    >
+    <div v-if="mcpStatus?.error || statusError" class="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
       {{ statusError || mcpStatus?.error }}
     </div>
 

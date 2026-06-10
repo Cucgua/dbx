@@ -1,18 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import {
-  AlertTriangle,
-  Bot,
-  Check,
-  ChevronRight,
-  Loader2,
-  MessageSquarePlus,
-  ShieldCheck,
-  Square,
-  Wand2,
-  Wrench,
-} from "@lucide/vue";
+import { AlertTriangle, Bot, Check, ChevronRight, Loader2, MessageSquarePlus, ShieldCheck, Square, Wand2, Wrench } from "@lucide/vue";
 import { buildAiThoughtNodeChildPresentation } from "@/lib/aiThoughtNodePresentation";
 import type { AiThoughtNodeState, AiWorkflowNodeKind, AiWorkflowNodeStatus } from "@/lib/aiWorkflowEvents";
 
@@ -38,23 +27,14 @@ const statusTone = computed(() => statusClass(props.node.status));
 const nodeSummary = computed(() => props.node.summary || props.node.description || props.node.content.trim());
 const contentExpanded = ref(false);
 const compactContent = computed(() => compactThoughtContent(props.node.content, contentExpanded.value));
-const childPresentation = computed(() =>
-  buildAiThoughtNodeChildPresentation(props.node.children, toolChildrenExpanded.value),
-);
+const childPresentation = computed(() => buildAiThoughtNodeChildPresentation(props.node.children, toolChildrenExpanded.value));
 const showArgumentsToggle = computed(() => (props.node.toolArguments || "").length > 240);
 const visibleToolArguments = computed(() => {
   const value = props.node.toolArguments || "";
   if (!showArgumentsToggle.value || argumentsExpanded.value) return value;
   return `${value.slice(0, 240)}...`;
 });
-const hasBody = computed(
-  () =>
-    !!props.node.description ||
-    !!props.node.content ||
-    !!props.node.toolArguments ||
-    !!props.node.summary ||
-    !!props.node.children.length,
-);
+const hasBody = computed(() => !!props.node.description || !!props.node.content || !!props.node.toolArguments || !!props.node.summary || !!props.node.children.length);
 const shouldShowInlineSummary = computed(() => !expanded.value && !!nodeSummary.value);
 
 watch(
@@ -125,10 +105,7 @@ function toolChildrenSummaryText(): string {
 <template>
   <div class="relative pl-5 text-muted-foreground">
     <div class="absolute left-[7px] top-6 bottom-0 w-px bg-border/70" :class="{ hidden: !node.children.length }" />
-    <div
-      class="absolute left-0 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border bg-background"
-      :class="statusTone"
-    >
+    <div class="absolute left-0 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border bg-background" :class="statusTone">
       <Loader2 v-if="node.status === 'loading'" class="h-2.5 w-2.5 animate-spin" />
       <Check v-else-if="node.status === 'success'" class="h-2.5 w-2.5" />
       <AlertTriangle v-else-if="node.status === 'error'" class="h-2.5 w-2.5" />
@@ -136,15 +113,8 @@ function toolChildrenSummaryText(): string {
       <component :is="kindIcon" v-else class="h-2.5 w-2.5" />
     </div>
 
-    <button
-      class="flex w-full min-w-0 items-start gap-1.5 text-left text-[11px] leading-5 transition-colors hover:text-foreground"
-      :disabled="!hasBody"
-      @click="toggleExpanded"
-    >
-      <ChevronRight
-        class="mt-1 h-3 w-3 shrink-0 transition-transform duration-200"
-        :class="{ 'rotate-90': expanded, 'opacity-0': !hasBody }"
-      />
+    <button class="flex w-full min-w-0 items-start gap-1.5 text-left text-[11px] leading-5 transition-colors hover:text-foreground" :disabled="!hasBody" @click="toggleExpanded">
+      <ChevronRight class="mt-1 h-3 w-3 shrink-0 transition-transform duration-200" :class="{ 'rotate-90': expanded, 'opacity-0': !hasBody }" />
       <div class="min-w-0 flex-1">
         <div class="flex min-w-0 items-center gap-1.5">
           <span class="truncate font-medium text-foreground/80">{{ node.title }}</span>
@@ -156,10 +126,7 @@ function toolChildrenSummaryText(): string {
       </div>
     </button>
 
-    <div
-      class="overflow-hidden transition-all duration-200 ease-in-out"
-      :style="{ maxHeight: expanded ? '16000px' : '0px', opacity: expanded ? '1' : '0' }"
-    >
+    <div class="overflow-hidden transition-all duration-200 ease-in-out" :style="{ maxHeight: expanded ? '16000px' : '0px', opacity: expanded ? '1' : '0' }">
       <div v-if="node.description" class="mt-1 whitespace-pre-wrap pl-4 text-[10px] leading-4 opacity-80">
         {{ node.description }}
       </div>
@@ -168,22 +135,14 @@ function toolChildrenSummaryText(): string {
           {{ t("ai.thoughtEarlierHidden") }}
         </div>
         <div class="whitespace-pre-wrap">{{ compactContent.text }}</div>
-        <button
-          v-if="compactContent.truncated || contentExpanded"
-          class="mt-1 text-[10px] text-primary hover:underline"
-          @click.stop="contentExpanded = !contentExpanded"
-        >
+        <button v-if="compactContent.truncated || contentExpanded" class="mt-1 text-[10px] text-primary hover:underline" @click.stop="contentExpanded = !contentExpanded">
           {{ contentExpanded ? t("ai.thoughtShowRecent") : t("ai.thoughtShowAll") }}
         </button>
       </div>
       <div v-if="node.toolArguments" class="mt-1 pl-4">
         <div class="text-[10px] font-medium text-foreground/65">{{ t("ai.thoughtToolArguments") }}</div>
         <div class="break-words font-mono text-[10px] opacity-80">{{ visibleToolArguments }}</div>
-        <button
-          v-if="showArgumentsToggle"
-          class="mt-1 text-[10px] text-primary hover:underline"
-          @click.stop="argumentsExpanded = !argumentsExpanded"
-        >
+        <button v-if="showArgumentsToggle" class="mt-1 text-[10px] text-primary hover:underline" @click.stop="argumentsExpanded = !argumentsExpanded">
           {{ argumentsExpanded ? t("ai.thoughtCollapse") : t("ai.thoughtExpand") }}
         </button>
       </div>
@@ -198,18 +157,10 @@ function toolChildrenSummaryText(): string {
           :aria-expanded="toolChildrenExpanded"
           @click.stop="toolChildrenExpanded = !toolChildrenExpanded"
         >
-          <ChevronRight
-            class="h-3 w-3 shrink-0 opacity-70 transition-transform duration-200"
-            :class="{ 'rotate-90': toolChildrenExpanded }"
-          />
+          <ChevronRight class="h-3 w-3 shrink-0 opacity-70 transition-transform duration-200" :class="{ 'rotate-90': toolChildrenExpanded }" />
           <span class="min-w-0 flex-1 truncate">{{ toolChildrenSummaryText() }}</span>
         </button>
-        <AiThoughtNode
-          v-for="child in childPresentation.visibleChildren"
-          :key="child.id"
-          :node="child"
-          :depth="depth + 1"
-        />
+        <AiThoughtNode v-for="child in childPresentation.visibleChildren" :key="child.id" :node="child" :depth="depth + 1" />
       </div>
     </div>
   </div>

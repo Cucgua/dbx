@@ -930,13 +930,11 @@
     proxy: "Proxy",
     proxyEnable: "Enviar requisições de AI através do proxy",
     proxyUrl: "URL do Proxy",
-    settingsHint:
-      "A configuração é armazenada no diretório local de dados do aplicativo. As requisições são enviadas pelo backend do Tauri em vez de diretamente pelo frontend.",
+    settingsHint: "A configuração é armazenada no diretório local de dados do aplicativo. As requisições são enviadas pelo backend do Tauri em vez de diretamente pelo frontend.",
     includeWorkspaceContext: "Contexto do editor",
     includeWorkspaceContextOn: "Incluído",
     includeWorkspaceContextOff: "Não incluído",
-    includeWorkspaceContextHint:
-      "Quando desativado, o SQL atual, o último erro e a prévia do resultado não são enviados para a AI.",
+    includeWorkspaceContextHint: "Quando desativado, o SQL atual, o último erro e a prévia do resultado não são enviados para a AI.",
     tableChoiceTitle: "Confirmar tabela",
     columnChoiceTitle: "Confirmar colunas",
     relationConfirmTitle: "Confirmar relação",

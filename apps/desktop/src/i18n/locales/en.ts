@@ -940,8 +940,7 @@
       ragChecking: "Checking whether the active schema has a RAG index",
       ragUnavailableNoSchema: "No active schema is available for RAG",
       ragUnavailableNoIndex: "The active schema has no RAG analysis, so RAG cannot be selected",
-      ragUnavailableUnsupportedAiConfig:
-        "The current AI config does not support function calls. Use a Chat Completions compatible model.",
+      ragUnavailableUnsupportedAiConfig: "The current AI config does not support function calls. Use a Chat Completions compatible model.",
     },
     fixWithAi: "Fix with AI",
     truncated: "Context truncated",
@@ -970,8 +969,7 @@
     proxy: "Proxy",
     proxyEnable: "Send AI requests through proxy",
     proxyUrl: "Proxy URL",
-    settingsHint:
-      "The config is stored in the local app data directory. Requests are sent by the Tauri backend instead of directly from the frontend.",
+    settingsHint: "The config is stored in the local app data directory. Requests are sent by the Tauri backend instead of directly from the frontend.",
     includeWorkspaceContext: "Editor context",
     includeWorkspaceContextOn: "Included",
     includeWorkspaceContextOff: "Not included",
@@ -993,8 +991,7 @@
     enableThinking: "Thinking",
     enableThinkingOn: "Enabled",
     enableThinkingOff: "Disabled",
-    enableThinkingHint:
-      "This option only takes effect on /chat/completions APIs and supported models. When disabled, it can significantly reduce token usage, but the quality of generated results may decrease slightly.",
+    enableThinkingHint: "This option only takes effect on /chat/completions APIs and supported models. When disabled, it can significantly reduce token usage, but the quality of generated results may decrease slightly.",
     toolCall: "Tool",
     toolRunning: "Running",
     toolSucceeded: "Done",
@@ -1014,8 +1011,7 @@
     thoughtShowAll: "Show all",
     thoughtShowRecent: "Show recent",
     schemaResearchTitle: "SQL Assistant Subagent",
-    schemaResearchHint:
-      "Uses schema tools during RAG chats and returns compact evidence. Reuse the main assistant model or configure an independent model to reduce context cost.",
+    schemaResearchHint: "Uses schema tools during RAG chats and returns compact evidence. Reuse the main assistant model or configure an independent model to reduce context cost.",
     schemaResearchEnabled: "Enabled",
     schemaResearchEnabledOn: "Enabled",
     schemaResearchEnabledOff: "Disabled",
@@ -1024,8 +1020,7 @@
     schemaResearchProxyEnable: "Send SQL assistant requests through proxy",
     schemaResearchMaxToolRounds: "Max tool rounds",
     schemaResearchMaxOutputTokens: "Max output tokens",
-    schemaResearchNotice:
-      "The SQL assistant receives the user request, current SQL, schema metadata, and compact tool summaries. Table data is never sent. This model must support /chat/completions function calling.",
+    schemaResearchNotice: "The SQL assistant receives the user request, current SQL, schema metadata, and compact tool summaries. Table data is never sent. This model must support /chat/completions function calling.",
     actions: {
       generate: "Generate SQL",
       explain: "Explain SQL",
@@ -1203,11 +1198,9 @@
     schemaRagRefreshTable: "Refresh Current Table Smart Index",
     schemaRagImportApiDocs: "Import API Docs",
     schemaRagDelete: "Delete Schema Smart Index",
-    schemaRagAnalyzeConfirm:
-      "This will send the current schema's table names, column names, types, comments, indexes, and foreign keys to your configured external embedding service. Table data will not be sent. Continue?",
+    schemaRagAnalyzeConfirm: "This will send the current schema's table names, column names, types, comments, indexes, and foreign keys to your configured external embedding service. Table data will not be sent. Continue?",
     schemaRagAnalyzeSuccess: "Schema smart index updated: {tables} tables, {columns} columns",
-    schemaRagRefreshTableConfirm:
-      "This will reload the current table's columns, indexes, and foreign keys, then send that metadata to your configured external embedding service. Table data will not be sent. Continue?",
+    schemaRagRefreshTableConfirm: "This will reload the current table's columns, indexes, and foreign keys, then send that metadata to your configured external embedding service. Table data will not be sent. Continue?",
     schemaRagRefreshTableSuccess: "Current table smart index refreshed: rebuilt {documents} documents",
     schemaRagOperationFailed: "Schema smart index operation failed: {message}",
     schemaRagDeleteConfirm: 'Delete the smart index for schema "{name}"?',
@@ -1215,19 +1208,15 @@
     schemaRagNoIndex: "Current schema has not been analyzed",
     schemaRagApiDocMarkdownFilter: "Markdown API Docs",
     schemaRagApiDocFutureFilter: "Word / PDF (currently unsupported)",
-    schemaRagApiDocsImportSuccess:
-      "API docs imported: {sources} sources, {chunks} chunks, {unsupported} unsupported files",
+    schemaRagApiDocsImportSuccess: "API docs imported: {sources} sources, {chunks} chunks, {unsupported} unsupported files",
     schemaRagApiDocProgressImporting: "Submitting to sidecar for validation, embedding, and graph write",
     schemaRagApiDocProgressRefreshing: "Refreshing Schema RAG status",
     schemaRagProgress: "Analyzing {done}/{total}: {table}",
     schemaRagProgressScan: "Scanning table metadata {done}/{total}: {table}",
     schemaRagProgressBuildDocuments: "Building table and column embedding documents",
-    schemaRagProgressEmbeddingQueued:
-      "Built {total} embedding documents in {batches} batches with concurrency {concurrency}",
-    schemaRagProgressEmbeddingRequest:
-      "Sending embedding batch {batch}/{batches}; completed {done}/{total}; batch size {size}; concurrency {concurrency}; in flight {inFlight}",
-    schemaRagProgressEmbeddingDone:
-      "Embedding batch {batch}/{batches} returned; completed {done}/{total}; in flight {inFlight}",
+    schemaRagProgressEmbeddingQueued: "Built {total} embedding documents in {batches} batches with concurrency {concurrency}",
+    schemaRagProgressEmbeddingRequest: "Sending embedding batch {batch}/{batches}; completed {done}/{total}; batch size {size}; concurrency {concurrency}; in flight {inFlight}",
+    schemaRagProgressEmbeddingDone: "Embedding batch {batch}/{batches} returned; completed {done}/{total}; in flight {inFlight}",
     schemaRagProgressEmbeddingFailed: "Embedding batch {batch}/{batches} failed",
     schemaRagProgressWrite: "Writing schema smart index files",
     schemaRagProgressFinished: "Schema smart index written",

@@ -142,19 +142,11 @@ export function isSqlAiCodeLanguage(lang: string): boolean {
 
 export function shouldRenderAssistantMessage(message: AiChatPresentationMessage): boolean {
   if (message.role !== "assistant") return false;
-  return (
-    !!message.content ||
-    !!message.thoughtNodes?.length ||
-    !!message.timeline?.length ||
-    !!message.reasoning ||
-    !!message.toolTraces?.length
-  );
+  return !!message.content || !!message.thoughtNodes?.length || !!message.timeline?.length || !!message.reasoning || !!message.toolTraces?.length;
 }
 
 export function shouldShowLegacyAssistantProgress(message: AiChatPresentationMessage): boolean {
-  return (
-    !message.thoughtNodes?.length && (!!message.timeline?.length || !!message.reasoning || !!message.toolTraces?.length)
-  );
+  return !message.thoughtNodes?.length && (!!message.timeline?.length || !!message.reasoning || !!message.toolTraces?.length);
 }
 
 function escapeHtml(value: string): string {

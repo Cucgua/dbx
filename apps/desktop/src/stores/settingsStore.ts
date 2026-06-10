@@ -164,8 +164,7 @@ const defaultConfigs: Record<AiProvider, Omit<AiConfig, "apiKey">> = Object.from
 ) as Record<AiProvider, Omit<AiConfig, "apiKey">>;
 
 export function normalizeAiConfig(config: Partial<AiConfig> | null | undefined): AiConfig {
-  const provider =
-    config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : inferAiProviderFromConfig(config);
+  const provider = config?.provider && config.provider in AI_PROVIDER_PRESETS ? config.provider : inferAiProviderFromConfig(config);
   const baseConfig = {
     ...defaultConfigs[provider],
     apiKey: config?.apiKey ?? "",
@@ -183,16 +182,10 @@ export function normalizeAiConfig(config: Partial<AiConfig> | null | undefined):
   };
 }
 
-export function normalizeSchemaResearchModelConfig(
-  config: Partial<SchemaResearchModelConfig> | null | undefined,
-  mainConfig: Pick<AiConfig, "provider" | "apiKey" | "endpoint" | "model" | "apiStyle" | "proxyEnabled" | "proxyUrl">,
-): SchemaResearchModelConfig {
+export function normalizeSchemaResearchModelConfig(config: Partial<SchemaResearchModelConfig> | null | undefined, mainConfig: Pick<AiConfig, "provider" | "apiKey" | "endpoint" | "model" | "apiStyle" | "proxyEnabled" | "proxyUrl">): SchemaResearchModelConfig {
   const useMainModel = config?.useMainModel ?? true;
   const source = useMainModel ? mainConfig : config;
-  const provider =
-    useMainModel || !config?.provider || !(config.provider in AI_PROVIDER_PRESETS)
-      ? mainConfig.provider
-      : config.provider;
+  const provider = useMainModel || !config?.provider || !(config.provider in AI_PROVIDER_PRESETS) ? mainConfig.provider : config.provider;
   const defaults = defaultConfigs[provider];
   return {
     enabled: config?.enabled ?? true,

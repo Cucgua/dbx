@@ -306,20 +306,11 @@ export const DEFAULT_SCHEMA_RAG_CONFIG: SchemaRagConfig = {
   proxyUrl: "",
 };
 
-export function findSchemaRagTableUnit(
-  manifest: SchemaRagManifest | null | undefined,
-  target: { schema?: string | null; table?: string | null },
-): SchemaRagTableIndexUnit | null {
+export function findSchemaRagTableUnit(manifest: SchemaRagManifest | null | undefined, target: { schema?: string | null; table?: string | null }): SchemaRagTableIndexUnit | null {
   const schema = target.schema?.trim();
   const table = target.table?.trim();
   if (!schema || !table) return null;
-  return (
-    manifest?.tableUnits?.find(
-      (unit) =>
-        unit.schema.trim().toLowerCase() === schema.toLowerCase() &&
-        unit.table.trim().toLowerCase() === table.toLowerCase(),
-    ) || null
-  );
+  return manifest?.tableUnits?.find((unit) => unit.schema.trim().toLowerCase() === schema.toLowerCase() && unit.table.trim().toLowerCase() === table.toLowerCase()) || null;
 }
 
 type RawSchemaRagConfig = Partial<SchemaRagConfig> & {
@@ -338,57 +329,21 @@ type RawSchemaRagConfig = Partial<SchemaRagConfig> & {
   proxy_url?: unknown;
 };
 
-export function normalizeSchemaRagConfig(
-  config: RawSchemaRagConfig | null | undefined,
-  previousConfig?: Pick<SchemaRagConfig, "embeddingApiKey" | "rerankApiKey"> | null,
-): SchemaRagConfig {
+export function normalizeSchemaRagConfig(config: RawSchemaRagConfig | null | undefined, previousConfig?: Pick<SchemaRagConfig, "embeddingApiKey" | "rerankApiKey"> | null): SchemaRagConfig {
   const value = config || {};
   return {
     ...DEFAULT_SCHEMA_RAG_CONFIG,
-    embeddingProvider: nonEmptyStringValue(
-      value.embeddingProvider,
-      value.embedding_provider,
-      DEFAULT_SCHEMA_RAG_CONFIG.embeddingProvider,
-    ),
-    embeddingEndpoint: stringValue(
-      value.embeddingEndpoint,
-      value.embedding_endpoint,
-      DEFAULT_SCHEMA_RAG_CONFIG.embeddingEndpoint,
-    ),
+    embeddingProvider: nonEmptyStringValue(value.embeddingProvider, value.embedding_provider, DEFAULT_SCHEMA_RAG_CONFIG.embeddingProvider),
+    embeddingEndpoint: stringValue(value.embeddingEndpoint, value.embedding_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.embeddingEndpoint),
     embeddingModel: stringValue(value.embeddingModel, value.embedding_model, DEFAULT_SCHEMA_RAG_CONFIG.embeddingModel),
-    embeddingApiKey: normalizeSchemaRagApiKey(
-      stringValue(value.embeddingApiKey, value.embedding_api_key, DEFAULT_SCHEMA_RAG_CONFIG.embeddingApiKey),
-      stringValue(value.embeddingEndpoint, value.embedding_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.embeddingEndpoint),
-      previousConfig?.embeddingApiKey || "",
-    ),
-    embeddingDimension: positiveInt(
-      firstDefined(value.embeddingDimension, value.embedding_dimension),
-      DEFAULT_SCHEMA_RAG_CONFIG.embeddingDimension,
-    ),
-    embeddingBatchSize: positiveInt(
-      firstDefined(value.embeddingBatchSize, value.embedding_batch_size),
-      DEFAULT_SCHEMA_RAG_CONFIG.embeddingBatchSize,
-    ),
-    embeddingConcurrency: clampInt(
-      finiteInt(
-        firstDefined(value.embeddingConcurrency, value.embedding_concurrency),
-        DEFAULT_SCHEMA_RAG_CONFIG.embeddingConcurrency,
-      ),
-      1,
-      16,
-    ),
-    rerankProvider: nonEmptyStringValue(
-      value.rerankProvider,
-      value.rerank_provider,
-      DEFAULT_SCHEMA_RAG_CONFIG.rerankProvider,
-    ),
+    embeddingApiKey: normalizeSchemaRagApiKey(stringValue(value.embeddingApiKey, value.embedding_api_key, DEFAULT_SCHEMA_RAG_CONFIG.embeddingApiKey), stringValue(value.embeddingEndpoint, value.embedding_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.embeddingEndpoint), previousConfig?.embeddingApiKey || ""),
+    embeddingDimension: positiveInt(firstDefined(value.embeddingDimension, value.embedding_dimension), DEFAULT_SCHEMA_RAG_CONFIG.embeddingDimension),
+    embeddingBatchSize: positiveInt(firstDefined(value.embeddingBatchSize, value.embedding_batch_size), DEFAULT_SCHEMA_RAG_CONFIG.embeddingBatchSize),
+    embeddingConcurrency: clampInt(finiteInt(firstDefined(value.embeddingConcurrency, value.embedding_concurrency), DEFAULT_SCHEMA_RAG_CONFIG.embeddingConcurrency), 1, 16),
+    rerankProvider: nonEmptyStringValue(value.rerankProvider, value.rerank_provider, DEFAULT_SCHEMA_RAG_CONFIG.rerankProvider),
     rerankEndpoint: stringValue(value.rerankEndpoint, value.rerank_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.rerankEndpoint),
     rerankModel: stringValue(value.rerankModel, value.rerank_model, DEFAULT_SCHEMA_RAG_CONFIG.rerankModel),
-    rerankApiKey: normalizeSchemaRagApiKey(
-      stringValue(value.rerankApiKey, value.rerank_api_key, DEFAULT_SCHEMA_RAG_CONFIG.rerankApiKey),
-      stringValue(value.rerankEndpoint, value.rerank_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.rerankEndpoint),
-      previousConfig?.rerankApiKey || "",
-    ),
+    rerankApiKey: normalizeSchemaRagApiKey(stringValue(value.rerankApiKey, value.rerank_api_key, DEFAULT_SCHEMA_RAG_CONFIG.rerankApiKey), stringValue(value.rerankEndpoint, value.rerank_endpoint, DEFAULT_SCHEMA_RAG_CONFIG.rerankEndpoint), previousConfig?.rerankApiKey || ""),
     proxyEnabled: !!firstDefined(value.proxyEnabled, value.proxy_enabled),
     proxyUrl: stringValue(value.proxyUrl, value.proxy_url, DEFAULT_SCHEMA_RAG_CONFIG.proxyUrl),
   };
@@ -408,10 +363,7 @@ export function normalizeSchemaRagApiKey(value: string, endpoint: string, previo
   return value;
 }
 
-export function filterRagColumnsAgainstRealtime(
-  matchedColumns: SchemaRagMatchedColumn[],
-  realtimeColumns: ColumnInfo[],
-): SchemaRagMatchedColumn[] {
+export function filterRagColumnsAgainstRealtime(matchedColumns: SchemaRagMatchedColumn[], realtimeColumns: ColumnInfo[]): SchemaRagMatchedColumn[] {
   const realtime = new Set(realtimeColumns.map((column) => column.name.toLowerCase()));
   return matchedColumns.filter((column) => realtime.has(column.name.toLowerCase()));
 }
@@ -423,16 +375,10 @@ export function formatSchemaRagContext(result: SchemaRagSearchResult | undefined
     const tableName = table.schema ? `${table.schema}.${table.name}` : table.name;
     lines.push(`- ${tableName}: score ${table.score.toFixed(2)}; ${table.reason}`);
     if (table.matchedColumns.length) {
-      lines.push(
-        `  matched columns: ${table.matchedColumns.map((column) => `${column.name} (${column.reason})`).join(", ")}`,
-      );
+      lines.push(`  matched columns: ${table.matchedColumns.map((column) => `${column.name} (${column.reason})`).join(", ")}`);
     }
     if (table.relatedTables.length) {
-      lines.push(
-        `  related tables: ${table.relatedTables
-          .map((related) => `${related.schema ? `${related.schema}.` : ""}${related.name} via ${related.relation}`)
-          .join(", ")}`,
-      );
+      lines.push(`  related tables: ${table.relatedTables.map((related) => `${related.schema ? `${related.schema}.` : ""}${related.name} via ${related.relation}`).join(", ")}`);
     }
   }
   if (result.truncated) lines.push("- Retrieval result was truncated.");

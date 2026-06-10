@@ -968,9 +968,7 @@ function schemaRagTableForNode(node = props.node): { schema: string; table: stri
   return { schema: node.schema || node.database || "main", table: node.label };
 }
 
-const selectedSchemaRagTableUnit = computed(() =>
-  findSchemaRagTableUnit(schemaRagStatus.value?.manifest, schemaRagStatusTable.value || {}),
-);
+const selectedSchemaRagTableUnit = computed(() => findSchemaRagTableUnit(schemaRagStatus.value?.manifest, schemaRagStatusTable.value || {}));
 
 function formatSchemaRagProgress(progress: any): string {
   switch (progress.stage) {
@@ -1041,11 +1039,7 @@ async function analyzeSchemaRag() {
   try {
     await connectionStore.ensureConnected(scope.connectionId);
     unlisten = await api.listenSchemaRagProgress((progress) => {
-      if (
-        progress.connectionId !== scope.connectionId ||
-        progress.database !== scope.database ||
-        progress.schema !== scope.schema
-      ) {
+      if (progress.connectionId !== scope.connectionId || progress.database !== scope.database || progress.schema !== scope.schema) {
         return;
       }
       schemaRagProgress.value = formatSchemaRagProgress(progress);
@@ -3318,11 +3312,7 @@ function treeItemMenuItems(): ContextMenuItem[] {
     <DialogContent class="sm:max-w-[480px]">
       <DialogHeader>
         <DialogTitle>
-          {{
-            schemaRagStatusTable
-              ? t("contextMenu.schemaRagTableStatusTitle", { name: schemaRagStatusTable.table })
-              : t("contextMenu.schemaRagStatusTitle", { name: node.label })
-          }}
+          {{ schemaRagStatusTable ? t("contextMenu.schemaRagTableStatusTitle", { name: schemaRagStatusTable.table }) : t("contextMenu.schemaRagStatusTitle", { name: node.label }) }}
         </DialogTitle>
       </DialogHeader>
       <div class="space-y-3 text-sm">
@@ -3333,18 +3323,10 @@ function treeItemMenuItems(): ContextMenuItem[] {
         <p v-else-if="schemaRagStatusError" class="text-destructive">{{ schemaRagStatusError }}</p>
         <div v-else-if="schemaRagStatus?.indexed && schemaRagStatus.manifest" class="space-y-2">
           <div v-if="schemaRagStatusTable" class="space-y-2">
-            <div
-              v-if="selectedSchemaRagTableUnit"
-              class="grid grid-cols-2 gap-2 rounded-md border bg-muted/20 p-3 text-xs"
-            >
+            <div v-if="selectedSchemaRagTableUnit" class="grid grid-cols-2 gap-2 rounded-md border bg-muted/20 p-3 text-xs">
               <div>
                 <div class="text-muted-foreground">{{ t("contextMenu.schemaRagTableName") }}</div>
-                <div
-                  class="truncate"
-                  :title="`${selectedSchemaRagTableUnit.schema}.${selectedSchemaRagTableUnit.table}`"
-                >
-                  {{ selectedSchemaRagTableUnit.schema }}.{{ selectedSchemaRagTableUnit.table }}
-                </div>
+                <div class="truncate" :title="`${selectedSchemaRagTableUnit.schema}.${selectedSchemaRagTableUnit.table}`">{{ selectedSchemaRagTableUnit.schema }}.{{ selectedSchemaRagTableUnit.table }}</div>
               </div>
               <div>
                 <div class="text-muted-foreground">{{ t("contextMenu.schemaRagTableUpdatedAt") }}</div>
