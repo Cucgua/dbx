@@ -1701,6 +1701,7 @@ export default {
     shortcutScopeSearch: "Campos de búsqueda",
     shortcutPressShortcut: "Presiona un atajo",
     shortcutConflict: "Este atajo entra en conflicto con otra acción del mismo ámbito.",
+    shortcutClear: "Borrar atajo",
     preview: "Vista previa en tiempo real",
     customTheme: "Tema personalizado",
     customThemeConfigure: "Configurar tema personalizado",

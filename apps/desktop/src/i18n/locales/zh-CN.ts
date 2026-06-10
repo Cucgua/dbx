@@ -1921,6 +1921,7 @@ export default {
     shortcutScopeSearch: "搜索框",
     shortcutPressShortcut: "按下快捷键",
     shortcutConflict: "这个快捷键与同一作用域内的其他操作冲突。",
+    shortcutClear: "清除快捷键",
     preview: "实时预览",
     customTheme: "自定义主题",
     customThemeConfigure: "自定义主题配置",

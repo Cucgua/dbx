@@ -1922,6 +1922,7 @@ export default {
     shortcutScopeSearch: "Search fields",
     shortcutPressShortcut: "Press shortcut",
     shortcutConflict: "This shortcut conflicts with another action in the same scope.",
+    shortcutClear: "Clear shortcut",
     preview: "Live Preview",
     customTheme: "Custom Theme",
     customThemeConfigure: "Configure Custom Theme",

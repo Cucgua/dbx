@@ -1821,6 +1821,7 @@ export default {
     shortcutScopeSearch: "Campos de pesquisa",
     shortcutPressShortcut: "Pressione o atalho",
     shortcutConflict: "Este atalho conflita com outra ação no mesmo escopo.",
+    shortcutClear: "Limpar atalho",
     preview: "Pré-visualização ao vivo",
     customTheme: "Tema personalizado",
     customThemeConfigure: "Configurar tema personalizado",

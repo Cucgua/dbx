@@ -1,4 +1,4 @@
-import { DEFAULT_SHORTCUT_SETTINGS, normalizeShortcutSettings, type ShortcutActionId, type ShortcutSettings } from "@/lib/shortcutRegistry";
+import { normalizeShortcutSettings, type ShortcutActionId, type ShortcutSettings } from "@/lib/shortcutRegistry";
 
 export interface ShortcutLikeEvent {
   key: string;
@@ -39,7 +39,7 @@ export function eventToShortcut(event: ShortcutLikeEvent): string | null {
 }
 
 export function matchesShortcut(event: ShortcutLikeEvent, shortcut: string): boolean {
-  if (event.isComposing) return false;
+  if (event.isComposing || !shortcut) return false;
   const parts = shortcut.split("+");
   const key = parts[parts.length - 1] ?? "";
   const modifiers = new Set(parts.slice(0, -1));
@@ -60,7 +60,7 @@ export function matchesShortcut(event: ShortcutLikeEvent, shortcut: string): boo
 }
 
 function actionShortcut(actionId: ShortcutActionId, shortcuts?: Partial<ShortcutSettings>): string {
-  return normalizeShortcutSettings(shortcuts)[actionId] || DEFAULT_SHORTCUT_SETTINGS[actionId];
+  return normalizeShortcutSettings(shortcuts)[actionId];
 }
 
 export function isExecuteSqlShortcut(event: ShortcutLikeEvent, shortcuts?: Partial<ShortcutSettings>): boolean {

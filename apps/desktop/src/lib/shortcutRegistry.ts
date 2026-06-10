@@ -143,7 +143,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
 export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = Object.fromEntries(SHORTCUT_DEFINITIONS.map((definition) => [definition.id, definition.defaultShortcut])) as ShortcutSettings;
 
 export function normalizeShortcutSettings(settings?: Partial<ShortcutSettings>): ShortcutSettings {
-  return Object.fromEntries(SHORTCUT_DEFINITIONS.map((definition) => [definition.id, typeof settings?.[definition.id] === "string" && settings[definition.id]?.trim() ? settings[definition.id] : definition.defaultShortcut])) as ShortcutSettings;
+  return Object.fromEntries(SHORTCUT_DEFINITIONS.map((definition) => [definition.id, typeof settings?.[definition.id] === "string" ? settings[definition.id] : definition.defaultShortcut])) as ShortcutSettings;
 }
 
 export function shortcutToCodeMirrorKey(shortcut: string): string {
@@ -166,6 +166,7 @@ export function formatShortcut(shortcut: string, platform = globalThis.navigator
 }
 
 export function findShortcutConflict(actionId: ShortcutActionId, shortcut: string, shortcuts: ShortcutSettings): ShortcutActionId | null {
+  if (!shortcut) return null;
   const definition = SHORTCUT_DEFINITIONS.find((item) => item.id === actionId);
   if (!definition) return null;
 

@@ -1821,6 +1821,7 @@ export default {
     shortcutScopeSearch: "Cerca campi",
     shortcutPressShortcut: "Premi scorciatoia",
     shortcutConflict: "Questa scorciatoia è in conflitto con un'altra azione nello stesso ambito.",
+    shortcutClear: "Cancella scorciatoia",
     preview: "Anteprima in tempo reale",
     customTheme: "Tema personalizzato",
     customThemeConfigure: "Configura tema personalizzato",

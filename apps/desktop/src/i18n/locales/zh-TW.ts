@@ -1793,6 +1793,7 @@ export default {
     shortcutScopeSearch: "搜尋框",
     shortcutPressShortcut: "按下快速鍵",
     shortcutConflict: "這個快速鍵與同一作用域內的其他操作衝突。",
+    shortcutClear: "清除快速鍵",
     preview: "即時預覽",
     customTheme: "自定義主題",
     customThemeConfigure: "自定義主題配置",

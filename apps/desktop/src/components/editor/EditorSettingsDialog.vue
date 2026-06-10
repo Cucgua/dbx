@@ -493,6 +493,7 @@ function onShortcutKeydown(actionId: ShortcutActionId, event: KeyboardEvent) {
 }
 
 function formatShortcutPill(shortcut: string): string {
+  if (!shortcut) return "—";
   const isMac = globalThis.navigator?.platform?.toLowerCase().includes("mac") ?? false;
   return shortcut
     .split("+")
@@ -537,6 +538,10 @@ function resetShortcut(actionId: ShortcutActionId) {
   const definition = SHORTCUT_DEFINITIONS.find((item) => item.id === actionId);
   if (!definition) return;
   editShortcuts.value = { ...editShortcuts.value, [actionId]: definition.defaultShortcut };
+}
+
+function clearShortcut(actionId: ShortcutActionId) {
+  editShortcuts.value = { ...editShortcuts.value, [actionId]: "" };
 }
 
 function setAppLayout(value: "separated" | "classic") {
@@ -1745,6 +1750,17 @@ watch(
                         @click="resetShortcut(definition.id)"
                       >
                         <RotateCcw class="h-4 w-4" />
+                      </Button>
+                      <Button
+                        v-if="editingShortcutId !== definition.id && editShortcuts[definition.id]"
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                        :aria-label="t('settings.shortcutClear')"
+                        @click="clearShortcut(definition.id)"
+                      >
+                        <X class="h-4 w-4" />
                       </Button>
                     </div>
                     <p v-if="shortcutConflicts.includes(definition.id)" class="text-xs text-destructive">
