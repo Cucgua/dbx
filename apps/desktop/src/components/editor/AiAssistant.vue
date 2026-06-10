@@ -170,6 +170,8 @@ interface PendingRelationConfirmation {
   resolve: (result: AiRelationToolResult) => void;
 }
 
+type RelationColumnSide = "left" | "right";
+
 interface PendingTableChoice {
   request: AiTableChoiceRequest;
   selectedKey: string;
@@ -729,6 +731,13 @@ function removeRelationPair(id: string) {
   const pending = pendingRelation.value;
   if (!pending || pending.pairs.length <= 1) return;
   pending.pairs = pending.pairs.filter((pair) => pair.id !== id);
+}
+
+function relationColumnLabel(side: RelationColumnSide, columnName: string): string {
+  const pending = pendingRelation.value;
+  if (!pending) return columnName;
+  const columns = side === "left" ? pending.request.left.columns : pending.request.right.columns;
+  return columns.find((column) => column.name === columnName)?.name || columnName;
 }
 
 function confirmPendingRelation() {
@@ -1772,36 +1781,54 @@ const messageRenderer = computed(() => {
             <div
               v-for="pair in pendingRelation.pairs"
               :key="pair.id"
-              class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-1.5"
+              class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden"
             >
               <Select v-model="pair.leftColumn">
-                <SelectTrigger class="h-7 min-w-0 text-xs">
-                  <SelectValue />
+                <SelectTrigger class="h-7 w-full min-w-0 text-xs">
+                  <SelectValue as-child>
+                    <span class="min-w-0 truncate font-mono" :title="pair.leftColumn">
+                      {{ relationColumnLabel("left", pair.leftColumn) }}
+                    </span>
+                  </SelectValue>
                 </SelectTrigger>
-                <SelectContent class="max-h-64">
+                <SelectContent class="max-h-64 max-w-80">
                   <SelectItem
                     v-for="column in pendingRelation.request.left.columns"
                     :key="column.name"
                     :value="column.name"
+                    class="max-w-full *:[span]:last:min-w-0 *:[span]:last:flex-1"
                   >
-                    <span class="font-mono">{{ column.name }}</span>
-                    <span class="ml-1 text-[10px] text-muted-foreground">{{ column.dataType }}</span>
+                    <span class="flex w-full min-w-0 flex-col items-start gap-0.5 leading-tight">
+                      <span class="max-w-full truncate font-mono" :title="column.name">{{ column.name }}</span>
+                      <span class="max-w-full truncate text-[10px] text-muted-foreground" :title="column.dataType">
+                        {{ column.dataType }}
+                      </span>
+                    </span>
                   </SelectItem>
                 </SelectContent>
               </Select>
               <span class="text-muted-foreground">=</span>
               <Select v-model="pair.rightColumn">
-                <SelectTrigger class="h-7 min-w-0 text-xs">
-                  <SelectValue />
+                <SelectTrigger class="h-7 w-full min-w-0 text-xs">
+                  <SelectValue as-child>
+                    <span class="min-w-0 truncate font-mono" :title="pair.rightColumn">
+                      {{ relationColumnLabel("right", pair.rightColumn) }}
+                    </span>
+                  </SelectValue>
                 </SelectTrigger>
-                <SelectContent class="max-h-64">
+                <SelectContent class="max-h-64 max-w-80">
                   <SelectItem
                     v-for="column in pendingRelation.request.right.columns"
                     :key="column.name"
                     :value="column.name"
+                    class="max-w-full *:[span]:last:min-w-0 *:[span]:last:flex-1"
                   >
-                    <span class="font-mono">{{ column.name }}</span>
-                    <span class="ml-1 text-[10px] text-muted-foreground">{{ column.dataType }}</span>
+                    <span class="flex w-full min-w-0 flex-col items-start gap-0.5 leading-tight">
+                      <span class="max-w-full truncate font-mono" :title="column.name">{{ column.name }}</span>
+                      <span class="max-w-full truncate text-[10px] text-muted-foreground" :title="column.dataType">
+                        {{ column.dataType }}
+                      </span>
+                    </span>
                   </SelectItem>
                 </SelectContent>
               </Select>

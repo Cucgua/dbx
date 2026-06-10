@@ -1,8 +1,9 @@
 pub const QUERY_ROW_LIMIT: usize = 100;
 
 use dbx_core::models::connection::{
-    default_connect_timeout_secs, default_query_timeout_secs, default_ssh_connect_timeout_secs, ConnectionConfig,
-    DatabaseType, ProxyTunnelConfig, ProxyType, SshTunnelConfig, TransportLayerConfig,
+    default_connect_timeout_secs, default_idle_timeout_secs, default_query_timeout_secs,
+    default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, ProxyTunnelConfig, ProxyType, SshTunnelConfig,
+    TransportLayerConfig,
 };
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
@@ -336,6 +337,8 @@ fn default_port(db_type: DatabaseType) -> u16 {
         DatabaseType::Etcd => 2379,
         DatabaseType::Xugu => 5138,
         DatabaseType::Iris => 1972,
+        DatabaseType::Turso => 443,
+        DatabaseType::InfluxDb => 8086,
     }
 }
 
@@ -387,6 +390,8 @@ fn default_username(db_type: DatabaseType) -> &'static str {
         | DatabaseType::Access
         | DatabaseType::MongoDb
         | DatabaseType::Elasticsearch
+        | DatabaseType::Turso
+        | DatabaseType::InfluxDb
         | DatabaseType::Jdbc => "",
     }
 }
@@ -420,6 +425,7 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         transport_layers,
         connect_timeout_secs: args.connect_timeout_secs.unwrap_or_else(default_connect_timeout_secs),
         query_timeout_secs: args.query_timeout_secs.unwrap_or_else(default_query_timeout_secs),
+        idle_timeout_secs: default_idle_timeout_secs(),
         ssl: args.ssl.unwrap_or(false),
         ca_cert_path: String::new(),
         client_cert_path: String::new(),
@@ -439,6 +445,7 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         jdbc_driver_class: clean_optional(args.jdbc_driver_class),
         jdbc_driver_paths: args.jdbc_driver_paths.unwrap_or_default(),
         one_time: false,
+        read_only: false,
     }
     .canonicalized())
 }
@@ -485,7 +492,8 @@ pub fn resolve_schema(config: &ConnectionConfig, database: &str, requested: Opti
 mod tests {
     use super::*;
     use dbx_core::models::connection::{
-        default_connect_timeout_secs, default_query_timeout_secs, ProxyType, TransportLayerConfig,
+        default_connect_timeout_secs, default_idle_timeout_secs, default_query_timeout_secs, ProxyType,
+        TransportLayerConfig,
     };
 
     fn config(db_type: DatabaseType, database: Option<&str>) -> ConnectionConfig {
@@ -507,6 +515,7 @@ mod tests {
             transport_layers: Vec::new(),
             connect_timeout_secs: default_connect_timeout_secs(),
             query_timeout_secs: default_query_timeout_secs(),
+            idle_timeout_secs: default_idle_timeout_secs(),
             ssl: false,
             ca_cert_path: String::new(),
             client_cert_path: String::new(),
@@ -526,6 +535,7 @@ mod tests {
             jdbc_driver_class: None,
             jdbc_driver_paths: Vec::new(),
             one_time: false,
+            read_only: false,
         }
     }
 
@@ -612,6 +622,8 @@ mod tests {
         assert_eq!(config.redis_sentinel_password, "");
         assert!(!config.redis_sentinel_tls);
         assert_eq!(config.etcd_endpoints, "");
+        assert_eq!(config.idle_timeout_secs, default_idle_timeout_secs());
+        assert!(!config.read_only);
     }
 
     #[test]
@@ -636,6 +648,8 @@ mod tests {
             ("databend", DatabaseType::Databend, 8000, "databend"),
             ("iotdb", DatabaseType::Iotdb, 6667, "root"),
             ("etcd", DatabaseType::Etcd, 2379, ""),
+            ("turso", DatabaseType::Turso, 443, ""),
+            ("influxdb", DatabaseType::InfluxDb, 8086, ""),
         ] {
             let mut args = create_args();
             args.db_type = db_type.to_string();
