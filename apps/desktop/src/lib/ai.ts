@@ -1,4 +1,4 @@
-import type { AiConfig } from "@/stores/settingsStore";
+import { AI_PROVIDER_PRESETS, type AiConfig } from "@/stores/settingsStore";
 import { uuid } from "@/lib/utils";
 import type { AiToolTrace } from "@/lib/api";
 import type {
@@ -3298,6 +3298,7 @@ function resolveSchemaResearchSettings(config: AiConfig): ResolvedSchemaResearch
     config: {
       provider: schemaResearch.provider,
       apiKey: schemaResearch.apiKey,
+      authMethod: AI_PROVIDER_PRESETS[schemaResearch.provider].authMethod,
       endpoint: schemaResearch.endpoint,
       model: schemaResearch.model,
       apiStyle: schemaResearch.apiStyle,

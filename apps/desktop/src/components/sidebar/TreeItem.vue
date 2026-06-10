@@ -40,7 +40,6 @@ import {
   Scissors,
   CopyPlus,
   Plus,
-  FileText,
   FileUp,
   ScrollText,
   Braces,
