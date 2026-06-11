@@ -596,7 +596,7 @@ fn elasticsearch_sort_from_document_sort(sort: Option<&str>) -> Result<serde_jso
 }
 
 pub async fn insert_document(client: &EsClient, index: &str, doc_json: &str) -> Result<String, String> {
-    let doc: serde_json::Value = serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
+    let doc = elasticsearch_document_body_from_json(doc_json)?;
 
     let path = format!("/{}/_doc?refresh=true", index);
     let resp = client.post(&path).json(&doc).send().await.map_err(|e| format!("Elasticsearch request failed: {e}"))?;
@@ -611,7 +611,7 @@ pub async fn insert_document(client: &EsClient, index: &str, doc_json: &str) -> 
 }
 
 pub async fn update_document(client: &EsClient, index: &str, id: &str, doc_json: &str) -> Result<u64, String> {
-    let doc: serde_json::Value = serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
+    let doc = elasticsearch_document_body_from_json(doc_json)?;
 
     let path = format!("/{}/_doc/{}?refresh=true", index, id);
     let resp = client.put(&path).json(&doc).send().await.map_err(|e| format!("Elasticsearch request failed: {e}"))?;
@@ -622,6 +622,14 @@ pub async fn update_document(client: &EsClient, index: &str, id: &str, doc_json:
     }
 
     Ok(1)
+}
+
+fn elasticsearch_document_body_from_json(doc_json: &str) -> Result<serde_json::Value, String> {
+    let mut doc: serde_json::Value = serde_json::from_str(doc_json).map_err(|e| format!("Invalid JSON: {e}"))?;
+    if let serde_json::Value::Object(map) = &mut doc {
+        map.remove("_id");
+    }
+    Ok(doc)
 }
 
 pub async fn delete_document(client: &EsClient, index: &str, id: &str) -> Result<u64, String> {
@@ -1539,5 +1547,19 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.hits.total.value(), 5);
+    }
+
+    #[test]
+    fn document_body_removes_elasticsearch_id_metadata() {
+        let doc = super::elasticsearch_document_body_from_json(r#"{"_id":"abc","name":"Alice"}"#).unwrap();
+
+        assert_eq!(doc, json!({ "name": "Alice" }));
+    }
+
+    #[test]
+    fn document_body_preserves_user_field_order() {
+        let doc = super::elasticsearch_document_body_from_json(r#"{"z":1,"_id":"abc","a":2}"#).unwrap();
+
+        assert_eq!(serde_json::to_string(&doc).unwrap(), r#"{"z":1,"a":2}"#);
     }
 }
