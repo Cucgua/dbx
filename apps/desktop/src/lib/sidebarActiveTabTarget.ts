@@ -84,6 +84,9 @@ function schemaMatches(node: TreeNode, schema: string | undefined): boolean {
 
 export function matchesTarget(node: TreeNode, target: ActiveTabSidebarTarget): boolean {
   if (target.type === "mongo-collection") {
+    if (node.type === "elasticsearch-index") {
+      return node.connectionId === target.connectionId && node.label === target.collectionName;
+    }
     return node.type === "mongo-collection" && node.connectionId === target.connectionId && node.database === target.database && node.label === target.collectionName;
   }
 

@@ -2,8 +2,8 @@ pub const QUERY_ROW_LIMIT: usize = 100;
 
 use dbx_core::models::connection::{
     default_connect_timeout_secs, default_idle_timeout_secs, default_query_timeout_secs,
-    default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, ProxyTunnelConfig, ProxyType, SshTunnelConfig,
-    TransportLayerConfig,
+    default_redis_key_separator, default_ssh_connect_timeout_secs, ConnectionConfig, DatabaseType, ProxyTunnelConfig,
+    ProxyType, SshTunnelConfig, TransportLayerConfig,
 };
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
@@ -205,6 +205,7 @@ fn legacy_transport_layers(args: &CreateConnectionArgs) -> Result<Vec<TransportL
                 key_passphrase: args.ssh_key_passphrase.clone().unwrap_or_default(),
                 connect_timeout_secs: args.ssh_connect_timeout_secs.unwrap_or_else(default_ssh_connect_timeout_secs),
                 expose_lan: args.ssh_expose_lan.unwrap_or(false),
+                use_ssh_agent: false,
             }));
         }
     }
@@ -440,6 +441,7 @@ pub fn build_connection_config(args: CreateConnectionArgs, id: String) -> Result
         redis_sentinel_password: String::new(),
         redis_sentinel_tls: false,
         redis_cluster_nodes: clean_optional(args.redis_cluster_nodes).unwrap_or_default(),
+        redis_key_separator: default_redis_key_separator(),
         etcd_endpoints: String::new(),
         external_config: None,
         jdbc_driver_class: clean_optional(args.jdbc_driver_class),

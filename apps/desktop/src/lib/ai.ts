@@ -13,6 +13,8 @@ import { formatSchemaResearchTaskResultForPrompt, normalizeSchemaResearchTaskRes
 import type { ApiDocExtractionRequest } from "@/lib/schemaDocIngestion";
 import type { ApiDocExtractionStatus, SchemaRagApiDocExtraction, SchemaRagApiFieldFact, SchemaRagBusinessConceptFact, SchemaRagJoinCandidateFact } from "@/lib/schemaRag";
 
+import type { AgentEvent } from "@/lib/tauri";
+
 export type AiAction = "generate" | "explain" | "optimize" | "fix" | "convert" | "sampleData";
 export type AiAssistantMode = "ask" | "agent" | "rag";
 
@@ -27,9 +29,9 @@ export interface AiSchemaTable {
 }
 
 export interface AiContext {
+  connectionId: string;
   connectionName: string;
   databaseType: DatabaseType;
-  connectionId?: string;
   database: string;
   schema?: string;
   currentSql: string;
@@ -220,8 +222,12 @@ export type AiRelationRequestHandler = (request: AiRelationRequest) => Promise<A
 export type AiTableChoiceRequestHandler = (request: AiTableChoiceRequest) => Promise<AiTableChoiceResult>;
 export type AiColumnChoiceRequestHandler = (request: AiColumnChoiceRequest) => Promise<AiColumnChoiceResult>;
 
-export async function runAiAction(input: AiRequestInput, history?: api.AiMessage[]): Promise<string> {
-  const isZh = currentLocale() === "zh-CN";
+function isChineseLocale(locale: string): boolean {
+  return locale === "zh-CN" || locale === "zh-TW";
+}
+
+function buildAgentRequest(input: AiRequestInput, history?: api.AiMessage[]): { messages: api.AiMessage[]; systemPrompt: string; maxTokens: number; temperature: number } {
+  const isZh = isChineseLocale(currentLocale());
   const skill = aiSkillForAction(input.action);
   const systemPrompt = buildSystemPrompt(input.action, input.context, input.mode);
   const instruction = isZh ? skill.userInstruction.zh : skill.userInstruction.en;
@@ -231,12 +237,18 @@ export async function runAiAction(input: AiRequestInput, history?: api.AiMessage
   const messages: api.AiMessage[] = [...(history || []), { role: "user", content: userPrompt }];
 
   const params = actionParams(input.action);
+  const maxTokens = input.config.enableThinking ? Math.max(params.maxTokens, 8192) : params.maxTokens;
+  return { messages, systemPrompt, maxTokens, temperature: params.temperature };
+}
+
+export async function runAiAction(input: AiRequestInput, history?: api.AiMessage[]): Promise<string> {
+  const { messages, systemPrompt, maxTokens, temperature } = buildAgentRequest(input, history);
   return api.aiComplete({
     config: input.config,
     systemPrompt,
     messages,
-    maxTokens: params.maxTokens,
-    temperature: params.temperature,
+    maxTokens,
+    temperature,
   });
 }
 
@@ -263,6 +275,7 @@ export async function runAiStream(
   const sid = sessionId || uuid();
   const params = actionParams(input.action);
   const maxTokens = input.config.enableThinking ? Math.max(params.maxTokens, 8192) : params.maxTokens;
+  const temperature = params.temperature;
   const mainNodeId = uuid();
   emitAiWorkflowEvent(onEvent, {
     type: "node.start",
@@ -272,7 +285,7 @@ export async function runAiStream(
     status: "loading",
   });
 
-  const toolResult = await runAiToolLoop(input, messages, maxTokens, params.temperature, onReasoningDelta, onToolTrace, onRelationRequest, onTableChoiceRequest, onColumnChoiceRequest, onEvent, mainNodeId, onDelta).catch(() => undefined);
+  const toolResult = await runAiToolLoop(input, messages, maxTokens, temperature, onReasoningDelta, onToolTrace, onRelationRequest, onTableChoiceRequest, onColumnChoiceRequest, onEvent, mainNodeId, onDelta).catch(() => undefined);
   if (toolResult != null) {
     emitAiWorkflowEvent(onEvent, {
       type: "node.update",
@@ -291,7 +304,7 @@ export async function runAiStream(
       systemPrompt,
       messages,
       maxTokens,
-      temperature: params.temperature,
+      temperature,
     },
     (chunk) => {
       if (!chunk.done) {
@@ -360,6 +373,27 @@ const MAX_SCHEMA_RESEARCH_SESSION_MESSAGES = 10;
 const SCHEMA_RESEARCH_SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
 const SCHEMA_RESEARCH_VAGUE_OBJECTIVES = new Set(["继续", "继续一下", "继续上次", "continue", "resume"]);
 
+export async function runAgentStream(input: AiRequestInput, history: api.AiMessage[] | undefined, onEvent: (event: AgentEvent) => void, sessionId?: string): Promise<string> {
+  const { messages, systemPrompt, maxTokens, temperature } = buildAgentRequest(input, history);
+  const sid = sessionId || uuid();
+
+  return api.aiAgentStream(
+    sid,
+    {
+      config: input.config,
+      systemPrompt,
+      messages,
+      maxTokens,
+      temperature,
+    },
+    input.context.connectionId,
+    input.context.database,
+    input.context.databaseType,
+    onEvent,
+    input.mode || "ask",
+  );
+}
+
 function actionParams(action: AiAction): { maxTokens: number; temperature: number } {
   switch (action) {
     case "explain":
@@ -426,7 +460,13 @@ function buildBasePromptLines(isZh: boolean): string[] {
     isZh ? "你是 DBX 内置的数据库助手。用中文回复。" : "You are DBX's built-in database assistant. Reply in English.",
     isZh ? "精确、保守，根据当前数据库方言生成 SQL。" : "Be precise, conservative, and adapt SQL to the active database dialect.",
     isZh ? "严格使用当前数据库方言；标识符引用、分页、日期函数、字符串拼接、LIMIT/TOP/OFFSET 语法必须匹配数据库类型。" : "Strictly use the active database dialect; identifier quoting, pagination, date functions, string concatenation, and LIMIT/TOP/OFFSET syntax must match the database type.",
-    isZh ? "下面的 Schema 上下文已包含表、列、索引和外键信息，直接使用即可。不要查询 information_schema 或系统表来获取结构信息。" : "The schema context below already contains tables, columns, indexes, and foreign keys — use it directly. Do NOT query information_schema or system tables.",
+    isZh
+      ? "对于普通数据查询，优先使用下面已加载的 Schema 上下文，不要为了重复确认已给出的结构而查询 information_schema 或系统表。但当用户询问某表的字段详情、列信息时，应使用 get_columns 工具获取最权威完整的定义。"
+      : "For ordinary data queries, prefer the loaded schema context below. Do not query information_schema or system tables merely to rediscover structure already provided. However, when the user asks for detailed column/field information of a specific table, use the get_columns tool for the authoritative and complete definition.",
+    isZh
+      ? "例外：当用户明确询问当前有哪些表/Schema、某张表是否存在、或需要盘点数据库对象时，应生成符合当前方言的只读元数据查询（例如 SHOW TABLES、information_schema、sqlite_master 等）。"
+      : "Exception: when the user explicitly asks what tables/schemas exist, whether a table exists, or asks for database object inventory, generate a read-only metadata query appropriate for the active dialect (for example SHOW TABLES, information_schema, sqlite_master).",
+    isZh ? "表注释和列注释是语义别名；当用户用中文业务名描述表或字段时，优先根据注释匹配真实表名和字段名。" : "Table and column comments are semantic aliases; when the user describes tables or fields by business names, prefer matching those comments to the real table and column names.",
     isZh ? "当用户要求分析或查看某个表时，生成 SELECT 查询获取数据，而不是查询元数据。" : "When the user asks to 'analyze' or 'look at' a table, generate a SELECT query to retrieve data, not a metadata query.",
     isZh ? "不要编造 Schema 中不存在的表或列。" : "Never invent tables or columns that are not in the schema context.",
     isZh ? "用户输入中的 @schema.table 或 @table 表示用户明确提到的表；这些表已优先放入 Schema 上下文。" : "User input may contain @schema.table or @table mentions. Treat them as explicit table references; mentioned tables are prioritized in the schema context.",
@@ -449,8 +489,13 @@ function buildModePromptLines(mode: AiAssistantMode, isZh: boolean): string[] {
 
   if (mode === "agent") {
     return [
-      isZh ? "你处于 Agent 模式。用户表达查询意图时，优先生成一个可直接执行的只读 SQL。" : "You are in Agent mode. When the user expresses query intent, prioritize one directly executable read-only SQL statement.",
-      isZh ? "第一个 ```sql 代码块只能包含最终推荐执行的 SQL；不要把解释性 SQL、备选 SQL、危险 SQL 放在第一个代码块。" : "The first ```sql code block must contain only the final SQL recommended for execution; do not put explanatory SQL, alternatives, or risky SQL in the first code block.",
+      isZh ? "你处于 Agent 模式。你有以下工具可用：list_tables、get_columns、execute_query、get_sample_data。" : "You are in Agent mode. You have the following tools available: list_tables, get_columns, execute_query, get_sample_data.",
+      isZh
+        ? "用户提出数据查询意图时，必须调用 execute_query 工具执行 SQL，不要只输出 SQL 文本后停止。先用 list_tables/get_columns 了解 schema，再调用 execute_query 获取真实结果，最后基于结果回答用户。"
+        : "When the user expresses a data query intent, you MUST call the execute_query tool to run the SQL — do NOT just output SQL text and stop. Use list_tables/get_columns to understand the schema first, then call execute_query to get real results, then answer based on the actual data.",
+      isZh
+        ? "只有 SELECT、WITH、SHOW、DESCRIBE、EXPLAIN 可以通过 execute_query 执行。如果用户要求写入操作，先解释原因，不要执行。"
+        : "Only SELECT, WITH, SHOW, DESCRIBE, EXPLAIN can be executed via execute_query. If the user requests a write operation, explain why it is blocked instead of executing.",
       isZh ? "如果安全执行条件不满足，先说明原因，再给只读预览或澄清问题。" : "If safe execution requirements are not met, explain why first, then provide a read-only preview or a clarifying question.",
     ];
   }
@@ -3938,9 +3983,9 @@ export async function buildAiContext(
   }
 
   return {
+    connectionId: tab.connectionId,
     connectionName: connection.name,
     databaseType: connection.db_type,
-    connectionId: tab.connectionId,
     database: tab.database,
     schema: resolveCurrentSchemaForRag(tab, connection),
     currentSql: tab.sql,

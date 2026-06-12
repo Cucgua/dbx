@@ -2,10 +2,12 @@
 import { computed, ref, watch, nextTick } from "vue";
 import type { CSSProperties } from "vue";
 import { useI18n } from "vue-i18n";
-import { X, Pin, ChevronDown, Table2, Code2, TableProperties, PencilRuler, KeyRound, Pencil, Package, Check, Lock } from "@lucide/vue";
+import { X, Pin, ChevronDown, Table2, Code2, TableProperties, PencilRuler, KeyRound, Pencil, Package, Check, Lock, Copy, AlertTriangle } from "@lucide/vue";
 import CustomContextMenu, { type ContextMenuItem } from "@/components/ui/CustomContextMenu.vue";
 import LightDropdown from "@/components/ui/LightDropdown.vue";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTabScroll } from "@/composables/useTabScroll";
@@ -22,6 +24,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   "toggle-driver-store": [];
   "close-driver-store": [];
+  "save-tab": [tabId: string];
 }>();
 
 const { t } = useI18n();
@@ -83,6 +86,12 @@ function getTabMenuItems(tab: QueryTab): ContextMenuItem[] {
       icon: Pencil,
       visible: canRenameTab(tab),
     },
+    {
+      label: t("contextMenu.duplicateTab"),
+      action: () => queryStore.duplicateTab(tab.id),
+      icon: Copy,
+      visible: canRenameTab(tab),
+    },
     { label: "", separator: true },
     {
       label: tab.pinned ? t("contextMenu.unpin") : t("contextMenu.pin"),
@@ -105,6 +114,19 @@ function getTabMenuItems(tab: QueryTab): ContextMenuItem[] {
       icon: X,
     },
   ];
+}
+
+function handleSaveAndClose() {
+  const id = queryStore.saveAndClosePendingTab();
+  if (id) emit("save-tab", id);
+}
+
+function handleDiscardAndClose() {
+  queryStore.forceClosePendingTab();
+}
+
+function handleCancelClose() {
+  queryStore.cancelClosePendingTab();
 }
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
@@ -179,7 +201,7 @@ function tabColorStyle(tab: QueryTab) {
 }
 
 function tabIconClass(tab: QueryTab) {
-  if (tab.mode === "data" || tab.mode === "objects" || tab.mode === "structure") return "text-emerald-600 dark:text-emerald-400";
+  if (tab.mode === "data" || tab.mode === "mongo" || tab.mode === "redis" || tab.mode === "objects" || tab.mode === "structure") return "text-emerald-600 dark:text-emerald-400";
   return "text-blue-600 dark:text-blue-400";
 }
 
@@ -196,7 +218,7 @@ const openTabMenuItems = computed(() =>
 );
 
 function tabMenuIcon(tab: QueryTab) {
-  if (tab.mode === "data") return Table2;
+  if (tab.mode === "data" || tab.mode === "mongo" || tab.mode === "redis") return Table2;
   if (tab.mode === "etcd") return KeyRound;
   if (tab.mode === "objects") return TableProperties;
   if (tab.mode === "structure") return PencilRuler;
@@ -261,7 +283,7 @@ function activateTab(tabId: string) {
 
 <template>
   <div v-if="queryStore.tabs.length > 0 || showDriverStore" class="relative flex border-b shrink-0" :class="settingsStore.editorSettings.appLayout === 'classic' ? 'h-9 items-stretch bg-muted' : 'h-10 items-center bg-background px-2'">
-    <div class="relative h-full min-w-0 flex-1">
+    <div class="app-tab-strip relative h-full min-w-0 flex-1">
       <div v-if="showTabOverflowControls" class="app-tab-scrollbar" :class="{ 'app-tab-scrollbar--dragging': isScrollbarDragging }" @pointerdown="startScrollbarDrag">
         <div class="app-tab-scrollbar__thumb" :style="tabScrollbarThumbStyle" />
       </div>
@@ -288,7 +310,7 @@ function activateTab(tabId: string) {
                   @mouseleave="tabDrag.clearTarget(tab.id)"
                 >
                   <span class="shrink-0" :class="tabIconClass(tab)">
-                    <Table2 v-if="tab.mode === 'data'" class="h-3.5 w-3.5" />
+                    <Table2 v-if="tab.mode === 'data' || tab.mode === 'mongo' || tab.mode === 'redis'" class="h-3.5 w-3.5" />
                     <KeyRound v-else-if="tab.mode === 'etcd'" class="h-3.5 w-3.5" />
                     <TableProperties v-else-if="tab.mode === 'objects'" class="h-3.5 w-3.5" />
                     <PencilRuler v-else-if="tab.mode === 'structure'" class="h-3.5 w-3.5" />
@@ -381,6 +403,30 @@ function activateTab(tabId: string) {
       />
     </div>
   </div>
+
+  <Dialog
+    :open="queryStore.showCloseConfirm"
+    @update:open="
+      (open) => {
+        if (!open) queryStore.cancelClosePendingTab();
+      }
+    "
+  >
+    <DialogContent class="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle class="flex items-center gap-2">
+          <AlertTriangle class="h-5 w-5 text-amber-500" />
+          {{ t("editor.unsavedChangesTitle") }}
+        </DialogTitle>
+      </DialogHeader>
+      <p class="text-sm text-muted-foreground">{{ t("editor.unsavedChangesMessage") }}</p>
+      <DialogFooter>
+        <Button variant="outline" @click="handleCancelClose">{{ t("common.cancel") }}</Button>
+        <Button variant="secondary" @click="handleDiscardAndClose">{{ t("editor.discardChanges") }}</Button>
+        <Button @click="handleSaveAndClose">{{ t("savedSql.save") }}</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>
 
 <style scoped>
@@ -395,7 +441,17 @@ function activateTab(tabId: string) {
   z-index: 20;
   height: 6px;
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
   touch-action: none;
+  transition: opacity 140ms ease;
+}
+
+.app-tab-strip:hover .app-tab-scrollbar,
+.app-tab-strip:focus-within .app-tab-scrollbar,
+.app-tab-scrollbar--dragging {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .app-tab-scrollbar::before {

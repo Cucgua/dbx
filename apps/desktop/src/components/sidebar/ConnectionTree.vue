@@ -57,7 +57,7 @@ const SEARCH_SCOPE_TO_NODE_TYPES: Record<SearchScope, TreeNodeType[]> = {
   connection: ["connection"],
   database: ["database", "redis-db", "mongo-db"],
   schema: ["schema"],
-  table: ["table", "mongo-collection"],
+  table: ["table", "mongo-collection", "elasticsearch-index"],
   view: ["view"],
 };
 
@@ -275,8 +275,10 @@ async function ensureTreeLoadedForTab(tab: QueryTab, opts?: { force?: boolean })
     try {
       if (config.db_type === "redis") {
         await store.loadRedisDatabases(connId);
-      } else if (config.db_type === "mongodb" || config.db_type === "elasticsearch") {
+      } else if (config.db_type === "mongodb") {
         await store.loadMongoDatabases(connId);
+      } else if (config.db_type === "elasticsearch") {
+        await store.loadElasticsearchIndices(connId);
       } else {
         await store.loadDatabases(connId, loadOptions);
       }

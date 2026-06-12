@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ConnectionConfig,
   DatabaseInfo,
   TableInfo,
@@ -9,19 +9,25 @@ import type {
   IndexInfo,
   ForeignKeyInfo,
   TriggerInfo,
+  FunctionInfo,
+  SequenceInfo,
+  RuleInfo,
+  OwnerInfo,
   QueryResult,
   SqlReferenceAnalysis,
   DatabaseType,
   InstalledPlugin,
   JdbcDriverInfo,
+  JdbcMavenBundleInfo,
   JdbcPluginStatus,
   SidebarLayout,
   SavedSqlFile,
   SavedSqlFolder,
   SavedSqlLibrary,
 } from "@/types/database";
+import type { SchemaDiffPreparation, SchemaDiffPreparationOptions, TableDiff, FunctionDiff, SequenceDiff, RuleDiff, OwnerDiff } from "@/lib/schemaDiff";
 import type { SidebarObjectKind } from "@/lib/databaseObjectCapabilities";
-import type { AiConfig } from "@/stores/settingsStore";
+import type { AiConfig, AiTestConnectionResult } from "@/stores/settingsStore";
 import type {
   AgentDriverInfo,
   AiCompletionRequest,
@@ -106,7 +112,6 @@ import type { CreateDatabaseSqlOptions } from "@/lib/createDatabaseSql";
 import type { DatabaseNameSqlOptions, DropTableChildObjectSqlOptions, DropObjectSqlOptions, DuplicateTableStructureSqlOptions, SchemaNameSqlOptions, TableAdminSqlOptions } from "@/lib/dbAdminSql";
 import type { BuildDatabaseSqlExportOptions, BuildExportInsertStatementsOptions } from "@/lib/databaseExport";
 import type { DataCompareFromTablesOptions, DataCompareFromTablesPreparation, DataCompareSyncPlan, DataCompareSyncPlanOptions, DataComparePreparation, DataComparePreparationOptions } from "@/lib/dataCompare";
-import type { SchemaDiffPreparation, SchemaDiffPreparationOptions, TableDiff } from "@/lib/schemaDiff";
 import type { DataGridSavePreparation } from "./tauri";
 
 // ---------------------------------------------------------------------------
@@ -199,6 +204,10 @@ export async function listJdbcDrivers(): Promise<JdbcDriverInfo[]> {
   return get("/api/jdbc/drivers");
 }
 
+export async function listJdbcMavenBundles(): Promise<JdbcMavenBundleInfo[]> {
+  return get("/api/jdbc/drivers/maven");
+}
+
 export async function importJdbcDrivers(pathsOrFiles: (string | File)[]): Promise<JdbcDriverInfo[]> {
   const formData = new FormData();
   for (const item of pathsOrFiles) {
@@ -215,9 +224,17 @@ export async function importJdbcDrivers(pathsOrFiles: (string | File)[]): Promis
   return res.json();
 }
 
+export async function installJdbcDriverFromMaven(coordinate: string, repositories: string[] = []): Promise<JdbcDriverInfo[]> {
+  return post("/api/jdbc/drivers/maven", { coordinate, repositories });
+}
+
 export async function deleteJdbcDriver(path: string): Promise<JdbcDriverInfo[]> {
   const fileName = path.split("/").pop() || path;
   return del(`/api/jdbc/drivers/${encodeURIComponent(fileName)}`);
+}
+
+export async function deleteJdbcMavenBundle(bundleId: string): Promise<JdbcDriverInfo[]> {
+  return del(`/api/jdbc/drivers/maven/${encodeURIComponent(bundleId)}`);
 }
 
 export async function jdbcPluginStatus(): Promise<JdbcPluginStatus> {
@@ -501,8 +518,33 @@ export async function prepareSchemaDiff(options: SchemaDiffPreparationOptions): 
   return post("/api/schema-diff/prepare", options);
 }
 
-export async function generateSchemaSyncSql(diffs: TableDiff[], databaseType: DatabaseType, targetSchema?: string): Promise<string> {
-  return post("/api/schema-diff/generate-sync-sql", { diffs, databaseType, targetSchema });
+export async function generateSchemaSyncSql(diffs: TableDiff[], databaseType: DatabaseType, targetSchema?: string, functionDiffs?: FunctionDiff[], sequenceDiffs?: SequenceDiff[], ruleDiffs?: RuleDiff[], ownerDiffs?: OwnerDiff[], cascadeDelete?: boolean): Promise<string> {
+  return post("/api/schema-diff/generate-sync-sql", {
+    diffs,
+    databaseType,
+    targetSchema,
+    functionDiffs: functionDiffs ?? [],
+    sequenceDiffs: sequenceDiffs ?? [],
+    ruleDiffs: ruleDiffs ?? [],
+    ownerDiffs: ownerDiffs ?? [],
+    cascadeDelete: cascadeDelete ?? false,
+  });
+}
+
+export async function listFunctions(connectionId: string, database: string, schema: string): Promise<FunctionInfo[]> {
+  return get(`/api/schema/functions?${qs({ connection_id: connectionId, database, schema })}`);
+}
+
+export async function listSequences(connectionId: string, database: string, schema: string, withLastValues: boolean): Promise<SequenceInfo[]> {
+  return get(`/api/schema/sequences?${qs({ connection_id: connectionId, database, schema, with_last_values: withLastValues ? 1 : 0 })}`);
+}
+
+export async function listRules(connectionId: string, database: string, schema: string): Promise<RuleInfo[]> {
+  return get(`/api/schema/rules?${qs({ connection_id: connectionId, database, schema })}`);
+}
+
+export async function listOwners(connectionId: string, database: string, schema: string): Promise<OwnerInfo[]> {
+  return get(`/api/schema/owners?${qs({ connection_id: connectionId, database, schema })}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -815,12 +857,64 @@ export async function aiCancelStream(sessionId: string): Promise<boolean> {
   return post("/api/ai/cancel-stream", { sessionId });
 }
 
-export async function aiTestConnection(config: AiConfig): Promise<string> {
+export async function aiTestConnection(config: AiConfig): Promise<AiTestConnectionResult> {
   return post("/api/ai/test-connection", { config });
 }
 
 export async function aiListModels(config: AiConfig): Promise<AiModelInfo[]> {
   return post("/api/ai/models", { config });
+}
+
+export type { AgentEvent } from "./tauri";
+
+function isAgentEvent(v: unknown): v is import("./tauri").AgentEvent {
+  return typeof v === "object" && v !== null && "type" in v && typeof (v as Record<string, unknown>).type === "string";
+}
+
+export async function aiAgentStream(sessionId: string, request: AiCompletionRequest, connectionId: string, database: string, dbType: string, onEvent: (event: import("./tauri").AgentEvent) => void, mode?: string, signal?: AbortSignal): Promise<string> {
+  const res = await fetch("/api/ai/agent-stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, request, connection_id: connectionId, database, db_type: dbType, mode: mode || "ask" }),
+    signal,
+  });
+  if (!res.ok) throw new Error(await res.text());
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (line.startsWith("data:")) {
+        const data = line.slice(5).trim();
+        if (data && data !== "[DONE]") {
+          try {
+            const parsed = JSON.parse(data);
+            if (!isAgentEvent(parsed)) {
+              console.warn("[aiAgentStream] Skipping invalid agent event:", data);
+              continue;
+            }
+            onEvent(parsed);
+            if (parsed.type === "agent_end" || parsed.type === "error") {
+              result = data;
+            }
+          } catch {
+            // skip malformed JSON
+          }
+        }
+      }
+    }
+  }
+  return result;
 }
 
 export async function saveAiConfig(config: AiConfig): Promise<void> {
@@ -1214,8 +1308,8 @@ export async function redisScanKeys(connectionId: string, db: number, cursor: nu
   return post("/api/redis/scan-keys", { connectionId, db, cursor, pattern, count });
 }
 
-export async function redisScanValues(connectionId: string, db: number, cursor: number, pattern: string, query: string, count: number): Promise<RedisScanResult> {
-  return post("/api/redis/scan-values", { connectionId, db, cursor, pattern, query, count });
+export async function redisScanValues(connectionId: string, db: number, cursor: number, pattern: string, query: string, count: number, includeKeyMatches = false): Promise<RedisScanResult> {
+  return post("/api/redis/scan-values", { connectionId, db, cursor, pattern, query, includeKeyMatches, count });
 }
 
 export async function redisGetValue(connectionId: string, db: number, keyRaw: string): Promise<RedisValue> {
@@ -1290,8 +1384,8 @@ export async function redisFlushDb(connectionId: string, db: number): Promise<vo
   return post("/api/redis/flush-db", { connectionId, db });
 }
 
-export async function redisExecuteCommand(connectionId: string, db: number, command: string): Promise<RedisCommandResult> {
-  return post("/api/redis/execute-command", { connectionId, db, command });
+export async function redisExecuteCommand(connectionId: string, db: number, command: string, skipSafetyCheck?: boolean): Promise<RedisCommandResult> {
+  return post("/api/redis/execute-command", { connectionId, db, command, skipSafetyCheck: skipSafetyCheck ?? false });
 }
 
 export async function redisLoadMore(connectionId: string, db: number, keyRaw: string, keyType: string, cursor: number, count: number): Promise<RedisValue> {
@@ -1330,8 +1424,16 @@ export async function mongoListCollections(connectionId: string, database: strin
   return post("/api/mongo/list-collections", { connectionId, database });
 }
 
+export async function elasticsearchListIndices(connectionId: string): Promise<string[]> {
+  return mongoListCollections(connectionId, "default");
+}
+
 export async function mongoFindDocuments(connectionId: string, database: string, collection: string, skip: number, limit: number, filter?: string, sort?: string): Promise<MongoDocumentResult> {
   return post("/api/mongo/find-documents", { connectionId, database, collection, skip, limit, filter, sort });
+}
+
+export async function documentFindDocuments(connectionId: string, database: string, collection: string, skip: number, limit: number, filter?: string, sort?: string): Promise<MongoDocumentResult> {
+  return post("/api/document-store/find-documents", { connectionId, database, collection, skip, limit, filter, sort });
 }
 
 export async function mongoAggregateDocuments(connectionId: string, database: string, collection: string, pipelineJson: string, maxRows?: number): Promise<MongoDocumentResult> {
@@ -1453,5 +1555,5 @@ export async function loadSidebarLayout(): Promise<SidebarLayout | null> {
 }
 
 export async function refreshConnections(): Promise<void> {
-  // Web mode doesn't maintain persistent connection pools — no-op
+  // Web mode doesn't maintain persistent connection pools - no-op
 }
